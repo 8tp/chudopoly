@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHUDOPOLY GO — Air Force Card Game</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Title / Lobby Screen ─────────────────────────────────────────── -->
+<div id="lobby-screen">
+  <div class="logo">
+    <div class="logo-star">&#9733;</div>
+    <h1>CHUDOPOLY GO</h1>
+    <p class="subtitle">AIR FORCE CARD GAME</p>
+    <p class="tagline">Monopoly Deal — Tactical Edition</p>
+  </div>
+
+  <div id="lobby-join" class="lobby-panel">
+    <input type="text" id="player-name" placeholder="Your Call Sign" maxlength="16" autocomplete="off">
+    <button id="btn-create" onclick="createRoom()">Create Room</button>
+    <div class="divider">— OR —</div>
+    <input type="text" id="room-code-input" placeholder="Room Code" maxlength="4" autocomplete="off"
+           style="text-transform:uppercase">
+    <button id="btn-join" onclick="joinRoom()">Join Room</button>
+  </div>
+
+  <div id="lobby-waiting" class="lobby-panel" style="display:none">
+    <h2>Room: <span id="room-code-display"></span></h2>
+    <p class="hint">Share this code with your squad</p>
+    <div id="player-list"></div>
+    <button id="btn-start" onclick="startGame()" style="display:none">Launch Mission</button>
+    <p id="waiting-msg" class="hint">Waiting for host to start...</p>
+  </div>
+
+  <div id="lobby-error" class="error-msg"></div>
+</div>
+
+<!-- ── Game Screen ──────────────────────────────────────────────────── -->
+<div id="game-screen" style="display:none">
+  <div class="game-header">
+    <div class="hdr-left">
+      <span class="hdr-title">CHUDOPOLY GO</span>
+      <span id="hdr-room" class="hdr-badge"></span>
+    </div>
+    <div class="hdr-center">
+      <span id="hdr-turn"></span>
+      <span id="hdr-phase" class="hdr-badge"></span>
+      <span id="hdr-plays"></span>
+    </div>
+    <div class="hdr-right">
+      <span id="hdr-deck"></span>
+    </div>
+  </div>
+
+  <div class="game-body">
+    <!-- Other players -->
+    <div id="opponents" class="opponents-area"></div>
+
+    <!-- Center: your bank + properties + log -->
+    <div class="center-area">
+      <div class="center-cols">
+        <div class="my-assets">
+          <h3>Your Bank <span id="my-bank-total"></span></h3>
+          <div id="my-bank" class="card-row"></div>
+          <h3>Your Properties</h3>
+          <div id="my-properties" class="prop-area"></div>
+        </div>
+        <div class="game-log-panel">
+          <h3>Mission Log</h3>
+          <div id="game-log"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Your hand -->
+    <div class="hand-area">
+      <div class="hand-bar">
+        <span class="hand-label">YOUR HAND</span>
+        <div class="hand-actions">
+          <button id="btn-draw" onclick="doDraw()">Draw Cards</button>
+          <button id="btn-end-turn" onclick="doEndTurn()">End Turn</button>
+        </div>
+      </div>
+      <div id="my-hand" class="card-row hand-cards"></div>
+    </div>
+  </div>
+
+  <!-- Action modal -->
+  <div id="modal-overlay" class="modal-overlay" style="display:none" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <h3 id="modal-title"></h3>
+      <div id="modal-body"></div>
+      <div id="modal-actions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+</div>
+
+<!-- ── Winner Overlay ───────────────────────────────────────────────── -->
+<div id="winner-overlay" class="winner-overlay" style="display:none">
+  <div class="winner-box">
+    <div class="winner-star">&#9733;</div>
+    <h1 id="winner-name"></h1>
+    <p>MISSION ACCOMPLISHED</p>
+    <p class="hint">3 Complete Property Sets</p>
+    <button onclick="location.reload()">New Game</button>
+  </div>
+</div>
+
+<script src="client.js"></script>
+</body>
+</html>

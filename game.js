@@ -191,6 +191,11 @@ function playerTotalValue(player) {
 
 function drawCards(state) {
   const p = currentPlayer(state);
+
+  // Auto-win check at turn start: if player already has 3+ complete sets
+  // (e.g. gained from opponent's payment/swap on a previous turn), they win now
+  if (checkWin(state, p.id)) return { ok: true, autoWin: true };
+
   const count = p.hand.length === 0 ? 5 : 2;
 
   if (state.deck.length < count && state.discardPile.length > 0) {
@@ -219,8 +224,10 @@ function playAsMoney(state, playerId, cardIndex) {
   if (state.turnPhase !== 'play') return { error: 'Cannot play now' };
   if (state.playsRemaining <= 0) return { error: 'No plays remaining' };
   if (cardIndex < 0 || cardIndex >= p.hand.length) return { error: 'Invalid card' };
+  const card = p.hand[cardIndex];
+  if (card.type === 'property' || card.type === 'wild_property') return { error: 'Properties cannot be banked' };
 
-  const card = p.hand.splice(cardIndex, 1)[0];
+  p.hand.splice(cardIndex, 1);
   p.bank.push(card);
   state.playsRemaining--;
   state.log.push(p.name + ' banked ' + card.name + ' (' + card.value + 'M)');
@@ -293,7 +300,7 @@ function playAction(state, playerId, cardIndex, opts) {
     case 'finance_office': {
       if (!targetId) return { error: 'Choose a player to collect from' };
       const target = getPlayer(state, targetId);
-      if (!target || target.id === p.id) return { error: 'Invalid target' };
+      if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
@@ -311,12 +318,12 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
-      const targets = state.players.filter(x => x.id !== p.id);
+      const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
       state.pendingAction = {
         type: 'payment_all', action: 'roll_call',
         sourceId: p.id, amount: 2,
         pending: targets.map(t => t.id),
-        responderId: targets[0]?.id,
+        opsecChains: {},
       };
       state.turnPhase = 'action_response';
       state.log.push(p.name + ' calls Roll Call — everyone pays 2M!');
@@ -326,7 +333,7 @@ function playAction(state, playerId, cardIndex, opts) {
     case 'inspector_general': {
       if (!targetId || !targetColor) return { error: 'Choose a player and a complete set to seize' };
       const target = getPlayer(state, targetId);
-      if (!target || target.id === p.id) return { error: 'Invalid target' };
+      if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       if (!isSetComplete(target, targetColor)) return { error: 'That set is not complete' };
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
@@ -344,7 +351,7 @@ function playAction(state, playerId, cardIndex, opts) {
     case 'midnight_requisition': {
       if (!targetId || targetCardId == null) return { error: 'Choose a player and a property to requisition' };
       const target = getPlayer(state, targetId);
-      if (!target || target.id === p.id) return { error: 'Invalid target' };
+      if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       let foundColor = null, foundIdx = -1;
       for (const [col, cards] of Object.entries(target.properties)) {
         if (isSetComplete(target, col)) continue;
@@ -369,7 +376,7 @@ function playAction(state, playerId, cardIndex, opts) {
       if (!targetId || targetCardId == null || opts?.myCardId == null)
         return { error: 'Choose your property and a target property to swap' };
       const target = getPlayer(state, targetId);
-      if (!target || target.id === p.id) return { error: 'Invalid target' };
+      if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
@@ -423,7 +430,7 @@ function playAction(state, playerId, cardIndex, opts) {
     case 'chud': {
       if (!targetId || targetCardId == null) return { error: 'Choose a player and ANY property to commandeer' };
       const target = getPlayer(state, targetId);
-      if (!target || target.id === p.id) return { error: 'Invalid target' };
+      if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       let chudColor = null;
       for (const [col, cards] of Object.entries(target.properties)) {
         const idx = cards.findIndex(c => c.id === targetCardId);
@@ -470,12 +477,12 @@ function playAction(state, playerId, cardIndex, opts) {
     state.discardPile.push(card);
     state.playsRemaining--;
 
-    const targets = state.players.filter(x => x.id !== p.id);
+    const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
     state.pendingAction = {
       type: 'payment_all', action: 'rent',
       sourceId: p.id, amount: rent, color: targetColor,
       pending: targets.map(t => t.id),
-      responderId: targets[0]?.id,
+      opsecChains: {},
     };
     state.turnPhase = 'action_response';
     state.log.push(p.name + ' charges ' + rent + 'M rent on ' + COLORS[targetColor].name);
@@ -490,6 +497,13 @@ function playAction(state, playerId, cardIndex, opts) {
 function respondToAction(state, playerId, response, paymentCards) {
   const pa = state.pendingAction;
   if (!pa) return { error: 'No pending action' };
+
+  // Simultaneous payment_all handling
+  if (pa.type === 'payment_all') {
+    return respondToPaymentAll(state, pa, playerId, response, paymentCards);
+  }
+
+  // Original single-responder logic for non-payment_all
   if (pa.responderId !== playerId) return { error: 'Not your turn to respond' };
   const responder = getPlayer(state, playerId);
 
@@ -509,6 +523,95 @@ function respondToAction(state, playerId, response, paymentCards) {
   }
 
   return { error: 'Invalid response' };
+}
+
+function respondToPaymentAll(state, pa, playerId, response, paymentCards) {
+  const responder = getPlayer(state, playerId);
+  const source = getPlayer(state, pa.sourceId);
+  if (!pa.opsecChains) pa.opsecChains = {};
+
+  // Check if source is responding to an OPSEC chain
+  if (playerId === pa.sourceId) {
+    // Find which opsec chain the source needs to respond to
+    const chainPlayerIds = Object.keys(pa.opsecChains).filter(pid => pa.opsecChains[pid].responderId === pa.sourceId);
+    if (chainPlayerIds.length === 0) return { error: 'Not your turn to respond' };
+    const chainPid = chainPlayerIds[0]; // handle one at a time
+    const chain = pa.opsecChains[chainPid];
+
+    if (response === 'accept') {
+      // Source accepts the block — this player doesn't pay
+      const blockedPlayer = getPlayer(state, chainPid);
+      state.log.push('Action blocked by OPSEC for ' + (blockedPlayer?.name || '?') + '!');
+      delete pa.opsecChains[chainPid];
+      return checkPaymentAllDone(state, pa);
+    } else if (response === 'opsec') {
+      const idx = responder.hand.findIndex(c => c.action === 'opsec');
+      if (idx < 0) return { error: 'No OPSEC card in hand' };
+      const opsecCard = responder.hand.splice(idx, 1)[0];
+      state.discardPile.push(opsecCard);
+      chain.chain++;
+      chain.responderId = chainPid;
+      state.log.push(responder.name + ' counters OPSEC! ' + getPlayer(state, chainPid).name + ' can respond...');
+      return { ok: true, opsec: true };
+    }
+    return { error: 'Invalid response' };
+  }
+
+  // Check if this player is in an OPSEC chain (being asked to respond after source countered)
+  if (pa.opsecChains[playerId] && pa.opsecChains[playerId].responderId === playerId) {
+    const chain = pa.opsecChains[playerId];
+    if (response === 'accept') {
+      // Player accepts — action goes through, they must pay
+      delete pa.opsecChains[playerId];
+      pa.pending.push(playerId); // put back in pending so they pay
+      state.log.push(responder.name + ' accepts — must pay.');
+      return { ok: true };
+    } else if (response === 'opsec') {
+      const idx = responder.hand.findIndex(c => c.action === 'opsec');
+      if (idx < 0) return { error: 'No OPSEC card in hand' };
+      const opsecCard = responder.hand.splice(idx, 1)[0];
+      state.discardPile.push(opsecCard);
+      chain.chain++;
+      chain.responderId = pa.sourceId;
+      state.log.push(responder.name + ' plays OPSEC again! ' + source.name + ' can counter...');
+      return { ok: true, opsec: true };
+    }
+    return { error: 'Invalid response' };
+  }
+
+  // Regular pending player responding
+  if (!pa.pending?.includes(playerId)) return { error: 'Not your turn to respond' };
+
+  if (response === 'opsec') {
+    const idx = responder.hand.findIndex(c => c.action === 'opsec');
+    if (idx < 0) return { error: 'No OPSEC card in hand' };
+    const opsecCard = responder.hand.splice(idx, 1)[0];
+    state.discardPile.push(opsecCard);
+    // Remove from pending, create opsec chain
+    pa.pending = pa.pending.filter(id => id !== playerId);
+    pa.opsecChains[playerId] = { chain: 1, responderId: pa.sourceId };
+    state.log.push(responder.name + ' plays OPSEC! ' + source.name + ' can counter...');
+    return { ok: true, opsec: true };
+  }
+
+  if (response === 'accept') {
+    // Process payment directly — set _lastPayer so advancePending removes them
+    pa._lastPayer = playerId;
+    const result = processPayment(state, pa, responder, source, paymentCards);
+    if (result.needPayment) { delete pa._lastPayer; return result; }
+    return checkPaymentAllDone(state, pa);
+  }
+
+  return { error: 'Invalid response' };
+}
+
+function checkPaymentAllDone(state, pa) {
+  if (pa.pending.length === 0 && Object.keys(pa.opsecChains || {}).length === 0) {
+    state.pendingAction = null;
+    state.turnPhase = 'play';
+    return { ok: true };
+  }
+  return { ok: true, morePending: true };
 }
 
 function executeAction(state, pa, accepterId, paymentCards) {
@@ -663,18 +766,152 @@ function advancePending(state) {
   const pa = state.pendingAction;
   if (!pa) { state.turnPhase = 'play'; return { ok: true }; }
 
-  if (pa.type === 'payment_all' && pa.pending && pa.pending.length > 0) {
-    pa.pending = pa.pending.filter(id => id !== pa.responderId);
-    if (pa.pending.length > 0) {
-      pa.responderId = pa.pending[0];
-      pa._opsecChain = 0;
-      return { ok: true, morePending: true };
+  if (pa.type === 'payment_all') {
+    // For simultaneous payment_all, the payer ID is in pa._lastPayer (set by processPayment caller)
+    // Remove the payer from pending
+    if (pa._lastPayer) {
+      pa.pending = pa.pending.filter(id => id !== pa._lastPayer);
+      delete pa._lastPayer;
     }
+    // Check if all done
+    if (pa.pending.length === 0 && Object.keys(pa.opsecChains || {}).length === 0) {
+      state.pendingAction = null;
+      state.turnPhase = 'play';
+      return { ok: true };
+    }
+    return { ok: true, morePending: true };
   }
 
   state.pendingAction = null;
   state.turnPhase = 'play';
   return { ok: true };
+}
+
+/* ── Move property (free rearrange) ─────────────────────────────────── */
+
+function moveProperty(state, playerId, cardId, toColor) {
+  const p = getPlayer(state, playerId);
+  if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
+  if (state.turnPhase !== 'play') return { error: 'Cannot rearrange now' };
+  if (!COLORS[toColor]) return { error: 'Invalid color' };
+
+  // Find the card in player's properties
+  let card = null, fromColor = null, fromIdx = -1;
+  for (const [col, cards] of Object.entries(p.properties)) {
+    const idx = cards.findIndex(c => c.id === cardId);
+    if (idx >= 0) { card = cards[idx]; fromColor = col; fromIdx = idx; break; }
+  }
+  if (!card) return { error: 'Card not found in your properties' };
+  if (fromColor === toColor) return { error: 'Already in that set' };
+
+  // Only wild_property cards can be moved
+  if (card.type !== 'wild_property') return { error: 'Only wild properties can be moved between sets' };
+
+  // Validate the target color is valid for this wild
+  if (card.colors[0] !== 'any' && !card.colors.includes(toColor))
+    return { error: 'This wild cannot go on ' + COLORS[toColor].name };
+
+  // Move the card
+  p.properties[fromColor].splice(fromIdx, 1);
+  if (!p.properties[toColor]) p.properties[toColor] = [];
+  card.placedColor = toColor;
+  p.properties[toColor].push(card);
+
+  // Clean up upgrades if the source set is no longer complete
+  if (!isSetComplete(p, fromColor)) delete p.upgrades[fromColor];
+
+  state.log.push(p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
+  checkWin(state, playerId);
+  return { ok: true };
+}
+
+/* ── Scoop (forfeit) ─────────────────────────────────────────────────── */
+
+function scoop(state, playerId) {
+  const p = getPlayer(state, playerId);
+  if (!p) return { error: 'Player not found' };
+  if (p.eliminated) return { error: 'Already eliminated' };
+
+  // Discard all hand cards
+  while (p.hand.length > 0) state.discardPile.push(p.hand.pop());
+  // Discard all bank cards
+  while (p.bank.length > 0) state.discardPile.push(p.bank.pop());
+  // Discard all property cards
+  for (const [color, cards] of Object.entries(p.properties)) {
+    while (cards.length > 0) state.discardPile.push(cards.pop());
+    delete p.upgrades[color];
+  }
+  p.properties = {};
+  p.upgrades = {};
+  p.eliminated = true;
+
+  state.log.push(p.name + ' scooped! All cards discarded.');
+
+  // Handle pending actions involving this player
+  const pa = state.pendingAction;
+  if (pa) {
+    if (pa.sourceId === playerId) {
+      // Scooper was the one who played the action — cancel it
+      state.pendingAction = null;
+      state.turnPhase = 'play';
+    } else if (pa.type === 'payment_all') {
+      // Remove scooper from pending
+      if (pa.pending) pa.pending = pa.pending.filter(id => id !== playerId);
+      // Remove from opsec chains
+      if (pa.opsecChains && pa.opsecChains[playerId]) delete pa.opsecChains[playerId];
+      // Also resolve any chain where scooper is the responderId
+      if (pa.opsecChains) {
+        for (const [pid, chain] of Object.entries(pa.opsecChains)) {
+          if (chain.responderId === playerId) {
+            // Scooper was supposed to respond — treat as blocked
+            delete pa.opsecChains[pid];
+          }
+        }
+      }
+      checkPaymentAllDone(state, pa);
+    } else if (pa.responderId === playerId) {
+      // Scooper was the single responder — auto-accept
+      state.pendingAction = null;
+      state.turnPhase = 'play';
+    }
+  }
+
+  // If it was the scooper's turn, advance
+  const wasMyTurn = currentPlayer(state).id === playerId;
+  if (wasMyTurn) {
+    delete state._surgeOps;
+    state.pendingAction = null;
+    state.turnPhase = 'draw';
+    state.playsRemaining = 3;
+  }
+
+  // Advance past eliminated players
+  const activePlayers = state.players.filter(x => !x.eliminated);
+  if (activePlayers.length <= 1) {
+    // Last player standing wins
+    if (activePlayers.length === 1) {
+      state.phase = 'finished';
+      state.winner = activePlayers[0].id;
+      state.log.push(activePlayers[0].name + ' wins — all other players scooped!');
+    }
+    return { ok: true };
+  }
+
+  if (wasMyTurn) {
+    // Find next non-eliminated player
+    advanceToNextActive(state);
+    state.log.push(currentPlayer(state).name + '\'s turn');
+  }
+
+  return { ok: true };
+}
+
+function advanceToNextActive(state) {
+  const n = state.players.length;
+  for (let i = 0; i < n; i++) {
+    state.currentPlayerIndex = (state.currentPlayerIndex + 1) % n;
+    if (!state.players[state.currentPlayerIndex].eliminated) return;
+  }
 }
 
 /* ── End turn ────────────────────────────────────────────────────────── */
@@ -697,7 +934,7 @@ function endTurn(state, playerId, discardIds) {
   }
 
   delete state._surgeOps;
-  state.currentPlayerIndex = (state.currentPlayerIndex + 1) % state.players.length;
+  advanceToNextActive(state);
   state.turnPhase = 'draw';
   state.playsRemaining = 3;
   state.log.push(currentPlayer(state).name + '\'s turn');
@@ -714,6 +951,7 @@ function getPlayerView(state, playerId) {
     playsRemaining: state.playsRemaining,
     deckCount: state.deck.length,
     discardTop: state.discardPile.length > 0 ? state.discardPile[state.discardPile.length-1] : null,
+    discardPile: [...state.discardPile].reverse(),
     pendingAction: state.pendingAction,
     winner: state.winner,
     surgeOps: !!state._surgeOps,
@@ -726,6 +964,7 @@ function getPlayerView(state, playerId) {
       properties: p.properties,
       upgrades: p.upgrades,
       completedSets: completedSets(p),
+      eliminated: !!p.eliminated,
     })),
   };
 }
@@ -734,5 +973,5 @@ module.exports = {
   COLORS, buildDeck, shuffle, createGame, currentPlayer, getPlayer,
   completedSets, checkWin, isSetComplete, calcRent, playerTotalValue,
   drawCards, playAsMoney, playProperty, playAction, respondToAction,
-  endTurn, getPlayerView,
+  moveProperty, scoop, endTurn, getPlayerView,
 };

@@ -35,6 +35,7 @@ let _chatDrawerOpen = false;
 let _giphyKey = '';
 let _gifPickerFrom = '';
 let _timerInterval = null;
+let _autoDrawTimer = null;
 
 /* ── Sound engine (Web Audio API) ────────────────────────────────────── */
 
@@ -325,7 +326,14 @@ function handleState(msg) {
     // Auto-draw when it's our turn (skip if eliminated)
     const meState = S.game.players.find(p => p.id === myId);
     if (isMyTurn && S.game.turnPhase === 'draw' && !meState?.eliminated) {
-      setTimeout(() => doDraw(), 300);
+      if (!_autoDrawTimer) {
+        _autoDrawTimer = setTimeout(() => {
+          _autoDrawTimer = null;
+          doDraw();
+        }, 300);
+      }
+    } else {
+      if (_autoDrawTimer) { clearTimeout(_autoDrawTimer); _autoDrawTimer = null; }
     }
 
     // Clear targeting when not our turn
@@ -404,6 +412,8 @@ function renderGame() {
   }
 
   // Buttons
+  const drawBtn = $('btn-draw');
+  if (drawBtn) drawBtn.style.display = (isMyTurn && g.turnPhase === 'draw' && !me.eliminated) ? '' : 'none';
   $('btn-end-turn').disabled = !(isMyTurn && g.turnPhase === 'play');
   const scoopBtn = $('btn-scoop');
   if (scoopBtn) scoopBtn.style.display = me.eliminated ? 'none' : '';
@@ -512,6 +522,8 @@ function renderGame() {
     spawnConfetti();
     if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
     $('hdr-timer').style.display = 'none';
+  } else {
+    $('winner-overlay').style.display = 'none';
   }
 }
 

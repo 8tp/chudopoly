@@ -20,31 +20,40 @@ let modalCallback = null;
 /* ── WebSocket ───────────────────────────────────────────────────────── */
 
 function connect() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host);
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    switch (msg.type) {
-      case 'joined':
-        myId = msg.playerId;
-        myName = msg.name;
-        roomCode = msg.code;
-        showLobbyWaiting();
-        break;
-      case 'state':
-        handleState(msg);
-        break;
-      case 'error':
-        toast(msg.message);
-        if (msg.needDiscard) showDiscardModal(msg.excess);
-        if (msg.needPayment) showPaymentModal(msg.amount);
-        break;
-      case 'need_payment':
-        showPaymentModal(msg.amount);
-        break;
-    }
-  };
-  ws.onclose = () => setTimeout(connect, 2000);
+  return new Promise((resolve, reject) => {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host);
+    ws.onopen = () => resolve();
+    ws.onerror = (err) => {
+      console.error('WebSocket error:', err);
+      reject(err);
+    };
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      switch (msg.type) {
+        case 'joined':
+          myId = msg.playerId;
+          myName = msg.name;
+          roomCode = msg.code;
+          showLobbyWaiting();
+          break;
+        case 'state':
+          handleState(msg);
+          break;
+        case 'error':
+          toast(msg.message);
+          if (msg.needDiscard) showDiscardModal(msg.excess);
+          if (msg.needPayment) showPaymentModal(msg.amount);
+          break;
+        case 'need_payment':
+          showPaymentModal(msg.amount);
+          break;
+      }
+    };
+    ws.onclose = () => {
+      if (myId) setTimeout(() => connect().catch(() => {}), 2000);
+    };
+  });
 }
 
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
@@ -53,16 +62,22 @@ function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
 
 function createRoom() {
   const name = $('player-name').value.trim() || 'Maverick';
-  connect();
-  ws.onopen = () => send({ type:'create_room', name });
+  connect().then(() => {
+    send({ type:'create_room', name });
+  }).catch(() => {
+    toast('Failed to connect to server. Try again.');
+  });
 }
 
 function joinRoom() {
   const name = $('player-name').value.trim() || 'Goose';
   const code = $('room-code-input').value.trim().toUpperCase();
   if (!code) { toast('Enter a room code'); return; }
-  connect();
-  ws.onopen = () => send({ type:'join_room', code, name });
+  connect().then(() => {
+    send({ type:'join_room', code, name });
+  }).catch(() => {
+    toast('Failed to connect to server. Try again.');
+  });
 }
 
 function startGame() { send({ type:'start_game' }); }

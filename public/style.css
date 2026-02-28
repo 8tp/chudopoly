@@ -117,8 +117,13 @@ body {
 .hdr-timer {
   font-size:12px; font-weight:700; color:#f44; font-family:monospace;
   padding:2px 6px; border-radius:4px; background:rgba(255,68,68,.15);
+  transition:background .3s, color .3s;
+}
+.hdr-timer.response-active {
+  background:rgba(255,152,0,.2); color:#ff9800;
 }
 .hdr-timer.warning { animation:timerBlink .5s ease-in-out infinite; }
+.hdr-timer.warning.response-active { background:rgba(255,68,68,.25); color:#f44; }
 @keyframes timerBlink { 0%,100%{opacity:1;} 50%{opacity:.4;} }
 
 .hdr-btn {
@@ -219,6 +224,25 @@ body {
 #game-log .log-rent { color:#c77dff; }
 #game-log .log-opsec { color:#ff6b6b; font-weight:600; }
 #game-log .log-turn { color:#667; font-size:10px; border-top:1px solid #1a2a44; padding-top:3px; margin-top:3px; }
+#game-log .log-bank { color:#4caf50; }
+#game-log .log-draw { color:#87CEEB; }
+#game-log .log-steal { color:#FF8C00; font-weight:600; }
+#game-log .log-seize { color:#DC143C; font-weight:600; }
+#game-log .log-swap { color:#FFD700; }
+#game-log .log-upgrade { color:#00bcd4; }
+#game-log .log-surge { color:#e040fb; font-weight:600; }
+#game-log .log-pay { color:#81c784; }
+#game-log .log-pcs { color:#64b5f6; }
+#game-log .log-scoop { color:#ef5350; font-weight:600; }
+#game-log .log-win { color:var(--af-gold); font-weight:700; }
+#game-log .log-blocked { color:#4caf50; font-weight:600; }
+#game-log .log-demand { color:#FF8C00; }
+#game-log .log-property { color:#aabbcc; }
+#game-log .log-color-tag {
+  font-weight:700; border-radius:3px; padding:0 3px;
+  background:rgba(255,255,255,0.08);
+}
+#game-log .log-amount { color:var(--af-gold); font-weight:700; }
 
 /* ── Cards ───────────────────────────────────────────────────────────── */
 
@@ -233,6 +257,16 @@ body {
 }
 .card:active { transform:scale(.97); }
 .card.selected { border-color:var(--af-gold); box-shadow:0 0 12px rgba(255,215,0,.5); transform:translateY(-4px); }
+
+/* Card deal-in animation */
+@keyframes cardDealIn {
+  0% { opacity:0; transform:scale(0.3) translateY(30px); }
+  60% { opacity:1; transform:scale(1.05) translateY(-4px); }
+  100% { opacity:1; transform:scale(1) translateY(0); }
+}
+.card.card-deal-in {
+  animation:cardDealIn 0.35s ease-out both;
+}
 
 /* Desktop-only hover */
 @media (hover:hover) {
@@ -793,6 +827,13 @@ body {
   .prop-set-header { font-size:10px; margin-bottom:2px; }
   .prop-mini { font-size:9px; padding:4px 6px; min-height:24px; }
   .card-row { gap:5px; }
+  .bot-badge { font-size:8px; padding:1px 4px; }
+  .bot-mode-grid { grid-template-columns:1fr 1fr; gap:6px; }
+  .bot-mode-btn { min-height:50px; padding:8px; }
+  .bot-mode-btn .mode-icon { font-size:16px; }
+  .bot-mode-btn .mode-label { font-size:11px; }
+  .response-timer-modal { padding:6px 8px; }
+  .response-timer-label { font-size:11px; }
 }
 
 @media (max-width:400px) {
@@ -822,6 +863,80 @@ body {
     padding:5px 6px; font-size:9px; letter-spacing:0; min-height:30px;
   }
   .btn-emote { width:26px; height:26px; font-size:14px; }
+  .bot-mode-grid { grid-template-columns:1fr; gap:4px; }
+  .bot-mode-btn { min-height:44px; flex-direction:row; gap:8px; padding:6px 10px; }
+  .bot-mode-btn .mode-icon { font-size:16px; }
+  .bot-mode-btn .mode-label { font-size:10px; }
+  .bot-mode-btn .mode-desc { display:none; }
+  .opp-bot-indicator .bot-badge { font-size:7px; padding:1px 3px; }
+}
+
+/* ── Bot Badges & Controls ──────────────────────────────────────────── */
+
+.btn-add-bot {
+  width:100%; padding:10px; border-radius:8px; border:1px dashed #2a3a54;
+  background:transparent; color:var(--af-silver); font-size:13px; font-weight:700;
+  cursor:pointer; text-transform:uppercase; letter-spacing:2px;
+  transition:all .2s; margin-top:8px; min-height:44px;
+}
+.btn-add-bot:hover { border-color:var(--af-gold); color:var(--af-gold); background:rgba(255,215,0,.05); }
+
+.bot-badge {
+  font-size:9px; font-weight:700; padding:2px 6px; border-radius:4px;
+  letter-spacing:1px; flex-shrink:0; text-transform:uppercase;
+}
+.bot-badge.mode-random     { background:rgba(158,158,158,.2); color:#9e9e9e; }
+.bot-badge.mode-conservative { background:rgba(66,165,245,.2); color:#42a5f5; }
+.bot-badge.mode-neutral    { background:rgba(102,187,106,.2); color:#66bb6a; }
+.bot-badge.mode-aggressive { background:rgba(239,83,80,.2); color:#ef5350; }
+.bot-badge.mode-chud       { background:rgba(255,215,64,.2); color:#ffd740; }
+
+.bot-icon {
+  font-size:12px; margin-right:2px; opacity:.7;
+}
+
+.bot-mode-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:8px 0;
+}
+.bot-mode-btn {
+  padding:12px; border-radius:8px; background:#0d1829; border:1px solid #2a3a54;
+  color:#fff; cursor:pointer; text-align:center; transition:all .15s;
+  min-height:60px; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:4px;
+}
+.bot-mode-btn:hover { border-color:var(--af-gold); background:#1a2a44; }
+.bot-mode-btn .mode-icon { font-size:20px; }
+.bot-mode-btn .mode-label { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:1px; }
+.bot-mode-btn .mode-desc { font-size:10px; color:#889; }
+
+.player-item .remove-bot-btn {
+  margin-left:auto; padding:4px 10px; border-radius:4px; border:1px solid #c00;
+  background:transparent; color:#f44; font-size:11px; font-weight:700;
+  cursor:pointer; text-transform:uppercase; letter-spacing:1px; min-height:32px;
+  transition:all .15s; flex-shrink:0;
+}
+.player-item .remove-bot-btn:hover { background:#c00; color:#fff; }
+
+/* Bot indicator on opponent cards in-game */
+.opp-bot-indicator {
+  display:inline-flex; align-items:center; gap:3px; margin-left:4px;
+}
+
+/* Response timer in modal */
+.response-timer-modal {
+  margin-bottom:10px; padding:8px 10px; border-radius:6px;
+  background:rgba(255,152,0,.1); border:1px solid rgba(255,152,0,.3);
+}
+.response-timer-label {
+  font-size:12px; font-weight:700; color:#ff9800; margin-bottom:4px;
+  display:flex; justify-content:space-between; align-items:center;
+}
+.response-timer-track {
+  height:4px; background:rgba(255,255,255,.1); border-radius:2px; overflow:hidden;
+}
+.response-timer-bar-fill {
+  height:100%; background:#ff9800; border-radius:2px;
+  transition:width .5s linear;
 }
 
 /* Desktop: modal centered instead of bottom-sheet */

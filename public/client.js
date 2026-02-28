@@ -35,6 +35,11 @@ let _chatDrawerOpen = false;
 let _giphyKey = '';
 let _gifPickerFrom = '';
 let _timerInterval = null;
+let _responseTimerInterval = null;
+let _alarmPlayed = false;
+let _responseAlarmPlayed = false;
+let _dealInCount = 0;
+let _prevPlayerBotState = {}; // track isBot per player for takeover/reclaim detection
 
 /* ── Sound engine (Web Audio API) ────────────────────────────────────── */
 
@@ -96,11 +101,91 @@ function sfx(name) {
       playTone(300, 0.05, 'sine', 0.06);
       setTimeout(() => playTone(350, 0.05, 'sine', 0.06), 60);
       break;
+    case 'steal':
+      playTone(500, 0.15, 'sawtooth', 0.08);
+      setTimeout(() => playTone(350, 0.2, 'sawtooth', 0.1), 150);
+      break;
+    case 'swap':
+      playTone(600, 0.1, 'triangle', 0.08);
+      setTimeout(() => playTone(500, 0.1, 'triangle', 0.08), 120);
+      setTimeout(() => playTone(600, 0.1, 'triangle', 0.08), 240);
+      break;
+    case 'seize':
+      playTone(150, 0.3, 'sawtooth', 0.1);
+      setTimeout(() => playTone(120, 0.35, 'sawtooth', 0.12), 100);
+      setTimeout(() => playTone(200, 0.2, 'square', 0.08), 250);
+      break;
+    case 'upgrade':
+      [0,80,160].forEach((d,i) =>
+        setTimeout(() => playTone([600,800,1000][i], 0.12, 'sine', 0.1), d));
+      break;
+    case 'surge':
+      playTone(200, 0.4, 'sawtooth', 0.06);
+      setTimeout(() => playTone(400, 0.3, 'sawtooth', 0.08), 150);
+      setTimeout(() => playTone(800, 0.2, 'sine', 0.1), 300);
+      break;
+    case 'pay':
+      [0,50,100].forEach((d,i) =>
+        setTimeout(() => playTone([1800,2000,1600][i], 0.04, 'sine', 0.06), d));
+      break;
+    case 'pcs':
+      [0,40,80,120].forEach((d,i) =>
+        setTimeout(() => playTone([400,500,450,550][i], 0.04, 'sine', 0.06), d));
+      break;
+    case 'demand':
+      playTone(400, 0.15, 'square', 0.1);
+      setTimeout(() => playTone(500, 0.2, 'square', 0.1), 170);
+      break;
+    case 'scoop':
+      playTone(500, 0.15, 'sine', 0.1);
+      setTimeout(() => playTone(400, 0.15, 'sine', 0.08), 150);
+      setTimeout(() => playTone(300, 0.2, 'sine', 0.06), 300);
+      setTimeout(() => playTone(200, 0.3, 'sine', 0.04), 450);
+      break;
+    case 'blocked':
+      playTone(800, 0.08, 'square', 0.1);
+      setTimeout(() => playTone(1200, 0.12, 'square', 0.08), 80);
+      break;
+    case 'property':
+      playTone(600, 0.06, 'sine', 0.08);
+      setTimeout(() => playTone(800, 0.08, 'sine', 0.1), 70);
+      break;
     case 'error':
       playTone(200, 0.2, 'square', 0.08);
       break;
     case 'emote':
       playTone(700, 0.06, 'sine', 0.06);
+      break;
+    case 'alarm':
+      // Loud 5-second warning alarm — pulsing high pitch
+      [0,200,400,600,800].forEach((d,i) => {
+        setTimeout(() => {
+          playTone(1000, 0.15, 'square', 0.25);
+          setTimeout(() => playTone(800, 0.1, 'square', 0.2), 100);
+        }, d);
+      });
+      break;
+    case 'siren':
+      // Military air raid siren — rising/falling sweep
+      if (_soundMuted) return;
+      try {
+        const ctx = getAudio();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(400, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(1200, ctx.currentTime + 1.0);
+        osc.frequency.linearRampToValueAtTime(400, ctx.currentTime + 2.0);
+        osc.frequency.linearRampToValueAtTime(1200, ctx.currentTime + 3.0);
+        osc.frequency.linearRampToValueAtTime(400, ctx.currentTime + 4.0);
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.setValueAtTime(0.2, ctx.currentTime + 3.5);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 4.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 4.5);
+      } catch {}
       break;
   }
 }
@@ -279,7 +364,43 @@ function joinRoom() {
 
 function startGame() {
   const timeout = parseInt($('turn-timeout')?.value) || 0;
-  send({ type:'start_game', turnTimeout: timeout });
+  const responseTimeout = parseInt($('response-timeout')?.value) || 0;
+  send({ type:'start_game', turnTimeout: timeout, responseTimeout: responseTimeout });
+}
+
+/* ── Bot Management ─────────────────────────────────────────────────── */
+
+const BOT_MODES = {
+  random:       { icon:'\uD83C\uDFB2', label:'Random',       desc:'Unpredictable plays',  color:'#9e9e9e' },
+  conservative: { icon:'\uD83D\uDEE1\uFE0F',  label:'Conservative', desc:'Plays it safe',        color:'#42a5f5' },
+  neutral:      { icon:'\u2696\uFE0F',  label:'Neutral',      desc:'Balanced strategy',    color:'#66bb6a' },
+  aggressive:   { icon:'\u2694\uFE0F',  label:'Aggressive',   desc:'Relentless attacker',  color:'#ef5350' },
+  chud:         { icon:'\uD83D\uDC80', label:'Chud',         desc:'Pure chaos',           color:'#ffd740' },
+};
+
+function showBotModePicker() {
+  let body = '<p style="font-size:12px;color:#889;margin-bottom:8px">Choose bot personality:</p>';
+  body += '<div class="bot-mode-grid">';
+  for (const [mode, info] of Object.entries(BOT_MODES)) {
+    body += `<button class="bot-mode-btn" onclick="addBot('${mode}')">
+      <span class="mode-icon">${info.icon}</span>
+      <span class="mode-label" style="color:${info.color}">${info.label}</span>
+      <span class="mode-desc">${info.desc}</span>
+    </button>`;
+  }
+  body += '</div>';
+  showModal('Add Bot', body, [
+    { label:'Cancel', cls:'btn-secondary', fn:closeModalDirect },
+  ]);
+}
+
+function addBot(mode) {
+  send({ type:'add_bot', mode });
+  closeModalDirect();
+}
+
+function removeBot(targetId) {
+  send({ type:'remove_bot', targetId });
 }
 
 function showLobbyWaiting() {
@@ -313,12 +434,40 @@ function handleState(msg) {
       const newLogs = S.game.log.slice(prevState.game.log.length);
       for (const l of newLogs) {
         if (l.includes('CHUD')) sfx('chud');
-        else if (l.includes('plays OPSEC')) { sfx('opsec'); toast(l); }
-        else if (l.includes('blocked by OPSEC')) { sfx('opsec'); toast(l); }
-        else if (l.includes('rent')) sfx('rent');
-        else if (l.includes('drew')) sfx('draw');
+        else if (l.includes('plays OPSEC') || l.includes('counters OPSEC')) { sfx('opsec'); toast(l); }
+        else if (l.includes('blocked by OPSEC')) { sfx('blocked'); toast(l); }
+        else if (l.includes('charges') && l.includes('rent')) sfx('rent');
+        else if (l.includes('drew')) {
+          sfx('draw');
+          // Detect draw count for deal-in animation
+          const m = l.match(/drew (\d+)/);
+          if (m) _dealInCount = parseInt(m[1]);
+        }
         else if (l.includes('banked')) sfx('bank');
-        else if (l.includes('wins with')) sfx('win');
+        else if (l.includes('wins with') || l.includes('wins —')) sfx('siren');
+        else if (l.includes('requisitioned') || l.includes('commandeered')) { sfx('steal'); toast(l); }
+        else if (l.includes('swapped')) sfx('swap');
+        else if (l.includes('seized')) { sfx('seize'); toast(l); }
+        else if (l.includes('upgraded') || l.includes('FOC')) sfx('upgrade');
+        else if (l.includes('Surge Operations')) sfx('surge');
+        else if (l.includes('paid')) sfx('pay');
+        else if (l.includes('PCS Orders')) sfx('pcs');
+        else if (l.includes('demands') || l.includes('Roll Call')) sfx('demand');
+        else if (l.includes('scooped')) sfx('scoop');
+        else if (l.includes('played') && l.includes(' on ')) sfx('property');
+      }
+    }
+
+    // Detect bot takeover / human reclaim (using lobby player list which has isBot)
+    if (S.players) {
+      for (const p of S.players) {
+        const wasBotBefore = _prevPlayerBotState[p.id];
+        if (wasBotBefore === false && p.isBot) {
+          toast(p.name + ' disconnected \u2014 bot taking over');
+        } else if (wasBotBefore === true && !p.isBot && p.id !== myId) {
+          toast(p.name + ' is back in control');
+        }
+        _prevPlayerBotState[p.id] = !!p.isBot;
       }
     }
 
@@ -348,22 +497,30 @@ function renderLobby() {
   const isHost = S.hostId === myId;
   const list = $('player-list');
   list.innerHTML = S.players.map(p => {
+    const isBot = !!p.isBot;
     const badges = (p.id === myId ? '<span class="you">YOU</span>' : '')
-      + (p.id === S.hostId ? '<span class="host-badge">HOST</span>' : '');
-    const kickBtn = isHost && p.id !== myId
-      ? `<button class="kick-btn" onclick="kickPlayer('${p.id}')">Kick</button>` : '';
+      + (p.id === S.hostId ? '<span class="host-badge">HOST</span>' : '')
+      + (isBot && p.botMode ? `<span class="bot-badge mode-${p.botMode}">${BOT_MODES[p.botMode]?.icon || '\u2699'} ${p.botMode}</span>` : '');
+    const actionBtn = isHost && p.id !== myId
+      ? (isBot
+        ? `<button class="remove-bot-btn" onclick="removeBot('${p.id}')">Remove</button>`
+        : `<button class="kick-btn" onclick="kickPlayer('${p.id}')">Kick</button>`)
+      : '';
     return `<div class="player-item">
-      <span class="dot ${p.connected?'':'off'}"></span>
+      <span class="dot ${isBot || p.connected ? '' : 'off'}"></span>
+      ${isBot ? '<span class="bot-icon">\u2699</span>' : ''}
       <span class="player-name-text">${esc(p.name)}</span>
       ${badges}
       <span class="player-spacer"></span>
-      ${kickBtn}
+      ${actionBtn}
     </div>`;
   }).join('');
   $('btn-start').style.display = isHost ? 'block' : 'none';
   $('waiting-msg').style.display = isHost ? 'none' : 'block';
   const rs = $('room-settings');
   if (rs) rs.style.display = isHost ? 'block' : 'none';
+  const bc = $('bot-controls');
+  if (bc) bc.style.display = isHost && S.players.length < 5 ? 'block' : 'none';
 }
 
 function kickPlayer(targetId) { send({ type:'kick', targetId }); }
@@ -392,15 +549,26 @@ function renderGame() {
   $('hdr-deck').textContent = 'Deck: ' + g.deckCount;
   if (g.surgeOps && isMyTurn) $('hdr-plays').textContent += ' | SURGE OPS';
 
-  // Turn timer
+  // Turn timer — only show when no response timer active
   const timerEl = $('hdr-timer');
-  if (S.turnTimer) {
+  if (S.responseTimer) {
+    // Response timer takes priority
+    timerEl.style.display = 'inline';
+    updateResponseTimerDisplay();
+    if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+    if (!_responseTimerInterval) _responseTimerInterval = setInterval(updateResponseTimerDisplay, 500);
+  } else if (S.turnTimer) {
     timerEl.style.display = 'inline';
     updateTimerDisplay();
+    if (_responseTimerInterval) { clearInterval(_responseTimerInterval); _responseTimerInterval = null; }
+    _responseAlarmPlayed = false;
     if (!_timerInterval) _timerInterval = setInterval(updateTimerDisplay, 1000);
   } else {
     timerEl.style.display = 'none';
     if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+    if (_responseTimerInterval) { clearInterval(_responseTimerInterval); _responseTimerInterval = null; }
+    _alarmPlayed = false;
+    _responseAlarmPlayed = false;
   }
 
   // Buttons
@@ -454,8 +622,14 @@ function renderGame() {
       });
       targetCls = hasComplete ? 'target-highlight' : 'target-dimmed';
     }
+    const pLobby = (S.players||[]).find(x => x.id === p.id);
+    const pIsBot = pLobby?.isBot;
+    const pBotMode = pLobby?.botMode;
+    const botInfo = pIsBot && pBotMode && BOT_MODES[pBotMode]
+      ? `<span class="opp-bot-indicator"><span class="bot-badge mode-${pBotMode}">${BOT_MODES[pBotMode].icon} ${pBotMode}</span></span>`
+      : '';
     return `<div class="opp-card ${isTurn?'active-turn':''} ${isResp?'responding':''} ${targetCls}" data-pid="${p.id}" onclick="showOpponentDetail('${p.id}')">
-      <div class="opp-name">${p.id===S.hostId?'<span class="opp-host" title="Host">&#9733;</span>':''}${esc(p.name)} <span class="sets">${p.completedSets}/3 sets</span></div>
+      <div class="opp-name">${p.id===S.hostId?'<span class="opp-host" title="Host">&#9733;</span>':''}${pIsBot?'<span class="bot-icon">\u2699</span>':''}${esc(p.name)} <span class="sets">${p.completedSets}/3 sets</span>${botInfo}</div>
       <div class="opp-stats">
         <span>Hand: ${p.handCount}</span>
         <span>Bank: ${bankTotal(p)}M</span>
@@ -481,17 +655,21 @@ function renderGame() {
   renderDiscardPile(g.discardTop);
 
   // My hand
-  $('my-hand').innerHTML = (me.hand || []).map((c,i) => renderCard(c, 'hand', i)).join('');
+  const handCards = me.hand || [];
+  const dealCount = _dealInCount;
+  _dealInCount = 0;
+  $('my-hand').innerHTML = handCards.map((c,i) => {
+    let html = renderCard(c, 'hand', i);
+    // Apply deal-in animation to the last N cards if we just drew
+    if (dealCount > 0 && i >= handCards.length - dealCount) {
+      const delay = (i - (handCards.length - dealCount)) * 0.1;
+      html = html.replace('<div class="card', `<div style="animation-delay:${delay}s" class="card card-deal-in`);
+    }
+    return html;
+  }).join('');
 
   // Log
-  $('game-log').innerHTML = g.log.map(l => {
-    let cls = '';
-    if (l.includes('CHUD')) cls = 'log-chud';
-    else if (l.includes('OPSEC')) cls = 'log-opsec';
-    else if (l.includes('rent')) cls = 'log-rent';
-    else if (l.includes("'s turn")) cls = 'log-turn';
-    return `<div class="${cls}">${esc(l)}</div>`;
-  }).join('');
+  $('game-log').innerHTML = g.log.map(l => formatLogEntry(l)).join('');
   const logEl = $('game-log');
   logEl.scrollTop = logEl.scrollHeight;
 
@@ -511,6 +689,8 @@ function renderGame() {
     $('winner-overlay').style.display = 'flex';
     spawnConfetti();
     if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+    if (_responseTimerInterval) { clearInterval(_responseTimerInterval); _responseTimerInterval = null; }
+    _alarmPlayed = false; _responseAlarmPlayed = false;
     $('hdr-timer').style.display = 'none';
   }
 }
@@ -555,6 +735,47 @@ function colorLabel(colorKey) {
   const info = COLORS[colorKey];
   if (!info) return esc(colorKey);
   return `<span class="color-label">${esc(info.name)} <span class="color-dot" style="background:${info.bg}"></span></span>`;
+}
+
+function formatLogEntry(text) {
+  // Determine overall line class
+  let cls = '';
+  if (text.includes('CHUD')) cls = 'log-chud';
+  else if (text.includes('plays OPSEC') || text.includes('counters OPSEC') || text.includes('OPSEC again')) cls = 'log-opsec';
+  else if (text.includes('blocked by OPSEC')) cls = 'log-blocked';
+  else if (text.includes('charges') && text.includes('rent')) cls = 'log-rent';
+  else if (text.includes("'s turn")) cls = 'log-turn';
+  else if (text.includes('banked')) cls = 'log-bank';
+  else if (text.includes('drew')) cls = 'log-draw';
+  else if (text.includes('requisitioned') || text.includes('commandeered')) cls = 'log-steal';
+  else if (text.includes('seized')) cls = 'log-seize';
+  else if (text.includes('swapped')) cls = 'log-swap';
+  else if (text.includes('upgraded') || text.includes('FOC')) cls = 'log-upgrade';
+  else if (text.includes('Surge Operations')) cls = 'log-surge';
+  else if (text.includes('paid')) cls = 'log-pay';
+  else if (text.includes('PCS Orders')) cls = 'log-pcs';
+  else if (text.includes('demands') || text.includes('Roll Call')) cls = 'log-demand';
+  else if (text.includes('scooped')) cls = 'log-scoop';
+  else if (text.includes('wins with') || text.includes('wins —')) cls = 'log-win';
+  else if (text.includes('played') && text.includes(' on ')) cls = 'log-property';
+
+  // Escape the text first
+  let safe = esc(text);
+
+  // Highlight property color names with their actual color
+  for (const [key, info] of Object.entries(COLORS)) {
+    const name = info.name;
+    const escaped = esc(name);
+    if (safe.includes(escaped)) {
+      safe = safe.replace(new RegExp(escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+        `<span class="log-color-tag" style="color:${info.bg}">${escaped}</span>`);
+    }
+  }
+
+  // Highlight money amounts (e.g., "5M", "10M")
+  safe = safe.replace(/(\d+)M\b/g, '<span class="log-amount">$1M</span>');
+
+  return `<div class="${cls}">${safe}</div>`;
 }
 
 function renderCard(card, context, handIndex) {
@@ -1205,10 +1426,21 @@ function showResponseModal(pa) {
     }});
   }
 
+  // Add response timer bar if active
+  if (S.responseTimer) {
+    body = `<div class="response-timer-modal" id="response-timer-modal">
+      <div class="response-timer-label">Response time: <span id="response-countdown"></span></div>
+      <div class="response-timer-track"><div class="response-timer-bar-fill" id="response-bar-fill"></div></div>
+    </div>` + body;
+  }
+
   showModal(title, body, actions);
   // Hide X button — response modals must be answered
   const closeBtn = document.querySelector('.modal-close');
   if (closeBtn) closeBtn.style.display = 'none';
+
+  // Update the in-modal countdown
+  if (S.responseTimer) updateModalResponseTimer();
 }
 
 window.togglePayCard = function(el, cardId, value) {
@@ -1461,7 +1693,50 @@ function updateTimerDisplay() {
   const remaining = Math.max(0, Math.ceil(S.turnTimer.timeout - elapsed));
   el.textContent = remaining + 's';
   el.classList.toggle('warning', remaining <= 10);
+  el.classList.remove('response-active');
+  if (remaining <= 5 && remaining > 0 && !_alarmPlayed) {
+    _alarmPlayed = true;
+    sfx('alarm');
+  }
   if (remaining <= 0) { el.textContent = '0s'; }
+  if (remaining > 5) _alarmPlayed = false;
+}
+
+function updateResponseTimerDisplay() {
+  const el = $('hdr-timer');
+  if (!el || !S.responseTimer) { if (el) el.style.display = 'none'; return; }
+  const elapsed = (Date.now() - S.responseTimer.startedAt) / 1000;
+  const remaining = Math.max(0, Math.ceil(S.responseTimer.timeout - elapsed));
+  el.textContent = '\u23F1 ' + remaining + 's';
+  el.classList.toggle('warning', remaining <= 10);
+  el.classList.add('response-active');
+  if (remaining <= 5 && remaining > 0 && !_responseAlarmPlayed) {
+    _responseAlarmPlayed = true;
+    sfx('alarm');
+  }
+  if (remaining <= 0) { el.textContent = '\u23F1 0s'; }
+  if (remaining > 5) _responseAlarmPlayed = false;
+}
+
+function updateModalResponseTimer() {
+  const countdown = $('response-countdown');
+  const barFill = $('response-bar-fill');
+  if (!countdown || !barFill || !S.responseTimer) return;
+  const update = () => {
+    if (!S.responseTimer) return;
+    const elapsed = (Date.now() - S.responseTimer.startedAt) / 1000;
+    const remaining = Math.max(0, Math.ceil(S.responseTimer.timeout - elapsed));
+    const pct = Math.max(0, (1 - elapsed / S.responseTimer.timeout) * 100);
+    countdown.textContent = remaining + 's';
+    countdown.style.color = remaining <= 5 ? '#f44' : '#ff9800';
+    barFill.style.width = pct + '%';
+    barFill.style.background = remaining <= 5 ? '#f44' : '#ff9800';
+  };
+  update();
+  const iv = setInterval(() => {
+    if (!$('response-countdown')) { clearInterval(iv); return; }
+    update();
+  }, 500);
 }
 
 function showTurnPopup() {
@@ -1526,6 +1801,10 @@ function doLeave() {
   _chatMsgs = { room:[], global:[] }; _chatUnread = { room:0, global:0 };
   _lastTurnPlayerId = null; selectedHandCard = null;
   _responseModalOpen = false;
+  _prevPlayerBotState = {};
+  _alarmPlayed = false; _responseAlarmPlayed = false;
+  if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+  if (_responseTimerInterval) { clearInterval(_responseTimerInterval); _responseTimerInterval = null; }
   if (_chatDrawerOpen) toggleChatDrawer();
   $('game-screen').style.display = 'none';
   $('lobby-screen').style.display = 'flex';

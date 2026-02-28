@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>CHUDOPOLY GO — Air Force Card Game</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -18,7 +18,9 @@
   </div>
 
   <div id="lobby-join" class="lobby-panel">
-    <input type="text" id="player-name" placeholder="Your Call Sign" maxlength="16" autocomplete="off">
+    <label class="input-label" for="player-name">CALL SIGN</label>
+    <input type="text" id="player-name" placeholder="Enter your name" maxlength="16" autocomplete="off">
+    <div class="divider"></div>
     <button id="btn-create" onclick="createRoom()">Create Room</button>
     <div class="divider">— OR —</div>
     <input type="text" id="room-code-input" placeholder="Room Code" maxlength="4" autocomplete="off"
@@ -30,8 +32,26 @@
     <h2>Room: <span id="room-code-display"></span></h2>
     <p class="hint">Share this code with your squad</p>
     <div id="player-list"></div>
+    <div id="room-settings" class="room-settings" style="display:none">
+      <label class="input-label" for="turn-timeout">TURN TIMER (seconds, 0 = off)</label>
+      <input type="number" id="turn-timeout" value="60" min="0" max="300" step="10" style="text-align:center;width:100px;margin:0 auto">
+    </div>
     <button id="btn-start" onclick="startGame()" style="display:none">Launch Mission</button>
     <p id="waiting-msg" class="hint">Waiting for host to start...</p>
+    <button id="btn-leave-lobby" class="btn-leave-lobby" onclick="leaveLobby()">Leave Room</button>
+    <div id="lobby-chat" class="chat-box" style="display:none">
+      <div class="chat-tabs">
+        <button class="chat-tab active" data-scope="room" onclick="switchChatTab('room')">Room</button>
+        <button class="chat-tab" data-scope="global" onclick="switchChatTab('global')">Global <span id="lobby-unread-global" class="chat-unread" style="display:none">0</span></button>
+      </div>
+      <div id="lobby-chat-msgs" class="chat-msgs"></div>
+      <div class="chat-input-row">
+        <input type="text" id="lobby-chat-input" placeholder="Message..." maxlength="500" autocomplete="off"
+               onkeydown="if(event.key==='Enter')sendChat('lobby')">
+        <button class="btn-gif" onclick="showGifPicker('lobby')" title="GIF" style="display:none">GIF</button>
+        <button onclick="sendChat('lobby')">Send</button>
+      </div>
+    </div>
   </div>
 
   <div id="lobby-error" class="error-msg"></div>
@@ -43,15 +63,26 @@
     <div class="hdr-left">
       <span class="hdr-title">CHUDOPOLY GO</span>
       <span id="hdr-room" class="hdr-badge"></span>
+      <span id="conn-status" class="conn-dot connected" title="Connected"></span>
+      <button id="btn-leave-game" class="hdr-btn btn-leave" onclick="leaveGame()" title="Leave Game">&#10005;</button>
     </div>
     <div class="hdr-center">
       <span id="hdr-turn"></span>
       <span id="hdr-phase" class="hdr-badge"></span>
       <span id="hdr-plays"></span>
+      <span id="hdr-timer" class="hdr-timer" style="display:none"></span>
     </div>
     <div class="hdr-right">
       <span id="hdr-deck"></span>
+      <button id="btn-help" class="hdr-btn" onclick="showHelpModal()" title="Rules">?</button>
+      <button id="btn-sound" class="hdr-btn" onclick="toggleSound()" title="Toggle Sound">&#9835;</button>
     </div>
+  </div>
+
+  <!-- Targeting banner (steal/swap mode) -->
+  <div id="targeting-banner" class="targeting-banner" style="display:none">
+    <span id="targeting-msg"></span>
+    <button onclick="cancelTargeting()">Cancel</button>
   </div>
 
   <div class="game-body">
@@ -62,25 +93,48 @@
     <div class="center-area">
       <div class="center-cols">
         <div class="my-assets">
+          <div id="my-net-worth" class="my-net-worth"></div>
           <h3>Your Bank <span id="my-bank-total"></span></h3>
           <div id="my-bank" class="card-row"></div>
           <h3>Your Properties</h3>
           <div id="my-properties" class="prop-area"></div>
         </div>
-        <div class="game-log-panel">
-          <h3>Mission Log</h3>
-          <div id="game-log"></div>
+        <div class="side-panel">
+          <div class="discard-panel">
+            <h3>Discard Pile <span id="discard-count" class="discard-count"></span></h3>
+            <div id="discard-pile"></div>
+          </div>
+          <div class="game-log-panel">
+            <h3>Mission Log</h3>
+            <div id="game-log"></div>
+          </div>
+          <div class="chat-panel">
+            <div class="chat-tabs">
+              <button class="chat-tab active" data-scope="room" onclick="switchChatTab('room')">Room <span id="game-unread-room" class="chat-unread" style="display:none">0</span></button>
+              <button class="chat-tab" data-scope="global" onclick="switchChatTab('global')">Global <span id="game-unread-global" class="chat-unread" style="display:none">0</span></button>
+            </div>
+            <div id="game-chat-msgs" class="chat-msgs"></div>
+            <div class="chat-input-row">
+              <input type="text" id="game-chat-input" placeholder="Message..." maxlength="500" autocomplete="off"
+                     onkeydown="if(event.key==='Enter')sendChat('game')">
+              <button class="btn-gif" onclick="showGifPicker('game')" title="GIF" style="display:none">GIF</button>
+              <button onclick="sendChat('game')">Send</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Your hand -->
-    <div class="hand-area">
+    <div class="hand-area" id="hand-area">
       <div class="hand-bar">
-        <span class="hand-label">YOUR HAND</span>
+        <span class="hand-label">YOUR HAND <span id="hand-count" class="hand-count"></span></span>
         <div class="hand-actions">
-          <button id="btn-draw" onclick="doDraw()">Draw Cards</button>
+          <button id="btn-chat-toggle" class="btn-chat-toggle" onclick="toggleChatDrawer()">&#9993;<span id="chat-badge" class="chat-badge" style="display:none">0</span></button>
+          <button id="btn-emote" class="btn-emote" onclick="showEmotePicker()">&#9786;</button>
+          <!-- Draw is automatic -->
           <button id="btn-end-turn" onclick="doEndTurn()">End Turn</button>
+          <button id="btn-scoop" class="btn-scoop" onclick="confirmScoop()">Scoop</button>
         </div>
       </div>
       <div id="my-hand" class="card-row hand-cards"></div>
@@ -90,10 +144,40 @@
   <!-- Action modal -->
   <div id="modal-overlay" class="modal-overlay" style="display:none" onclick="closeModal(event)">
     <div class="modal" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModalDirect()" aria-label="Close">&times;</button>
       <h3 id="modal-title"></h3>
       <div id="modal-body"></div>
       <div id="modal-actions" class="modal-actions"></div>
     </div>
+  </div>
+
+  <!-- Floating emotes -->
+  <div id="emote-container"></div>
+
+  <!-- Mobile chat drawer -->
+  <div id="chat-drawer" class="chat-drawer" style="display:none">
+    <div class="chat-drawer-header">
+      <span>COMMS</span>
+      <button onclick="toggleChatDrawer()">&times;</button>
+    </div>
+    <div class="chat-tabs">
+      <button class="chat-tab active" data-scope="room" onclick="switchChatTab('room')">Room <span id="drawer-unread-room" class="chat-unread" style="display:none">0</span></button>
+      <button class="chat-tab" data-scope="global" onclick="switchChatTab('global')">Global <span id="drawer-unread-global" class="chat-unread" style="display:none">0</span></button>
+    </div>
+    <div id="drawer-chat-msgs" class="chat-msgs"></div>
+    <div class="chat-input-row">
+      <input type="text" id="drawer-chat-input" placeholder="Message..." maxlength="500" autocomplete="off"
+             onkeydown="if(event.key==='Enter')sendChat('drawer')">
+      <button class="btn-gif" onclick="showGifPicker('drawer')" title="GIF" style="display:none">GIF</button>
+      <button onclick="sendChat('drawer')">Send</button>
+    </div>
+  </div>
+
+  <!-- Turn popup -->
+  <div id="turn-popup" class="turn-popup" style="display:none">
+    <div class="turn-popup-star">&#9733;</div>
+    <div class="turn-popup-text">YOUR TURN</div>
+    <div class="turn-popup-sub" id="turn-popup-sub"></div>
   </div>
 
   <!-- Toast -->
@@ -110,6 +194,9 @@
     <button onclick="location.reload()">New Game</button>
   </div>
 </div>
+
+<!-- Confetti -->
+<div id="confetti"></div>
 
 <script src="client.js"></script>
 </body>

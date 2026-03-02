@@ -152,16 +152,6 @@
     </div>
   </div>
 
-  <!-- Action modal -->
-  <div id="modal-overlay" class="modal-overlay" style="display:none" onclick="closeModal(event)">
-    <div class="modal" onclick="event.stopPropagation()">
-      <button class="modal-close" onclick="closeModalDirect()" aria-label="Close">&times;</button>
-      <h3 id="modal-title"></h3>
-      <div id="modal-body"></div>
-      <div id="modal-actions" class="modal-actions"></div>
-    </div>
-  </div>
-
   <!-- Floating emotes -->
   <div id="emote-container"></div>
 
@@ -193,6 +183,16 @@
 
   <!-- Toast -->
   <div id="toast" class="toast"></div>
+</div>
+
+<!-- ── Action modal (global, accessible from lobby + game) ──────────── -->
+<div id="modal-overlay" class="modal-overlay" style="display:none" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeModalDirect()" aria-label="Close">&times;</button>
+    <h3 id="modal-title"></h3>
+    <div id="modal-body"></div>
+    <div id="modal-actions" class="modal-actions"></div>
+  </div>
 </div>
 
 <!-- ── Winner Overlay ───────────────────────────────────────────────── -->

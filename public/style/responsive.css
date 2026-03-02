@@ -1,0 +1,98 @@
+/* ── Responsive ──────────────────────────────────────────────────────── */
+
+@media (max-width:768px) {
+  :root { --card-w:92px; --card-h:130px; }
+  .center-cols { flex-direction:column; }
+  .center-area { padding:6px 8px; }
+  .my-assets h3 { font-size:11px; letter-spacing:1.5px; margin:6px 0 3px; }
+  .side-panel { min-width:0; flex-direction:row; gap:6px; }
+  .discard-panel { flex:0 0 auto; }
+  .discard-panel h3 { font-size:11px; letter-spacing:1.5px; }
+  .discard-top-hint { font-size:9px; }
+  .game-log-panel { flex:1; min-width:0; }
+  .game-log-panel h3 { font-size:11px; letter-spacing:1.5px; }
+  #game-log { max-height:120px; font-size:10px; padding:6px; line-height:1.5; }
+  .opponents-area { gap:6px; padding:5px 8px; }
+  .opp-card { min-width:140px; padding:5px 8px; }
+  .opp-name { font-size:12px; margin-bottom:2px; }
+  .opp-name .sets { font-size:10px; }
+  .opp-stats { font-size:10px; gap:8px; margin-bottom:3px; }
+  .opp-net-worth { font-size:9px; }
+  .set-progress { margin-top:2px; }
+  .hand-cards { flex-wrap:nowrap; }
+  .modal { border-radius:16px 16px 0 0; max-height:80vh; }
+  .hdr-title { display:none; }
+  .game-header { padding:4px 8px; padding-top:calc(4px + var(--safe-t)); min-height:36px; }
+  #hdr-turn { font-size:12px; }
+  #hdr-plays { font-size:11px; }
+  #hdr-deck { font-size:11px; }
+  #discard-pile { min-height:50px; }
+  #discard-pile .card { width:70px; min-height:75px; font-size:9px; }
+  .chat-panel { display:none; }
+  .btn-chat-toggle { display:flex; }
+  .turn-popup { padding:16px 28px; }
+  .turn-popup-text { font-size:20px; letter-spacing:3px; }
+  .discard-grid .card { width:85px; min-height:110px; }
+  .gif-grid { grid-template-columns:repeat(auto-fill, minmax(100px, 1fr)); }
+  .gif-item { height:80px; }
+  .hand-bar { padding:5px 8px; gap:6px; }
+  .hand-label { letter-spacing:2px; font-size:10px; }
+  .hand-actions { gap:4px; }
+  .hand-actions button:not(.btn-emote) {
+    padding:6px 8px; font-size:10px; letter-spacing:0.5px; min-height:32px;
+  }
+  .prop-set { min-width:100px; padding:5px 7px; }
+  .prop-set-header { font-size:10px; margin-bottom:2px; }
+  .prop-mini { font-size:9px; padding:4px 6px; min-height:24px; }
+  .card-row { gap:5px; }
+  .bot-badge { font-size:8px; padding:1px 4px; }
+  .bot-mode-grid { grid-template-columns:1fr 1fr; gap:6px; }
+  .bot-mode-btn { min-height:50px; padding:8px; }
+  .bot-mode-btn .mode-icon { font-size:16px; }
+  .bot-mode-btn .mode-label { font-size:11px; }
+  .response-timer-modal { padding:6px 8px; }
+  .response-timer-label { font-size:11px; }
+}
+
+@media (max-width:400px) {
+  :root { --card-w:80px; --card-h:112px; }
+  .card { padding:5px; font-size:9px; }
+  .card-name { font-size:10px; }
+  .card-desc { font-size:8px; }
+  .card.money .card-name { font-size:18px; }
+  .center-area { padding:4px 6px; }
+  .opp-card { min-width:125px; padding:4px 6px; }
+  .opp-name { font-size:11px; }
+  .opp-stats { font-size:9px; gap:6px; }
+  .opp-net-worth { display:none; }
+  .prop-set { min-width:90px; padding:4px 6px; }
+  .prop-set-header { font-size:9px; }
+  .side-panel { flex-direction:column; gap:4px; }
+  #game-log { max-height:100px; font-size:9px; }
+  #discard-pile .card { width:60px; min-height:65px; font-size:8px; }
+  .discard-top-hint { font-size:8px; }
+  .turn-popup { padding:12px 20px; }
+  .turn-popup-text { font-size:16px; letter-spacing:2px; }
+  .turn-popup-star { font-size:24px; }
+  .discard-grid .card { width:72px; min-height:90px; font-size:8px; }
+  .hand-bar { padding:4px 6px; }
+  .hand-label { letter-spacing:1px; font-size:9px; }
+  .hand-actions button:not(.btn-emote) {
+    padding:5px 6px; font-size:9px; letter-spacing:0; min-height:30px;
+  }
+  .btn-emote { width:26px; height:26px; font-size:14px; }
+  .bot-mode-grid { grid-template-columns:1fr; gap:4px; }
+  .bot-mode-btn { min-height:44px; flex-direction:row; gap:8px; padding:6px 10px; }
+  .bot-mode-btn .mode-icon { font-size:16px; }
+  .bot-mode-btn .mode-label { font-size:10px; }
+  .bot-mode-btn .mode-desc { display:none; }
+  .opp-bot-indicator .bot-badge { font-size:7px; padding:1px 3px; }
+}
+
+/* Desktop: modal centered instead of bottom-sheet */
+@media (min-width:769px) {
+  .modal-overlay { align-items:center; padding:20px; }
+  .modal { border-radius:12px; }
+  .chat-drawer { display:none !important; }
+  .btn-chat-toggle { display:none !important; }
+}

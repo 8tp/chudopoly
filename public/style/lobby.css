@@ -1,0 +1,70 @@
+/* ── Lobby ───────────────────────────────────────────────────────────── */
+
+#lobby-screen {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-height:100vh; min-height:100dvh; gap:24px; padding:20px;
+  padding-top:calc(20px + var(--safe-t));
+}
+.logo { text-align:center; }
+.logo-star { font-size:56px; color:var(--af-gold); text-shadow:0 0 30px rgba(255,215,0,.4); }
+.logo h1 { font-size:clamp(28px,7vw,48px); letter-spacing:clamp(4px,1.5vw,8px); color:#fff; margin:8px 0; }
+.subtitle { font-size:clamp(12px,3vw,18px); letter-spacing:clamp(3px,1vw,6px); color:var(--af-silver); text-transform:uppercase; }
+.tagline { color:#8899aa; margin-top:8px; font-style:italic; font-size:14px; }
+.lobby-panel {
+  background:var(--af-navy); border:1px solid #1a2a44; border-radius:12px;
+  padding:24px; width:100%; max-width:380px; display:flex; flex-direction:column; gap:12px;
+}
+.lobby-panel input {
+  padding:12px 16px; border-radius:8px; border:1px solid #2a3a54; background:#0d1829;
+  color:#fff; font-size:16px; text-align:center; outline:none;
+}
+.lobby-panel input:focus { border-color:var(--af-gold); }
+.lobby-panel > button {
+  padding:12px; border-radius:8px; border:none; font-size:16px; font-weight:700;
+  cursor:pointer; text-transform:uppercase; letter-spacing:2px; transition:all .2s;
+  min-height:44px;
+}
+#btn-create { background:var(--af-blue); color:#fff; }
+#btn-create:hover { background:#004adf; }
+#btn-join { background:#1a2a44; color:var(--af-silver); border:1px solid #2a3a54; }
+#btn-join:hover { background:#2a3a54; }
+#btn-start { background:var(--af-gold); color:#000; }
+#btn-start:hover { background:#ffea00; }
+.input-label {
+  font-size:11px; letter-spacing:2px; color:var(--af-silver); text-transform:uppercase;
+  font-weight:700; text-align:center;
+}
+.divider { text-align:center; color:#556; font-size:14px; padding:4px 0; }
+.hint { color:#667; font-size:13px; text-align:center; }
+#player-list { display:flex; flex-direction:column; gap:6px; }
+.player-item {
+  padding:10px 12px; background:#0d1829; border-radius:6px; display:flex;
+  align-items:center; gap:8px;
+}
+.player-item .dot { width:8px; height:8px; border-radius:50%; background:#4caf50; flex-shrink:0; }
+.player-item .dot.off { background:#666; }
+.player-item .player-name-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.player-item .you { color:var(--af-gold); font-size:12px; flex-shrink:0; }
+.player-item .player-spacer { flex:1; }
+.host-badge {
+  font-size:10px; color:var(--af-gold); background:rgba(255,215,0,.15);
+  padding:2px 6px; border-radius:4px; letter-spacing:1px; font-weight:700; flex-shrink:0;
+}
+.player-item .kick-btn {
+  margin-left:auto; padding:4px 10px; border-radius:4px; border:1px solid #c00;
+  background:transparent; color:#f44; font-size:11px; font-weight:700;
+  cursor:pointer; text-transform:uppercase; letter-spacing:1px; min-height:32px;
+  transition:all .15s; flex-shrink:0;
+}
+.player-item .kick-btn:hover { background:#c00; color:#fff; }
+.error-msg { color:#f44; font-size:14px; min-height:20px; }
+.room-settings {
+  padding:8px 0; display:flex; flex-direction:column; align-items:center; gap:6px;
+  border-top:1px solid #1a2a44; margin-top:4px; padding-top:10px;
+}
+.room-settings input[type="number"] {
+  padding:8px 12px; border-radius:6px; border:1px solid #2a3a54; background:#0d1829;
+  color:#fff; font-size:14px; outline:none;
+}
+.room-settings input[type="number"]:focus { border-color:var(--af-gold); }
+#room-code-display { color:var(--af-gold); font-family:monospace; font-size:28px; letter-spacing:4px; }

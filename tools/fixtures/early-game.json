@@ -1,0 +1,284 @@
+{
+ "$schema": "chud-fixture/1",
+ "name": "early-game",
+ "description": "First play phase of the opening turn — small hands, empty boards, full deck.",
+ "seed": 1337,
+ "selfId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+ "room": "FW5A",
+ "recordedAt": "2026-08-06T20:10:31.464Z",
+ "stateIndex": 1,
+ "states": [
+  {
+   "type": "state",
+   "code": "FW5A",
+   "phase": "playing",
+   "players": [
+    {
+     "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+     "name": "HARNESS",
+     "connected": true,
+     "isBot": false,
+     "botMode": null
+    },
+    {
+     "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+     "name": "Warlock",
+     "connected": true,
+     "isBot": true,
+     "botMode": "chud"
+    },
+    {
+     "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+     "name": "Iceman",
+     "connected": true,
+     "isBot": true,
+     "botMode": "aggressive"
+    }
+   ],
+   "hostId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+   "game": {
+    "phase": "playing",
+    "turnPhase": "play",
+    "currentPlayerId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+    "playsRemaining": 3,
+    "deckCount": 89,
+    "discardTop": null,
+    "discardPile": [],
+    "pendingAction": null,
+    "responders": [],
+    "winner": null,
+    "endReason": null,
+    "surgeOps": false,
+    "handLimit": 7,
+    "setsToWin": 3,
+    "stats": {
+     "turns": 1,
+     "cardsPlayed": {},
+     "payments": {
+      "count": 0,
+      "total": 0,
+      "biggest": 0
+     },
+     "propertiesStolen": {}
+    },
+    "log": [
+     "Game started! HARNESS, Warlock, Iceman are playing.",
+     "HARNESS drew 2 cards."
+    ],
+    "events": [
+     {
+      "seq": 1,
+      "t": "game_start",
+      "order": [
+       "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+       "1a6a2722-7982-45bc-a130-7e2a3543c020"
+      ],
+      "names": {
+       "1667cc2c-c718-4908-8fdb-c1fb1870e666": "HARNESS",
+       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a": "Warlock",
+       "1a6a2722-7982-45bc-a130-7e2a3543c020": "Iceman"
+      }
+     },
+     {
+      "seq": 2,
+      "t": "deal",
+      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "count": 5,
+      "cards": [
+       {
+        "id": 46,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 61,
+        "type": "action",
+        "name": "OPSEC",
+        "value": 4,
+        "action": "opsec",
+        "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+       },
+       {
+        "id": 77,
+        "type": "action",
+        "name": "PCS Orders",
+        "value": 1,
+        "action": "pcs_orders",
+        "description": "Draw 2 extra cards from the deck"
+       },
+       {
+        "id": 6,
+        "type": "property",
+        "name": "Schriever SFB",
+        "value": 2,
+        "color": "pink"
+       },
+       {
+        "id": 64,
+        "type": "action",
+        "name": "Midnight Requisition",
+        "value": 3,
+        "action": "midnight_requisition",
+        "description": "Steal a single property from any player. Cannot touch a complete set."
+       }
+      ]
+     },
+     {
+      "seq": 3,
+      "t": "deal",
+      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "count": 5
+     },
+     {
+      "seq": 4,
+      "t": "deal",
+      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "count": 5
+     },
+     {
+      "seq": 5,
+      "t": "turn_start",
+      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "plays": 3
+     },
+     {
+      "seq": 6,
+      "t": "draw",
+      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "count": 2,
+      "cards": [
+       {
+        "id": 4,
+        "type": "property",
+        "name": "Goodfellow AFB",
+        "value": 1,
+        "color": "lightblue"
+       },
+       {
+        "id": 97,
+        "type": "rent",
+        "name": "Rent: green/darkblue",
+        "value": 1,
+        "colors": [
+         "green",
+         "darkblue"
+        ]
+       }
+      ]
+     }
+    ],
+    "eventSeq": 6,
+    "players": [
+     {
+      "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "name": "HARNESS",
+      "handCount": 7,
+      "hand": [
+       {
+        "id": 46,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 61,
+        "type": "action",
+        "action": "opsec",
+        "name": "OPSEC",
+        "value": 4,
+        "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+       },
+       {
+        "id": 77,
+        "type": "action",
+        "action": "pcs_orders",
+        "name": "PCS Orders",
+        "value": 1,
+        "description": "Draw 2 extra cards from the deck"
+       },
+       {
+        "id": 6,
+        "type": "property",
+        "color": "pink",
+        "name": "Schriever SFB",
+        "value": 2
+       },
+       {
+        "id": 64,
+        "type": "action",
+        "action": "midnight_requisition",
+        "name": "Midnight Requisition",
+        "value": 3,
+        "description": "Steal a single property from any player. Cannot touch a complete set."
+       },
+       {
+        "id": 4,
+        "type": "property",
+        "color": "lightblue",
+        "name": "Goodfellow AFB",
+        "value": 1
+       },
+       {
+        "id": 97,
+        "type": "rent",
+        "colors": [
+         "green",
+         "darkblue"
+        ],
+        "name": "Rent: green/darkblue",
+        "value": 1
+       }
+      ],
+      "bank": [],
+      "properties": {},
+      "upgrades": {},
+      "completedSets": 0,
+      "eliminated": false,
+      "bankValue": 0,
+      "propertyValue": 0,
+      "upgradeValue": 0,
+      "payableValue": 0,
+      "netWorth": 0
+     },
+     {
+      "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "name": "Warlock",
+      "handCount": 5,
+      "bank": [],
+      "properties": {},
+      "upgrades": {},
+      "completedSets": 0,
+      "eliminated": false,
+      "bankValue": 0,
+      "propertyValue": 0,
+      "upgradeValue": 0,
+      "payableValue": 0,
+      "netWorth": 0
+     },
+     {
+      "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "name": "Iceman",
+      "handCount": 5,
+      "bank": [],
+      "properties": {},
+      "upgrades": {},
+      "completedSets": 0,
+      "eliminated": false,
+      "bankValue": 0,
+      "propertyValue": 0,
+      "upgradeValue": 0,
+      "payableValue": 0,
+      "netWorth": 0
+     }
+    ]
+   },
+   "turnTimer": {
+    "timeout": 60,
+    "startedAt": 1786046899154
+   },
+   "responseTimer": null
+  }
+ ]
+}

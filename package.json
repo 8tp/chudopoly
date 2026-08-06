@@ -7,7 +7,17 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "check": "node scripts/check-syntax.js",
-    "test": "node --test"
+    "test": "node --test",
+    "verify": "node tools/verify.mjs",
+    "serve": "node tools/serve.mjs",
+    "tool:assets": "node tools/checkAssets.mjs",
+    "tool:client": "node tools/checkClient.mjs",
+    "tool:record": "node tools/record.mjs",
+    "tool:simbalance": "node tools/simbalance.mjs",
+    "tool:playtest": "node tools/playtest.mjs",
+    "tool:touchtest": "node tools/touchtest.mjs",
+    "tool:screenshot": "node tools/screenshot.mjs",
+    "tool:audiotest": "node tools/audiotest.mjs"
   },
   "engines": {
     "node": ">=20 <25"
@@ -15,5 +25,9 @@
   "dependencies": {
     "express": "^4.22.2",
     "ws": "^8.21.2"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0",
+    "pngjs": "^7.0.0"
   }
 }

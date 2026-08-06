@@ -1,0 +1,57 @@
+{
+ "$schema": "chud-fixture/1",
+ "name": "lobby",
+ "description": "Real 5-seat lobby broadcast: host, four bots with modes, no game yet.",
+ "seed": 1338,
+ "selfId": "3bab29b1-93e3-4209-9a03-04be1c12f138",
+ "room": "GQWL",
+ "recordedAt": "2026-08-06T20:12:12.280Z",
+ "states": [
+  {
+   "type": "state",
+   "code": "GQWL",
+   "phase": "lobby",
+   "players": [
+    {
+     "id": "3bab29b1-93e3-4209-9a03-04be1c12f138",
+     "name": "HARNESS",
+     "connected": true,
+     "isBot": false,
+     "botMode": null
+    },
+    {
+     "id": "8091e101-fb0a-4cb0-b16e-7b353444f3d3",
+     "name": "Reaper",
+     "connected": true,
+     "isBot": true,
+     "botMode": "conservative"
+    },
+    {
+     "id": "cb3d9494-e171-4da1-944d-74916a362a8e",
+     "name": "Hangman",
+     "connected": true,
+     "isBot": true,
+     "botMode": "neutral"
+    },
+    {
+     "id": "d4160fc1-c7a2-4028-8327-37a2a1dea36a",
+     "name": "Slider",
+     "connected": true,
+     "isBot": true,
+     "botMode": "aggressive"
+    },
+    {
+     "id": "9d290557-c99a-4241-9239-fbbb0c90cfed",
+     "name": "Ace",
+     "connected": true,
+     "isBot": true,
+     "botMode": "chud"
+    }
+   ],
+   "hostId": "3bab29b1-93e3-4209-9a03-04be1c12f138",
+   "game": null,
+   "turnTimer": null,
+   "responseTimer": null
+  }
+ ]
+}

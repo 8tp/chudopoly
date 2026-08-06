@@ -284,6 +284,12 @@ function runGame(playerConfigs, maxTurns = 500, seed) {
     winnerMode: state.winner ? getBotMode(room, state.winner) : null,
     stalemate: state.endReason === 'stalemate' || turnNum > maxTurns - 1,
     endReason: state.endReason,
+    // §3.10 telemetry: how many final approaches were armed, and how many were shot down.
+    armings: state.events.filter(e => e.t === 'final_approach').length,
+    breaks: state.events.filter(e => e.t === 'final_approach_broken').length,
+    breaksByOpponent: state.events.filter(e => e.t === 'final_approach_broken' && e.by).length,
+    shuffles: state.events.filter(e => e.t === 'shuffle').length,
+    armingsOffTurn: state.events.filter(e => e.t === 'final_approach' && e.onOwnTurn === false).length,
     tracker,
   };
 }
@@ -303,6 +309,7 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300 } = {}) 
   const seatWins = new Array(modes.length).fill(0);
 
   let totalTurns = 0, stalemates = 0, decided = 0;
+  let armings = 0, breaks = 0, breaksByOpponent = 0, armingsOffTurn = 0, maxTurns_ = 0;
   const turnList = [];
 
   for (let g = 0; g < games; g++) {
@@ -311,6 +318,11 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300 } = {}) 
     const result = runGame(configs, maxTurns, gameSeed);
     totalTurns += result.turns;
     turnList.push(result.turns);
+    armings += result.armings;
+    breaks += result.breaks;
+    breaksByOpponent += result.breaksByOpponent;
+    armingsOffTurn += result.armingsOffTurn;
+    if (result.turns > maxTurns_) maxTurns_ = result.turns;
     if (result.endReason === 'stalemate' || (!result.winner && result.stalemate)) stalemates++;
     if (result.winner) {
       decided++;
@@ -332,6 +344,12 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300 } = {}) 
     firstPlayerWin: +(seatWins[0] / games * 100).toFixed(2),
     avgTurns: +(totalTurns / games).toFixed(1),
     medianTurns: sorted[Math.floor(games / 2)],
+    maxTurns: maxTurns_,
+    armings, breaks, breaksByOpponent, armingsOffTurn,
+    offTurnArmRate: armings > 0 ? +(armingsOffTurn / armings * 100).toFixed(1) : 0,
+    armingsPerGame: +(armings / games).toFixed(2),
+    breakRate: armings > 0 ? +(breaks / armings * 100).toFixed(1) : 0,
+    opponentBreakRate: armings > 0 ? +(breaksByOpponent / armings * 100).toFixed(1) : 0,
     stalemates,
     stalemateRate: +(stalemates / games * 100).toFixed(2),
     decided,
@@ -350,11 +368,16 @@ function mixedMatrix(totalGames = 500, seed = 'matrix') {
   const tally = {};
   for (const m of BOT_MODES) tally[m] = { wins: 0, games: 0 };
   let seat0 = 0, games = 0, turnSum = 0, stalemates = 0, decided = 0;
+  let armings = 0, breaks = 0, armingsOffTurn = 0, maxTurns_ = 0;
 
   lineups.forEach((order, i) => {
     const res = runMatches({ players: order, games: per, seed: `${seed}-mix${i}` });
     for (const m of order) { tally[m].wins += res.wins[m]; tally[m].games += res.games; }
     seat0 += res.seatWins[0];
+    armings += res.armings;
+    breaks += res.breaks;
+    armingsOffTurn += res.armingsOffTurn;
+    if (res.maxTurns > maxTurns_) maxTurns_ = res.maxTurns;
     games += res.games;
     decided += res.decided;
     turnSum += res.avgTurns * res.games;
@@ -366,6 +389,11 @@ function mixedMatrix(totalGames = 500, seed = 'matrix') {
     firstPlayerWin: seat0 / games * 100,
     avgTurns: turnSum / games,
     stalemateRate: stalemates / games * 100,
+    maxTurns: maxTurns_,
+    armings, breaks, armingsOffTurn,
+    armingsPerGame: armings / games,
+    breakRate: armings > 0 ? breaks / armings * 100 : 0,
+    offTurnArmRate: armings > 0 ? armingsOffTurn / armings * 100 : 0,
   };
 }
 
@@ -380,7 +408,10 @@ function printMatrix(games = 500, seed = 'matrix') {
       + '   ' + '█'.repeat(Math.round(pct / 2)) + flag);
   }
   console.log(`  first-player advantage: ${mixed.firstPlayerWin.toFixed(1)}% (fair share 25.0%)`);
-  console.log(`  avg turns ${mixed.avgTurns.toFixed(1)}  stalemates ${mixed.stalemateRate.toFixed(2)}%  decided ${mixed.decided}/${mixed.games}`);
+  console.log(`  avg turns ${mixed.avgTurns.toFixed(1)}  max ${mixed.maxTurns}  stalemates ${mixed.stalemateRate.toFixed(2)}%  decided ${mixed.decided}/${mixed.games}`);
+  console.log(`  final approach: ${mixed.armingsPerGame.toFixed(2)} armings/game, ` +
+    `${mixed.breakRate.toFixed(1)}% shot down, ${(100 - mixed.breakRate).toFixed(1)}% converted, ` +
+    `${mixed.offTurnArmRate.toFixed(1)}% armed off-turn`);
 
   console.log(`\n── EACH PERSONALITY vs 3 NEUTRAL (${games} games each) ${'─'.repeat(12)}`);
   for (const m of BOT_MODES) {

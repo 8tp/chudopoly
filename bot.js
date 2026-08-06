@@ -108,6 +108,140 @@ function findThreats(opponents) {
   return opponents.filter(opp => G.completedSets(opp) >= 2);
 }
 
+/* ── §3.10 Final approach: breaking it and defending it ─────────────── */
+
+function findArmed(players, exceptId) {
+  return players.filter(p => p.finalApproach && !p.eliminated && p.id !== exceptId);
+}
+
+// Cards sitting in a zone that is exactly a complete set — the only cards whose loss
+// actually costs the owner a set.
+function completeSetCards(player) {
+  const out = [];
+  for (const [color, cards] of Object.entries(player.properties)) {
+    const info = G.COLORS[color];
+    if (!info || cards.length !== info.size) continue;
+    for (const card of cards) out.push({ color, card });
+  }
+  return out;
+}
+
+function bankValue(player) {
+  return player.bank.reduce((sum, c) => sum + c.value, 0);
+}
+
+// How hard each personality tries to shoot down a final approach.
+const BREAK_URGENCY = { aggressive: 1, chud: 1, neutral: 0.9, conservative: 0.85, random: 0.2 };
+
+function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
+  const victim = armed.reduce((best, p) =>
+    G.completedSets(p) > G.completedSets(best) ? p : best);
+  const theirSets = completeSetCards(victim);
+  if (theirSets.length === 0) return null;
+
+  // 1. Inspector General — takes the whole set, and it lands on our board.
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action !== 'inspector_general') continue;
+    const color = theirSets[0].color;
+    return { type:'play_action', cardIndex:i, targetId:victim.id, targetColor:color };
+  }
+
+  // 2. CHUD — the only card that reaches into a complete set for a single property.
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action !== 'chud') continue;
+    const best = theirSets.reduce((a, b) => (b.card.value > a.card.value ? b : a));
+    return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:best.card.id };
+  }
+
+  // 3. TDY Orders — a swap is not a steal, so the complete-set guard does not apply.
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action !== 'tdy_orders') continue;
+    let mine = null;
+    for (const [color, cards] of Object.entries(bot.properties)) {
+      for (const card of cards) {
+        if (G.isSetComplete(bot, color)) continue;
+        if (!mine || card.value < mine.value) mine = card;
+      }
+    }
+    if (!mine) continue;
+    return {
+      type:'play_action', cardIndex:i, targetId:victim.id,
+      myCardId:mine.id, targetCardId:theirSets[0].card.id,
+    };
+  }
+
+  // 4. Midnight Requisition still cannot touch an exact set — only an overflowed zone.
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action !== 'midnight_requisition') continue;
+    for (const [color, cards] of Object.entries(victim.properties)) {
+      if (!G.zoneRequisitionable(victim, color) || cards.length === 0) continue;
+      return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:cards[0].id };
+    }
+  }
+
+  // 5. Charge them more than their bank holds and the payment has to come out of a set.
+  const cash = bankValue(victim);
+  const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
+  const financeIdx = hand.findIndex(c => c.action === 'finance_office');
+  if (financeIdx >= 0) {
+    if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2 && cash >= 5) {
+      return { type:'play_action', cardIndex:surgeIdx };
+    }
+    if (cash < (state._surgeOps ? 10 : 5)) {
+      return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
+    }
+  }
+  for (let i = 0; i < hand.length; i++) {
+    const card = hand[i];
+    if (card.type !== 'rent') continue;
+    const color = chooseBestRentColor(bot, card);
+    if (!color) continue;
+    const amount = G.calcRent(bot, color) * (state._surgeOps ? 2 : 1);
+    if (amount <= cash) continue;
+    if (card.colors[0] === 'any') {
+      return { type:'play_action', cardIndex:i, targetColor:color, targetId:victim.id };
+    }
+    return { type:'play_action', cardIndex:i, targetColor:color };
+  }
+  if (financeIdx >= 0) return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
+  return null;
+}
+
+// Even the gremlin should not waste the only card that reaches into a complete set on a
+// player with nothing to lose. Armed first, then whoever is closest to arming.
+function biggestThreat(opponents) {
+  const armed = opponents.filter(o => o.finalApproach);
+  if (armed.length > 0) return armed[0];
+  const ranked = opponents.filter(o => G.completedSets(o) >= 2);
+  if (ranked.length === 0) return null;
+  return ranked.reduce((a, b) => (G.completedSets(b) > G.completedSets(a) ? b : a));
+}
+
+function chudTargetOn(player) {
+  const sets = completeSetCards(player);
+  if (sets.length > 0) return { playerId: player.id, cardId: sets[0].card.id };
+  for (const cards of Object.values(player.properties)) {
+    if (cards.length > 0) return { playerId: player.id, cardId: cards[0].id };
+  }
+  return null;
+}
+
+// Armed bots stop building (they cannot win by having more sets) and start hoarding cash
+// so an incoming charge does not have to be paid out of a completed set.
+const ARMED_BANK_BIAS = { conservative: 0.9, neutral: 0.85, aggressive: 0.7, chud: 0.4, random: 0.2 };
+
+function tryDefendFinalApproach(bot, hand, mode) {
+  if (rnd() > (ARMED_BANK_BIAS[mode] ?? 0.8)) return null;
+  let best = -1, bestIdx = -1;
+  for (let i = 0; i < hand.length; i++) {
+    const card = hand[i];
+    if (card.type === 'property' || card.type === 'wild_property') continue;
+    if (card.action === 'opsec') continue;              // the shield is worth more than the cash
+    if (card.value > best) { best = card.value; bestIdx = i; }
+  }
+  return bestIdx >= 0 ? { type:'play_money', cardIndex:bestIdx } : null;
+}
+
 function myProgress(bot) {
   // How many sets toward each color?
   const progress = {};
@@ -233,6 +367,15 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
   const entry = G.pendingEntryFor(state, botId);
   const isChainResponse = !!entry && entry.depth > 0;
 
+  // §3.10 — an armed bot is one turn from winning: anything that could cost it a set is
+  // worth an OPSEC. Random keeps a coin-flip's worth of incompetence.
+  if (bot?.finalApproach && pa.sourceId !== botId) {
+    const forcedOutOfSets = pa.type === 'payment' && bankValue(bot) < (pa.amount || 0);
+    if (pa.type !== 'payment' || forcedOutOfSets) {
+      return mode === 'random' ? rnd() < 0.6 : true;
+    }
+  }
+
   switch (mode) {
     case 'random':
       // Even random mode should have some survival instinct
@@ -301,6 +444,18 @@ function decideBotPlay(state, botId, mode) {
   const bot = G.getPlayer(state, botId);
   if (!bot || state.playsRemaining <= 0) return null;
   if (bot.hand.length === 0) return null;
+
+  // §3.10 — a live final approach outranks every personality quirk, including the
+  // human-like holdback below: there may be no next turn to use the card on.
+  const armed = findArmed(state.players, botId);
+  if (armed.length > 0 && rnd() < (BREAK_URGENCY[mode] ?? 0.8)) {
+    const shot = tryBreakFinalApproach(state, bot, botId, bot.hand, armed, mode);
+    if (shot) return shot;
+  }
+  if (bot.finalApproach) {
+    const shield = tryDefendFinalApproach(bot, bot.hand, mode);
+    if (shield) return shield;
+  }
 
   // Human-like holdback: sometimes don't use all 3 plays
   // Conservative: 20% chance to stop after 2 plays (save cards for defense)
@@ -755,7 +910,10 @@ function decideChud(state, bot, botId) {
   // 1. CHUD card — play it immediately for maximum chaos
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'chud') {
-      const target = findChudChudTarget(opponents);
+      // Spraying CHUD at whoever left chud unable to answer a final approach later:
+      // 53.8% of approaches converted against an all-chud field vs 47.6% vs aggressive.
+      const threat = biggestThreat(opponents);
+      const target = (threat && chudTargetOn(threat)) || findChudChudTarget(opponents);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.playerId, targetCardId: target.cardId };
     }
   }
@@ -763,9 +921,13 @@ function decideChud(state, bot, botId) {
   // 2. Inspector General — seize sets chaotically (target random complete set)
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'inspector_general') {
-      const target = findRandomIGTarget(opponents);
-      if (!target) { const best = findBestIGTarget(opponents); if (best) return { type: 'play_action', cardIndex: i, targetId: best.id, targetColor: best.color }; }
-      else return { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color };
+      const threat = biggestThreat(opponents);
+      if (threat) {
+        const sets = completeSetCards(threat);
+        if (sets.length > 0) return { type: 'play_action', cardIndex: i, targetId: threat.id, targetColor: sets[0].color };
+      }
+      const target = findRandomIGTarget(opponents) || findBestIGTarget(opponents);
+      if (target) return { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color };
     }
   }
 
@@ -1104,6 +1266,8 @@ function isWildRent(card) { return card.type === 'rent' && card.colors[0] === 'a
 function chooseRentTarget(opponents, mode) {
   const live = opponents.filter(o => !o.eliminated);
   if (live.length === 0) return null;
+  const armed = live.filter(o => o.finalApproach);
+  if (armed.length > 0) return armed[0];            // §3.10 — bleed the armed player first
   if (mode === 'chud' || mode === 'random') return live[Math.floor(rnd() * live.length)];
   // Hit the leader; break ties on who can actually pay.
   return live.reduce((best, p) => {
@@ -1476,6 +1640,12 @@ function selectPaymentCards(bot, amount, mode) {
         return a.value - b.value;
       });
       break;
+  }
+
+  // §3.10 — never volunteer a card out of a completed set while armed; it disarms us.
+  if (bot.finalApproach) {
+    const complete = new Set(completeSetCards(bot).map(entry => entry.card.id));
+    cards.sort((a, b) => (complete.has(a.id) ? 1 : 0) - (complete.has(b.id) ? 1 : 0));
   }
 
   const selected = [];

@@ -16,6 +16,11 @@ const COLORS = {
 const HAND_LIMIT = 7;
 const SETS_TO_WIN = 3;
 const EVENT_TAIL = 120;          // broadcast tail size (ARCHITECTURE §4)
+// Attrition cap. The §3.10 grace cycle stretched 5-player bot games from p99 63 turns to
+// p99 387 (max 401) because every break scatters a finished set. Ending the game on points
+// after N deck cycles bounds it: N=8 → max 99 turns but 17% of 5p games decided on points;
+// N=16 → max 152 turns and only 7%. Normal games spend 1.9 cycles (p90 5).
+const DECK_CYCLE_LIMIT = 16;
 const EVENT_LOG_MAX = 400;       // retained in state; never grows unbounded
 
 /* ── Card definitions ────────────────────────────────────────────────── */
@@ -198,11 +203,14 @@ function createGame(players, opts = {}) {
       hand: [], bank: [],
       properties: {},
       upgrades: {},
+      finalApproach: false,
     })),
     pendingAction: null,
     winner: null,
     endReason: null,
     cardTotal: deck.length,
+    shuffleCount: 0,
+    turnCounter: 0,
     seed: seed === undefined ? null : seed,
     events: [],
     eventSeq: 0,
@@ -232,7 +240,7 @@ function createGame(players, opts = {}) {
 
   state._handSnapshot = totalHandCards(state);
   state._idleTurns = 0;
-  emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining });
+  emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining, finalApproach: false });
 
   return state;
 }
@@ -263,9 +271,77 @@ function completedColors(player) {
   return set;
 }
 
-function emitSetChanges(state, player, before) {
+// §3.10 FINAL APPROACH — reaching 3 sets does not win, it arms. Every set-count change
+// runs through here so a player can never be armed (or un-armed) by accident.
+// `byId` is whoever caused the change; null when the player did it to themselves.
+function syncSets(state, player, before, byId = null) {
   const after = completedColors(player);
   for (const color of after) if (!before.has(color)) emit(state, 'set_completed', { actor: player.id, color });
+
+  if (state.phase !== 'playing') return;
+  const sets = after.size;
+  if (sets >= SETS_TO_WIN && !player.finalApproach && !player.eliminated) {
+    player.finalApproach = true;
+    player.armedAtTurn = state.turnCounter || 0;
+    const onOwnTurn = currentPlayer(state).id === player.id;
+    state.log.push(player.name + ' is on FINAL APPROACH with ' + sets +
+      ' sets — every other player gets a turn to break it!');
+    emit(state, 'final_approach', {
+      actor: player.id, sets, onOwnTurn, turnsToCheckpoint: activeCount(state),
+    });
+  } else if (sets < SETS_TO_WIN && player.finalApproach) {
+    player.finalApproach = false;
+    delete player.armedAtTurn;
+    const by = byId && byId !== player.id ? byId : null;
+    state.log.push(player.name + '\'s final approach is broken' +
+      (by ? ' by ' + (getPlayer(state, by)?.name || '?') : '') + '!');
+    emit(state, 'final_approach_broken', { actor: player.id, by });
+  }
+}
+
+function activeCount(state) {
+  return state.players.filter(p => !p.eliminated).length;
+}
+
+// §3.10 strict reading: a full turn cycle must pass, so every opponent gets at least one
+// response turn no matter when the arming happened (mid-payment on the seat before you
+// used to hand out a one-turn grace period). Re-arming resets the clock.
+function turnsSinceArming(state, player) {
+  if (!player || !player.finalApproach) return 0;
+  return (state.turnCounter || 0) - (player.armedAtTurn || 0);
+}
+
+function checkpointReached(state, player) {
+  return turnsSinceArming(state, player) >= activeCount(state);
+}
+
+function turnsUntilCheckpoint(state, player) {
+  if (!player || !player.finalApproach) return null;
+  return Math.max(0, activeCount(state) - turnsSinceArming(state, player));
+}
+
+function armedPlayers(state) {
+  return state.players.filter(p => p.finalApproach && !p.eliminated).map(p => p.id);
+}
+
+// The one and only win-by-sets resolution point: the armed player's own turn start.
+function resolveFinalApproach(state, player) {
+  if (state.phase !== 'playing') return false;
+  if (!player || player.eliminated || !player.finalApproach) return false;
+  const sets = completedSets(player);
+  if (sets < SETS_TO_WIN) { player.finalApproach = false; delete player.armedAtTurn; return false; }
+  if (!checkpointReached(state, player)) return false;   // the table has not answered yet
+  return finishGame(state, player.id, 'sets',
+    player.name + ' held the final approach and wins with ' + sets + ' complete sets!');
+}
+
+function beginTurn(state) {
+  state.turnCounter = (state.turnCounter || 0) + 1;
+  state.turnPhase = 'draw';
+  state.playsRemaining = 3;
+  const p = currentPlayer(state);
+  emit(state, 'turn_start', { actor: p.id, plays: state.playsRemaining, finalApproach: !!p.finalApproach });
+  return resolveFinalApproach(state, p);
 }
 
 function finishGame(state, winnerId, reason, logLine) {
@@ -278,20 +354,18 @@ function finishGame(state, winnerId, reason, logLine) {
   state.log.push(logLine);
   const winner = winnerId ? getPlayer(state, winnerId) : null;
   const sets = winner ? completedSets(winner) : 0;
-  if (reason === 'stalemate') emit(state, 'stalemate', { winner: winnerId, sets, reason: 'deck_dry' });
+  if (reason === 'stalemate') {
+    emit(state, 'stalemate', { winner: winnerId, sets, reason: state._stalemateReason || 'deck_dry' });
+  }
   else emit(state, 'win', { actor: winnerId, sets, reason });
   return true;
 }
 
+// Kept as the public name for "does this player win right now?" — under §3.10 that is
+// only ever true at their own turn start while still armed.
 function checkWin(state, playerId) {
   if (state.phase !== 'playing') return state.winner === playerId;
-  const p = getPlayer(state, playerId);
-  if (!p) return false;
-  const sets = completedSets(p);
-  if (sets >= SETS_TO_WIN) {
-    return finishGame(state, playerId, 'sets', p.name + ' wins with ' + sets + ' complete sets!');
-  }
-  return false;
+  return resolveFinalApproach(state, getPlayer(state, playerId));
 }
 
 function isSetComplete(player, color) {
@@ -454,8 +528,9 @@ function reshuffleDiscard(state) {
   if (state.discardPile.length === 0) return false;
   state.deck = shuffle([...state.deck, ...state.discardPile], rngOf(state));
   state.discardPile = [];
+  state.shuffleCount = (state.shuffleCount || 0) + 1;
   state.log.push('Deck reshuffled from discard pile.');
-  emit(state, 'shuffle', { deckCount: state.deck.length });
+  emit(state, 'shuffle', { deckCount: state.deck.length, cycle: state.shuffleCount });
   return true;
 }
 
@@ -542,9 +617,7 @@ function playProperty(state, playerId, cardIndex, targetColor) {
   recordCardPlay(state, playerId);
   state.log.push(p.name + ' played ' + card.name + ' on ' + COLORS[color].name);
   emit(state, 'play_property', { actor: playerId, card: publicCard(placed), color });
-  emitSetChanges(state, p, before);
-
-  checkWin(state, playerId);
+  syncSets(state, p, before);
   return { ok: true, card: placed };
 }
 
@@ -872,6 +945,7 @@ function executeEntry(state, pa, entry, paymentCards) {
     case 'steal_set': {
       const col = pa.color;
       const beforeSource = completedColors(source);
+      const beforeTarget = completedColors(target);
       const stolen = (target.properties[col] || []).slice();
       target.properties[col] = [];
       if (!source.properties[col]) source.properties[col] = [];
@@ -885,14 +959,15 @@ function executeEntry(state, pa, entry, paymentCards) {
         actor: source.id, from: target.id, color: col, cards: stolen.map(publicCard),
       });
       recordStolenProperties(state, source.id, stolen.length);
-      emitSetChanges(state, source, beforeSource);
-      checkWin(state, source.id);
+      syncSets(state, target, beforeTarget, source.id);
+      syncSets(state, source, beforeSource);
       return finishEntry(state, pa, entry);
     }
 
     case 'steal_property': {
       const col = pa.targetColor;
       const beforeSource = completedColors(source);
+      const beforeTarget = completedColors(target);
       const idx = (target.properties[col] || []).findIndex(c => c.id === pa.targetCardId);
       if (idx >= 0) {
         const card = target.properties[col].splice(idx, 1)[0];
@@ -905,8 +980,8 @@ function executeEntry(state, pa, entry, paymentCards) {
         });
         if (!isSetComplete(target, col)) discardUpgrades(state, target, col);
         recordStolenProperties(state, source.id, 1);
-        emitSetChanges(state, source, beforeSource);
-        checkWin(state, source.id);
+        syncSets(state, target, beforeTarget, source.id);
+        syncSets(state, source, beforeSource);
       }
       return finishEntry(state, pa, entry);
     }
@@ -934,9 +1009,8 @@ function executeEntry(state, pa, entry, paymentCards) {
         });
         if (!isSetComplete(source, myColor)) discardUpgrades(state, source, myColor);
         if (!isSetComplete(target, theirColor)) discardUpgrades(state, target, theirColor);
-        emitSetChanges(state, source, beforeSource);
-        emitSetChanges(state, target, beforeTarget);
-        checkWin(state, source.id);
+        syncSets(state, source, beforeSource, target.id);
+        syncSets(state, target, beforeTarget, source.id);
       } else {
         // Restore anything we pulled out before discovering the other side was gone.
         if (myCard) receiveProperty(state, source, myCard, myColor);
@@ -1021,9 +1095,8 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
   state.stats.payments.count++;
   state.stats.payments.total += totalValue;
   state.stats.payments.biggest = Math.max(state.stats.payments.biggest, totalValue);
-  emitSetChanges(state, payee, beforePayee);
-  emitSetChanges(state, payer, beforePayer);
-  checkWin(state, payee.id);
+  syncSets(state, payee, beforePayee);
+  syncSets(state, payer, beforePayer, payee.id);
   return { ok: true };
 }
 
@@ -1066,8 +1139,7 @@ function moveProperty(state, playerId, cardId, toColor) {
 
   state.log.push(p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
   emit(state, 'move_property', { actor: playerId, card: publicCard(card), from: fromColor, to: toColor });
-  emitSetChanges(state, p, before);
-  checkWin(state, playerId);
+  syncSets(state, p, before);
   return { ok: true };
 }
 
@@ -1080,6 +1152,7 @@ function scoop(state, playerId) {
   if (!p) return { error: 'Player not found' };
   if (p.eliminated) return { error: 'Already eliminated' };
 
+  const beforeScoop = completedColors(p);
   while (p.hand.length > 0) state.discardPile.push(p.hand.pop());
   while (p.bank.length > 0) state.discardPile.push(p.bank.pop());
   for (const [color, cards] of Object.entries(p.properties)) {
@@ -1088,6 +1161,7 @@ function scoop(state, playerId) {
   }
   p.properties = {};
   p.upgrades = {};
+  syncSets(state, p, beforeScoop);
   p.eliminated = true;
 
   state.log.push(p.name + ' scooped! All cards discarded.');
@@ -1129,8 +1203,8 @@ function scoop(state, playerId) {
   if (wasMyTurn) {
     advanceToNextActive(state);
     emit(state, 'turn_end', { actor: playerId });
-    emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining });
     state.log.push(currentPlayer(state).name + '\'s turn');
+    beginTurn(state);
   }
 
   return { ok: true };
@@ -1148,7 +1222,7 @@ function advanceToNextActive(state) {
 
 // §3.6 — the table is dead when deck and discard are empty and a full round passes
 // with no card leaving any hand. Most sets wins; net worth breaks the tie.
-function endInStalemate(state) {
+function endInStalemate(state, why = 'deck_dry') {
   const active = state.players.filter(p => !p.eliminated);
   const ranked = active.slice().sort((a, b) => {
     const sets = completedSets(b) - completedSets(a);
@@ -1156,9 +1230,12 @@ function endInStalemate(state) {
     return playerNetWorth(b) - playerNetWorth(a);
   });
   const winner = ranked[0] || null;
+  const cause = why === 'deck_cycles'
+    ? 'The deck has been through ' + DECK_CYCLE_LIMIT + ' cycles with no one closing — '
+    : 'Deck and discard are empty and nobody can move — ';
+  state._stalemateReason = why;
   finishGame(state, winner ? winner.id : null, 'stalemate',
-    'Deck and discard are empty and nobody can move — ' +
-    (winner ? winner.name + ' wins on completed sets and net worth.' : 'the game is a draw.'));
+    cause + (winner ? winner.name + ' wins on completed sets and net worth.' : 'the game is a draw.'));
 }
 
 function endTurn(state, playerId, discardIds) {
@@ -1202,14 +1279,16 @@ function endTurn(state, playerId, discardIds) {
     endInStalemate(state);
     return { ok: true, stalemate: true };
   }
+  if ((state.shuffleCount || 0) >= DECK_CYCLE_LIMIT) {
+    endInStalemate(state, 'deck_cycles');
+    return { ok: true, stalemate: true };
+  }
 
   advanceToNextActive(state);
-  state.turnPhase = 'draw';
-  state.playsRemaining = 3;
   state.stats.turns++;
   state.log.push(currentPlayer(state).name + '\'s turn');
-  emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining });
-  return { ok: true };
+  const won = beginTurn(state);
+  return won ? { ok: true, win: true } : { ok: true };
 }
 
 /* ── Player view (hides other hands) ─────────────────────────────────── */
@@ -1228,9 +1307,13 @@ function getPlayerView(state, playerId) {
     responders: pendingResponders(state),
     winner: state.winner,
     endReason: state.endReason || null,
+    armedIds: armedPlayers(state),
     surgeOps: !!state._surgeOps,
     handLimit: HAND_LIMIT,
     setsToWin: SETS_TO_WIN,
+    deckCycle: state.shuffleCount || 0,
+    deckCycleLimit: DECK_CYCLE_LIMIT,
+    turnNumber: state.turnCounter || 0,
     stats: state.stats,
     log: state.log.slice(-20),
     events: tail,
@@ -1244,6 +1327,8 @@ function getPlayerView(state, playerId) {
       upgrades: p.upgrades,
       completedSets: completedSets(p),
       eliminated: !!p.eliminated,
+      finalApproach: !!p.finalApproach,
+      finalApproachIn: turnsUntilCheckpoint(state, p),
       bankValue: p.bank.reduce((s, c) => s + c.value, 0),
       propertyValue: Object.values(p.properties).reduce(
         (s, cards) => s + cards.reduce((t, c) => t + c.value, 0), 0),
@@ -1255,11 +1340,12 @@ function getPlayerView(state, playerId) {
 }
 
 module.exports = {
-  COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL,
+  COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL, DECK_CYCLE_LIMIT,
   buildDeck, shuffle, makeRng, createGame, currentPlayer, getPlayer,
   completedSets, checkWin, isSetComplete, calcRent, playerTotalValue, playerNetWorth,
   playerUpgradeValue, payableCards, zoneFull, zoneCount, zoneRequisitionable, legalColorsFor,
   drawCards, playAsMoney, playProperty, playAction, respondToAction,
   moveProperty, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
-  pendingResponders, pendingEntryFor, publicCard,
+  pendingResponders, pendingEntryFor, publicCard, armedPlayers,
+  turnsUntilCheckpoint, checkpointReached,
 };

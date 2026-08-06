@@ -397,6 +397,25 @@ test('the table ends when the deck is dry and a full round changes no hand (§3.
   assertHealthy(state);
 });
 
+test('the game ends on points once the deck has been cycled too often', () => {
+  const state = game(3);
+  const [p1, p2] = state.players;
+  property(state, p1, 'brown'); property(state, p1, 'brown');   // one set
+  bank(state, p2, 10);                                          // richest, but no sets
+  state.shuffleCount = G.DECK_CYCLE_LIMIT;
+
+  const ended = G.endTurn(state, 'p1');
+  assert.equal(ended.stalemate, true);
+  assert.equal(state.phase, 'finished');
+  assert.equal(state.endReason, 'stalemate');
+  assert.equal(state.winner, 'p1', 'completed sets beat net worth');
+  assert.equal(events(state, 'stalemate')[0].reason, 'deck_cycles');
+  const view = G.getPlayerView(state, 'p1');
+  assert.equal(view.deckCycle, G.DECK_CYCLE_LIMIT);
+  assert.equal(view.deckCycleLimit, G.DECK_CYCLE_LIMIT);
+  assertHealthy(state);
+});
+
 test('scoop unwinds every chain the scooper was part of', () => {
   const state = game(3);
   const [p1, p2, p3] = state.players;
@@ -459,19 +478,242 @@ test('duplicate discards and post-win mutations are rejected', () => {
   assert.equal(state.players[0].bank.length, 0);
 });
 
-test('a win fires exactly one event and freezes the table', () => {
+/* ── §3.10 final approach ────────────────────────────────────────────── */
+
+// Gives `player` two complete sets plus one card of a third, and puts the card that
+// completes the third set in their hand.
+function armAt(state, player) {
+  property(state, player, 'brown'); property(state, player, 'brown');
+  property(state, player, 'darkblue'); property(state, player, 'darkblue');
+  property(state, player, 'intel');
+  give(state, player, c => c.type === 'property' && c.color === 'intel');
+}
+
+test('the third set arms a final approach instead of winning', () => {
   const state = game();
   const p1 = state.players[0];
-  property(state, p1, 'brown'); property(state, p1, 'brown');
-  property(state, p1, 'darkblue'); property(state, p1, 'darkblue');
-  property(state, p1, 'intel');
-  const last = give(state, p1, c => c.type === 'property' && c.color === 'intel');
+  armAt(state, p1);
   assert.ok(G.playProperty(state, 'p1', 0).ok);
+
+  assert.equal(state.phase, 'playing', 'three sets does not win on the spot');
+  assert.equal(state.winner, null);
+  assert.equal(p1.finalApproach, true);
+  assert.deepEqual(G.armedPlayers(state), ['p1']);
+  assert.equal(events(state, 'final_approach').length, 1);
+  assert.deepEqual(
+    { actor: events(state, 'final_approach')[0].actor, sets: events(state, 'final_approach')[0].sets },
+    { actor:'p1', sets:3 });
+  assert.equal(events(state, 'win').length, 0);
+
+  const view = G.getPlayerView(state, 'p2');
+  assert.deepEqual(view.armedIds, ['p1']);
+  assert.equal(view.players[0].finalApproach, true);
+  assert.equal(view.players[1].finalApproach, false);
+  assertHealthy(state);
+});
+
+test('an armed player wins when their own next turn begins', () => {
+  const state = game(3);
+  const p1 = state.players[0];
+  armAt(state, p1);
+  assert.ok(G.playProperty(state, 'p1', 0).ok);
+
+  assert.ok(G.endTurn(state, 'p1').ok);
+  assert.equal(state.phase, 'playing');
+  assert.equal(G.currentPlayer(state).id, 'p2');
+  assert.ok(G.endTurn(state, 'p2').ok);
+  assert.equal(state.phase, 'playing', 'every other player gets exactly one turn');
+  assert.equal(G.currentPlayer(state).id, 'p3');
+
+  const closing = G.endTurn(state, 'p3');
+  assert.equal(closing.win, true);
+  assert.equal(events(state, 'final_approach')[0].onOwnTurn, true);
+  assert.equal(events(state, 'final_approach')[0].turnsToCheckpoint, 3);
   assert.equal(state.phase, 'finished');
   assert.equal(state.winner, 'p1');
   assert.equal(state.endReason, 'sets');
   assert.equal(events(state, 'win').length, 1);
   assert.equal(events(state, 'win')[0].sets, 3);
-  assert.equal(last.color, 'intel');
+  // turn_start fires before the win so the client can stage the moment
+  const tail = state.events.slice(-2).map(e => e.t);
+  assert.deepEqual(tail, ['turn_start', 'win']);
+  assert.equal(state.events.at(-2).finalApproach, true);
+  assertHealthy(state);
+});
+
+test('arming on the seat before you does not convert at your very next turn', () => {
+  const state = game(3);
+  const [p1, , p3] = state.players;
+  property(state, p1, 'brown'); property(state, p1, 'brown');
+  property(state, p1, 'darkblue'); property(state, p1, 'darkblue');
+  property(state, p1, 'intel');
+  const spare = property(state, p1, 'green');       // the card p3 will take in the swap
+  const theirIntel = property(state, p3, 'intel');  // the card that completes p1's third set
+
+  // p3 (the seat immediately before p1) hands the completing card over on their own turn
+  state.currentPlayerIndex = 2;
+  state.turnPhase = 'play';
+  state.playsRemaining = 3;
+  give(state, p3, c => c.action === 'tdy_orders');
+  assert.ok(G.playAction(state, 'p3', 0, {
+    targetId:'p1', myCardId:theirIntel.id, targetCardId:spare.id }).ok);
+  assert.ok(G.respondToAction(state, 'p1', 'accept').ok);
+
+  assert.equal(p1.finalApproach, true);
+  assert.equal(events(state, 'final_approach')[0].onOwnTurn, false);
+  assert.equal(G.getPlayerView(state, 'p1').players[0].finalApproachIn, 3);
+
+  // p1's own turn starts one turn later — nobody has had a chance to answer yet
+  assert.ok(G.endTurn(state, 'p3').ok);
+  assert.equal(G.currentPlayer(state).id, 'p1');
+  assert.equal(state.phase, 'playing', 'a full cycle has not passed');
+  assert.equal(G.getPlayerView(state, 'p1').players[0].finalApproachIn, 2);
+
+  // a full cycle later it converts
+  assert.ok(G.endTurn(state, 'p1').ok);
+  assert.ok(G.endTurn(state, 'p2').ok);
+  assert.equal(state.phase, 'playing');
+  assert.equal(G.endTurn(state, 'p3').win, true);
+  assert.equal(state.winner, 'p1');
+  assertHealthy(state);
+});
+
+test('breaking the third set disarms, and rebuilding re-arms', () => {
+  const state = game();
+  const [p1, p2] = state.players;
+  armAt(state, p1);
+  assert.ok(G.playProperty(state, 'p1', 0).ok);
+  assert.equal(p1.finalApproach, true);
+  assert.ok(G.endTurn(state, 'p1').ok);
+  state.turnPhase = 'play';
+
+  // p2 CHUDs a card straight out of a complete set
+  const victimCard = p1.properties.intel[0];
+  give(state, p2, c => c.action === 'chud');
+  assert.ok(G.playAction(state, 'p2', 0, { targetId:'p1', targetCardId:victimCard.id }).ok);
+  assert.ok(G.respondToAction(state, 'p1', 'accept').ok);
+
+  assert.equal(p1.finalApproach, false);
+  assert.deepEqual(G.armedPlayers(state), []);
+  const broken = events(state, 'final_approach_broken');
+  assert.equal(broken.length, 1);
+  assert.deepEqual({ actor: broken[0].actor, by: broken[0].by }, { actor:'p1', by:'p2' });
+
+  // p1 survives to their turn and does NOT win
+  assert.ok(G.endTurn(state, 'p2').ok);
+  assert.equal(state.phase, 'playing');
+  assert.equal(G.currentPlayer(state).id, 'p1');
+
+  // rebuild the set with a wild → arms again
+  state.turnPhase = 'play';
+  state.playsRemaining = 3;
+  const rebuild = give(state, p1, c => c.type === 'wild_property' && c.colors.includes('intel'));
+  const idx = p1.hand.findIndex(c => c.id === rebuild.id);
+  assert.ok(G.playProperty(state, 'p1', idx, 'intel').ok);
+  assert.equal(p1.finalApproach, true);
+  assert.equal(events(state, 'final_approach').length, 2, 're-arming fires the event again');
+  assert.equal(state.phase, 'playing');
+  assert.equal(G.getPlayerView(state, 'p1').players[0].finalApproachIn, 2,
+    're-arming restarts the full grace cycle');
+  assertHealthy(state);
+});
+
+test('a self-inflicted break reports no breaker', () => {
+  const state = game();
+  const p1 = state.players[0];
+  armAt(state, p1);
+  assert.ok(G.playProperty(state, 'p1', 0).ok);
+  const wildIdx = state.deck.findIndex(c => c.type === 'wild_property' && c.colors.includes('brown'));
+  const wild = state.deck.splice(wildIdx, 1)[0];
+  state.deck.push(p1.properties.brown.pop());
+  p1.properties.brown.push({ ...wild, placedColor:'brown' });
+  assert.equal(G.completedSets(p1), 3);
+
+  const other = wild.colors.find(c => c !== 'brown');
+  assert.ok(G.moveProperty(state, 'p1', wild.id, other).ok);
+  assert.equal(p1.finalApproach, false);
+  const broken = events(state, 'final_approach_broken').at(-1);
+  assert.equal(broken.by, null);
+  assertHealthy(state);
+});
+
+test('a payment that completes a third set arms the payee, it never wins mid-turn', () => {
+  const state = game();
+  const [p1, p2] = state.players;
+  property(state, p2, 'brown'); property(state, p2, 'brown');
+  property(state, p2, 'darkblue'); property(state, p2, 'darkblue');
+  property(state, p2, 'intel');
+  const owed = property(state, p1, 'intel');       // p1 will hand this over
+  give(state, p2, c => c.action === 'finance_office');
+  state.currentPlayerIndex = 1;
+
+  assert.ok(G.playAction(state, 'p2', 0, { targetId:'p1' }).ok);
+  assert.ok(G.respondToAction(state, 'p1', 'accept', [owed.id]).ok);
+
+  assert.equal(state.phase, 'playing', 'win-on-opponent-turn is gone');
+  assert.equal(p2.finalApproach, true);
+  assert.equal(G.completedSets(p2), 3);
+  assert.equal(events(state, 'win').length, 0);
+  assertHealthy(state);
+});
+
+test('two armed players race: the first to reach their own turn wins', () => {
+  const state = game(3);
+  const [, p2, p3] = state.players;
+
+  // p2: brown + darkblue complete, one intel down and the second in hand
+  property(state, p2, 'brown'); property(state, p2, 'brown');
+  property(state, p2, 'darkblue'); property(state, p2, 'darkblue');
+  property(state, p2, 'intel');
+  give(state, p2, c => c.type === 'property' && c.color === 'intel');
+
+  // p3: lightblue + orange complete, two pink down and the third in hand
+  for (let i = 0; i < 3; i++) property(state, p3, 'lightblue');
+  for (let i = 0; i < 3; i++) property(state, p3, 'orange');
+  property(state, p3, 'pink'); property(state, p3, 'pink');
+  give(state, p3, c => c.type === 'property' && c.color === 'pink');
+
+  state.currentPlayerIndex = 1;
+  state.turnPhase = 'play';
+  state.playsRemaining = 3;
+  assert.ok(G.playProperty(state, 'p2', 0).ok);
+  assert.equal(p2.finalApproach, true);
+  assert.ok(G.endTurn(state, 'p2').ok);
+
+  state.turnPhase = 'play';
+  assert.ok(G.playProperty(state, 'p3', 0).ok);
+  assert.equal(p3.finalApproach, true);
+  assert.deepEqual(G.armedPlayers(state), ['p2', 'p3']);
+
+  assert.ok(G.endTurn(state, 'p3').ok);
+  assert.equal(state.phase, 'playing');
+  assert.equal(G.endTurn(state, 'p1').win, true);
+  assert.equal(state.winner, 'p2', 'p2 reached their checkpoint one seat earlier');
+  assertHealthy(state);
+});
+
+test('scooping while armed clears the approach and never wins', () => {
+  const state = game(3);
+  const p1 = state.players[0];
+  armAt(state, p1);
+  assert.ok(G.playProperty(state, 'p1', 0).ok);
+  assert.equal(p1.finalApproach, true);
+
+  assert.ok(G.scoop(state, 'p1').ok);
+  assert.equal(p1.finalApproach, false);
+  assert.equal(state.phase, 'playing');
+  assert.equal(state.winner, null);
+  assert.equal(events(state, 'final_approach_broken').at(-1).by, null);
+  assert.deepEqual(G.armedPlayers(state), []);
+  assertHealthy(state);
+});
+
+test('a scoop-out still ends the game immediately', () => {
+  const state = game();
+  assert.ok(G.scoop(state, 'p2').ok);
+  assert.equal(state.phase, 'finished');
+  assert.equal(state.winner, 'p1');
+  assert.equal(state.endReason, 'last_standing');
+  assert.equal(events(state, 'win')[0].reason, 'last_standing');
   assertHealthy(state);
 });

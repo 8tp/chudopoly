@@ -105,8 +105,14 @@ const MOMENTS = [
   {
     name: 'mid-game',
     description: 'Every seat holds properties and banked money — the dense table the layout must survive.',
-    pick: (states) => {
-      const ok = states.filter((s) => s.game && s.game.players.every((p) => propCount(p) >= 1 && bankCount(p) >= 1));
+    pick: (states, selfId) => {
+      // Must be OUR play phase with plays left — touchtest drag-plays a card from this state.
+      const ok = states.filter((s) => s.game
+        && s.game.players.every((p) => propCount(p) >= 1 && bankCount(p) >= 1)
+        && s.game.currentPlayerId === selfId
+        && s.game.turnPhase === 'play'
+        && s.game.playsRemaining > 0
+        && !s.game.pendingAction);
       if (!ok.length) return null;
       // Prefer the busiest board rather than the first qualifying one.
       return ok.reduce((best, s) => (boardCount(s.game) > boardCount(best.game) ? s : best));
@@ -119,9 +125,7 @@ const MOMENTS = [
       const owes = (s) => {
         const pa = s.game?.pendingAction;
         if (!pa || !(pa.amount > 0)) return false;
-        return pa.type === 'payment_all'
-          ? Array.isArray(pa.pending) && pa.pending.includes(selfId)
-          : pa.responderId === selfId;
+        return Array.isArray(s.game.responders) && s.game.responders.includes(selfId);
       };
       const hits = states.filter(owes);
       if (!hits.length) return states.find((s) => s.game?.pendingAction?.amount > 0) || null;

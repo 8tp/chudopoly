@@ -467,3 +467,107 @@ chaotically; it just stopped refusing to build.
 - **Surge Ops doubles any charge.** All three planning modes now play Surge when a rent,
   Finance Office *or* Roll Call can follow it (`hasChargeFollowUp()`).
 - **No CHUD rider.** The follow-up payment branch is gone from the response logic.
+
+## Final Approach (owner directive, ARCHITECTURE §3.10)
+
+Reaching three sets no longer wins — it *arms*. The armed player wins only if they still hold
+three sets when their own next turn begins, so every opponent gets one turn to shoot them down.
+Bots had to learn both halves of that.
+
+### Breaking someone else's approach
+
+`tryBreakFinalApproach()` runs **before** every personality's own plan and before the
+human-like holdback (there may not be another turn to spend the card on). It walks the
+options in order of how reliably they cost the victim a set:
+
+1. **Inspector General** — takes the whole set, and it lands on our board.
+2. **THE CHUD CARD** — the only single-property steal that reaches into a complete set.
+3. **TDY Orders** — a swap is not a steal, so the complete-set guard does not apply to it.
+4. **Midnight Requisition** — only useful against an *overflowed* zone (length ≠ set size).
+5. **Charge them past their bank** — Finance Office or a rent aimed at the armed player when
+   their bank cannot cover it, so the payment has to come out of a set. Surge Ops first when
+   doubling would push the charge past their cash.
+
+Rent targeting (`chooseRentTarget`) now prefers an armed opponent over the leader, and chud's
+CHUD/Inspector General targeting became threat-aware — spraying those cards at whoever left
+chud with nothing to answer a late approach with (53.8% of approaches converted against an
+all-chud field; 48.1% after the fix).
+
+**Shot-taken rate** — an opponent is armed, a breaking card is in hand, does the bot fire at
+them on the first play of its turn? (200 games, all lineups)
+
+| Personality | Takes the shot |
+|---|---|
+| chud | **98.7%** |
+| aggressive | **94.4%** |
+| neutral | 88.0% |
+| conservative | 86.4% |
+| random | **38.5%** |
+
+That is the intended spread: chud and aggressive are the enforcers, random mostly does not
+notice. `BREAK_URGENCY` gates the attempt per personality, but the roll turns out to matter
+far less than card availability — softening it (1.0/0.9/0.85/0.2 → 0.9/0.75/0.7/0.15) moved
+conversion by 0.2 points, so the original values stayed.
+
+### Defending your own approach
+
+An armed bot stops building (more sets cannot help it) and starts protecting:
+
+- **Hoards cash** (`tryDefendFinalApproach`) so an incoming charge never has to be paid out of
+  a completed set. Bias per personality: conservative 0.9 … chud 0.4, random 0.2.
+- **Pays complete-set cards last**, regardless of personality — `selectPaymentCards` sorts them
+  to the back of the queue whenever the payer is armed.
+- **OPSECs anything that could cost a set**: any property attack, or a payment demand larger
+  than its bank. Random still flips a coin about it.
+
+Measured effect: across 250 mixed games, **every** broken approach was broken by an opponent —
+zero self-inflicted breaks. The defensive rules work.
+
+### The checkpoint is a full turn cycle
+
+The win checkpoint is the armed player's own turn start **with at least `active players`
+turns elapsed since arming**, so every opponent is guaranteed a response turn no matter when
+the arming happened. It matters because 5.2% of armings happen on somebody else's turn (a
+payment or a swap completing your third set); those used to get a truncated grace period.
+Conversion by arming position, 240 games: armed on your own turn **38.9%**, armed off-turn
+**25.0%** — the strict rule costs an off-turn armer real equity, which is the point.
+
+### Balance after the change (4000 games, seat-balanced)
+
+| Personality | Before §3.10 | After §3.10 |
+|---|---|---|
+| random | 12.4% | **12.7%** |
+| conservative | 27.3% | **25.8%** |
+| neutral | 35.5% | **33.1%** |
+| aggressive | 36.7% | **40.5%** |
+| chud | 13.2% | **13.0%** |
+
+§3 bounds still hold. First-player advantage 21.1% against a 25.0% fair share. Games got
+longer, as expected: **27.7 → 41.3 average turns**, 2.61 armings per game, **56.8% of
+approaches shot down / 43.2% converted** — the grace cycle is a real fight, not theater.
+Conversion falls hard with table size (2p 86.2%, 3p 65.0%, 5p 31.4%): more opponents, more
+guns pointed at you.
+
+### The tail, and the attrition cap
+
+The grace cycle has a cost: every break scatters a finished set, so 5-player games grew a long
+tail. Measured over 300 five-player games:
+
+| | p50 | p90 | p99 | max |
+|---|---|---|---|---|
+| before §3.10 | 27 | 44 | 63 | 73 |
+| after §3.10 | 42 | 114 | 387 | 401 |
+
+Not livelock — every game still ended — but a p99 of 387 turns is unplayable with live turn
+timers. The separator is deck cycles: healthy games reshuffle 1.9 times (p90 5), tail games
+22.8 (max 56). So the game now ends on points (most sets, net worth breaks the tie — the same
+resolution §3.6 already used) once the deck has been cycled `DECK_CYCLE_LIMIT` times.
+
+| Limit | max turns (5p) | 5p games decided on points |
+|---|---|---|
+| 8 | 99 | 17% |
+| 12 | 129 | 11.7% |
+| **16** | **152** | **7%** |
+
+16 was chosen: it bounds the tail at ~30 turns per player and never fires at all in 2/3/4-player
+games (0 of 450 sampled). Max turns across the 4000-game matrix: 167.

@@ -105,6 +105,23 @@ first-player advantage measured and reported).
 7. **Upgrades (FOC/hangar)** stay off-limits as payment (matches MD) but must be **shown** in
    net worth display so the UI never lies.
 8. **Free wild rearranging** stays (it's good), but becomes a first-class visible interaction.
+10. **FINAL APPROACH (win grace cycle — owner directive 2026-08-06).** Reaching 3 complete
+    sets does NOT win immediately (deliberate departure from Monopoly Deal). It arms *final
+    approach*: every other player gets exactly one turn to respond; if the player still holds
+    ≥3 complete sets when their own next turn begins, they win then. Dropping below 3 disarms
+    (and can re-arm — each arming restarts the cycle). Multiple players can be armed at once;
+    the first to reach their checkpoint still armed wins. Engine emits `final_approach`
+    `{actor, sets}` on arm and `final_approach_broken` `{actor, by}` on disarm so the client
+    can treat it as the dramatic peak it is. Bots must understand both defending and breaking
+    a final approach. `last_standing` (scoop-out) still ends the game immediately.
+    The checkpoint requires a **full round**: the win resolves at the armed player's first
+    own-turn start that is ≥ one full turn cycle after arming, so every opponent is
+    guaranteed at least one turn to respond regardless of when the arming happened.
+11. **Deck-cycle attrition end (ratified from P1b measurement).** After the discard has been
+    reshuffled into the deck **16 times**, the game ends on points exactly like §3.6
+    (most completed sets, net worth tiebreak), emitting `stalemate {reason:'deck_cycles'}`.
+    Measured: fires in 0.45% of games, only at 5 players, and caps the pathological tail
+    (p99 387 turns → max 152) without touching healthy games (p90 reshuffles = 5).
 9. Every rule above must be reflected in card text and the help content — **no rule may exist
    that the help screen doesn't state**. The help must also cover: rent on incomplete sets,
    set sizes/rent ladders, OPSEC chains, scoop, hand limit, and win-on-opponent's-turn.

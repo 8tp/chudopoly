@@ -1,0 +1,66 @@
+// net/send.js — one named sender per protocol message (server/protocol.js).
+// Nothing else in the client is allowed to hand-roll a socket payload; a typo
+// in a message type is a silent no-op on the server and costs an hour.
+
+import { send } from './socket.js';
+
+export const createRoom = (name) => send({ type: 'create_room', name });
+export const quickPlay = (name) => send({ type: 'quick_play', name });
+
+export const joinRoom = (code, name, resume) => send({
+  type: 'join_room',
+  code: String(code || '').toUpperCase(),
+  name,
+  ...(resume?.playerId ? { playerId: resume.playerId } : {}),
+  ...(resume?.resumeToken ? { resumeToken: resume.resumeToken } : {}),
+});
+
+export const reconnect = (playerId, code, resumeToken) =>
+  send({ type: 'reconnect', playerId, code, resumeToken });
+
+export const leaveRoom = () => send({ type: 'leave_room' });
+export const kick = (targetId) => send({ type: 'kick', targetId });
+export const addBot = (mode) => send({ type: 'add_bot', mode });
+export const removeBot = (targetId) => send({ type: 'remove_bot', targetId });
+
+export const startGame = (turnTimeout, responseTimeout) =>
+  send({ type: 'start_game', turnTimeout: turnTimeout | 0, responseTimeout: responseTimeout | 0 });
+
+export const rematch = () => send({ type: 'rematch' });
+
+export const draw = () => send({ type: 'draw' });
+export const playMoney = (cardIndex) => send({ type: 'play_money', cardIndex });
+
+export const playProperty = (cardIndex, targetColor) => send({
+  type: 'play_property', cardIndex,
+  ...(targetColor ? { targetColor } : {}),
+});
+
+export const moveProperty = (cardId, toColor) => send({ type: 'move_property', cardId, toColor });
+
+/**
+ * opts: {targetId, targetColor, targetCardId, myCardId} — only the keys the
+ * action needs. Sending an undefined key fails protocol validation, so they are
+ * spread in conditionally.
+ */
+export const playAction = (cardIndex, opts = {}) => send({
+  type: 'play_action', cardIndex,
+  ...(opts.targetId ? { targetId: opts.targetId } : {}),
+  ...(opts.targetColor ? { targetColor: opts.targetColor } : {}),
+  ...(opts.targetCardId != null ? { targetCardId: opts.targetCardId } : {}),
+  ...(opts.myCardId != null ? { myCardId: opts.myCardId } : {}),
+});
+
+export const respond = (response, paymentCards) => send({
+  type: 'respond', response,
+  ...(paymentCards ? { paymentCards } : {}),
+});
+
+export const emote = (text) => send({ type: 'emote', text });
+export const chat = (text, scope) => send({ type: 'chat', text, scope });
+export const chatHistory = () => send({ type: 'chat_history' });
+export const scoop = () => send({ type: 'scoop' });
+export const endTurn = (discardIds) => send({
+  type: 'end_turn',
+  ...(discardIds ? { discardIds } : {}),
+});

@@ -1,0 +1,220 @@
+/* table.css — P3 SCAFFOLD: the felt, the zones, the card object.
+   Functional geometry only. The design agent (§6) owns the look; what it must
+   preserve is the transform composition on .card — FLIP writes --fx/--fy/--fs
+   and nothing else may claim `transform` on a card node. */
+
+.screen-game { display: flex; flex-direction: column; }
+
+.table {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .3em;
+  padding: .3em;
+  background:
+    radial-gradient(120% 80% at 50% 0%, #16233a 0%, #0a1120 55%, #060a12 100%);
+  overflow: hidden;
+}
+
+/* ── opponents ─────────────────────────────────────────────────────────── */
+.opponents {
+  display: flex;
+  gap: .4em;
+  flex: 0 0 auto;
+  max-height: 28%;
+  overflow: auto;
+  min-width: 0;
+}
+.opponents .board { flex: 1 1 0; min-width: 0; }
+
+.board {
+  position: relative;
+  padding: .3em;
+  border: 1px solid var(--navy-500);
+  border-radius: var(--radius);
+  background: rgba(9, 15, 26, .72);
+  min-width: 0;
+}
+.board.is-turn { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold-dim) inset; }
+.board.is-out { opacity: .45; }
+.board[data-targetable="1"] {
+  border-color: var(--gold);
+  box-shadow: 0 0 14px rgba(217, 164, 65, .55);
+  cursor: pointer;
+}
+.board-head {
+  display: flex;
+  gap: .4em;
+  align-items: baseline;
+  font-size: .78em;
+  letter-spacing: .06em;
+  color: var(--ink-300);
+  min-width: 0;
+}
+.board-name { font-weight: 800; color: var(--ink-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-sets { color: var(--gold); white-space: nowrap; }
+.board-worth { margin-left: auto; white-space: nowrap; }
+
+.zone-tag { font-size: .64em; letter-spacing: .16em; color: var(--steel-300); }
+
+/* ── zones ─────────────────────────────────────────────────────────────── */
+.cardzone { display: flex; align-items: flex-start; min-height: 0; }
+
+.board-bank { display: flex; align-items: center; gap: .3em; min-width: 0; }
+/* Overlap is capped at 35%: at 62% a bank card's exposed strip was under 20px
+   wide and neither a finger nor elementFromPoint could pick the buried ones. */
+.zone-bank { flex: 1 1 auto; flex-wrap: wrap; }
+.zone-bank .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.35); }
+
+.board-props { display: flex; flex-wrap: wrap; gap: .25em; margin-top: .25em; }
+.propcol {
+  flex: 0 0 auto;
+  min-width: calc(var(--card-w) + .4em);
+  padding: .15em;
+  border: 1px dashed rgba(124, 140, 166, .28);
+  border-radius: 4px;
+}
+.propcol.is-complete { border-color: var(--gold); border-style: solid; }
+.propcol[data-targetable="1"] {
+  border-color: var(--gold);
+  border-style: solid;
+  box-shadow: 0 0 12px rgba(217, 164, 65, .5);
+  cursor: pointer;
+}
+.propcol-head { display: flex; justify-content: space-between; gap: .3em; font-size: .58em; letter-spacing: .08em; color: var(--steel-300); }
+.zone-props, .zone-ups { flex-wrap: wrap; }
+.zone-props .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.4); }
+.zone-ups .card { margin-left: calc(var(--card-w) * -0.5); }
+.board-opponent .propcol[data-empty="1"] { display: none; }
+
+/* ── centre piles ──────────────────────────────────────────────────────── */
+.table-center {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 1.2em;
+  justify-content: center;
+  align-items: center;
+  padding: .2em 0;
+}
+.pile { display: flex; flex-direction: column; align-items: center; gap: .2em; }
+.pile-label { font-size: .64em; letter-spacing: .14em; color: var(--steel-300); }
+.zone-deck, .zone-discard {
+  position: relative;
+  width: var(--card-w);
+  aspect-ratio: var(--card-ratio);
+  --card-w: calc(var(--s) * 3.4);
+  border: 1px dashed rgba(124, 140, 166, .3);
+  border-radius: var(--radius-card);
+}
+.zone-deck .card, .zone-discard .card { position: absolute; inset: 0; width: 100%; }
+.zone-deck .card { transform: translate(0, calc(var(--i, 0) * -1.5px)); }
+
+/* ── self ──────────────────────────────────────────────────────────────── */
+.self-board { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.self-board .board { --card-w: calc(var(--s) * 2.6); }
+.opponents .board { --card-w: calc(var(--s) * 1.9); }
+
+.hand-dock {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--navy-500);
+  background: rgba(6, 10, 18, .92);
+  padding: .25em .35em calc(.25em + env(safe-area-inset-bottom));
+}
+.hand-dock.over-limit { border-top-color: var(--danger); }
+.hand-bar { display: flex; align-items: center; gap: .4em; min-width: 0; }
+.hand-label { font-size: .72em; letter-spacing: .14em; color: var(--steel-300); white-space: nowrap; }
+.hand-actions { margin-left: auto; display: flex; gap: .3em; }
+.zone-hand {
+  --card-w: calc(var(--s) * 4.2);
+  margin-top: .25em;
+  gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: .5em .2em .2em;
+  min-height: calc(var(--s) * 5.9);
+  scrollbar-width: none;
+}
+.zone-hand::-webkit-scrollbar { display: none; }
+.zone-hand .card { flex: 0 0 auto; }
+.zone-hand .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.28); }
+
+/* ── the card ──────────────────────────────────────────────────────────── */
+.card {
+  position: relative;
+  width: var(--card-w);
+  aspect-ratio: var(--card-ratio);
+  border-radius: var(--radius-card);
+  background: var(--navy-700);
+  border: 1px solid rgba(200, 214, 235, .18);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+  transform: translate(var(--fx, 0px), var(--fy, 0px)) rotate(var(--tilt, 0deg)) scale(var(--fs, 1));
+  transform-origin: 50% 60%;
+  will-change: transform;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  overflow: hidden;
+}
+.card.is-flying { z-index: 40; }
+.card.is-lifted { outline: 2px solid var(--gold); transform: translate(var(--fx, 0px), calc(var(--fy, 0px) - 10px)) rotate(var(--tilt, 0deg)) scale(var(--fs, 1)); }
+.card.is-picked { outline: 2px solid var(--good); }
+.card[data-targetable="1"] { outline: 2px solid var(--gold); box-shadow: 0 0 12px rgba(217, 164, 65, .6); }
+.card[data-payable="1"] { outline: 1px solid var(--steel-300); }
+
+/* The card node itself is the only hit target: without this, elementsFromPoint
+   reports .card-art sitting "above" the card and every hit-test in
+   tools/touchtest.mjs reads as a swallowed touch. */
+.card > * { pointer-events: none; }
+
+.card-face { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 6%; gap: 2%; }
+.card-back { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  background: repeating-linear-gradient(135deg, #0b1c33 0 4px, #102544 4px 8px); }
+.card-facedown .card-face { display: none; }
+.card-facedown .card-back { display: flex; }
+.card-back-roundel { color: var(--gold-dim); font-size: calc(var(--card-w) * .42); line-height: 1; }
+
+.card-band {
+  font-size: calc(var(--card-w) * .13);
+  letter-spacing: .06em;
+  font-weight: 800;
+  color: var(--navy-900);
+  background: var(--steel-300);
+  border-radius: 2px;
+  padding: 1px 3px;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.card-name {
+  font-size: calc(var(--card-w) * .135);
+  line-height: 1.15;
+  font-weight: 700;
+  overflow: hidden;
+}
+.card-art { flex: 1 1 auto; border-radius: 2px; background: linear-gradient(160deg, rgba(255, 255, 255, .06), rgba(0, 0, 0, .25)); }
+.card-foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 2px; font-size: calc(var(--card-w) * .12); }
+.card-ladder { color: var(--steel-300); overflow: hidden; white-space: nowrap; }
+.card-coin { font-weight: 900; color: var(--gold); }
+
+.card[data-color] .card-band { background: var(--band, var(--steel-300)); color: #fff; }
+.card[data-color="brown"] { --band: var(--set-brown); }
+.card[data-color="lightblue"] { --band: var(--set-lightblue); }
+.card[data-color="pink"] { --band: var(--set-pink); }
+.card[data-color="orange"] { --band: var(--set-orange); }
+.card[data-color="red"] { --band: var(--set-red); }
+.card[data-color="yellow"] { --band: var(--set-yellow); }
+.card[data-color="green"] { --band: var(--set-green); }
+.card[data-color="darkblue"] { --band: var(--set-darkblue); }
+.card[data-color="base"] { --band: var(--set-base); }
+.card[data-color="intel"] { --band: var(--set-intel); }
+.card[data-color="lightblue"] .card-band,
+.card[data-color="yellow"] .card-band,
+.card[data-color="pink"] .card-band,
+.card[data-color="orange"] .card-band { color: #101418; }
+.card[data-action-kind="chud"] { border-color: var(--danger); }
+
+.zone-hand-oppo { --card-w: calc(var(--s) * 1.3); min-height: calc(var(--s) * 1.9); }
+.zone-hand-oppo .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.6); }

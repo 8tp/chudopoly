@@ -1,0 +1,40 @@
+/* variables.css — P3 SCAFFOLD.
+   The design agent replaces this file wholesale in the next wave (§6). What
+   must survive: the single scale unit --s, the 5:7 card ratio, per-context
+   --card-w, and dark-only. Everything else here is placeholder value. */
+
+:root {
+  --s: clamp(13px, 1.6vw + 8px, 17px);
+
+  --navy-900: #05090f;
+  --navy-800: #080d16;
+  --navy-700: #0d1626;
+  --navy-600: #142033;
+  --navy-500: #1d2c44;
+  --steel-400: #4a5c78;
+  --steel-300: #7c8ca6;
+  --ink-100: #e8eef7;
+  --ink-300: #b3c0d4;
+  --gold: #d9a441;
+  --gold-dim: #8a6a2b;
+  --danger: #c0392b;
+  --good: #3f9e63;
+
+  --radius: 8px;
+  --radius-card: 6px;
+  --tap: 44px;                       /* §0.9 floor */
+
+  --card-ratio: 5 / 7;
+  --card-w: 54px;
+
+  --set-brown: #8B4513;
+  --set-lightblue: #87CEEB;
+  --set-pink: #FF69B4;
+  --set-orange: #FF8C00;
+  --set-red: #DC143C;
+  --set-yellow: #FFD700;
+  --set-green: #228B22;
+  --set-darkblue: #00308F;
+  --set-base: #2F4F4F;
+  --set-intel: #708090;
+}

@@ -1,0 +1,165 @@
+// table/layout.js — the felt: player boards, colour columns, piles.
+//
+// Boards are STRUCTURE, not content. This file builds the containers once per
+// seating change and hands out zone elements; every card that lands in them is
+// placed by table/index.js. Rebuilding is keyed on the seat list, so a normal
+// turn never touches this code and never orphans a card node mid-FLIP.
+
+import { el, clear, setText, setAttr, setClass } from '../core/dom.js';
+import { COLORS, COLOR_KEYS } from '../core/cards.js';
+
+const zones = new Map();          // zoneKey -> element
+const boards = new Map();         // playerId -> board element
+
+let seatKey = '';
+let selfId = null;
+let root = null;
+
+export function zoneEl(key) { return zones.get(key) || null; }
+export function boardEl(playerId) { return boards.get(playerId) || null; }
+export function allBoards() { return boards; }
+export function zoneKeys() { return zones.keys(); }
+
+/**
+ * zoneFor(kind, ownerId, color) — the §5 addressing scheme.
+ * Own zones get the short key ('bank'); everyone else is suffixed by id. The
+ * short form is what tools/touchtest.mjs selects on ([data-zone="bank"],
+ * [data-zone^="properties"]), and it keeps CSS for "my side of the table" simple.
+ */
+export function zoneKeyFor(kind, ownerId, color) {
+  const mine = !ownerId || ownerId === selfId;
+  switch (kind) {
+    case 'deck': return 'deck';
+    case 'discard': return 'discard';
+    case 'hand': return mine ? 'hand' : `hand:${ownerId}`;
+    case 'bank': return mine ? 'bank' : `bank:${ownerId}`;
+    case 'properties': return mine ? `properties:${color}` : `properties:${ownerId}:${color}`;
+    case 'upgrades': return mine ? `upgrades:${color}` : `upgrades:${ownerId}:${color}`;
+    default: return null;
+  }
+}
+
+export function zoneFor(kind, ownerId, color) {
+  return zoneEl(zoneKeyFor(kind, ownerId, color));
+}
+
+export function mount(rootEl, mySeatId) {
+  root = rootEl;
+  selfId = mySeatId;
+  zones.set('deck', document.querySelector('[data-zone="deck"]'));
+  zones.set('discard', document.querySelector('[data-zone="discard"]'));
+  zones.set('hand', document.querySelector('[data-zone="hand"]'));
+}
+
+/** Rebuild boards only when the seating changes. Returns true if it rebuilt. */
+export function syncSeats(snapshot, mySeatId) {
+  if (!root) return false;
+  selfId = mySeatId || selfId;
+  const players = snapshot?.players || [];
+  const key = players.map(p => p.id).join(',') + '|' + selfId;
+  if (key === seatKey) return false;
+  seatKey = key;
+
+  const opponents = document.getElementById('opponents');
+  const selfSlot = document.getElementById('self-board');
+  if (!opponents || !selfSlot) return false;
+
+  // Detach every card node before the containers go away, so nothing is
+  // destroyed by the clear() — the registry in cardnode.js still owns them and
+  // reconcile puts them back this same frame.
+  for (const zone of zones.values()) {
+    if (!zone || zone.dataset.zone === 'hand') continue;
+    while (zone.firstChild) zone.removeChild(zone.firstChild);
+  }
+  for (const k of [...zones.keys()]) if (k !== 'deck' && k !== 'discard' && k !== 'hand') zones.delete(k);
+  boards.clear();
+  clear(opponents);
+  clear(selfSlot);
+
+  for (const player of players) {
+    const isSelf = player.id === selfId;
+    const board = buildBoard(player, isSelf);
+    boards.set(player.id, board);
+    (isSelf ? selfSlot : opponents).appendChild(board);
+  }
+  return true;
+}
+
+function buildBoard(player, isSelf) {
+  const board = el('section', {
+    class: `board${isSelf ? ' board-self' : ' board-opponent'}`,
+    attrs: { 'data-player': player.id, 'data-self': isSelf ? '1' : '0', tabindex: '0' },
+  });
+
+  const head = el('div', { class: 'board-head' }, [
+    el('span', { class: 'board-name', text: player.name || '' }),
+    el('span', { class: 'board-sets', text: '0/3' }),
+    el('span', { class: 'board-worth', text: '0M' }),
+  ]);
+  board.appendChild(head);
+
+  if (!isSelf) {
+    board.appendChild(el('div', {
+      class: 'cardzone zone-hand-oppo',
+      attrs: { 'data-zone': zoneKeyFor('hand', player.id) },
+    }));
+    zones.set(zoneKeyFor('hand', player.id), board.lastElementChild);
+  }
+
+  const bankWrap = el('div', { class: 'board-bank' }, [
+    el('span', { class: 'zone-tag', text: 'BANK' }),
+    el('div', { class: 'cardzone zone-bank', attrs: { 'data-zone': zoneKeyFor('bank', player.id) } }),
+  ]);
+  board.appendChild(bankWrap);
+  zones.set(zoneKeyFor('bank', player.id), bankWrap.lastElementChild);
+
+  const props = el('div', { class: 'board-props' });
+  for (const color of COLOR_KEYS) {
+    const info = COLORS[color];
+    const col = el('div', {
+      class: 'propcol',
+      attrs: { 'data-color': color, 'data-owner': player.id, 'data-empty': '1' },
+    });
+    col.appendChild(el('div', { class: 'propcol-head' }, [
+      el('span', { class: 'propcol-name', text: info.short }),
+      el('span', { class: 'propcol-count', text: `0/${info.size}` }),
+    ]));
+    const cards = el('div', {
+      class: 'cardzone zone-props',
+      attrs: { 'data-zone': zoneKeyFor('properties', player.id, color) },
+    });
+    const ups = el('div', {
+      class: 'cardzone zone-ups',
+      attrs: { 'data-zone': zoneKeyFor('upgrades', player.id, color) },
+    });
+    col.appendChild(cards);
+    col.appendChild(ups);
+    props.appendChild(col);
+    zones.set(zoneKeyFor('properties', player.id, color), cards);
+    zones.set(zoneKeyFor('upgrades', player.id, color), ups);
+  }
+  board.appendChild(props);
+  return board;
+}
+
+/** Per-reconcile text/state on the board chrome. All writes guarded. */
+export function paintBoard(player, snapshot) {
+  const board = boards.get(player.id);
+  if (!board) return;
+  setText(board.querySelector('.board-name'), player.name);
+  setText(board.querySelector('.board-sets'), `${player.completedSets}/${snapshot.setsToWin || 3} SETS`);
+  setText(board.querySelector('.board-worth'), `${player.netWorth}M`);
+  setClass(board, 'is-turn', snapshot.currentPlayerId === player.id && snapshot.phase === 'playing');
+  setClass(board, 'is-out', !!player.eliminated);
+  setClass(board, 'is-winner', snapshot.winner === player.id);
+
+  for (const color of COLOR_KEYS) {
+    const col = board.querySelector(`.propcol[data-color="${color}"]`);
+    if (!col) continue;
+    const cards = player.properties?.[color] || [];
+    const size = COLORS[color].size;
+    setAttr(col, 'data-empty', cards.length === 0 ? '1' : null);
+    setClass(col, 'is-complete', cards.length >= size);
+    setText(col.querySelector('.propcol-count'), `${cards.length}/${size}`);
+  }
+}

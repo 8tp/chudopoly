@@ -402,3 +402,68 @@ Bot-vs-bot games feature 5 equally skilled opponents with different strategies. 
 ### Iterative Process
 
 The tuning was not a one-shot process. Each round of changes was validated through 500-game simulations, and results revealed secondary effects (e.g., fixing Conservative's banking caused it to hold too many action cards, requiring the holdback mechanic). The final parameters represent 6 rounds of tuning with simulation verification after each.
+
+## P1 Card-Table Revamp — Rules Rebalance and Re-tune
+
+The ARCHITECTURE §3 rebalance changed the rules under the bots (CHUD lost its 2M rider,
+the wild rent became single-target, Surge Ops doubles any charge, colour zones are capped
+at set size, insolvency now forces zero-value wilds out). Every personality was re-checked
+against the §3 bounds: **no personality above 60% or below 8% in a 4-player mixed game.**
+
+### New measurement harness
+
+`simulate.js` grew a programmatic API next to the CLI:
+
+```js
+const { runMatches } = require('./simulate');
+runMatches({ players:['chud','neutral','neutral','neutral'], games:500, seed:'x' });
+// → { winrates, seatWinrates, firstPlayerWin, avgTurns, medianTurns, stalemates, ... }
+```
+
+`node simulate.js matrix <games> <seed>` prints the balance matrix. Every personality plays
+**every seat of every 4-subset of the roster**, so seat order cannot masquerade as strength.
+Runs are reproducible: the engine takes `{seed}` and the bot RNG is injected
+(`Bot._internal.setRng`) rather than reading `Math.random` directly.
+
+### 4-player mixed, 4000 games (3200 per personality)
+
+| Personality | Before rebalance (5p, 500 games) | After (4p mixed, 4000 games) |
+|---|---|---|
+| Aggressive | 28.4% | **36.7%** |
+| Neutral | 35.0% | **35.5%** |
+| Conservative | 29.6% | **27.3%** |
+| Chud | 5.8% ✗ | **13.2%** |
+| Random | 1.2% ✗ | **12.4%** |
+
+First-player advantage: **24.5%** against a 25.0% fair share — turn order is worth nothing
+measurable. Average game 27.7 turns, 0 stalemates in 4000 games, 4000/4000 decided.
+
+Each personality against three neutrals (4000 games each): random 9.6%, chud 10.8%,
+conservative 19.8%, aggressive 20.4%, neutral 23.1%.
+
+### What moved random and chud off the floor
+
+Both were below the 8% floor *before* the rebalance too (1.2% and 5.8%), so this was a bot
+fix, not a rules fix. Three changes, each measured:
+
+| Change | Effect |
+|---|---|
+| Random's per-decision "do nothing" chance 15% → 5% → 2% | 2.5% → 8.6% → 12.4% |
+| Random/chud pay from the **bank before properties** (still random order within each) | random 4.5% → 6.6%, chud +3 points |
+| Random's wild colours pull 70% toward a colour it has already started | random 2.5% → 4.5% |
+| Chud plays a property first on a 45% coin-flip instead of always harassing first | chud 6.0% → 12.3% |
+
+Random still shuffles its hand, still targets at random, still discards blind — it is
+unpredictable rather than absent. Chud still leads with theft, banks OPSEC and discards
+chaotically; it just stopped refusing to build.
+
+### Rules the bots had to learn
+
+- **Wild rent needs a victim.** `makeRentPlay()` attaches a `targetId` for `Rent: any`;
+  smart modes pick the leader (ties broken on who can actually pay), random/chud roll.
+- **Zone cap.** `openColorsForWild()` and `randomPropertyPlay()` refuse a colour that
+  already holds a full set, so no personality wastes a play on an illegal placement
+  (soak: 45,396 decisions across 300 games, 0 rejected plays).
+- **Surge Ops doubles any charge.** All three planning modes now play Surge when a rent,
+  Finance Office *or* Roll Call can follow it (`hasChargeFollowUp()`).
+- **No CHUD rider.** The follow-up payment branch is gone from the response logic.

@@ -13,6 +13,11 @@ const COLORS = {
   intel:     { name:'Intelligence',    bg:'#708090', fg:'#fff', size:2, rent:[1,2] },
 };
 
+const HAND_LIMIT = 7;
+const SETS_TO_WIN = 3;
+const EVENT_TAIL = 120;          // broadcast tail size (ARCHITECTURE §4)
+const EVENT_LOG_MAX = 400;       // retained in state; never grows unbounded
+
 /* ── Card definitions ────────────────────────────────────────────────── */
 
 function buildDeck() {
@@ -56,16 +61,16 @@ function buildDeck() {
 
   /* Action cards */
   const actions = [
-    ['inspector_general','Inspector General',5,'Steal a complete property set from any player',2],
-    ['opsec','OPSEC',4,'Counter any action card played against you',3],
-    ['midnight_requisition','Midnight Requisition',3,'Steal a single property from any player (not from a complete set)',3],
+    ['inspector_general','Inspector General',5,'Steal a complete property set from any player. OPSEC can block it.',2],
+    ['opsec','OPSEC',4,'Counter any action card played against you. Can itself be countered by another OPSEC.',3],
+    ['midnight_requisition','Midnight Requisition',3,'Steal a single property from any player. Cannot touch a complete set.',3],
     ['tdy_orders','TDY Orders',3,'Swap one of your properties for one of another player\'s',3],
     ['finance_office','Finance Office',3,'Collect 5M from any one player',3],
     ['roll_call','Roll Call',2,'All other players pay you 2M each',3],
     ['pcs_orders','PCS Orders',1,'Draw 2 extra cards from the deck',10],
     ['upgrade','Upgrade (House)',3,'Add to a complete set: +3M rent',3],
     ['foc','Full Operational Capability (Hotel)',4,'Add to a complete set with Upgrade: +4M rent',2],
-    ['surge_ops','Surge Operations',1,'Double the rent you charge this turn',2],
+    ['surge_ops','Surge Operations',1,'Double the next charge you make this turn — rent or any demand',2],
   ];
   actions.forEach(([action,name,value,desc,qty]) => {
     for(let i=0;i<qty;i++) c({ type:'action', action, name, value, description:desc });
@@ -84,27 +89,103 @@ function buildDeck() {
     for(let i=0;i<qty;i++) c({ type:'rent', colors, name:'Rent: '+colors.join('/'), value });
   });
 
-  /* THE CHUD CARD — 2 copies */
-  c({ type:'action', action:'chud', name:'THE CHUD CARD', value:4,
-      description:'Commandeer Hardware Under Directive — Steal ANY property from any player (even from complete sets) + collect 2M from them' });
-  c({ type:'action', action:'chud', name:'THE CHUD CARD', value:4,
-      description:'Commandeer Hardware Under Directive — Steal ANY property from any player (even from complete sets) + collect 2M from them' });
+  /* THE CHUD CARD — 2 copies. The 2M tax rider is gone (§3.1); the steal is the whole card.
+     Face value stays 4M: a 4000-game mixed matrix at value 5 moved no personality by more
+     than 0.1 point (conservative 27.3% → 27.2%, all others identical), so §3.1's
+     "raise the face value if it still dominates" has nothing to fix. */
+  const CHUD_TEXT = 'Commandeer Hardware Under Directive — Steal ANY property from any player, even out of a complete set. OPSEC can block it.';
+  c({ type:'action', action:'chud', name:'THE CHUD CARD', value:4, description:CHUD_TEXT });
+  c({ type:'action', action:'chud', name:'THE CHUD CARD', value:4, description:CHUD_TEXT });
 
   return cards;
 }
 
-function shuffle(arr) {
+/* ── Seeded RNG (ARCHITECTURE §0.7) ──────────────────────────────────── */
+
+function xmur3(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function () {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return (h ^= h >>> 16) >>> 0;
+  };
+}
+
+function sfc32(a, b, c, d) {
+  return function () {
+    a |= 0; b |= 0; c |= 0; d |= 0;
+    const t = (((a + b) | 0) + d) | 0;
+    d = (d + 1) | 0;
+    a = b ^ (b >>> 9);
+    b = (c + (c << 3)) | 0;
+    c = (c << 21) | (c >>> 11);
+    c = (c + t) | 0;
+    return (t >>> 0) / 4294967296;
+  };
+}
+
+// makeRng(undefined) === Math.random, so the unseeded path is byte-identical to before.
+function makeRng(seed) {
+  if (seed === undefined || seed === null || seed === '') return Math.random;
+  const h = xmur3(String(seed));
+  const rand = sfc32(h(), h(), h(), h());
+  for (let i = 0; i < 15; i++) rand();
+  return rand;
+}
+
+function shuffle(arr, rand = Math.random) {
   for (let i=arr.length-1; i>0; i--) {
-    const j=Math.floor(Math.random()*(i+1));
+    const j=Math.floor(rand()*(i+1));
     [arr[i],arr[j]]=[arr[j],arr[i]];
   }
   return arr;
 }
 
+function rngOf(state) {
+  return typeof state?._rng === 'function' ? state._rng : Math.random;
+}
+
+/* ── Structured event channel (ARCHITECTURE §4) ──────────────────────── */
+
+function publicCard(card) {
+  if (!card) return null;
+  const out = { id: card.id, type: card.type, name: card.name, value: card.value };
+  if (card.color) out.color = card.color;
+  if (card.colors) out.colors = card.colors;
+  if (card.action) out.action = card.action;
+  if (card.description) out.description = card.description;
+  if (card.placedColor) out.placedColor = card.placedColor;
+  if (card.upgradeType) out.upgradeType = card.upgradeType;
+  return out;
+}
+
+function emit(state, t, payload) {
+  if (!state.events) { state.events = []; state.eventSeq = state.eventSeq || 0; }
+  const ev = { seq: ++state.eventSeq, t, ...payload };
+  state.events.push(ev);
+  if (state.events.length > EVENT_LOG_MAX) state.events.splice(0, state.events.length - EVENT_LOG_MAX);
+  return ev;
+}
+
+// Events must leak nothing getPlayerView hides (§10). Only draw/deal carry hand cards.
+function redactEvent(ev, playerId) {
+  if ((ev.t === 'draw' || ev.t === 'deal') && ev.cards && ev.to !== playerId) {
+    const { cards, ...rest } = ev;
+    return rest;
+  }
+  return ev;
+}
+
 /* ── Game state ──────────────────────────────────────────────────────── */
 
-function createGame(players) {
-  const deck = shuffle(buildDeck());
+function createGame(players, opts = {}) {
+  const seed = opts && opts.seed !== undefined ? opts.seed : undefined;
+  const rand = makeRng(seed);
+  const deck = shuffle(buildDeck(), rand);
   const state = {
     phase: 'playing',
     turnPhase: 'draw',
@@ -120,7 +201,11 @@ function createGame(players) {
     })),
     pendingAction: null,
     winner: null,
+    endReason: null,
     cardTotal: deck.length,
+    seed: seed === undefined ? null : seed,
+    events: [],
+    eventSeq: 0,
     stats: {
       turns: 1,
       cardsPlayed: {},
@@ -129,12 +214,25 @@ function createGame(players) {
     },
     log: ['Game started! ' + players.map(p=>p.name).join(', ') + ' are playing.'],
   };
+  // Non-enumerable: the RNG must never end up in a broadcast or a JSON snapshot.
+  Object.defineProperty(state, '_rng', { value: rand, enumerable: false, writable: true });
+
+  emit(state, 'game_start', {
+    order: state.players.map(p => p.id),
+    names: Object.fromEntries(state.players.map(p => [p.id, p.name])),
+  });
 
   state.players.forEach(p => {
+    const dealt = [];
     for (let i=0; i<5; i++) {
-      if (state.deck.length) p.hand.push(state.deck.pop());
+      if (state.deck.length) { const card = state.deck.pop(); p.hand.push(card); dealt.push(card); }
     }
+    emit(state, 'deal', { to: p.id, count: dealt.length, cards: dealt.map(publicCard) });
   });
+
+  state._handSnapshot = totalHandCards(state);
+  state._idleTurns = 0;
+  emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining });
 
   return state;
 }
@@ -150,20 +248,48 @@ function getPlayer(state, id) {
 function completedSets(player) {
   let count = 0;
   for (const [color, cards] of Object.entries(player.properties)) {
-    if (color === 'any') continue;
     const info = COLORS[color];
     if (info && cards.length >= info.size) count++;
   }
   return count;
 }
 
+function completedColors(player) {
+  const set = new Set();
+  for (const [color, cards] of Object.entries(player.properties)) {
+    const info = COLORS[color];
+    if (info && cards.length >= info.size) set.add(color);
+  }
+  return set;
+}
+
+function emitSetChanges(state, player, before) {
+  const after = completedColors(player);
+  for (const color of after) if (!before.has(color)) emit(state, 'set_completed', { actor: player.id, color });
+}
+
+function finishGame(state, winnerId, reason, logLine) {
+  if (state.phase !== 'playing') return false;
+  state.phase = 'finished';
+  state.winner = winnerId;
+  state.endReason = reason;
+  state.turnPhase = 'finished';
+  state.pendingAction = null;
+  state.log.push(logLine);
+  const winner = winnerId ? getPlayer(state, winnerId) : null;
+  const sets = winner ? completedSets(winner) : 0;
+  if (reason === 'stalemate') emit(state, 'stalemate', { winner: winnerId, sets, reason: 'deck_dry' });
+  else emit(state, 'win', { actor: winnerId, sets, reason });
+  return true;
+}
+
 function checkWin(state, playerId) {
+  if (state.phase !== 'playing') return state.winner === playerId;
   const p = getPlayer(state, playerId);
-  if (completedSets(p) >= 3) {
-    state.phase = 'finished';
-    state.winner = playerId;
-    state.log.push(p.name + ' wins with 3 complete sets!');
-    return true;
+  if (!p) return false;
+  const sets = completedSets(p);
+  if (sets >= SETS_TO_WIN) {
+    return finishGame(state, playerId, 'sets', p.name + ' wins with ' + sets + ' complete sets!');
   }
   return false;
 }
@@ -172,6 +298,47 @@ function isSetComplete(player, color) {
   const info = COLORS[color];
   if (!info) return false;
   return (player.properties[color] || []).length >= info.size;
+}
+
+// §3.5 — a color zone holds at most `set size` property cards.
+function zoneCount(player, color) { return (player.properties[color] || []).length; }
+function zoneFull(player, color) {
+  const info = COLORS[color];
+  return !info || zoneCount(player, color) >= info.size;
+}
+
+// Midnight Requisition may not touch a zone that is exactly a complete set.
+// A zone that overflowed through a forced transfer (see receiveProperty) is fair game again.
+function zoneRequisitionable(player, color) {
+  const info = COLORS[color];
+  if (!info) return false;
+  const n = zoneCount(player, color);
+  return n > 0 && n !== info.size;
+}
+
+function legalColorsFor(card) {
+  if (card.type === 'property') return [card.color];
+  if (!card.colors) return [];
+  return card.colors[0] === 'any' ? Object.keys(COLORS) : card.colors;
+}
+
+// Involuntary transfer (payment / steal / swap). Honors the zone cap where it can;
+// a plain property whose only zone is full has nowhere else to go and overflows, which
+// zoneRequisitionable() then re-exposes to Midnight Requisition.
+function receiveProperty(state, player, card, preferredColor) {
+  const legal = legalColorsFor(card);
+  const ordered = [];
+  if (preferredColor && legal.includes(preferredColor)) ordered.push(preferredColor);
+  for (const color of legal.slice().sort((a, b) => zoneCount(player, b) - zoneCount(player, a))) {
+    if (!ordered.includes(color)) ordered.push(color);
+  }
+  let dest = ordered.find(color => !zoneFull(player, color));
+  if (!dest) dest = ordered[0] || card.color;
+  if (!COLORS[dest]) dest = card.color || Object.keys(COLORS)[0];
+  if (!player.properties[dest]) player.properties[dest] = [];
+  card.placedColor = dest;
+  player.properties[dest].push(card);
+  return dest;
 }
 
 function calcRent(player, color) {
@@ -186,12 +353,36 @@ function calcRent(player, color) {
   return rent;
 }
 
+// Value a player can actually hand over. Upgrades are never payable (§3.7).
 function playerTotalValue(player) {
   let total = 0;
   player.bank.forEach(c => total += c.value);
   for (const cards of Object.values(player.properties))
     cards.forEach(c => total += c.value);
   return total;
+}
+
+function playerUpgradeValue(player) {
+  let total = 0;
+  for (const upgrades of Object.values(player.upgrades || {}))
+    for (const u of upgrades) total += (u && typeof u === 'object' ? u.value : 0) || 0;
+  return total;
+}
+
+// §3.7 — upgrades are off-limits as payment but must be visible in net worth.
+function playerNetWorth(player) {
+  return playerTotalValue(player) + playerUpgradeValue(player);
+}
+
+function payableCards(player) {
+  const out = [];
+  player.bank.forEach(c => out.push(c));
+  for (const cards of Object.values(player.properties)) cards.forEach(c => out.push(c));
+  return out;
+}
+
+function totalHandCards(state) {
+  return state.players.reduce((sum, p) => sum + p.hand.length, 0);
 }
 
 function ensurePlaying(state) {
@@ -259,6 +450,15 @@ function validateState(state) {
 
 /* ── Draw phase ──────────────────────────────────────────────────────── */
 
+function reshuffleDiscard(state) {
+  if (state.discardPile.length === 0) return false;
+  state.deck = shuffle([...state.deck, ...state.discardPile], rngOf(state));
+  state.discardPile = [];
+  state.log.push('Deck reshuffled from discard pile.');
+  emit(state, 'shuffle', { deckCount: state.deck.length });
+  return true;
+}
+
 function drawCards(state) {
   const phaseError = ensurePlaying(state);
   if (phaseError) return phaseError;
@@ -270,11 +470,7 @@ function drawCards(state) {
 
   const count = p.hand.length === 0 ? 5 : 2;
 
-  if (state.deck.length < count && state.discardPile.length > 0) {
-    state.deck = shuffle([...state.deck, ...state.discardPile]);
-    state.discardPile = [];
-    state.log.push('Deck reshuffled from discard pile.');
-  }
+  if (state.deck.length < count) reshuffleDiscard(state);
 
   const drawn = [];
   for (let i = 0; i < count && state.deck.length > 0; i++) {
@@ -284,7 +480,9 @@ function drawCards(state) {
   }
   state.turnPhase = 'play';
   state.playsRemaining = 3;
+  state._handSnapshot = totalHandCards(state);
   state.log.push(p.name + ' drew ' + drawn.length + ' cards.');
+  emit(state, 'draw', { to: p.id, count: drawn.length, cards: drawn.map(publicCard) });
   return drawn;
 }
 
@@ -306,6 +504,7 @@ function playAsMoney(state, playerId, cardIndex) {
   state.playsRemaining--;
   recordCardPlay(state, playerId);
   state.log.push(p.name + ' banked ' + card.name + ' (' + card.value + 'M)');
+  emit(state, 'play_money', { actor: playerId, card: publicCard(card) });
   return { ok: true, card };
 }
 
@@ -331,7 +530,10 @@ function playProperty(state, playerId, cardIndex, targetColor) {
       return { error: 'Wild cannot be placed on ' + targetColor };
     color = targetColor;
   }
+  if (zoneFull(p, color))
+    return { error: COLORS[color].name + ' already holds a full set (' + COLORS[color].size + ')' };
 
+  const before = completedColors(p);
   p.hand.splice(cardIndex, 1);
   if (!p.properties[color]) p.properties[color] = [];
   const placed = { ...card, placedColor: color };
@@ -339,9 +541,27 @@ function playProperty(state, playerId, cardIndex, targetColor) {
   state.playsRemaining--;
   recordCardPlay(state, playerId);
   state.log.push(p.name + ' played ' + card.name + ' on ' + COLORS[color].name);
+  emit(state, 'play_property', { actor: playerId, card: publicCard(placed), color });
+  emitSetChanges(state, p, before);
 
   checkWin(state, playerId);
   return { ok: true, card: placed };
+}
+
+function startPending(state, base, targetIds) {
+  state.pendingAction = {
+    ...base,
+    targetId: targetIds.length === 1 ? targetIds[0] : undefined,
+    targets: targetIds.map(id => ({ id, depth: 0, responderId: id })),
+  };
+  state.turnPhase = 'action_response';
+  return state.pendingAction;
+}
+
+// §3.3 — Surge Ops doubles the NEXT charge of any kind this turn.
+function chargeAmount(state, base) {
+  if (state._surgeOps) { delete state._surgeOps; return { amount: base * 2, doubled: true }; }
+  return { amount: base, doubled: false };
 }
 
 function playAction(state, playerId, cardIndex, opts) {
@@ -361,21 +581,25 @@ function playAction(state, playerId, cardIndex, opts) {
   const targetColor = opts?.targetColor;
   const targetCardId = opts?.targetCardId;
 
+  const spend = () => {
+    p.hand.splice(cardIndex, 1);
+    state.playsRemaining--;
+    recordCardPlay(state, playerId);
+    emit(state, 'play_action', { actor: playerId, card: publicCard(card), action });
+  };
+  const discardAndSpend = () => { spend(); state.discardPile.push(card); };
+
   switch (action) {
     case 'pcs_orders': {
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
-      if (state.deck.length < 2 && state.discardPile.length > 1) {
-        state.deck = shuffle([...state.deck, ...state.discardPile]);
-        state.discardPile = [];
-      }
+      discardAndSpend();
+      if (state.deck.length < 2) reshuffleDiscard(state);
       const drawn = [];
       for (let i=0; i<2 && state.deck.length > 0; i++) {
         const d = state.deck.pop(); p.hand.push(d); drawn.push(d);
       }
-      state.log.push(p.name + ' played PCS Orders — drew 2 cards');
+      state._handSnapshot = totalHandCards(state);
+      state.log.push(p.name + ' played PCS Orders — drew ' + drawn.length + ' cards');
+      emit(state, 'draw', { to: playerId, count: drawn.length, cards: drawn.map(publicCard) });
       return { ok: true, card, drawn };
     }
 
@@ -383,34 +607,30 @@ function playAction(state, playerId, cardIndex, opts) {
       if (!targetId) return { error: 'Choose a player to collect from' };
       const target = getPlayer(state, targetId);
       if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
-      state.pendingAction = {
+      discardAndSpend();
+      const { amount, doubled } = chargeAmount(state, 5);
+      startPending(state, {
         type: 'payment', action: 'finance_office',
-        sourceId: p.id, targetId: target.id,
-        amount: 5, responderId: target.id,
-      };
-      state.turnPhase = 'action_response';
-      state.log.push(p.name + ' demands 5M from ' + target.name + ' (Finance Office)');
+        sourceId: p.id, amount, doubled,
+      }, [target.id]);
+      state.log.push(p.name + ' demands ' + amount + 'M from ' + target.name + ' (Finance Office)'
+        + (doubled ? ' — DOUBLED' : ''));
+      emit(state, 'demand', { actor: p.id, target: target.id, amount, reason: 'finance_office', doubled });
       return { ok: true, card, pending: true };
     }
 
     case 'roll_call': {
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
+      discardAndSpend();
       const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
-      state.pendingAction = {
-        type: 'payment_all', action: 'roll_call',
-        sourceId: p.id, amount: 2,
-        pending: targets.map(t => t.id),
-        opsecChains: {},
-      };
-      state.turnPhase = 'action_response';
-      state.log.push(p.name + ' calls Roll Call — everyone pays 2M!');
+      const { amount, doubled } = chargeAmount(state, 2);
+      startPending(state, {
+        type: 'payment', action: 'roll_call',
+        sourceId: p.id, amount, doubled,
+      }, targets.map(t => t.id));
+      state.log.push(p.name + ' calls Roll Call — everyone pays ' + amount + 'M!');
+      for (const t of targets) {
+        emit(state, 'demand', { actor: p.id, target: t.id, amount, reason: 'roll_call', doubled });
+      }
       return { ok: true, card, pending: true };
     }
 
@@ -419,16 +639,11 @@ function playAction(state, playerId, cardIndex, opts) {
       const target = getPlayer(state, targetId);
       if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       if (!isSetComplete(target, targetColor)) return { error: 'That set is not complete' };
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
-      state.pendingAction = {
+      discardAndSpend();
+      startPending(state, {
         type: 'steal_set', action: 'inspector_general',
-        sourceId: p.id, targetId: target.id,
-        color: targetColor, responderId: target.id,
-      };
-      state.turnPhase = 'action_response';
+        sourceId: p.id, color: targetColor,
+      }, [target.id]);
       state.log.push(p.name + ' plays Inspector General on ' + target.name + '\'s ' + COLORS[targetColor].name + ' set!');
       return { ok: true, card, pending: true };
     }
@@ -437,24 +652,18 @@ function playAction(state, playerId, cardIndex, opts) {
       if (!targetId || targetCardId == null) return { error: 'Choose a player and a property to requisition' };
       const target = getPlayer(state, targetId);
       if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
-      let foundColor = null, foundIdx = -1;
+      let foundColor = null;
       for (const [col, cards] of Object.entries(target.properties)) {
-        if (isSetComplete(target, col)) continue;
-        const idx = cards.findIndex(c => c.id === targetCardId);
-        if (idx >= 0) { foundColor = col; foundIdx = idx; break; }
+        if (!zoneRequisitionable(target, col)) continue;
+        if (cards.some(c => c.id === targetCardId)) { foundColor = col; break; }
       }
       if (!foundColor) return { error: 'Cannot steal from a complete set or card not found' };
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
-      state.pendingAction = {
+      const stolenCard = target.properties[foundColor].find(c => c.id === targetCardId);
+      discardAndSpend();
+      startPending(state, {
         type: 'steal_property', action: 'midnight_requisition',
-        sourceId: p.id, targetId: target.id,
-        targetCardId, targetColor: foundColor, responderId: target.id,
-      };
-      state.turnPhase = 'action_response';
-      const stolenCard = target.properties[foundColor][foundIdx];
+        sourceId: p.id, targetCardId, targetColor: foundColor,
+      }, [target.id]);
       state.log.push(p.name + ' plays Midnight Requisition on ' + target.name + '\'s ' + stolenCard.name);
       return { ok: true, card, pending: true };
     }
@@ -467,17 +676,11 @@ function playAction(state, playerId, cardIndex, opts) {
       const mine = findProperty(p, opts.myCardId);
       const theirs = findProperty(target, targetCardId);
       if (!mine || !theirs) return { error: 'Selected property is no longer available' };
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
-      state.pendingAction = {
+      discardAndSpend();
+      startPending(state, {
         type: 'swap', action: 'tdy_orders',
-        sourceId: p.id, targetId: target.id,
-        myCardId: opts.myCardId, targetCardId,
-        responderId: target.id,
-      };
-      state.turnPhase = 'action_response';
+        sourceId: p.id, myCardId: opts.myCardId, targetCardId,
+      }, [target.id]);
       state.log.push(p.name + ' plays TDY Orders on ' + target.name + ' — property swap!');
       return { ok: true, card, pending: true };
     }
@@ -487,12 +690,12 @@ function playAction(state, playerId, cardIndex, opts) {
       if (!isSetComplete(p, targetColor)) return { error: 'Set must be complete to add Upgrade' };
       if (upgradeKinds(p, targetColor).includes('house'))
         return { error: 'Set already has an Upgrade' };
-      p.hand.splice(cardIndex, 1);
+      spend();
       if (!p.upgrades[targetColor]) p.upgrades[targetColor] = [];
-      p.upgrades[targetColor].push({ ...card, upgradeType: 'house' });
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
+      const placed = { ...card, upgradeType: 'house' };
+      p.upgrades[targetColor].push(placed);
       state.log.push(p.name + ' upgraded ' + COLORS[targetColor].name + ' (+3M rent)');
+      emit(state, 'upgrade', { actor: playerId, color: targetColor, card: publicCard(placed) });
       return { ok: true, card };
     }
 
@@ -503,21 +706,19 @@ function playAction(state, playerId, cardIndex, opts) {
         return { error: 'Must have Upgrade before FOC' };
       if (upgradeKinds(p, targetColor).includes('hotel'))
         return { error: 'Already at FOC' };
-      p.hand.splice(cardIndex, 1);
-      p.upgrades[targetColor].push({ ...card, upgradeType: 'hotel' });
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
+      spend();
+      const placed = { ...card, upgradeType: 'hotel' };
+      p.upgrades[targetColor].push(placed);
       state.log.push(p.name + ' achieves FOC on ' + COLORS[targetColor].name + ' (+4M rent)');
+      emit(state, 'upgrade', { actor: playerId, color: targetColor, card: publicCard(placed) });
       return { ok: true, card };
     }
 
     case 'surge_ops': {
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
+      if (state._surgeOps) return { error: 'Surge Operations is already active' };
+      discardAndSpend();
       state._surgeOps = true;
-      state.log.push(p.name + ' activates Surge Operations — next rent is doubled!');
+      state.log.push(p.name + ' activates Surge Operations — the next charge this turn is doubled!');
       return { ok: true, card };
     }
 
@@ -527,27 +728,16 @@ function playAction(state, playerId, cardIndex, opts) {
       if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       let chudColor = null;
       for (const [col, cards] of Object.entries(target.properties)) {
-        const idx = cards.findIndex(c => c.id === targetCardId);
-        if (idx >= 0) { chudColor = col; break; }
+        if (cards.some(c => c.id === targetCardId)) { chudColor = col; break; }
       }
       if (!chudColor) return { error: 'Property not found on target' };
-      p.hand.splice(cardIndex, 1);
-      state.discardPile.push(card);
-      state.playsRemaining--;
-      recordCardPlay(state, playerId);
-      state.pendingAction = {
-        type: 'chud', action: 'chud',
-        sourceId: p.id, targetId: target.id,
-        targetCardId, targetColor: chudColor, amount: 2,
-        responderId: target.id,
-      };
-      state.turnPhase = 'action_response';
-      let cname = '?';
-      for (const cards of Object.values(target.properties)) {
-        const fc = cards.find(c => c.id === targetCardId);
-        if (fc) { cname = fc.name; break; }
-      }
-      state.log.push(p.name + ' plays THE CHUD CARD on ' + target.name + '\'s ' + cname + '!');
+      const stolenCard = target.properties[chudColor].find(c => c.id === targetCardId);
+      discardAndSpend();
+      startPending(state, {
+        type: 'steal_property', action: 'chud',
+        sourceId: p.id, targetCardId, targetColor: chudColor,
+      }, [target.id]);
+      state.log.push(p.name + ' plays THE CHUD CARD on ' + target.name + '\'s ' + stolenCard.name + '!');
       return { ok: true, card, pending: true };
     }
 
@@ -560,210 +750,170 @@ function playAction(state, playerId, cardIndex, opts) {
   // Rent card
   if (card.type === 'rent') {
     if (!targetColor) return { error: 'Choose a color to charge rent for' };
-    if (card.colors[0] !== 'any' && !card.colors.includes(targetColor))
+    if (!COLORS[targetColor]) return { error: 'Invalid property color' };
+    const isWildRent = card.colors[0] === 'any';
+    if (!isWildRent && !card.colors.includes(targetColor))
       return { error: 'This rent card cannot be used for ' + targetColor };
     const count = (p.properties[targetColor] || []).length;
     if (count === 0) return { error: 'You have no properties of that color' };
 
-    let rent = calcRent(p, targetColor);
-    if (state._surgeOps) { rent *= 2; delete state._surgeOps; }
+    // §3.2 — the wild ("any") rent hits ONE chosen player; colour rents hit the table.
+    let targets;
+    if (isWildRent) {
+      if (!targetId) return { error: 'Choose a player to charge' };
+      const target = getPlayer(state, targetId);
+      if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
+      targets = [target];
+    } else {
+      targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
+    }
+    if (targets.length === 0) return { error: 'No one to charge' };
 
-    p.hand.splice(cardIndex, 1);
-    state.discardPile.push(card);
-    state.playsRemaining--;
-    recordCardPlay(state, playerId);
-
-    const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
-    state.pendingAction = {
-      type: 'payment_all', action: 'rent',
-      sourceId: p.id, amount: rent, color: targetColor,
-      pending: targets.map(t => t.id),
-      opsecChains: {},
-    };
-    state.turnPhase = 'action_response';
-    state.log.push(p.name + ' charges ' + rent + 'M rent on ' + COLORS[targetColor].name);
+    discardAndSpend();
+    const { amount, doubled } = chargeAmount(state, calcRent(p, targetColor));
+    startPending(state, {
+      type: 'payment', action: 'rent',
+      sourceId: p.id, amount, color: targetColor, doubled, wild: isWildRent,
+    }, targets.map(t => t.id));
+    state.log.push(p.name + ' charges ' + amount + 'M rent on ' + COLORS[targetColor].name
+      + (isWildRent ? ' from ' + targets[0].name : '') + (doubled ? ' — DOUBLED' : ''));
+    emit(state, 'rent_charged', {
+      actor: p.id, color: targetColor, amount,
+      targets: targets.map(t => t.id), doubled,
+    });
     return { ok: true, card, pending: true };
   }
 
   return { error: 'Unknown action' };
 }
 
-/* ── Respond to action (OPSEC / accept) ─────────────────────────────── */
+/* ── Respond to action (single OPSEC mechanism) ──────────────────────── */
+
+// Every pending action carries `targets: [{ id, depth, responderId }]`.
+// depth 0  → the target must answer; accepting suffers the action.
+// depth odd→ the source must answer; accepting means OPSEC stood and the action is blocked.
+// depth even>0 → the target answers again (counter-counter-OPSEC), accepting suffers.
+function pendingResponders(state) {
+  const pa = state?.pendingAction;
+  if (!pa || !pa.targets) return [];
+  return pa.targets.map(t => t.responderId).filter(Boolean);
+}
+
+function pendingEntryFor(state, playerId) {
+  const pa = state?.pendingAction;
+  if (!pa || !pa.targets) return null;
+  return pa.targets.find(t => t.responderId === playerId) || null;
+}
+
+function finishEntry(state, pa, entry) {
+  if (state.pendingAction !== pa) return { ok: true };  // game ended mid-resolution
+  pa.targets = pa.targets.filter(t => t !== entry);
+  if (pa.targets.length === 0) {
+    state.pendingAction = null;
+    if (state.phase === 'playing') state.turnPhase = 'play';
+    return { ok: true };
+  }
+  return { ok: true, morePending: true };
+}
 
 function respondToAction(state, playerId, response, paymentCards) {
   const phaseError = ensurePlaying(state);
   if (phaseError) return phaseError;
   const pa = state.pendingAction;
   if (!pa) return { error: 'No pending action' };
-
-  // Simultaneous payment_all handling
-  if (pa.type === 'payment_all') {
-    return respondToPaymentAll(state, pa, playerId, response, paymentCards);
-  }
-
-  // Original single-responder logic for non-payment_all
-  if (pa.responderId !== playerId) return { error: 'Not your turn to respond' };
+  const entry = pendingEntryFor(state, playerId);
+  if (!entry) return { error: 'Not your turn to respond' };
   const responder = getPlayer(state, playerId);
+  if (!responder) return { error: 'Player not found' };
 
   if (response === 'opsec') {
     const idx = responder.hand.findIndex(c => c.action === 'opsec');
     if (idx < 0) return { error: 'No OPSEC card in hand' };
     const opsecCard = responder.hand.splice(idx, 1)[0];
     state.discardPile.push(opsecCard);
-    pa.responderId = pa.responderId === pa.sourceId ? (pa.targetId || playerId) : pa.sourceId;
-    state.log.push(responder.name + ' plays OPSEC! ' + getPlayer(state, pa.responderId).name + ' can counter...');
-    pa._opsecChain = (pa._opsecChain || 0) + 1;
-    return { ok: true, opsec: true };
+    entry.depth++;
+    const against = playerId === pa.sourceId ? entry.id : pa.sourceId;
+    entry.responderId = against;
+    state.log.push(responder.name + ' plays OPSEC! ' + (getPlayer(state, against)?.name || '?') + ' can counter...');
+    emit(state, 'opsec', {
+      actor: playerId, against, depth: entry.depth,
+      target: entry.id, action: pa.action, card: publicCard(opsecCard),
+    });
+    return { ok: true, opsec: true, morePending: true };
   }
 
-  if (response === 'accept') {
-    return executeAction(state, pa, playerId, paymentCards);
+  if (response !== 'accept') return { error: 'Invalid response' };
+
+  if (entry.depth % 2 === 1) {
+    // The source conceded: the defender's OPSEC stands.
+    const targetName = getPlayer(state, entry.id)?.name || '?';
+    state.log.push('Action blocked by OPSEC — ' + targetName + ' is safe.');
+    emit(state, 'action_blocked', {
+      source: pa.sourceId, target: entry.id, action: pa.action, depth: entry.depth,
+    });
+    return finishEntry(state, pa, entry);
   }
 
-  return { error: 'Invalid response' };
+  return executeEntry(state, pa, entry, paymentCards);
 }
 
-function respondToPaymentAll(state, pa, playerId, response, paymentCards) {
-  const responder = getPlayer(state, playerId);
+function executeEntry(state, pa, entry, paymentCards) {
   const source = getPlayer(state, pa.sourceId);
-  if (!pa.opsecChains) pa.opsecChains = {};
-
-  // Check if source is responding to an OPSEC chain
-  if (playerId === pa.sourceId) {
-    // Find which opsec chain the source needs to respond to
-    const chainPlayerIds = Object.keys(pa.opsecChains).filter(pid => pa.opsecChains[pid].responderId === pa.sourceId);
-    if (chainPlayerIds.length === 0) return { error: 'Not your turn to respond' };
-    const chainPid = chainPlayerIds[0]; // handle one at a time
-    const chain = pa.opsecChains[chainPid];
-
-    if (response === 'accept') {
-      // Source accepts the block — this player doesn't pay
-      const blockedPlayer = getPlayer(state, chainPid);
-      state.log.push('Action blocked by OPSEC for ' + (blockedPlayer?.name || '?') + '!');
-      delete pa.opsecChains[chainPid];
-      return checkPaymentAllDone(state, pa);
-    } else if (response === 'opsec') {
-      const idx = responder.hand.findIndex(c => c.action === 'opsec');
-      if (idx < 0) return { error: 'No OPSEC card in hand' };
-      const opsecCard = responder.hand.splice(idx, 1)[0];
-      state.discardPile.push(opsecCard);
-      chain.chain++;
-      chain.responderId = chainPid;
-      state.log.push(responder.name + ' counters OPSEC! ' + getPlayer(state, chainPid).name + ' can respond...');
-      return { ok: true, opsec: true };
-    }
-    return { error: 'Invalid response' };
-  }
-
-  // Check if this player is in an OPSEC chain (being asked to respond after source countered)
-  if (pa.opsecChains[playerId] && pa.opsecChains[playerId].responderId === playerId) {
-    const chain = pa.opsecChains[playerId];
-    if (response === 'accept') {
-      // Player accepts — action goes through, they must pay
-      delete pa.opsecChains[playerId];
-      pa.pending.push(playerId); // put back in pending so they pay
-      state.log.push(responder.name + ' accepts — must pay.');
-      return { ok: true };
-    } else if (response === 'opsec') {
-      const idx = responder.hand.findIndex(c => c.action === 'opsec');
-      if (idx < 0) return { error: 'No OPSEC card in hand' };
-      const opsecCard = responder.hand.splice(idx, 1)[0];
-      state.discardPile.push(opsecCard);
-      chain.chain++;
-      chain.responderId = pa.sourceId;
-      state.log.push(responder.name + ' plays OPSEC again! ' + source.name + ' can counter...');
-      return { ok: true, opsec: true };
-    }
-    return { error: 'Invalid response' };
-  }
-
-  // Regular pending player responding
-  if (!pa.pending?.includes(playerId)) return { error: 'Not your turn to respond' };
-
-  if (response === 'opsec') {
-    const idx = responder.hand.findIndex(c => c.action === 'opsec');
-    if (idx < 0) return { error: 'No OPSEC card in hand' };
-    const opsecCard = responder.hand.splice(idx, 1)[0];
-    state.discardPile.push(opsecCard);
-    // Remove from pending, create opsec chain
-    pa.pending = pa.pending.filter(id => id !== playerId);
-    pa.opsecChains[playerId] = { chain: 1, responderId: pa.sourceId };
-    state.log.push(responder.name + ' plays OPSEC! ' + source.name + ' can counter...');
-    return { ok: true, opsec: true };
-  }
-
-  if (response === 'accept') {
-    // Process payment directly — set _lastPayer so advancePending removes them
-    pa._lastPayer = playerId;
-    const result = processPayment(state, pa, responder, source, paymentCards);
-    if (result.needPayment) { delete pa._lastPayer; return result; }
-    return checkPaymentAllDone(state, pa);
-  }
-
-  return { error: 'Invalid response' };
-}
-
-function checkPaymentAllDone(state, pa) {
-  if (pa.pending.length === 0 && Object.keys(pa.opsecChains || {}).length === 0) {
-    state.pendingAction = null;
-    state.turnPhase = 'play';
-    return { ok: true };
-  }
-  return { ok: true, morePending: true };
-}
-
-function executeAction(state, pa, accepterId, paymentCards) {
-  const source = getPlayer(state, pa.sourceId);
-  const wasBlocked = (pa._opsecChain || 0) % 2 === 1 && accepterId === pa.sourceId;
-
-  if (wasBlocked) {
-    state.log.push('Action blocked by OPSEC!');
-    return advancePending(state);
-  }
+  const target = getPlayer(state, entry.id);
+  if (!source || !target) return finishEntry(state, pa, entry);
 
   switch (pa.type) {
-    case 'payment':
-    case 'payment_all': {
-      const payer = getPlayer(state, pa.responderId);
-      return processPayment(state, pa, payer, source, paymentCards);
+    case 'payment': {
+      const result = processPayment(state, pa, target, source, paymentCards);
+      if (result.needPayment) return result;
+      return finishEntry(state, pa, entry);
     }
 
     case 'steal_set': {
-      const target = getPlayer(state, pa.targetId);
       const col = pa.color;
-      const stolen = target.properties[col] || [];
-      if (!source.properties[col]) source.properties[col] = [];
-      source.properties[col].push(...stolen);
+      const beforeSource = completedColors(source);
+      const stolen = (target.properties[col] || []).slice();
       target.properties[col] = [];
+      if (!source.properties[col]) source.properties[col] = [];
+      for (const card of stolen) { card.placedColor = col; source.properties[col].push(card); }
       if (target.upgrades[col]) {
         source.upgrades[col] = [...(source.upgrades[col] || []), ...target.upgrades[col]];
         delete target.upgrades[col];
       }
       state.log.push(source.name + ' seized ' + target.name + '\'s ' + COLORS[col].name + ' set!');
+      emit(state, 'set_stolen', {
+        actor: source.id, from: target.id, color: col, cards: stolen.map(publicCard),
+      });
       recordStolenProperties(state, source.id, stolen.length);
+      emitSetChanges(state, source, beforeSource);
       checkWin(state, source.id);
-      return advancePending(state);
+      return finishEntry(state, pa, entry);
     }
 
     case 'steal_property': {
-      const target = getPlayer(state, pa.targetId);
       const col = pa.targetColor;
+      const beforeSource = completedColors(source);
       const idx = (target.properties[col] || []).findIndex(c => c.id === pa.targetCardId);
       if (idx >= 0) {
         const card = target.properties[col].splice(idx, 1)[0];
-        const destColor = card.placedColor || card.color || col;
-        if (!source.properties[destColor]) source.properties[destColor] = [];
-        source.properties[destColor].push(card);
-        state.log.push(source.name + ' requisitioned ' + card.name + ' from ' + target.name);
+        const destColor = receiveProperty(state, source, card, card.placedColor || card.color || col);
+        state.log.push(source.name + (pa.action === 'chud' ? ' commandeered ' : ' requisitioned ')
+          + card.name + ' from ' + target.name + (pa.action === 'chud' ? '!' : ''));
+        emit(state, 'steal', {
+          actor: source.id, from: target.id, card: publicCard(card),
+          toColor: destColor, action: pa.action,
+        });
         if (!isSetComplete(target, col)) discardUpgrades(state, target, col);
         recordStolenProperties(state, source.id, 1);
+        emitSetChanges(state, source, beforeSource);
         checkWin(state, source.id);
       }
-      return advancePending(state);
+      return finishEntry(state, pa, entry);
     }
 
     case 'swap': {
-      const target = getPlayer(state, pa.targetId);
+      const beforeSource = completedColors(source);
+      const beforeTarget = completedColors(target);
       let myCard=null, myColor=null, theirCard=null, theirColor=null;
       for (const [col, cards] of Object.entries(source.properties)) {
         const i = cards.findIndex(c => c.id === pa.myCardId);
@@ -774,52 +924,39 @@ function executeAction(state, pa, accepterId, paymentCards) {
         if (i >= 0) { theirCard = cards.splice(i, 1)[0]; theirColor = col; break; }
       }
       if (myCard && theirCard) {
-        if (!source.properties[theirColor]) source.properties[theirColor] = [];
-        if (!target.properties[myColor]) target.properties[myColor] = [];
-        source.properties[theirColor].push(theirCard);
-        target.properties[myColor].push(myCard);
+        const gotColor = receiveProperty(state, source, theirCard, theirCard.placedColor || theirColor);
+        const gaveColor = receiveProperty(state, target, myCard, myCard.placedColor || myColor);
         state.log.push(source.name + ' swapped properties with ' + target.name);
+        emit(state, 'swap', {
+          actor: source.id, target: target.id,
+          gave: publicCard(myCard), took: publicCard(theirCard),
+          gaveColor, tookColor: gotColor,
+        });
         if (!isSetComplete(source, myColor)) discardUpgrades(state, source, myColor);
         if (!isSetComplete(target, theirColor)) discardUpgrades(state, target, theirColor);
+        emitSetChanges(state, source, beforeSource);
+        emitSetChanges(state, target, beforeTarget);
         checkWin(state, source.id);
+      } else {
+        // Restore anything we pulled out before discovering the other side was gone.
+        if (myCard) receiveProperty(state, source, myCard, myColor);
+        if (theirCard) receiveProperty(state, target, theirCard, theirColor);
       }
-      return advancePending(state);
-    }
-
-    case 'chud': {
-      const target = getPlayer(state, pa.targetId);
-      const col = pa.targetColor;
-      const idx = (target.properties[col] || []).findIndex(c => c.id === pa.targetCardId);
-      if (idx >= 0) {
-        const card = target.properties[col].splice(idx, 1)[0];
-        const destColor = card.placedColor || card.color || col;
-        if (!source.properties[destColor]) source.properties[destColor] = [];
-        source.properties[destColor].push(card);
-        state.log.push(source.name + ' commandeered ' + card.name + ' from ' + target.name + '!');
-        if (!isSetComplete(target, col)) discardUpgrades(state, target, col);
-        recordStolenProperties(state, source.id, 1);
-        const won = checkWin(state, source.id);
-        if (won) return advancePending(state);
-      }
-      // CHUD also charges 2M
-      state.pendingAction = {
-        type: 'payment', action: 'chud_payment',
-        sourceId: pa.sourceId, targetId: pa.targetId,
-        amount: 2, responderId: pa.targetId,
-      };
-      state.log.push(target.name + ' must also pay ' + source.name + ' 2M (CHUD tax)');
-      return { ok: true, morePending: true };
+      return finishEntry(state, pa, entry);
     }
   }
-  return advancePending(state);
+  return finishEntry(state, pa, entry);
 }
 
 function processPayment(state, pa, payer, payee, selectedCardIds) {
+  const payable = payableCards(payer);
+
   if (!selectedCardIds || !Array.isArray(selectedCardIds) || selectedCardIds.length === 0) {
-    const payerTotal = playerTotalValue(payer);
-    if (payerTotal === 0) {
+    // §3.4 — "nothing to pay with" means no cards at all, not merely no *value*.
+    if (payable.length === 0) {
       state.log.push(payer.name + ' has nothing to pay!');
-      return advancePending(state);
+      emit(state, 'insolvent', { from: payer.id, to: payee.id, amount: pa.amount });
+      return { ok: true };
     }
     return { error: 'Select cards to pay with', needPayment: true, amount: pa.amount };
   }
@@ -846,57 +983,47 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
     return { error: 'Payment selection contains an invalid card', needPayment: true, amount: pa.amount };
   }
 
-  const payerTotal = playerTotalValue(payer);
-  if (totalValue < pa.amount && totalValue < payerTotal)
-    return { error: 'You must pay at least ' + pa.amount + 'M (or everything you have)', needPayment: true };
+  // Short payments are only legal when the payer surrenders every card they own —
+  // zero-value wilds included (§3.4).
+  if (totalValue < pa.amount && selectedCardIds.length < payable.length) {
+    return {
+      error: 'You must pay at least ' + pa.amount + 'M (or surrender every card you have)',
+      needPayment: true, amount: pa.amount,
+    };
+  }
+
+  const beforePayee = completedColors(payee);
+  const beforePayer = completedColors(payer);
+  const paid = [];
 
   bankCards.sort((a,b) => b.idx - a.idx);
   bankCards.forEach(({ idx, card }) => {
     payer.bank.splice(idx, 1);
     payee.bank.push(card);
+    paid.push(card);
   });
 
   propCards.forEach(({ color, card }) => {
     const ci = payer.properties[color].findIndex(c => c.id === card.id);
     if (ci >= 0) {
       payer.properties[color].splice(ci, 1);
-      const destColor = card.placedColor || card.color || color;
-      if (!payee.properties[destColor]) payee.properties[destColor] = [];
-      payee.properties[destColor].push(card);
+      receiveProperty(state, payee, card, card.placedColor || card.color || color);
+      paid.push(card);
     }
     if (!isSetComplete(payer, color)) discardUpgrades(state, payer, color);
   });
 
   state.log.push(payer.name + ' paid ' + totalValue + 'M to ' + payee.name);
+  emit(state, 'payment', {
+    from: payer.id, to: payee.id, total: totalValue,
+    cards: paid.map(publicCard), reason: pa.action,
+  });
   state.stats.payments.count++;
   state.stats.payments.total += totalValue;
   state.stats.payments.biggest = Math.max(state.stats.payments.biggest, totalValue);
+  emitSetChanges(state, payee, beforePayee);
+  emitSetChanges(state, payer, beforePayer);
   checkWin(state, payee.id);
-  return advancePending(state);
-}
-
-function advancePending(state) {
-  const pa = state.pendingAction;
-  if (!pa) { state.turnPhase = 'play'; return { ok: true }; }
-
-  if (pa.type === 'payment_all') {
-    // For simultaneous payment_all, the payer ID is in pa._lastPayer (set by processPayment caller)
-    // Remove the payer from pending
-    if (pa._lastPayer) {
-      pa.pending = pa.pending.filter(id => id !== pa._lastPayer);
-      delete pa._lastPayer;
-    }
-    // Check if all done
-    if (pa.pending.length === 0 && Object.keys(pa.opsecChains || {}).length === 0) {
-      state.pendingAction = null;
-      state.turnPhase = 'play';
-      return { ok: true };
-    }
-    return { ok: true, morePending: true };
-  }
-
-  state.pendingAction = null;
-  state.turnPhase = 'play';
   return { ok: true };
 }
 
@@ -925,8 +1052,10 @@ function moveProperty(state, playerId, cardId, toColor) {
   // Validate the target color is valid for this wild
   if (card.colors[0] !== 'any' && !card.colors.includes(toColor))
     return { error: 'This wild cannot go on ' + COLORS[toColor].name };
+  if (zoneFull(p, toColor))
+    return { error: COLORS[toColor].name + ' already holds a full set (' + COLORS[toColor].size + ')' };
 
-  // Move the card
+  const before = completedColors(p);
   p.properties[fromColor].splice(fromIdx, 1);
   if (!p.properties[toColor]) p.properties[toColor] = [];
   card.placedColor = toColor;
@@ -936,6 +1065,8 @@ function moveProperty(state, playerId, cardId, toColor) {
   if (!isSetComplete(p, fromColor)) discardUpgrades(state, p, fromColor);
 
   state.log.push(p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
+  emit(state, 'move_property', { actor: playerId, card: publicCard(card), from: fromColor, to: toColor });
+  emitSetChanges(state, p, before);
   checkWin(state, playerId);
   return { ok: true };
 }
@@ -949,11 +1080,8 @@ function scoop(state, playerId) {
   if (!p) return { error: 'Player not found' };
   if (p.eliminated) return { error: 'Already eliminated' };
 
-  // Discard all hand cards
   while (p.hand.length > 0) state.discardPile.push(p.hand.pop());
-  // Discard all bank cards
   while (p.bank.length > 0) state.discardPile.push(p.bank.pop());
-  // Discard all property cards
   for (const [color, cards] of Object.entries(p.properties)) {
     while (cards.length > 0) state.discardPile.push(cards.pop());
     discardUpgrades(state, p, color);
@@ -963,37 +1091,24 @@ function scoop(state, playerId) {
   p.eliminated = true;
 
   state.log.push(p.name + ' scooped! All cards discarded.');
+  emit(state, 'scoop', { actor: playerId });
+  state._handSnapshot = totalHandCards(state);
 
-  // Handle pending actions involving this player
+  // Unwind any pending action this player is part of.
   const pa = state.pendingAction;
   if (pa) {
     if (pa.sourceId === playerId) {
-      // Scooper was the one who played the action — cancel it
       state.pendingAction = null;
       state.turnPhase = 'play';
-    } else if (pa.type === 'payment_all') {
-      // Remove scooper from pending
-      if (pa.pending) pa.pending = pa.pending.filter(id => id !== playerId);
-      // Remove from opsec chains
-      if (pa.opsecChains && pa.opsecChains[playerId]) delete pa.opsecChains[playerId];
-      // Also resolve any chain where scooper is the responderId
-      if (pa.opsecChains) {
-        for (const [pid, chain] of Object.entries(pa.opsecChains)) {
-          if (chain.responderId === playerId) {
-            // Scooper was supposed to respond — treat as blocked
-            delete pa.opsecChains[pid];
-          }
-        }
+    } else {
+      pa.targets = pa.targets.filter(t => t.id !== playerId);
+      if (pa.targets.length === 0) {
+        state.pendingAction = null;
+        state.turnPhase = 'play';
       }
-      checkPaymentAllDone(state, pa);
-    } else if (pa.responderId === playerId) {
-      // Scooper was the single responder — auto-accept
-      state.pendingAction = null;
-      state.turnPhase = 'play';
     }
   }
 
-  // If it was the scooper's turn, advance
   const wasMyTurn = currentPlayer(state).id === playerId;
   if (wasMyTurn) {
     delete state._surgeOps;
@@ -1002,21 +1117,19 @@ function scoop(state, playerId) {
     state.playsRemaining = 3;
   }
 
-  // Advance past eliminated players
   const activePlayers = state.players.filter(x => !x.eliminated);
   if (activePlayers.length <= 1) {
-    // Last player standing wins
     if (activePlayers.length === 1) {
-      state.phase = 'finished';
-      state.winner = activePlayers[0].id;
-      state.log.push(activePlayers[0].name + ' wins — all other players scooped!');
+      finishGame(state, activePlayers[0].id, 'last_standing',
+        activePlayers[0].name + ' wins — all other players scooped!');
     }
     return { ok: true };
   }
 
   if (wasMyTurn) {
-    // Find next non-eliminated player
     advanceToNextActive(state);
+    emit(state, 'turn_end', { actor: playerId });
+    emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining });
     state.log.push(currentPlayer(state).name + '\'s turn');
   }
 
@@ -1033,6 +1146,21 @@ function advanceToNextActive(state) {
 
 /* ── End turn ────────────────────────────────────────────────────────── */
 
+// §3.6 — the table is dead when deck and discard are empty and a full round passes
+// with no card leaving any hand. Most sets wins; net worth breaks the tie.
+function endInStalemate(state) {
+  const active = state.players.filter(p => !p.eliminated);
+  const ranked = active.slice().sort((a, b) => {
+    const sets = completedSets(b) - completedSets(a);
+    if (sets !== 0) return sets;
+    return playerNetWorth(b) - playerNetWorth(a);
+  });
+  const winner = ranked[0] || null;
+  finishGame(state, winner ? winner.id : null, 'stalemate',
+    'Deck and discard are empty and nobody can move — ' +
+    (winner ? winner.name + ' wins on completed sets and net worth.' : 'the game is a draw.'));
+}
+
 function endTurn(state, playerId, discardIds) {
   const phaseError = ensurePlaying(state);
   if (phaseError) return phaseError;
@@ -1040,33 +1168,54 @@ function endTurn(state, playerId, discardIds) {
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase === 'action_response') return { error: 'Resolve pending action first' };
 
-  if (p.hand.length > 7) {
+  if (p.hand.length > HAND_LIMIT) {
+    const excess = p.hand.length - HAND_LIMIT;
     if (!discardIds || !Array.isArray(discardIds))
-      return { error: 'Must discard to 7 cards', needDiscard: true, excess: p.hand.length - 7 };
-    if (discardIds.length !== p.hand.length - 7)
-      return { error: 'Discard exactly ' + (p.hand.length - 7) + ' cards' };
+      return { error: 'Must discard to ' + HAND_LIMIT + ' cards', needDiscard: true, excess };
+    if (discardIds.length !== excess)
+      return { error: 'Discard exactly ' + excess + ' cards' };
     if (hasDuplicates(discardIds)) return { error: 'Discarded cards must be unique' };
-    const toDiscard = discardIds.map(id => {
-      const idx = p.hand.findIndex(c => c.id === id);
-      return idx >= 0 ? idx : -1;
-    });
+    const toDiscard = discardIds.map(id => p.hand.findIndex(c => c.id === id));
     if (toDiscard.some(i => i < 0)) return { error: 'Discard selection contains an invalid card' };
     toDiscard.sort((a,b) => b-a);
-    toDiscard.forEach(idx => state.discardPile.push(p.hand.splice(idx, 1)[0]));
+    const discarded = [];
+    toDiscard.forEach(idx => {
+      const card = p.hand.splice(idx, 1)[0];
+      state.discardPile.push(card);
+      discarded.push(card);
+    });
+    emit(state, 'discard', { actor: playerId, cards: discarded.map(publicCard) });
   }
 
   delete state._surgeOps;
+
+  const handsNow = totalHandCards(state);
+  const dry = state.deck.length === 0 && state.discardPile.length === 0;
+  if (dry && handsNow === state._handSnapshot) state._idleTurns = (state._idleTurns || 0) + 1;
+  else state._idleTurns = 0;
+  state._handSnapshot = handsNow;
+
+  emit(state, 'turn_end', { actor: playerId });
+
+  const activeCount = state.players.filter(x => !x.eliminated).length;
+  if ((state._idleTurns || 0) >= activeCount) {
+    endInStalemate(state);
+    return { ok: true, stalemate: true };
+  }
+
   advanceToNextActive(state);
   state.turnPhase = 'draw';
   state.playsRemaining = 3;
   state.stats.turns++;
   state.log.push(currentPlayer(state).name + '\'s turn');
+  emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining });
   return { ok: true };
 }
 
 /* ── Player view (hides other hands) ─────────────────────────────────── */
 
 function getPlayerView(state, playerId) {
+  const tail = (state.events || []).slice(-EVENT_TAIL).map(ev => redactEvent(ev, playerId));
   return {
     phase: state.phase,
     turnPhase: state.turnPhase,
@@ -1076,10 +1225,16 @@ function getPlayerView(state, playerId) {
     discardTop: state.discardPile.length > 0 ? state.discardPile[state.discardPile.length-1] : null,
     discardPile: [...state.discardPile].reverse(),
     pendingAction: state.pendingAction,
+    responders: pendingResponders(state),
     winner: state.winner,
+    endReason: state.endReason || null,
     surgeOps: !!state._surgeOps,
+    handLimit: HAND_LIMIT,
+    setsToWin: SETS_TO_WIN,
     stats: state.stats,
     log: state.log.slice(-20),
+    events: tail,
+    eventSeq: state.eventSeq || 0,
     players: state.players.map(p => ({
       id: p.id, name: p.name,
       handCount: p.hand.length,
@@ -1089,13 +1244,22 @@ function getPlayerView(state, playerId) {
       upgrades: p.upgrades,
       completedSets: completedSets(p),
       eliminated: !!p.eliminated,
+      bankValue: p.bank.reduce((s, c) => s + c.value, 0),
+      propertyValue: Object.values(p.properties).reduce(
+        (s, cards) => s + cards.reduce((t, c) => t + c.value, 0), 0),
+      upgradeValue: playerUpgradeValue(p),
+      payableValue: playerTotalValue(p),
+      netWorth: playerNetWorth(p),
     })),
   };
 }
 
 module.exports = {
-  COLORS, buildDeck, shuffle, createGame, currentPlayer, getPlayer,
-  completedSets, checkWin, isSetComplete, calcRent, playerTotalValue,
+  COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL,
+  buildDeck, shuffle, makeRng, createGame, currentPlayer, getPlayer,
+  completedSets, checkWin, isSetComplete, calcRent, playerTotalValue, playerNetWorth,
+  playerUpgradeValue, payableCards, zoneFull, zoneCount, zoneRequisitionable, legalColorsFor,
   drawCards, playAsMoney, playProperty, playAction, respondToAction,
   moveProperty, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
+  pendingResponders, pendingEntryFor, publicCard,
 };

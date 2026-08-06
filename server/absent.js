@@ -46,49 +46,19 @@ function handleAbsent(room) {
 
     if (room.state.pendingAction) {
       const pa = room.state.pendingAction;
+      const absentResponder = G.pendingResponders(room.state)
+        .find(pid => !broadcast.isConnected(room, pid));
+      if (!absentResponder) return;
 
-      if (pa.type === 'payment_all') {
-        let resolved = false;
-        for (const pid of [...(pa.pending || [])]) {
-          if (!broadcast.isConnected(room, pid)) {
-            const gp = G.getPlayer(room.state, pid);
-            const rpName = gp?.name || '?';
-            let payCards = [];
-            gp.bank.forEach(c => payCards.push(c.id));
-            for (const cards of Object.values(gp.properties))
-              cards.forEach(c => payCards.push(c.id));
-            G.respondToAction(room.state, pid, 'accept', payCards.length > 0 ? payCards : undefined);
-            room.state.log.push(rpName + ' is absent — auto-resolved');
-            resolved = true;
-          }
-        }
-        for (const [pid, chain] of Object.entries(pa.opsecChains || {})) {
-          if (!broadcast.isConnected(room, chain.responderId)) {
-            G.respondToAction(room.state, chain.responderId, 'accept');
-            const gp = G.getPlayer(room.state, chain.responderId);
-            room.state.log.push((gp?.name || '?') + ' is absent — auto-resolved');
-            resolved = true;
-          }
-        }
-        if (resolved) continue;
-        if ((pa.pending?.length > 0) || Object.keys(pa.opsecChains || {}).length > 0) return;
-        continue;
+      const gp = G.getPlayer(room.state, absentResponder);
+      const owed = pa.type === 'payment' && absentResponder !== pa.sourceId ? (pa.amount || 0) : 0;
+      const picked = owed > 0 ? require('./timers').autoPickPayment(gp, owed) : [];
+      const res = G.respondToAction(room.state, absentResponder, 'accept', picked.length > 0 ? picked : undefined);
+      if (res?.needPayment) {
+        G.respondToAction(room.state, absentResponder, 'accept', G.payableCards(gp).map(c => c.id));
       }
-
-      if (pa.responderId && !broadcast.isConnected(room, pa.responderId)) {
-        const gp = G.getPlayer(room.state, pa.responderId);
-        const rpName = gp?.name || '?';
-        let payCards = [];
-        if (pa.type === 'payment') {
-          gp.bank.forEach(c => payCards.push(c.id));
-          for (const cards of Object.values(gp.properties))
-            cards.forEach(c => payCards.push(c.id));
-        }
-        G.respondToAction(room.state, pa.responderId, 'accept', payCards.length > 0 ? payCards : undefined);
-        room.state.log.push(rpName + ' is absent — auto-resolved');
-        continue;
-      }
-      return;
+      room.state.log.push((gp?.name || '?') + ' is absent — auto-resolved');
+      continue;
     }
 
     const cp = G.currentPlayer(room.state);

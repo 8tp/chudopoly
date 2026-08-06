@@ -62,7 +62,7 @@ function send(ws, message) { ws.send(JSON.stringify(message)); }
 test.before(async () => {
   serverProcess = spawn(process.execPath, ['server.js'], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT:String(port), NODE_ENV:'test' },
+    env: { ...process.env, PORT:String(port), NODE_ENV:'test', CHUD_SEED:'integration' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   await waitForServer();
@@ -111,9 +111,31 @@ test('reconnect requires the private token and an available seat', async () => {
 test('quick play creates a live three-player game', async () => {
   const ws = await openClient();
   send(ws, { type:'quick_play', name:'Solo' });
-  await waitMessage(ws, msg => msg.type === 'joined');
+  const joined = await waitMessage(ws, msg => msg.type === 'joined');
   const state = await waitMessage(ws, msg => msg.type === 'state' && msg.phase === 'playing');
   assert.equal(state.players.length, 3);
   assert.equal(state.players.filter(player => player.isBot).length, 2);
   assert.equal(state.game.phase, 'playing');
+
+  const me = state.game.players.find(player => player.id === joined.playerId);
+  assert.equal(me.hand.length, 5);
+  assert.equal(state.game.players.filter(player => player.hand !== undefined).length, 1);
+  assert.ok(state.game.events.some(event => event.t === 'game_start'));
+  const foreignDeal = state.game.events.find(event => event.t === 'deal' && event.to !== joined.playerId);
+  assert.equal(foreignDeal.cards, undefined);
+  assert.equal(foreignDeal.count, 5);
+});
+
+test('CHUD_SEED makes the served shuffle reproducible', async () => {
+  const hands = [];
+  for (let i = 0; i < 2; i++) {
+    const ws = await openClient();
+    send(ws, { type:'quick_play', name:`Seeded${i}` });
+    const joined = await waitMessage(ws, msg => msg.type === 'joined');
+    const state = await waitMessage(ws, msg => msg.type === 'state' && msg.phase === 'playing');
+    const me = state.game.players.find(player => player.id === joined.playerId);
+    hands.push(me.hand.map(card => card.id).join(','));
+    send(ws, { type:'leave_room' });
+  }
+  assert.equal(hands[0], hands[1]);
 });

@@ -71,15 +71,7 @@ function autoResolveResponse(room) {
   const pa = room.state.pendingAction;
   if (!pa) return;
 
-  let responderId = pa.responderId;
-  if (pa.type === 'payment_all' && pa.pending?.length > 0) {
-    responderId = pa.pending[0];
-  }
-  if (pa.opsecChains) {
-    for (const [pid, chain] of Object.entries(pa.opsecChains)) {
-      if (chain.responderId) { responderId = chain.responderId; break; }
-    }
-  }
+  const responderId = G.pendingResponders(room.state)[0];
   if (!responderId) return;
 
   const responder = G.getPlayer(room.state, responderId);
@@ -87,10 +79,10 @@ function autoResolveResponse(room) {
 
   room.state.log.push(responder.name + '\'s response timed out — auto-accepting');
 
-  const res = G.respondToAction(room.state, responderId, 'accept', autoPickPayment(responder, pa.amount || 0));
+  const owed = pa.type === 'payment' && responderId !== pa.sourceId ? (pa.amount || 0) : 0;
+  const res = G.respondToAction(room.state, responderId, 'accept', autoPickPayment(responder, owed));
   if (res.needPayment) {
-    const cards = autoPickPayment(responder, res.amount || pa.amount || 0);
-    G.respondToAction(room.state, responderId, 'accept', cards);
+    G.respondToAction(room.state, responderId, 'accept', G.payableCards(responder).map(c => c.id));
   }
 
   if (room.state.pendingAction) {
@@ -129,4 +121,7 @@ function autoPickPayment(player, amount) {
   return cards;
 }
 
-module.exports = { init, startTurnTimer, clearTurnTimer, startResponseTimer, clearResponseTimer };
+module.exports = {
+  init, startTurnTimer, clearTurnTimer, startResponseTimer, clearResponseTimer,
+  autoPickPayment, autoResolveResponse,
+};

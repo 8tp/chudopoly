@@ -26,11 +26,31 @@ function sendJoined(ws, room, player) {
   });
 }
 
+let seedWarned = false;
+
+// Dev/harness determinism hook (ARCHITECTURE §0.7). Refused in production so a
+// misconfigured deploy can never hand every room the same deck.
+function seedFromEnv(env = process.env) {
+  const raw = env.CHUD_SEED;
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (env.NODE_ENV === 'production') {
+    if (!seedWarned) {
+      seedWarned = true;
+      console.warn('[SEED] CHUD_SEED is ignored in production');
+    }
+    return null;
+  }
+  return String(raw);
+}
+
 function startRoomGame(room, turnTimeout = 60, responseTimeout = 30) {
   room.phase = 'playing';
   room.turnTimeout = Math.max(0, Math.min(300, Number(turnTimeout) || 0));
   room.responseTimeout = Math.max(0, Math.min(120, Number(responseTimeout) || 0));
-  room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })));
+  room.gameCount = (room.gameCount || 0) + 1;
+  const seedBase = seedFromEnv();
+  const options = seedBase === null ? {} : { seed: `${seedBase}#${room.gameCount}` };
+  room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })), options);
   if (room.turnTimeout > 0) timers.startTurnTimer(room);
   broadcast.broadcastAndScheduleBot(room);
 }
@@ -420,4 +440,4 @@ function handleClose(state) {
   broadcast.broadcastAndScheduleBot(room);
 }
 
-module.exports = { init, handleMessage, handleClose };
+module.exports = { init, handleMessage, handleClose, seedFromEnv };

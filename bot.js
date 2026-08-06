@@ -1,6 +1,12 @@
 // bot.js — Bot AI engine for Chudopoly GO with 5 personality modes
 const G = require('./game');
 
+/* ── Randomness ─────────────────────────────────────────────────────── */
+// Injectable so simulate.js can run reproducible matrices; defaults to Math.random.
+let RND = Math.random;
+function rnd() { return RND(); }
+function setRng(fn) { RND = typeof fn === 'function' ? fn : Math.random; }
+
 /* ── Timing ─────────────────────────────────────────────────────────── */
 
 const DELAYS = {
@@ -14,7 +20,7 @@ const DELAYS = {
 function getDelay(mode, action) {
   const d = DELAYS[mode] || DELAYS.neutral;
   const range = d[action] || d.play;
-  return range[0] + Math.random() * (range[1] - range[0]);
+  return range[0] + rnd() * (range[1] - range[0]);
 }
 
 /* ── Scheduling ─────────────────────────────────────────────────────── */
@@ -78,22 +84,9 @@ function getBotMode(room, botId) {
 /* ── Find which bot needs to respond ────────────────────────────────── */
 
 function findRespondingBot(room, state) {
-  const pa = state.pendingAction;
-  if (!pa) return null;
-
-  if (pa.type === 'payment_all') {
-    for (const pid of (pa.pending || [])) {
-      if (room.players.find(p => p.id === pid)?.isBot) return pid;
-    }
-    for (const [pid, chain] of Object.entries(pa.opsecChains || {})) {
-      const resp = room.players.find(p => p.id === chain.responderId);
-      if (resp?.isBot) return chain.responderId;
-    }
-  } else {
-    if (pa.responderId) {
-      const resp = room.players.find(p => p.id === pa.responderId);
-      if (resp?.isBot) return pa.responderId;
-    }
+  if (!state.pendingAction) return null;
+  for (const pid of G.pendingResponders(state)) {
+    if (room.players.find(p => p.id === pid)?.isBot) return pid;
   }
   return null;
 }
@@ -160,7 +153,7 @@ function botTakeTurn(room, botId, callbacks) {
   // PLAY PHASE
   if (state.turnPhase === 'play') {
     // Chud mode: random chance to end turn early (reduced from 40% to 20%)
-    if (mode === 'chud' && state.playsRemaining > 0 && state.playsRemaining < 3 && Math.random() < 0.2) {
+    if (mode === 'chud' && state.playsRemaining > 0 && state.playsRemaining < 3 && rnd() < 0.2) {
       botEndTurn(state, room, botId, mode, callbacks);
       return;
     }
@@ -210,13 +203,18 @@ function botRespond(room, botId, callbacks) {
   scheduleBotAction(room, callbacks);
 }
 
-function acceptAction(state, bot, botId, pa, mode) {
-  const needsPayment = pa.type === 'payment' || pa.type === 'payment_all' ||
-    pa.type === 'chud' || pa.action === 'chud_payment' ||
-    pa.action === 'finance_office' || pa.action === 'roll_call' || pa.action === 'rent';
+function amountOwed(state, pa, botId) {
+  const entry = G.pendingEntryFor(state, botId);
+  if (!entry || pa.type !== 'payment') return 0;
+  if (botId === pa.sourceId || entry.depth % 2 === 1) return 0;  // conceding a block, not paying
+  return pa.amount || 0;
+}
 
-  if (needsPayment && pa.amount > 0) {
-    const payCards = selectPaymentCards(bot, pa.amount, mode);
+function acceptAction(state, bot, botId, pa, mode) {
+  const owed = amountOwed(state, pa, botId);
+
+  if (owed > 0) {
+    const payCards = selectPaymentCards(bot, owed, mode);
     const result = G.respondToAction(state, botId, 'accept', payCards.length > 0 ? payCards : undefined);
     if (result?.needPayment) {
       const allCards = getAllPayableCardIds(bot);
@@ -232,17 +230,17 @@ function acceptAction(state, bot, botId, pa, mode) {
 function shouldPlayOpsecDecision(state, pa, mode, botId) {
   const bot = G.getPlayer(state, botId);
   const opsecCount = bot ? bot.hand.filter(c => c.action === 'opsec').length : 0;
-  const isChainResponse = pa._opsecChain > 0 ||
-    (pa.opsecChains && Object.values(pa.opsecChains).some(c => c.responderId === botId));
+  const entry = G.pendingEntryFor(state, botId);
+  const isChainResponse = !!entry && entry.depth > 0;
 
   switch (mode) {
     case 'random':
       // Even random mode should have some survival instinct
       if (pa.action === 'inspector_general') return true;
-      if (pa.action === 'chud') return Math.random() > 0.3;
-      if (pa.action === 'roll_call') return Math.random() > 0.8; // rarely block small stuff
-      if (pa.action === 'rent' && pa.amount <= 2) return Math.random() > 0.8;
-      return Math.random() > 0.5;
+      if (pa.action === 'chud') return rnd() > 0.3;
+      if (pa.action === 'roll_call') return rnd() > 0.8; // rarely block small stuff
+      if (pa.action === 'rent' && pa.amount <= 2) return rnd() > 0.8;
+      return rnd() > 0.5;
 
     case 'conservative':
       // Smart defense: save OPSEC for high-value threats
@@ -258,7 +256,6 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       if (pa.action === 'rent' && pa.amount >= 4) return true;
       if (pa.action === 'rent' && pa.amount >= 2 && opsecCount > 1) return true;
       if (pa.action === 'roll_call') return opsecCount > 1; // save for bigger threats
-      if (pa.action === 'chud_payment') return false;
       if (isChainResponse) return true;
       return false;
 
@@ -267,8 +264,7 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       if (pa.action === 'chud') return true;
       if (pa.action === 'finance_office') return true;
       if (pa.action === 'rent' && pa.amount >= 4) return true;
-      if (pa.action === 'midnight_requisition') return Math.random() > 0.3;
-      if (pa.action === 'chud_payment') return false;
+      if (pa.action === 'midnight_requisition') return rnd() > 0.3;
       if (isChainResponse) return true;
       return false;
 
@@ -278,7 +274,7 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       if (pa.action === 'chud') {
         // Check if the targeted card is from a near-complete set
         const mySets = G.completedSets(bot);
-        return mySets >= 2 || Math.random() > 0.3;
+        return mySets >= 2 || rnd() > 0.3;
       }
       if (isChainResponse) return true;
       // Don't waste OPSEC on money demands — save for property theft
@@ -286,13 +282,13 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
 
     case 'chud':
       // Chaotic OPSEC: block small stuff, let big stuff through
-      if (pa.action === 'roll_call') return Math.random() > 0.3;
-      if (pa.action === 'rent' && pa.amount <= 3) return Math.random() > 0.4;
-      if (pa.action === 'inspector_general') return Math.random() > 0.6; // 40% chance to block
-      if (pa.action === 'chud') return Math.random() > 0.7; // 30% chance to block
-      if (pa.action === 'finance_office') return Math.random() > 0.5;
-      if (pa.action === 'midnight_requisition') return Math.random() > 0.5;
-      return Math.random() > 0.6;
+      if (pa.action === 'roll_call') return rnd() > 0.3;
+      if (pa.action === 'rent' && pa.amount <= 3) return rnd() > 0.4;
+      if (pa.action === 'inspector_general') return rnd() > 0.6; // 40% chance to block
+      if (pa.action === 'chud') return rnd() > 0.7; // 30% chance to block
+      if (pa.action === 'finance_office') return rnd() > 0.5;
+      if (pa.action === 'midnight_requisition') return rnd() > 0.5;
+      return rnd() > 0.6;
 
     default:
       return false;
@@ -316,11 +312,11 @@ function decideBotPlay(state, botId, mode) {
   if (played >= 1) {
     // After 1 play: small chance to stop. After 2 plays: bigger chance.
     const holdChance = played === 1
-      ? (mode === 'conservative' ? 0.08 : mode === 'random' ? 0.12 : mode === 'neutral' ? 0.05 : 0)
+      ? (mode === 'conservative' ? 0.08 : mode === 'random' ? 0.08 : mode === 'neutral' ? 0.05 : 0)
       : (mode === 'conservative' ? 0.25 : mode === 'neutral' ? 0.15
-        : mode === 'random' ? 0.25 : mode === 'aggressive' ? 0.08 : 0);
+        : mode === 'random' ? 0.15 : mode === 'aggressive' ? 0.08 : 0);
     // Don't hold back if we have 8+ cards (need to discard anyway)
-    if (holdChance > 0 && bot.hand.length <= 7 && Math.random() < holdChance) return null;
+    if (holdChance > 0 && bot.hand.length <= 7 && rnd() < holdChance) return null;
   }
   // Also: if only OPSEC cards remain in hand, conservative/neutral hold them
   if ((mode === 'conservative' || mode === 'neutral') && played >= 1) {
@@ -341,8 +337,9 @@ function decideBotPlay(state, botId, mode) {
 /* ── RANDOM MODE — unpredictable but slightly smarter ──────────────── */
 
 function decideRandom(state, bot, botId) {
-  // Lower early-end chance: 15% instead of 30%
-  if (Math.random() < 0.15) return null;
+  // A 15% per-decision pass compounded with decideBotPlay's holdback into a 2.5%
+  // mixed winrate (§3 floor is 8%). 5% → 8.6%/10.0% on two seeds, 2% → 11.8%/14.1%.
+  if (rnd() < 0.02) return null;
 
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
@@ -352,40 +349,54 @@ function decideRandom(state, bot, botId) {
   shuffle(indices);
 
   // Slight bias: if we have properties, 60% chance to play them first
-  if (Math.random() < 0.6) {
+  if (rnd() < 0.6) {
     for (const i of indices) {
-      const c = hand[i];
-      if (c.type === 'property') return { type: 'play_property', cardIndex: i };
-      if (c.type === 'wild_property') {
-        const validColors = c.colors[0] === 'any' ? Object.keys(G.COLORS) : c.colors;
-        const color = validColors[Math.floor(Math.random() * validColors.length)];
-        return { type: 'play_property', cardIndex: i, targetColor: color };
-      }
+      const play = randomPropertyPlay(bot, hand[i], i);
+      if (play) return play;
     }
   }
 
   for (const i of indices) {
     const c = hand[i];
 
-    if (c.type === 'property') {
-      return { type: 'play_property', cardIndex: i };
-    }
-    if (c.type === 'wild_property') {
-      const validColors = c.colors[0] === 'any' ? Object.keys(G.COLORS) : c.colors;
-      const color = validColors[Math.floor(Math.random() * validColors.length)];
-      return { type: 'play_property', cardIndex: i, targetColor: color };
-    }
+    const propPlay = randomPropertyPlay(bot, c, i);
+    if (propPlay) return propPlay;
     if (c.type === 'money') {
       return { type: 'play_money', cardIndex: i };
     }
     if (c.type === 'rent') {
       const color = randomRentColor(bot, c);
-      if (color) return { type: 'play_action', cardIndex: i, targetColor: color };
+      const play = makeRentPlay(bot, hand, i, color, opponents, 'random');
+      if (play) return play;
     }
     if (c.type === 'action') {
       const action = tryRandomAction(state, bot, botId, c, i, opponents);
       if (action) return action;
     }
+  }
+  return null;
+}
+
+// Random/chud placement still has to respect the zone cap (§3.5).
+// Uniform-random colors scattered wilds across all ten sets and random never finished
+// one (1.2% winrate); a 70% pull toward a colour already started keeps the personality
+// unpredictable but lets it actually win.
+function randomWildColor(bot, card) {
+  const open = openColorsForWild(bot, card);
+  if (open.length === 0) return null;
+  const started = open.filter(color => (bot.properties[color] || []).length > 0);
+  const pool = started.length > 0 && rnd() < 0.7 ? started : open;
+  return pool[Math.floor(rnd() * pool.length)];
+}
+
+function randomPropertyPlay(bot, card, idx) {
+  if (card.type === 'property') {
+    return G.zoneFull(bot, card.color) ? null : { type: 'play_property', cardIndex: idx };
+  }
+  if (card.type === 'wild_property') {
+    const color = randomWildColor(bot, card);
+    if (!color) return null;
+    return { type: 'play_property', cardIndex: idx, targetColor: color };
   }
   return null;
 }
@@ -401,9 +412,9 @@ function tryRandomAction(state, bot, botId, card, idx, opponents) {
       if (bot.hand.some(c => c.type === 'rent') && state.playsRemaining >= 2) {
         return { type: 'play_action', cardIndex: idx };
       }
-      return Math.random() > 0.5 ? { type: 'play_action', cardIndex: idx } : null;
+      return rnd() > 0.5 ? { type: 'play_action', cardIndex: idx } : null;
     case 'finance_office': {
-      const t = opponents.length > 0 ? opponents[Math.floor(Math.random() * opponents.length)] : null;
+      const t = opponents.length > 0 ? opponents[Math.floor(rnd() * opponents.length)] : null;
       return t ? { type: 'play_action', cardIndex: idx, targetId: t.id } : null;
     }
     case 'midnight_requisition': {
@@ -440,6 +451,7 @@ function tryRandomAction(state, bot, botId, card, idx, opponents) {
 /* ── CONSERVATIVE MODE — defensive but not passive ─────────────────── */
 
 function decideConservative(state, bot, botId) {
+  const mode = 'conservative';
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
   const mySets = G.completedSets(bot);
@@ -453,21 +465,20 @@ function decideConservative(state, bot, botId) {
     if (offensive) return offensive;
   }
 
-  // 1. Surge + Rent combo — play surge first when we have rent queued
+  // 1. Surge before the biggest charge we can follow it with (§3.3: any charge, not just rent)
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const rentOnComplete = findRentOnCompleteSet(bot, hand);
-  if (surgeIdx >= 0 && rentOnComplete && !state._surgeOps && state.playsRemaining >= 2) {
+  const rentOnComplete = findRentOnCompleteSet(bot, hand, opponents, mode);
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && (rentOnComplete || hasChargeFollowUp(bot, hand, opponents))) {
     return { type: 'play_action', cardIndex: surgeIdx };
   }
 
   // 2. Rent on complete sets — good income, low risk
-  if (rentOnComplete) {
-    return { type: 'play_action', cardIndex: rentOnComplete.cardIndex, targetColor: rentOnComplete.color };
-  }
+  if (rentOnComplete) return rentOnComplete;
 
   // 3. PCS Orders — draw more cards (sometimes first, sometimes after property)
   const pcsIdx = hand.findIndex(c => c.action === 'pcs_orders');
-  if (pcsIdx >= 0 && (played === 0 || Math.random() < 0.5)) {
+  if (pcsIdx >= 0 && (played === 0 || rnd() < 0.5)) {
     return { type: 'play_action', cardIndex: pcsIdx };
   }
 
@@ -491,7 +502,7 @@ function decideConservative(state, bot, botId) {
   }
 
   // 7. Rent — any color with rent >= 2
-  const decentRent = findBestRent(bot, hand, 2);
+  const decentRent = findBestRent(bot, hand, 2, opponents, mode);
   if (decentRent) return decentRent;
 
   // 8. If WE are close to winning (2 sets), get offensive
@@ -532,6 +543,7 @@ function decideConservative(state, bot, botId) {
 /* ── NEUTRAL MODE — balanced with threat awareness ─────────────────── */
 
 function decideNeutral(state, bot, botId) {
+  const mode = 'neutral';
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
   const threat = threatLevel(opponents);
@@ -545,25 +557,25 @@ function decideNeutral(state, bot, botId) {
     if (defensive) return defensive;
   }
 
-  // 1. Surge Ops → Rent combo (play surge first)
+  // 1. Surge Ops → charge combo (rent, Finance Office or Roll Call — §3.3)
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const hasRent = hand.some(c => c.type === 'rent');
-  if (surgeIdx >= 0 && hasRent && !state._surgeOps && state.playsRemaining >= 2) {
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && hasChargeFollowUp(bot, hand, opponents)) {
     return { type: 'play_action', cardIndex: surgeIdx };
   }
 
   // 2. Rent if surged, or high-value rent (>= 3)
   if (state._surgeOps) {
-    const rentPlay = findBestRent(bot, hand, 0);
+    const rentPlay = findBestRent(bot, hand, 0, opponents, mode);
     if (rentPlay) return rentPlay;
   }
 
   // 3. Vary opening play — don't always lead with property
-  const roll = Math.random();
+  const roll = rnd();
   if (played === 0) {
     if (roll < 0.35) {
       // 35% chance: lead with rent if decent
-      const highRent = findBestRent(bot, hand, 2);
+      const highRent = findBestRent(bot, hand, 2, opponents, mode);
       if (highRent) return highRent;
     } else if (roll < 0.50) {
       // 15% chance: lead with PCS Orders
@@ -582,7 +594,7 @@ function decideNeutral(state, bot, botId) {
   if (pcsIdx >= 0) return { type: 'play_action', cardIndex: pcsIdx };
 
   // 5. Medium rent (>= 2)
-  const rentPlay = findBestRent(bot, hand, 2);
+  const rentPlay = findBestRent(bot, hand, 2, opponents, mode);
   if (rentPlay) return rentPlay;
 
   // 6. Offensive actions
@@ -602,7 +614,7 @@ function decideNeutral(state, bot, botId) {
   }
 
   // 8. Any rent (>= 1)
-  const lowRent = findBestRent(bot, hand, 1);
+  const lowRent = findBestRent(bot, hand, 1, opponents, mode);
   if (lowRent) return lowRent;
 
   // 9. Bank money
@@ -623,6 +635,7 @@ function decideNeutral(state, bot, botId) {
 /* ── AGGRESSIVE MODE — attack-first but not suicidal ───────────────── */
 
 function decideAggressive(state, bot, botId) {
+  const mode = 'aggressive';
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
   const mySets = G.completedSets(bot);
@@ -634,15 +647,15 @@ function decideAggressive(state, bot, botId) {
     if (propPlay) return propPlay;
   }
 
-  // 1. Surge Ops first (before rent)
+  // 1. Surge Ops first (before any charge — §3.3)
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const hasRent = hand.some(c => c.type === 'rent');
-  if (surgeIdx >= 0 && hasRent && !state._surgeOps && state.playsRemaining >= 2) {
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && hasChargeFollowUp(bot, hand, opponents)) {
     return { type: 'play_action', cardIndex: surgeIdx };
   }
 
   // 2. Rent — any color with properties, maximize damage
-  const rentPlay = findBestRent(bot, hand, 0);
+  const rentPlay = findBestRent(bot, hand, 0, opponents, mode);
   if (rentPlay) return rentPlay;
 
   // 3. CHUD — target strategically
@@ -730,6 +743,15 @@ function decideChud(state, bot, botId) {
   // Chud still plays chaotically, but now actually builds sets
   // Priority: harass opponents > build own empire > bank
 
+  // 0. Coin-flip: sometimes slam a property down before the harassment starts.
+  //    Pure harass-first left chud with 1.4 sets at game end (5.2% vs 3 neutral).
+  if (rnd() < 0.45) {
+    for (let i = 0; i < hand.length; i++) {
+      const play = randomPropertyPlay(bot, hand[i], i);
+      if (play) return play;
+    }
+  }
+
   // 1. CHUD card — play it immediately for maximum chaos
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'chud') {
@@ -758,7 +780,7 @@ function decideChud(state, bot, botId) {
   // 4. Finance Office — target random player (not always poorest)
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = opponents.length > 0 ? opponents[Math.floor(Math.random() * opponents.length)] : null;
+      const target = opponents.length > 0 ? opponents[Math.floor(rnd() * opponents.length)] : null;
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
@@ -786,21 +808,26 @@ function decideChud(state, bot, botId) {
     const c = hand[i];
     if (c.type === 'rent') {
       const color = randomRentColor(bot, c);
-      if (color) return { type: 'play_action', cardIndex: i, targetColor: color };
+      const play = makeRentPlay(bot, hand, i, color, opponents, 'chud');
+      if (play) return play;
     }
   }
 
   // 9. Properties — play them but on random/suboptimal colors
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
-    if (c.type === 'property') return { type: 'play_property', cardIndex: i };
+    if (c.type === 'property') {
+      if (G.zoneFull(bot, c.color)) continue;
+      return { type: 'play_property', cardIndex: i };
+    }
     if (c.type === 'wild_property') {
-      const validColors = c.colors[0] === 'any' ? Object.keys(G.COLORS) : c.colors;
+      const open = openColorsForWild(bot, c);
+      if (open.length === 0) continue;
       // 50% chance to pick worst color, 50% chance random
-      const color = Math.random() > 0.5
+      const color = rnd() > 0.5
         ? chooseBestColorForWild(bot, c)
-        : validColors[Math.floor(Math.random() * validColors.length)];
-      return { type: 'play_property', cardIndex: i, targetColor: color };
+        : open[Math.floor(rnd() * open.length)];
+      if (color) return { type: 'play_property', cardIndex: i, targetColor: color };
     }
   }
 
@@ -832,6 +859,7 @@ function findBestPropertyPlay(bot, hand) {
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
     if (c.type === 'property') {
+      if (G.zoneFull(bot, c.color)) continue;
       const pct = progress[c.color]?.pct || 0;
       // Prefer colors we're already building + smaller sets (easier to complete)
       const sizeBonus = (5 - G.COLORS[c.color].size) * 0.1;
@@ -840,6 +868,7 @@ function findBestPropertyPlay(bot, hand) {
     }
     if (c.type === 'wild_property') {
       const color = chooseBestColorForWild(bot, c);
+      if (!color) continue;
       const pct = progress[color]?.pct || 0;
       const score = pct + 0.3; // bonus for flexibility
       if (score > bestScore) { bestScore = score; bestPlay = { type: 'play_property', cardIndex: i, targetColor: color }; }
@@ -1045,8 +1074,15 @@ function totalProps(player) {
 
 /* ── Wild card color selection ──────────────────────────────────────── */
 
+// §3.5 — a zone that already holds a full set is not a legal destination.
+function openColorsForWild(bot, card) {
+  const all = card.colors[0] === 'any' ? Object.keys(G.COLORS) : card.colors;
+  return all.filter(color => G.COLORS[color] && !G.zoneFull(bot, color));
+}
+
 function chooseBestColorForWild(bot, card) {
-  const validColors = card.colors[0] === 'any' ? Object.keys(G.COLORS) : card.colors;
+  const validColors = openColorsForWild(bot, card);
+  if (validColors.length === 0) return null;
   let best = validColors[0];
   let bestScore = -1;
   for (const color of validColors) {
@@ -1062,7 +1098,34 @@ function chooseBestColorForWild(bot, card) {
 
 /* ── Rent helpers ───────────────────────────────────────────────────── */
 
-function findBestRent(bot, hand, minRent) {
+// §3.2 — the wild ("any") rent card must name a single victim.
+function isWildRent(card) { return card.type === 'rent' && card.colors[0] === 'any'; }
+
+function chooseRentTarget(opponents, mode) {
+  const live = opponents.filter(o => !o.eliminated);
+  if (live.length === 0) return null;
+  if (mode === 'chud' || mode === 'random') return live[Math.floor(rnd() * live.length)];
+  // Hit the leader; break ties on who can actually pay.
+  return live.reduce((best, p) => {
+    const bs = G.completedSets(best), ps = G.completedSets(p);
+    if (ps !== bs) return ps > bs ? p : best;
+    return G.playerTotalValue(p) > G.playerTotalValue(best) ? p : best;
+  });
+}
+
+function makeRentPlay(bot, hand, cardIndex, color, opponents, mode) {
+  const card = hand[cardIndex];
+  if (!card || !color) return null;
+  const play = { type: 'play_action', cardIndex, targetColor: color };
+  if (isWildRent(card)) {
+    const target = chooseRentTarget(opponents, mode);
+    if (!target) return null;
+    play.targetId = target.id;
+  }
+  return play;
+}
+
+function findBestRent(bot, hand, minRent, opponents, mode) {
   let bestRent = null;
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
@@ -1076,7 +1139,7 @@ function findBestRent(bot, hand, minRent) {
     }
   }
   if (!bestRent) return null;
-  return { type: 'play_action', cardIndex: bestRent.cardIndex, targetColor: bestRent.color };
+  return makeRentPlay(bot, hand, bestRent.cardIndex, bestRent.color, opponents, mode);
 }
 
 function chooseBestRentColor(bot, card) {
@@ -1092,21 +1155,32 @@ function randomRentColor(bot, card) {
   const validColors = card.colors[0] === 'any'
     ? Object.keys(bot.properties).filter(c => (bot.properties[c] || []).length > 0)
     : card.colors.filter(c => (bot.properties[c] || []).length > 0);
-  return validColors.length > 0 ? validColors[Math.floor(Math.random() * validColors.length)] : null;
+  return validColors.length > 0 ? validColors[Math.floor(rnd() * validColors.length)] : null;
 }
 
-function findRentOnCompleteSet(bot, hand) {
+function findRentOnCompleteSet(bot, hand, opponents, mode) {
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
     if (c.type !== 'rent') continue;
     const validColors = c.colors[0] === 'any' ? Object.keys(bot.properties) : c.colors;
     for (const color of validColors) {
       if (G.isSetComplete(bot, color)) {
-        return { cardIndex: i, color };
+        const play = makeRentPlay(bot, hand, i, color, opponents, mode);
+        if (play) return play;
       }
     }
   }
   return null;
+}
+
+// Surge Ops is only worth a play if a charge can follow it this turn (§3.3).
+function hasChargeFollowUp(bot, hand, opponents) {
+  if (opponents.length === 0) return false;
+  for (const c of hand) {
+    if (c.type === 'rent' && chooseBestRentColor(bot, c)) return true;
+    if (c.action === 'finance_office' || c.action === 'roll_call') return true;
+  }
+  return false;
 }
 
 /* ── Inspector General targets ──────────────────────────────────────── */
@@ -1131,7 +1205,7 @@ function findRandomIGTarget(opponents) {
       if (G.isSetComplete(opp, color)) targets.push({ id: opp.id, color });
     }
   }
-  return targets.length > 0 ? targets[Math.floor(Math.random() * targets.length)] : null;
+  return targets.length > 0 ? targets[Math.floor(rnd() * targets.length)] : null;
 }
 
 function findCheapestIGTarget(opponents) {
@@ -1204,7 +1278,7 @@ function findChudChudTarget(opponents) {
       for (const c of cards) all.push({ playerId: opp.id, cardId: c.id });
     }
   }
-  return all.length > 0 ? all[Math.floor(Math.random() * all.length)] : null;
+  return all.length > 0 ? all[Math.floor(rnd() * all.length)] : null;
 }
 
 function findRandomChudTarget(opponents) {
@@ -1214,7 +1288,7 @@ function findRandomChudTarget(opponents) {
       for (const c of cards) all.push({ playerId: opp.id, cardId: c.id });
     }
   }
-  return all.length > 0 ? all[Math.floor(Math.random() * all.length)] : null;
+  return all.length > 0 ? all[Math.floor(rnd() * all.length)] : null;
 }
 
 /* ── Steal targets (Midnight Requisition) ───────────────────────────── */
@@ -1267,7 +1341,7 @@ function findRandomStealTarget(opponents) {
       for (const c of cards) all.push({ playerId: opp.id, cardId: c.id });
     }
   }
-  return all.length > 0 ? all[Math.floor(Math.random() * all.length)] : null;
+  return all.length > 0 ? all[Math.floor(rnd() * all.length)] : null;
 }
 
 /* ── Swap targets (TDY Orders) ──────────────────────────────────────── */
@@ -1333,8 +1407,8 @@ function findRandomSwapTarget(bot, opponents) {
   }
   if (theirCards.length === 0) return null;
 
-  const my = myCards[Math.floor(Math.random() * myCards.length)];
-  const their = theirCards[Math.floor(Math.random() * theirCards.length)];
+  const my = myCards[Math.floor(rnd() * myCards.length)];
+  const their = theirCards[Math.floor(rnd() * theirCards.length)];
   return { targetPlayerId: their.playerId, targetCardId: their.cardId, myCardId: my };
 }
 
@@ -1363,8 +1437,10 @@ function selectPaymentCards(bot, amount, mode) {
 
   switch (mode) {
     case 'chud':
-      // Pay chaotically — random order
+      // Chaotic order, but the bank goes first — feeding properties to the table while
+      // sitting on cash was worth ~3 points of chud winrate.
       shuffle(cards);
+      cards.sort((a, b) => (a.source === b.source ? 0 : a.source === 'bank' ? -1 : 1));
       break;
 
     case 'conservative':
@@ -1387,7 +1463,10 @@ function selectPaymentCards(bot, amount, mode) {
       break;
 
     case 'random':
+      // Random order *within* each pool, but cash before property: paying with random
+      // properties while holding cash cost random ~2 points of winrate (4.5% → 6.6%).
       shuffle(cards);
+      cards.sort((a, b) => (a.source === b.source ? 0 : a.source === 'bank' ? -1 : 1));
       break;
 
     default: // neutral
@@ -1477,7 +1556,7 @@ function chooseDiscards(bot, excess, mode) {
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rnd() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
@@ -1487,17 +1566,9 @@ module.exports = {
   scheduleBotAction, cancelBotTimeout,
   // Exported for simulation harness
   _internal: {
-    decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards,
+    decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards, setRng, rnd,
     getAllPayableCardIds, chooseDiscards, findResponder: function(state) {
-      const pa = state.pendingAction;
-      if (!pa) return null;
-      if (pa.type === 'payment_all') {
-        if (pa.pending && pa.pending.length > 0) return pa.pending[0];
-        for (const [pid, chain] of Object.entries(pa.opsecChains || {})) return chain.responderId;
-      } else {
-        return pa.responderId || null;
-      }
-      return null;
+      return G.pendingResponders(state)[0] || null;
     },
     botRespondSync: function(state, botId, mode) {
       const pa = state.pendingAction;
@@ -1509,19 +1580,7 @@ module.exports = {
         const result = G.respondToAction(state, botId, 'opsec');
         if (!result.error) return;
       }
-      const needsPayment = pa.type === 'payment' || pa.type === 'payment_all' ||
-        pa.type === 'chud' || pa.action === 'chud_payment' ||
-        pa.action === 'finance_office' || pa.action === 'roll_call' || pa.action === 'rent';
-      if (needsPayment && pa.amount > 0) {
-        const payCards = selectPaymentCards(bot, pa.amount, mode);
-        const result = G.respondToAction(state, botId, 'accept', payCards.length > 0 ? payCards : undefined);
-        if (result?.needPayment) {
-          const allCards = getAllPayableCardIds(bot);
-          G.respondToAction(state, botId, 'accept', allCards.length > 0 ? allCards : undefined);
-        }
-      } else {
-        G.respondToAction(state, botId, 'accept');
-      }
+      acceptAction(state, bot, botId, pa, mode);
     },
   },
 };

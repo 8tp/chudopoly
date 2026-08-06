@@ -5,23 +5,27 @@
 
 const G = require('./game');
 const Bot = require('./bot');
-const { decideBotPlay, botRespondSync, findResponder, chooseDiscards } = Bot._internal;
+const { decideBotPlay, botRespondSync, findResponder, chooseDiscards, setRng } = Bot._internal;
+const botRnd = Bot._internal.rnd;
 
 const BOT_MODES = ['random', 'conservative', 'neutral', 'aggressive', 'chud'];
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(botRnd() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
 }
 
-function createBotRoom(playerConfigs) {
+function createBotRoom(playerConfigs, seed) {
   const players = playerConfigs.map((cfg, i) => ({
     id: 'p' + i, name: cfg.name, isBot: true, botMode: cfg.mode,
   }));
-  const state = G.createGame(players.map(p => ({ id: p.id, name: p.name })));
+  const state = G.createGame(
+    players.map(p => ({ id: p.id, name: p.name })),
+    seed === undefined || seed === null ? {} : { seed }
+  );
   return { code: 'SIM', players, state, clients: {} };
 }
 
@@ -31,8 +35,8 @@ function getBotMode(room, botId) {
 
 /* ── Deep-analysis game runner ─────────────────────────────────────── */
 
-function runGame(playerConfigs, maxTurns = 500) {
-  const room = createBotRoom(playerConfigs);
+function runGame(playerConfigs, maxTurns = 500, seed) {
+  const room = createBotRoom(playerConfigs, seed);
   const state = room.state;
 
   // Per-player tracking
@@ -144,7 +148,7 @@ function runGame(playerConfigs, maxTurns = 500) {
 
     // PLAY PHASE
     if (state.turnPhase === 'play') {
-      if (mode === 'chud' && state.playsRemaining > 0 && state.playsRemaining < 3 && Math.random() < 0.2) {
+      if (mode === 'chud' && state.playsRemaining > 0 && state.playsRemaining < 3 && botRnd() < 0.2) {
         const bot = G.getPlayer(state, cp.id);
         let discardIds;
         if (bot.hand.length > 7) discardIds = chooseDiscards(bot, bot.hand.length - 7, mode);
@@ -278,9 +282,118 @@ function runGame(playerConfigs, maxTurns = 500) {
   return {
     turns: turnNum, winner: state.winner,
     winnerMode: state.winner ? getBotMode(room, state.winner) : null,
-    stalemate: turnNum > maxTurns - 1,
+    stalemate: state.endReason === 'stalemate' || turnNum > maxTurns - 1,
+    endReason: state.endReason,
     tracker,
   };
+}
+
+/* ── Programmatic balance API (ARCHITECTURE §3 header) ─────────────── */
+
+// runMatches({ players:['neutral','chud',...], games, seed })
+//   → { games, wins, winrates, seatWins, seatWinrates, firstPlayerWin, avgTurns,
+//       medianTurns, stalemates, stalemateRate, decided }
+function runMatches({ players, games = 500, seed = null, maxTurns = 300 } = {}) {
+  const modes = (players && players.length ? players : ['neutral', 'neutral', 'neutral', 'neutral']).slice();
+  const configs = modes.map((mode, i) => ({ name: mode.slice(0, 4) + i, mode }));
+
+  const wins = {};
+  const seats = {};
+  for (const m of modes) { wins[m] = 0; seats[m] = (seats[m] || 0) + 1; }
+  const seatWins = new Array(modes.length).fill(0);
+
+  let totalTurns = 0, stalemates = 0, decided = 0;
+  const turnList = [];
+
+  for (let g = 0; g < games; g++) {
+    const gameSeed = seed === null || seed === undefined ? undefined : `${seed}:${g}`;
+    setRng(gameSeed === undefined ? null : G.makeRng('bot:' + gameSeed));
+    const result = runGame(configs, maxTurns, gameSeed);
+    totalTurns += result.turns;
+    turnList.push(result.turns);
+    if (result.endReason === 'stalemate' || (!result.winner && result.stalemate)) stalemates++;
+    if (result.winner) {
+      decided++;
+      const seat = Number(String(result.winner).slice(1));
+      if (Number.isInteger(seat) && seat >= 0 && seat < modes.length) seatWins[seat]++;
+      wins[modes[seat]]++;
+    }
+  }
+  setRng(null);
+
+  const sorted = turnList.slice().sort((a, b) => a - b);
+  const winrates = {};
+  for (const m of Object.keys(wins)) winrates[m] = +(wins[m] / games * 100).toFixed(2);
+
+  return {
+    games, players: modes, wins, winrates, seatCounts: seats,
+    seatWins,
+    seatWinrates: seatWins.map(w => +(w / games * 100).toFixed(2)),
+    firstPlayerWin: +(seatWins[0] / games * 100).toFixed(2),
+    avgTurns: +(totalTurns / games).toFixed(1),
+    medianTurns: sorted[Math.floor(games / 2)],
+    stalemates,
+    stalemateRate: +(stalemates / games * 100).toFixed(2),
+    decided,
+  };
+}
+
+// Every personality plays 4-player mixed games in every seat, against every other
+// 4-subset of the roster, so neither seat order nor a lucky matchup can flatter a mode.
+function mixedMatrix(totalGames = 500, seed = 'matrix') {
+  const lineups = [];
+  for (let drop = 0; drop < BOT_MODES.length; drop++) {
+    const base = BOT_MODES.filter((_, i) => i !== drop);
+    for (let r = 0; r < base.length; r++) lineups.push(base.slice(r).concat(base.slice(0, r)));
+  }
+  const per = Math.max(1, Math.round(totalGames / lineups.length));
+  const tally = {};
+  for (const m of BOT_MODES) tally[m] = { wins: 0, games: 0 };
+  let seat0 = 0, games = 0, turnSum = 0, stalemates = 0, decided = 0;
+
+  lineups.forEach((order, i) => {
+    const res = runMatches({ players: order, games: per, seed: `${seed}-mix${i}` });
+    for (const m of order) { tally[m].wins += res.wins[m]; tally[m].games += res.games; }
+    seat0 += res.seatWins[0];
+    games += res.games;
+    decided += res.decided;
+    turnSum += res.avgTurns * res.games;
+    stalemates += res.stalemates;
+  });
+
+  return {
+    games, tally, decided,
+    firstPlayerWin: seat0 / games * 100,
+    avgTurns: turnSum / games,
+    stalemateRate: stalemates / games * 100,
+  };
+}
+
+function printMatrix(games = 500, seed = 'matrix') {
+  const mixed = mixedMatrix(games, seed);
+  console.log(`\n── 4-PLAYER MIXED, every seat × every 4-subset (${mixed.games} games) ${'─'.repeat(6)}`);
+  console.log('  ' + 'personality'.padEnd(16) + 'winrate   games   bound 8–60%');
+  for (const m of BOT_MODES) {
+    const pct = tally(mixed, m);
+    const flag = pct > 60 ? ' ✗ HIGH' : pct < 8 ? ' ✗ LOW' : ' ✓';
+    console.log('  ' + m.padEnd(16) + `${pct.toFixed(1)}%`.padStart(6) + String(mixed.tally[m].games).padStart(8)
+      + '   ' + '█'.repeat(Math.round(pct / 2)) + flag);
+  }
+  console.log(`  first-player advantage: ${mixed.firstPlayerWin.toFixed(1)}% (fair share 25.0%)`);
+  console.log(`  avg turns ${mixed.avgTurns.toFixed(1)}  stalemates ${mixed.stalemateRate.toFixed(2)}%  decided ${mixed.decided}/${mixed.games}`);
+
+  console.log(`\n── EACH PERSONALITY vs 3 NEUTRAL (${games} games each) ${'─'.repeat(12)}`);
+  for (const m of BOT_MODES) {
+    const res = runMatches({ players: [m, 'neutral', 'neutral', 'neutral'], games, seed: `${seed}-vs3-${m}` });
+    console.log('  ' + m.padEnd(16) + `${res.seatWinrates[0].toFixed(1)}%`.padStart(6) +
+      `   (avg turns ${res.avgTurns}, stalemates ${res.stalemateRate}%)`);
+  }
+  console.log();
+}
+
+function tally(mixed, mode) {
+  const t = mixed.tally[mode];
+  return t.games > 0 ? t.wins / t.games * 100 : 0;
 }
 
 /* ── Aggregation and Analysis ──────────────────────────────────────── */
@@ -667,5 +780,13 @@ function runAndAnalyze(numGames = 500) {
 
 /* ── Main ──────────────────────────────────────────────────────────── */
 
-const numGames = parseInt(process.argv[2]) || 500;
-runAndAnalyze(numGames);
+module.exports = { runMatches, runGame, printMatrix, runAndAnalyze, BOT_MODES };
+
+if (require.main === module) {
+  const [first, second, third] = process.argv.slice(2);
+  if (first === 'matrix') {
+    printMatrix(parseInt(second) || 500, third || 'matrix');
+  } else {
+    runAndAnalyze(parseInt(first) || 500);
+  }
+}

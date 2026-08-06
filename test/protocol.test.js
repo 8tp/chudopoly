@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validateMessage } = require('../server/protocol');
+const G = require('../game');
+const Bot = require('../bot');
 
 test('rejects non-object, unknown, and malformed commands', () => {
   assert.equal(validateMessage(null).ok, false);
@@ -28,4 +30,122 @@ test('accepts supported product commands', () => {
   assert.equal(validateMessage({ type:'quick_play', name:'Maverick' }).ok, true);
   assert.equal(validateMessage({ type:'start_game', turnTimeout:60, responseTimeout:30 }).ok, true);
   assert.equal(validateMessage({ type:'rematch' }).ok, true);
+});
+
+test('a wild rent carrying a targetId passes validation', () => {
+  const targetId = '902ac21e-0feb-4d88-877c-1f17ad62ef00';
+  assert.equal(validateMessage({ type:'play_action', cardIndex:2, targetColor:'brown', targetId }).ok, true);
+  assert.equal(validateMessage({ type:'play_action', cardIndex:2, targetColor:'brown', targetId:'nope!' }).ok, false);
+  assert.equal(validateMessage({ type:'play_action', cardIndex:2, targetColor:'purple' }).ok, false);
+});
+
+/* ── §10 invariant: events leak nothing getPlayerView hides ──────────── */
+
+function collectCardIds(node, out = new Set()) {
+  if (Array.isArray(node)) {
+    for (const item of node) collectCardIds(item, out);
+    return out;
+  }
+  if (node && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node)) {
+      if (typeof value === 'number' && (key === 'id' || /CardId$/.test(key))) out.add(value);
+      else collectCardIds(value, out);
+    }
+  }
+  return out;
+}
+
+function hiddenHandIds(state, viewerId) {
+  const ids = new Set();
+  for (const player of state.players) {
+    if (player.id === viewerId) continue;
+    for (const card of player.hand) ids.add(card.id);
+  }
+  return ids;
+}
+
+function assertNoLeak(state) {
+  for (const viewer of state.players) {
+    const view = G.getPlayerView(state, viewer.id);
+    const hidden = hiddenHandIds(state, viewer.id);
+    const exposed = collectCardIds(view);
+    for (const id of hidden) {
+      assert.equal(exposed.has(id), false,
+        `card ${id} is in another player's hand but appears in ${viewer.id}'s view`);
+    }
+    // own hand is visible, other hands are counts only
+    for (const p of view.players) {
+      if (p.id === viewer.id) assert.ok(Array.isArray(p.hand));
+      else assert.equal(p.hand, undefined);
+    }
+  }
+}
+
+// Drives a fully seeded bot game and audits every intermediate state.
+function playSeededGame(seed, audit) {
+  const modes = ['neutral', 'aggressive', 'conservative', 'chud'];
+  const players = modes.map((m, i) => ({ id: 'p' + i, name: 'Bot' + i }));
+  const state = G.createGame(players, { seed });
+  Bot._internal.setRng(G.makeRng('bot:' + seed));
+  const modeOf = id => modes[Number(id.slice(1))];
+
+  for (let step = 0; step < 4000 && state.phase === 'playing'; step++) {
+    audit(state);
+    const responder = Bot._internal.findResponder(state);
+    if (responder) { Bot._internal.botRespondSync(state, responder, modeOf(responder)); continue; }
+    const cp = G.currentPlayer(state);
+    if (state.turnPhase === 'draw') { G.drawCards(state); continue; }
+    const action = Bot._internal.decideBotPlay(state, cp.id, modeOf(cp.id));
+    if (action) {
+      if (action.type === 'play_property') G.playProperty(state, cp.id, action.cardIndex, action.targetColor);
+      else if (action.type === 'play_money') G.playAsMoney(state, cp.id, action.cardIndex);
+      else G.playAction(state, cp.id, action.cardIndex, action);
+      continue;
+    }
+    const discard = cp.hand.length > 7
+      ? Bot._internal.chooseDiscards(cp, cp.hand.length - 7, modeOf(cp.id)) : undefined;
+    const ended = G.endTurn(state, cp.id, discard);
+    if (ended.error) break;
+  }
+  Bot._internal.setRng(null);
+  return state;
+}
+
+test('no view ever exposes a card that is in another hand', () => {
+  const state = playSeededGame('leak-audit', assertNoLeak);
+  assert.equal(state.phase, 'finished');
+  assert.deepEqual(G.validateState(state), { ok: true });
+  assert.ok(state.eventSeq > 50, 'the audited game actually produced events');
+});
+
+test('draw and deal events carry card ids only for the drawer', () => {
+  const players = [{ id:'p1', name:'One' }, { id:'p2', name:'Two' }];
+  const state = G.createGame(players, { seed: 'redact' });
+  G.drawCards(state);
+
+  const mine = G.getPlayerView(state, 'p1').events;
+  const theirs = G.getPlayerView(state, 'p2').events;
+  const own = mine.filter(e => (e.t === 'deal' || e.t === 'draw') && e.to === 'p1');
+  const foreign = theirs.filter(e => (e.t === 'deal' || e.t === 'draw') && e.to === 'p1');
+
+  assert.ok(own.length >= 2);
+  assert.equal(own.length, foreign.length);
+  for (const ev of own) assert.equal(ev.cards.length, ev.count);
+  for (const ev of foreign) {
+    assert.equal(ev.cards, undefined);
+    assert.ok(Number.isInteger(ev.count));
+  }
+  // Redaction must not mutate the stored event stream.
+  assert.ok(state.events.filter(e => e.t === 'deal').every(e => Array.isArray(e.cards)));
+});
+
+test('the broadcast event tail is capped and sequence numbers are monotonic', () => {
+  const state = playSeededGame('tail-cap', () => {});
+  const view = G.getPlayerView(state, 'p0');
+  assert.ok(view.events.length <= G.EVENT_TAIL);
+  assert.equal(view.eventSeq, state.eventSeq);
+  const seqs = view.events.map(e => e.seq);
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  assert.equal(new Set(seqs).size, seqs.length);
+  assert.equal(seqs[seqs.length - 1], state.eventSeq);
 });

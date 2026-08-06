@@ -120,6 +120,13 @@ function createGame(players) {
     })),
     pendingAction: null,
     winner: null,
+    cardTotal: deck.length,
+    stats: {
+      turns: 1,
+      cardsPlayed: {},
+      payments: { count: 0, total: 0, biggest: 0 },
+      propertiesStolen: {},
+    },
     log: ['Game started! ' + players.map(p=>p.name).join(', ') + ' are playing.'],
   };
 
@@ -173,7 +180,7 @@ function calcRent(player, color) {
   const count = (player.properties[color] || []).length;
   if (count === 0) return 0;
   let rent = info.rent[Math.min(count, info.rent.length) - 1];
-  const upgrades = player.upgrades[color] || [];
+  const upgrades = upgradeKinds(player, color);
   if (upgrades.includes('house')) rent += 3;
   if (upgrades.includes('hotel')) rent += 4;
   return rent;
@@ -187,9 +194,74 @@ function playerTotalValue(player) {
   return total;
 }
 
+function ensurePlaying(state) {
+  return state?.phase === 'playing' ? null : { error: 'Game is already finished' };
+}
+
+function hasDuplicates(values) {
+  return new Set(values).size !== values.length;
+}
+
+function findProperty(player, cardId) {
+  for (const [color, cards] of Object.entries(player.properties || {})) {
+    const index = cards.findIndex(c => c.id === cardId);
+    if (index >= 0) return { color, index, card: cards[index] };
+  }
+  return null;
+}
+
+function upgradeKinds(player, color) {
+  return (player.upgrades[color] || []).map(upgrade =>
+    typeof upgrade === 'string' ? upgrade : upgrade.upgradeType
+  );
+}
+
+function discardUpgrades(state, player, color) {
+  const upgrades = player.upgrades[color] || [];
+  for (const upgrade of upgrades) {
+    if (upgrade && typeof upgrade === 'object') state.discardPile.push(upgrade);
+  }
+  delete player.upgrades[color];
+}
+
+function recordCardPlay(state, playerId) {
+  state.stats.cardsPlayed[playerId] = (state.stats.cardsPlayed[playerId] || 0) + 1;
+}
+
+function recordStolenProperties(state, playerId, count) {
+  state.stats.propertiesStolen[playerId] = (state.stats.propertiesStolen[playerId] || 0) + count;
+}
+
+function validateState(state) {
+  const ids = [];
+  const addCards = cards => {
+    for (const card of cards || []) {
+      if (card && Number.isInteger(card.id)) ids.push(card.id);
+    }
+  };
+  addCards(state.deck);
+  addCards(state.discardPile);
+  for (const player of state.players || []) {
+    addCards(player.hand);
+    addCards(player.bank);
+    for (const cards of Object.values(player.properties || {})) addCards(cards);
+    for (const upgrades of Object.values(player.upgrades || {})) addCards(upgrades);
+  }
+  if (hasDuplicates(ids)) return { error: 'Duplicate card IDs detected' };
+  if (Number.isInteger(state.cardTotal) && ids.length !== state.cardTotal) {
+    return { error: `Card conservation failed: expected ${state.cardTotal}, found ${ids.length}` };
+  }
+  if (state.pendingAction && state.turnPhase !== 'action_response') {
+    return { error: 'Pending action requires action_response phase' };
+  }
+  return { ok: true };
+}
+
 /* ── Draw phase ──────────────────────────────────────────────────────── */
 
 function drawCards(state) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const p = currentPlayer(state);
 
   // Auto-win check at turn start: if player already has 3+ complete sets
@@ -219,6 +291,8 @@ function drawCards(state) {
 /* ── Play card actions ───────────────────────────────────────────────── */
 
 function playAsMoney(state, playerId, cardIndex) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const p = getPlayer(state, playerId);
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase !== 'play') return { error: 'Cannot play now' };
@@ -230,11 +304,14 @@ function playAsMoney(state, playerId, cardIndex) {
   p.hand.splice(cardIndex, 1);
   p.bank.push(card);
   state.playsRemaining--;
+  recordCardPlay(state, playerId);
   state.log.push(p.name + ' banked ' + card.name + ' (' + card.value + 'M)');
   return { ok: true, card };
 }
 
 function playProperty(state, playerId, cardIndex, targetColor) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const p = getPlayer(state, playerId);
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase !== 'play') return { error: 'Cannot play now' };
@@ -249,6 +326,7 @@ function playProperty(state, playerId, cardIndex, targetColor) {
     color = card.color;
   } else {
     if (!targetColor) return { error: 'Choose a color for the wild property' };
+    if (!COLORS[targetColor]) return { error: 'Invalid property color' };
     if (card.colors[0] !== 'any' && !card.colors.includes(targetColor))
       return { error: 'Wild cannot be placed on ' + targetColor };
     color = targetColor;
@@ -259,6 +337,7 @@ function playProperty(state, playerId, cardIndex, targetColor) {
   const placed = { ...card, placedColor: color };
   p.properties[color].push(placed);
   state.playsRemaining--;
+  recordCardPlay(state, playerId);
   state.log.push(p.name + ' played ' + card.name + ' on ' + COLORS[color].name);
 
   checkWin(state, playerId);
@@ -266,6 +345,8 @@ function playProperty(state, playerId, cardIndex, targetColor) {
 }
 
 function playAction(state, playerId, cardIndex, opts) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const p = getPlayer(state, playerId);
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase !== 'play') return { error: 'Cannot play now' };
@@ -285,6 +366,7 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       if (state.deck.length < 2 && state.discardPile.length > 1) {
         state.deck = shuffle([...state.deck, ...state.discardPile]);
         state.discardPile = [];
@@ -304,6 +386,7 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state.pendingAction = {
         type: 'payment', action: 'finance_office',
         sourceId: p.id, targetId: target.id,
@@ -318,6 +401,7 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
       state.pendingAction = {
         type: 'payment_all', action: 'roll_call',
@@ -338,6 +422,7 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state.pendingAction = {
         type: 'steal_set', action: 'inspector_general',
         sourceId: p.id, targetId: target.id,
@@ -362,11 +447,13 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state.pendingAction = {
         type: 'steal_property', action: 'midnight_requisition',
         sourceId: p.id, targetId: target.id,
         targetCardId, targetColor: foundColor, responderId: target.id,
       };
+      state.turnPhase = 'action_response';
       const stolenCard = target.properties[foundColor][foundIdx];
       state.log.push(p.name + ' plays Midnight Requisition on ' + target.name + '\'s ' + stolenCard.name);
       return { ok: true, card, pending: true };
@@ -377,9 +464,13 @@ function playAction(state, playerId, cardIndex, opts) {
         return { error: 'Choose your property and a target property to swap' };
       const target = getPlayer(state, targetId);
       if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
+      const mine = findProperty(p, opts.myCardId);
+      const theirs = findProperty(target, targetCardId);
+      if (!mine || !theirs) return { error: 'Selected property is no longer available' };
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state.pendingAction = {
         type: 'swap', action: 'tdy_orders',
         sourceId: p.id, targetId: target.id,
@@ -394,12 +485,13 @@ function playAction(state, playerId, cardIndex, opts) {
     case 'upgrade': {
       if (!targetColor) return { error: 'Choose a complete set to upgrade' };
       if (!isSetComplete(p, targetColor)) return { error: 'Set must be complete to add Upgrade' };
-      if ((p.upgrades[targetColor] || []).includes('house'))
+      if (upgradeKinds(p, targetColor).includes('house'))
         return { error: 'Set already has an Upgrade' };
       p.hand.splice(cardIndex, 1);
       if (!p.upgrades[targetColor]) p.upgrades[targetColor] = [];
-      p.upgrades[targetColor].push('house');
+      p.upgrades[targetColor].push({ ...card, upgradeType: 'house' });
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state.log.push(p.name + ' upgraded ' + COLORS[targetColor].name + ' (+3M rent)');
       return { ok: true, card };
     }
@@ -407,13 +499,14 @@ function playAction(state, playerId, cardIndex, opts) {
     case 'foc': {
       if (!targetColor) return { error: 'Choose a set for FOC' };
       if (!isSetComplete(p, targetColor)) return { error: 'Set must be complete' };
-      if (!(p.upgrades[targetColor] || []).includes('house'))
+      if (!upgradeKinds(p, targetColor).includes('house'))
         return { error: 'Must have Upgrade before FOC' };
-      if ((p.upgrades[targetColor] || []).includes('hotel'))
+      if (upgradeKinds(p, targetColor).includes('hotel'))
         return { error: 'Already at FOC' };
       p.hand.splice(cardIndex, 1);
-      p.upgrades[targetColor].push('hotel');
+      p.upgrades[targetColor].push({ ...card, upgradeType: 'hotel' });
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state.log.push(p.name + ' achieves FOC on ' + COLORS[targetColor].name + ' (+4M rent)');
       return { ok: true, card };
     }
@@ -422,6 +515,7 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state._surgeOps = true;
       state.log.push(p.name + ' activates Surge Operations — next rent is doubled!');
       return { ok: true, card };
@@ -440,6 +534,7 @@ function playAction(state, playerId, cardIndex, opts) {
       p.hand.splice(cardIndex, 1);
       state.discardPile.push(card);
       state.playsRemaining--;
+      recordCardPlay(state, playerId);
       state.pendingAction = {
         type: 'chud', action: 'chud',
         sourceId: p.id, targetId: target.id,
@@ -476,6 +571,7 @@ function playAction(state, playerId, cardIndex, opts) {
     p.hand.splice(cardIndex, 1);
     state.discardPile.push(card);
     state.playsRemaining--;
+    recordCardPlay(state, playerId);
 
     const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
     state.pendingAction = {
@@ -495,6 +591,8 @@ function playAction(state, playerId, cardIndex, opts) {
 /* ── Respond to action (OPSEC / accept) ─────────────────────────────── */
 
 function respondToAction(state, playerId, response, paymentCards) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const pa = state.pendingAction;
   if (!pa) return { error: 'No pending action' };
 
@@ -638,10 +736,11 @@ function executeAction(state, pa, accepterId, paymentCards) {
       source.properties[col].push(...stolen);
       target.properties[col] = [];
       if (target.upgrades[col]) {
-        source.upgrades[col] = target.upgrades[col];
+        source.upgrades[col] = [...(source.upgrades[col] || []), ...target.upgrades[col]];
         delete target.upgrades[col];
       }
       state.log.push(source.name + ' seized ' + target.name + '\'s ' + COLORS[col].name + ' set!');
+      recordStolenProperties(state, source.id, stolen.length);
       checkWin(state, source.id);
       return advancePending(state);
     }
@@ -656,7 +755,8 @@ function executeAction(state, pa, accepterId, paymentCards) {
         if (!source.properties[destColor]) source.properties[destColor] = [];
         source.properties[destColor].push(card);
         state.log.push(source.name + ' requisitioned ' + card.name + ' from ' + target.name);
-        if (!isSetComplete(target, col)) delete target.upgrades[col];
+        if (!isSetComplete(target, col)) discardUpgrades(state, target, col);
+        recordStolenProperties(state, source.id, 1);
         checkWin(state, source.id);
       }
       return advancePending(state);
@@ -679,6 +779,8 @@ function executeAction(state, pa, accepterId, paymentCards) {
         source.properties[theirColor].push(theirCard);
         target.properties[myColor].push(myCard);
         state.log.push(source.name + ' swapped properties with ' + target.name);
+        if (!isSetComplete(source, myColor)) discardUpgrades(state, source, myColor);
+        if (!isSetComplete(target, theirColor)) discardUpgrades(state, target, theirColor);
         checkWin(state, source.id);
       }
       return advancePending(state);
@@ -694,8 +796,10 @@ function executeAction(state, pa, accepterId, paymentCards) {
         if (!source.properties[destColor]) source.properties[destColor] = [];
         source.properties[destColor].push(card);
         state.log.push(source.name + ' commandeered ' + card.name + ' from ' + target.name + '!');
-        if (!isSetComplete(target, col)) delete target.upgrades[col];
-        checkWin(state, source.id);
+        if (!isSetComplete(target, col)) discardUpgrades(state, target, col);
+        recordStolenProperties(state, source.id, 1);
+        const won = checkWin(state, source.id);
+        if (won) return advancePending(state);
       }
       // CHUD also charges 2M
       state.pendingAction = {
@@ -719,6 +823,9 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
     }
     return { error: 'Select cards to pay with', needPayment: true, amount: pa.amount };
   }
+  if (hasDuplicates(selectedCardIds)) {
+    return { error: 'Payment cards must be unique', needPayment: true, amount: pa.amount };
+  }
 
   let totalValue = 0;
   const bankCards = [];
@@ -734,6 +841,9 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
         if (pi >= 0) { propCards.push({ color: col, idx: pi, card: cards[pi] }); totalValue += cards[pi].value; found = true; break; }
       }
     }
+  }
+  if (bankCards.length + propCards.length !== selectedCardIds.length) {
+    return { error: 'Payment selection contains an invalid card', needPayment: true, amount: pa.amount };
   }
 
   const payerTotal = playerTotalValue(payer);
@@ -754,10 +864,13 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
       if (!payee.properties[destColor]) payee.properties[destColor] = [];
       payee.properties[destColor].push(card);
     }
-    if (!isSetComplete(payer, color)) delete payer.upgrades[color];
+    if (!isSetComplete(payer, color)) discardUpgrades(state, payer, color);
   });
 
   state.log.push(payer.name + ' paid ' + totalValue + 'M to ' + payee.name);
+  state.stats.payments.count++;
+  state.stats.payments.total += totalValue;
+  state.stats.payments.biggest = Math.max(state.stats.payments.biggest, totalValue);
   checkWin(state, payee.id);
   return advancePending(state);
 }
@@ -790,6 +903,8 @@ function advancePending(state) {
 /* ── Move property (free rearrange) ─────────────────────────────────── */
 
 function moveProperty(state, playerId, cardId, toColor) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const p = getPlayer(state, playerId);
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase !== 'play') return { error: 'Cannot rearrange now' };
@@ -818,7 +933,7 @@ function moveProperty(state, playerId, cardId, toColor) {
   p.properties[toColor].push(card);
 
   // Clean up upgrades if the source set is no longer complete
-  if (!isSetComplete(p, fromColor)) delete p.upgrades[fromColor];
+  if (!isSetComplete(p, fromColor)) discardUpgrades(state, p, fromColor);
 
   state.log.push(p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
   checkWin(state, playerId);
@@ -828,6 +943,8 @@ function moveProperty(state, playerId, cardId, toColor) {
 /* ── Scoop (forfeit) ─────────────────────────────────────────────────── */
 
 function scoop(state, playerId) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const p = getPlayer(state, playerId);
   if (!p) return { error: 'Player not found' };
   if (p.eliminated) return { error: 'Already eliminated' };
@@ -839,7 +956,7 @@ function scoop(state, playerId) {
   // Discard all property cards
   for (const [color, cards] of Object.entries(p.properties)) {
     while (cards.length > 0) state.discardPile.push(cards.pop());
-    delete p.upgrades[color];
+    discardUpgrades(state, p, color);
   }
   p.properties = {};
   p.upgrades = {};
@@ -917,6 +1034,8 @@ function advanceToNextActive(state) {
 /* ── End turn ────────────────────────────────────────────────────────── */
 
 function endTurn(state, playerId, discardIds) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
   const p = getPlayer(state, playerId);
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase === 'action_response') return { error: 'Resolve pending action first' };
@@ -926,10 +1045,13 @@ function endTurn(state, playerId, discardIds) {
       return { error: 'Must discard to 7 cards', needDiscard: true, excess: p.hand.length - 7 };
     if (discardIds.length !== p.hand.length - 7)
       return { error: 'Discard exactly ' + (p.hand.length - 7) + ' cards' };
+    if (hasDuplicates(discardIds)) return { error: 'Discarded cards must be unique' };
     const toDiscard = discardIds.map(id => {
       const idx = p.hand.findIndex(c => c.id === id);
       return idx >= 0 ? idx : -1;
-    }).filter(i => i >= 0).sort((a,b) => b-a);
+    });
+    if (toDiscard.some(i => i < 0)) return { error: 'Discard selection contains an invalid card' };
+    toDiscard.sort((a,b) => b-a);
     toDiscard.forEach(idx => state.discardPile.push(p.hand.splice(idx, 1)[0]));
   }
 
@@ -937,6 +1059,7 @@ function endTurn(state, playerId, discardIds) {
   advanceToNextActive(state);
   state.turnPhase = 'draw';
   state.playsRemaining = 3;
+  state.stats.turns++;
   state.log.push(currentPlayer(state).name + '\'s turn');
   return { ok: true };
 }
@@ -955,6 +1078,7 @@ function getPlayerView(state, playerId) {
     pendingAction: state.pendingAction,
     winner: state.winner,
     surgeOps: !!state._surgeOps,
+    stats: state.stats,
     log: state.log.slice(-20),
     players: state.players.map(p => ({
       id: p.id, name: p.name,
@@ -973,5 +1097,5 @@ module.exports = {
   COLORS, buildDeck, shuffle, createGame, currentPlayer, getPlayer,
   completedSets, checkWin, isSetComplete, calcRent, playerTotalValue,
   drawCards, playAsMoney, playProperty, playAction, respondToAction,
-  moveProperty, scoop, endTurn, getPlayerView,
+  moveProperty, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
 };

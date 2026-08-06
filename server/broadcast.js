@@ -8,6 +8,17 @@ function init(deps) {
 }
 
 function broadcastRoom(room) {
+  if (room.state) {
+    const integrity = G.validateState(room.state);
+    if (!integrity.ok && !room.state.integrityError) {
+      console.error(`[GAME] ${room.code} stopped: ${integrity.error}`);
+      room.state.integrityError = integrity.error;
+      room.state.phase = 'finished';
+      room.state.pendingAction = null;
+      room.state.turnPhase = 'finished';
+      room.state.log.push('Game stopped because its state failed an integrity check.');
+    }
+  }
   const timerInfo = room.turnTimeout > 0 && room.turnStartedAt
     ? { timeout: room.turnTimeout, startedAt: room.turnStartedAt }
     : null;

@@ -1343,7 +1343,7 @@ function findRandomSwapTarget(bot, opponents) {
 function findUpgradeableSet(bot, type) {
   for (const [color] of Object.entries(bot.properties)) {
     if (!G.isSetComplete(bot, color)) continue;
-    const ups = bot.upgrades[color] || [];
+    const ups = G.upgradeKinds(bot, color);
     if (type === 'upgrade' && !ups.includes('house')) return color;
     if (type === 'foc' && ups.includes('house') && !ups.includes('hotel')) return color;
   }

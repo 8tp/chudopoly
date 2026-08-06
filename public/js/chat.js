@@ -10,34 +10,54 @@ var _gifSearchTimer = null;
 
 /* ── Chat rendering ──────────────────────────────────────────────────── */
 
-const IMG_RE = /https?:\/\/\S+\.(?:gif|png|jpg|jpeg|webp)(?:\?\S*)?/gi;
-const MEDIA_RE = /https?:\/\/(?:media\d*\.)?(?:tenor|giphy)\.com\/\S+/gi;
-
-function chatHTML(text) {
-  let safe = esc(text);
-  safe = safe.replace(IMG_RE, url =>
-    '<a href="' + url + '" target="_blank" rel="noopener"><img class="chat-img" src="' + url + '" loading="lazy" onerror="this.style.display=\'none\'" alt="image"></a>'
-  );
-  safe = safe.replace(MEDIA_RE, url => {
-    if (/\.(?:gif|png|jpg|jpeg|webp)/i.test(url)) return url;
-    return '<a href="' + url + '" target="_blank" rel="noopener"><img class="chat-img" src="' + url + '" loading="lazy" onerror="this.parentNode.replaceChild(document.createTextNode(\'' + url + '\'),this)" alt="gif"></a>';
-  });
-  return safe;
+function safeMediaURL(text) {
+  if (typeof text !== 'string' || text.trim() !== text || /\s/.test(text)) return null;
+  try {
+    const url = new URL(text);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    const imagePath = /\.(?:gif|png|jpg|jpeg|webp)$/i.test(url.pathname);
+    const mediaHost = url.hostname === 'tenor.com' || url.hostname.endsWith('.tenor.com')
+      || url.hostname === 'giphy.com' || url.hostname.endsWith('.giphy.com');
+    return imagePath || mediaHost ? url.href : null;
+  } catch { return null; }
 }
 
 function renderChatMsgs(containerId) {
   const el = $(containerId);
   if (!el) return;
   const msgs = _chatMsgs[_chatScope] || [];
-  el.innerHTML = msgs.map(m => {
+  el.replaceChildren();
+  msgs.forEach(m => {
     const time = new Date(m.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    const me = m.pid === myId ? ' chat-me' : '';
-    return '<div class="chat-msg' + me + '">' +
-      '<span class="chat-time">' + time + '</span>' +
-      '<span class="chat-name">' + esc(m.name) + '</span>' +
-      '<span class="chat-text">' + chatHTML(m.text) + '</span>' +
-    '</div>';
-  }).join('');
+    const row = document.createElement('div');
+    row.className = 'chat-msg' + (m.pid === myId ? ' chat-me' : '');
+    const timeEl = document.createElement('span');
+    timeEl.className = 'chat-time';
+    timeEl.textContent = time;
+    const nameEl = document.createElement('span');
+    nameEl.className = 'chat-name';
+    nameEl.textContent = String(m.name || 'Anon');
+    const textEl = document.createElement('span');
+    textEl.className = 'chat-text';
+    textEl.textContent = String(m.text || '');
+    row.append(timeEl, nameEl, textEl);
+    const mediaURL = safeMediaURL(m.text);
+    if (mediaURL) {
+      const link = document.createElement('a');
+      link.href = mediaURL;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const img = document.createElement('img');
+      img.className = 'chat-img';
+      img.src = mediaURL;
+      img.loading = 'lazy';
+      img.alt = 'Shared image';
+      img.addEventListener('error', () => link.remove(), { once: true });
+      link.appendChild(img);
+      row.appendChild(link);
+    }
+    el.appendChild(row);
+  });
   el.scrollTop = el.scrollHeight;
 }
 
@@ -130,7 +150,7 @@ function fetchConfig() {
 function showGifPicker(from) {
   if (!_giphyKey) { toast('GIF search not configured'); return; }
   _gifPickerFrom = from;
-  const body = '<input type="text" id="gif-search-input" class="gif-search-input" placeholder="Search GIFs..." autocomplete="off" oninput="onGifSearch()">' +
+  const body = '<input type="text" id="gif-search-input" class="gif-search-input" placeholder="Search GIFs..." autocomplete="off">' +
     '<div id="gif-grid" class="gif-grid"><p style="color:#889;text-align:center;padding:20px">Loading trending...</p></div>';
   showModal('GIF Search', body, [
     { label:'Cancel', cls:'btn-secondary', fn:closeModalDirect }
@@ -157,11 +177,18 @@ function searchGifs(query) {
       grid.innerHTML = '<p style="color:#889;text-align:center;padding:20px">No GIFs found</p>';
       return;
     }
-    grid.innerHTML = data.data.map(g => {
+    grid.replaceChildren();
+    data.data.forEach(g => {
       const preview = g.images?.fixed_height_small?.url || g.images?.fixed_height?.url || '';
       const full = g.images?.fixed_height?.url || preview;
-      return '<img class="gif-item" src="' + esc(preview) + '" alt="' + esc(g.title||'gif') + '" loading="lazy" onclick="selectGif(\'' + esc(full) + '\')">';
-    }).join('');
+      const img = document.createElement('img');
+      img.className = 'gif-item';
+      img.src = preview;
+      img.alt = g.title || 'gif';
+      img.loading = 'lazy';
+      img.addEventListener('click', () => window.selectGif(full));
+      grid.appendChild(img);
+    });
   }).catch(() => {
     if (grid) grid.innerHTML = '<p style="color:#889;text-align:center;padding:20px">Failed to load GIFs</p>';
   });

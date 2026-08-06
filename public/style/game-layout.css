@@ -63,6 +63,12 @@
   background:transparent; color:var(--af-gold); font-size:12px; font-weight:700;
   cursor:pointer; min-height:32px;
 }
+.waiting-status {
+  padding:6px 12px; text-align:center; flex-shrink:0;
+  background:rgba(255,152,0,.12); color:#ffb74d; border-bottom:1px solid rgba(255,152,0,.25);
+  font-size:12px; font-weight:700; letter-spacing:.5px;
+}
+.waiting-status.needs-you { background:rgba(244,67,54,.15); color:#ff8a80; }
 
 /* ── Opponents ───────────────────────────────────────────────────────── */
 

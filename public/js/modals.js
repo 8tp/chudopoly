@@ -2,10 +2,12 @@
 
 var _responseModalOpen = false;
 var modalCallback = null;
+var _modalPreviousFocus = null;
 
 /* ── Modal system ────────────────────────────────────────────────────── */
 
 function showModal(title, bodyHTML, actions) {
+  _modalPreviousFocus = document.activeElement;
   $('modal-title').textContent = title;
   $('modal-body').innerHTML = bodyHTML;
   const actEl = $('modal-actions');
@@ -20,7 +22,10 @@ function showModal(title, bodyHTML, actions) {
   // Restore X button visibility (response modals hide it separately)
   const closeBtn = document.querySelector('.modal-close');
   if (closeBtn) closeBtn.style.display = '';
-  $('modal-overlay').style.display = 'flex';
+  const overlay = $('modal-overlay');
+  overlay.style.display = 'flex';
+  overlay.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => overlay.querySelector('button, [tabindex="0"]')?.focus());
 }
 
 function closeModal(e) {
@@ -31,8 +36,12 @@ function closeModal(e) {
 }
 
 function closeModalDirect() {
-  $('modal-overlay').style.display = 'none';
+  const overlay = $('modal-overlay');
+  overlay.style.display = 'none';
+  overlay.setAttribute('aria-hidden', 'true');
   _responseModalOpen = false;
+  if (_modalPreviousFocus?.focus) _modalPreviousFocus.focus();
+  _modalPreviousFocus = null;
 }
 
 /* ── Response modal (OPSEC / pay / accept) ───────────────────────────── */
@@ -78,7 +87,7 @@ function showResponseModal(pa) {
     body = '<p>Select cards from your bank and properties to pay with.</p>';
     body += '<div class="pay-total" id="pay-total">Selected: 0M / ' + pa.amount + 'M</div>';
     body += '<div class="card-row">' + me.bank.map(c =>
-      `<div class="card money" style="width:80px;min-height:60px" onclick="togglePayCard(this,${c.id},${c.value})">
+      `<div class="card money" role="button" tabindex="0" data-action="toggle-pay" data-card-id="${c.id}" data-value="${c.value}" style="width:80px;min-height:60px">
         <div class="card-name" style="font-size:16px">${c.value}M</div>
       </div>`).join('') + '</div>';
     for (const [color, cards] of Object.entries(me.properties)) {
@@ -86,7 +95,7 @@ function showResponseModal(pa) {
       if (!info || !cards || cards.length === 0) continue;
       body += `<div style="margin-top:8px"><span style="display:inline-flex;align-items:center;gap:4px;margin-bottom:4px"><span style="width:10px;height:10px;border-radius:3px;background:${info.bg};display:inline-block;flex-shrink:0"></span><small style="color:${info.bg};font-weight:700">${info.name}</small></span><div style="display:flex;flex-wrap:wrap;gap:4px">`;
       body += cards.map(c =>
-        `<span class="prop-mini" style="border-left:3px solid ${info.bg}" onclick="togglePayCard(this,${c.id},${c.value})">${esc(c.name)} (${c.value}M)</span>`
+        `<span class="prop-mini" role="button" tabindex="0" data-action="toggle-pay" data-card-id="${c.id}" data-value="${c.value}" style="border-left:3px solid ${info.bg}">${esc(c.name)} (${c.value}M)</span>`
       ).join('');
       body += '</div></div>';
     }
@@ -183,7 +192,7 @@ function showDiscardModal(excess) {
   let body = `<p>You have too many cards. Discard ${excess} card(s).</p>`;
   body += `<div class="pay-total" id="discard-sel-count">Selected: 0 / ${excess}</div>`;
   body += '<div class="card-row">' + (me.hand||[]).map(c =>
-    `<div class="card action-card" style="width:90px;min-height:80px" onclick="toggleDiscard(this,${c.id})">
+    `<div class="card action-card" role="button" tabindex="0" data-action="toggle-discard" data-card-id="${c.id}" style="width:90px;min-height:80px">
       <div class="card-name" style="font-size:11px">${esc(c.name)}</div>
       <div class="card-value">${c.value}M</div>
     </div>`
@@ -268,7 +277,7 @@ window.showOpponentDetail = function(playerId) {
     const info = COLORS[color];
     if (!info || !cards || cards.length === 0) continue;
     const complete = cards.length >= info.size;
-    const ups = p.upgrades?.[color] || [];
+    const ups = (p.upgrades?.[color] || []).map(u => typeof u === 'string' ? u : u.upgradeType);
     const rentIdx = Math.min(cards.length, info.rent.length) - 1;
     const currentRent = rentIdx >= 0 ? info.rent[rentIdx] : 0;
     let rentExtra = 0;
@@ -299,12 +308,12 @@ window.showOpponentDetail = function(playerId) {
       <div class="discard-grid">${cards.map(c => renderCard(c, 'view')).join('')}</div>`;
     } else if (isIG && complete && !setDimmed) {
       propHTML += `<div class="discard-grid">${cards.map(c => renderCard(c, 'view')).join('')}</div>`;
-      propHTML += `<button class="pick-set-btn" onclick="window._pickIG('${playerId}','${color}')">Seize This Set</button>`;
+      propHTML += `<button class="pick-set-btn" data-action="pick-ig" data-player-id="${playerId}" data-color="${color}">Seize This Set</button>`;
     } else if (!setDimmed) {
       cards.forEach(c => {
         propHTML += `<div class="pick-card-row">
           ${renderCard(c, 'view')}
-          <button class="pick-btn" onclick="window._pickCard('${playerId}',${c.id},'${color}')">Select</button>
+          <button class="pick-btn" data-action="pick-card" data-player-id="${playerId}" data-card-id="${c.id}" data-color="${color}">Select</button>
         </div>`;
       });
     } else {
@@ -349,7 +358,7 @@ window.showOpponentDetail = function(playerId) {
 function showTargetPicker(callback) {
   const opps = S.game.players.filter(p => p.id !== myId && !p.eliminated);
   let body = '<div class="target-list">' + opps.map(p =>
-    `<button class="target-btn" onclick="window._pickerCb('${p.id}')">${esc(p.name)} (Bank: ${bankTotal(p)}M, Worth: ${netWorth(p)}M)</button>`
+    `<button class="target-btn" data-action="picker" data-value="${p.id}">${esc(p.name)} (Bank: ${bankTotal(p)}M, Worth: ${netWorth(p)}M)</button>`
   ).join('') + '</div>';
   window._pickerCb = (id) => { callback(id); closeModalDirect(); };
   showModal('Choose Target', body, [
@@ -365,7 +374,7 @@ function showTargetSetPicker(callback) {
       const info = COLORS[color];
       if (!info || !cards) continue;
       if (cards.length >= info.size) {
-        body += `<button class="target-btn" onclick="window._pickerCb('${p.id}','${color}')">
+        body += `<button class="target-btn" data-action="picker" data-value="${p.id}" data-value-two="${color}">
           ${esc(p.name)}'s ${info.name} (${cards.length}/${info.size}) \u2605 COMPLETE</button>`;
       }
     }
@@ -385,8 +394,8 @@ function showColorPicker(validColors, callback) {
   allColors.forEach(c => {
     const info = COLORS[c];
     if (info) {
-      body += `<span class="color-btn" style="background:${info.bg};color:${info.fg}"
-        onclick="window._colorCb('${c}')">${info.name}</span>`;
+      body += `<button class="color-btn" style="background:${info.bg};color:${info.fg}"
+        data-action="pick-color" data-color="${c}">${info.name}</button>`;
     }
   });
   body += '</div>';
@@ -404,7 +413,7 @@ function showMySetPicker(requireComplete, callback) {
     if (!info || !cards || cards.length === 0) continue;
     const complete = cards.length >= info.size;
     if (requireComplete && !complete) continue;
-    body += `<button class="target-btn" onclick="window._pickerCb('${color}')">
+    body += `<button class="target-btn" data-action="picker" data-value="${color}">
       ${info.name} (${cards.length}/${info.size}) ${complete?'\u2605 COMPLETE':''}</button>`;
   }
   if (!body) body = '<p style="color:#889">No eligible sets.</p>';

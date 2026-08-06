@@ -10,6 +10,8 @@ var _titleInterval = null;
 var _originalTitle = document.title;
 var _dealInCount = 0;
 var _prevPlayerBotState = {};
+var _winnerShownFor = null;
+var _tutorialQueued = false;
 
 /* ── Tab notification ────────────────────────────────────────────────── */
 
@@ -135,6 +137,7 @@ function handleState(msg) {
     $('lobby-screen').style.display = 'none';
     $('game-screen').style.display = 'flex';
     renderGame();
+    maybeShowFirstGameGuide();
   }
 }
 
@@ -166,15 +169,17 @@ function leaveGame() {
 function leaveLobby() { doLeave(); }
 
 function doLeave() {
+  const preserveResume = S.phase === 'playing' && S.game?.phase === 'playing';
   closeModalDirect();
   send({ type:'leave_room' });
   if (ws) { ws.onclose = null; ws.onerror = null; ws.close(); ws = null; }
-  try { sessionStorage.removeItem('chud_pid'); sessionStorage.removeItem('chud_room'); } catch {}
+  if (!preserveResume) clearResumeCredentials();
   const nameInput = $('player-name');
   if (nameInput && myName) nameInput.value = myName;
-  myId = null; roomCode = ''; myName = ''; S = {};
+  myId = null; roomCode = ''; myName = ''; resumeToken = null; S = {};
   _chatMsgs = { room:[], global:[] }; _chatUnread = { room:0, global:0 };
   _lastTurnPlayerId = null; selectedHandCard = null;
+  _winnerShownFor = null; _tutorialQueued = false;
   _responseModalOpen = false;
   _prevPlayerBotState = {};
   _alarmPlayed = false; _responseAlarmPlayed = false;
@@ -187,4 +192,22 @@ function doLeave() {
   $('lobby-waiting').style.display = 'none';
   $('winner-overlay').style.display = 'none';
   stopTitleBlink();
+}
+
+function maybeShowFirstGameGuide() {
+  if (_tutorialQueued || S.game?.phase !== 'playing') return;
+  try { if (localStorage.getItem('chud_tutorial_seen') === '1') return; } catch {}
+  _tutorialQueued = true;
+  setTimeout(() => {
+    if (S.game?.phase !== 'playing' || S.game?.pendingAction) return;
+    const body = `<div class="help-content">
+      <h4>YOUR MISSION</h4><p>Build <strong>3 complete property sets</strong> before everyone else.</p>
+      <h4>EACH TURN</h4><p>Cards draw automatically. Tap a card to play it as a property, bank it, or use its action. You get up to <strong>3 plays</strong>.</p>
+      <h4>WHEN TARGETED</h4><p>Choose assets to pay, accept the action, or counter with OPSEC. The orange banner always tells you who the game is waiting on.</p>
+    </div>`;
+    showModal('First Mission Briefing', body, [{ label:'Start Playing', cls:'btn-primary', fn:() => {
+      try { localStorage.setItem('chud_tutorial_seen', '1'); } catch {}
+      closeModalDirect();
+    }}]);
+  }, 50);
 }

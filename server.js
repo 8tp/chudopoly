@@ -47,7 +47,12 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
 });
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    // HTML must always revalidate so its cache-busted asset URLs stay in sync.
+    res.setHeader('Cache-Control', filePath.endsWith('index.html') ? 'no-store' : 'no-cache');
+  },
+}));
 
 const PORT = process.env.PORT || 3000;
 const rooms = new Map();

@@ -2,25 +2,19 @@
 
 function createRoom() {
   const name = $('player-name').value.trim() || 'Maverick';
-  $('btn-create').disabled = true;
-  $('btn-join').disabled = true;
+  setLobbyConnectionPending(true);
   connect(() => {
     send({ type:'create_room', name });
-    $('btn-create').disabled = false;
-    $('btn-join').disabled = false;
+    setLobbyConnectionPending(false);
   });
 }
 
 function quickPlay() {
   const name = $('player-name').value.trim() || 'Maverick';
-  $('btn-create').disabled = true;
-  $('btn-join').disabled = true;
-  $('btn-quick-play').disabled = true;
+  setLobbyConnectionPending(true);
   connect(() => {
     send({ type:'quick_play', name });
-    $('btn-create').disabled = false;
-    $('btn-join').disabled = false;
-    $('btn-quick-play').disabled = false;
+    setLobbyConnectionPending(false);
   });
 }
 
@@ -28,8 +22,7 @@ function joinRoom() {
   const name = $('player-name').value.trim() || 'Goose';
   const code = $('room-code-input').value.trim().toUpperCase();
   if (!code) { toast('Enter a room code'); return; }
-  $('btn-create').disabled = true;
-  $('btn-join').disabled = true;
+  setLobbyConnectionPending(true);
   connect(() => {
     const savedCode = tryGet('chud_room');
     const savedPlayerId = tryGet('chud_pid');
@@ -38,8 +31,7 @@ function joinRoom() {
       ? { playerId:savedPlayerId, resumeToken:savedResumeToken }
       : {};
     send({ type:'join_room', code, name, ...credentials });
-    $('btn-create').disabled = false;
-    $('btn-join').disabled = false;
+    setLobbyConnectionPending(false);
   });
 }
 

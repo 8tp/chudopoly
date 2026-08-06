@@ -3,18 +3,51 @@
 var ws;
 var _connecting = false;
 var resumeToken = null;
+var _connectCallbacks = [];
+var _connectTimer = null;
+
+function setLobbyConnectionPending(pending) {
+  for (const id of ['btn-create', 'btn-join', 'btn-quick-play']) {
+    const button = $(id);
+    if (button) button.disabled = pending;
+  }
+}
+
+function failPendingConnection(message) {
+  clearTimeout(_connectTimer);
+  _connectTimer = null;
+  _connectCallbacks = [];
+  setLobbyConnectionPending(false);
+  const error = $('lobby-error');
+  if (error) error.textContent = message;
+}
 
 function connect(onOpen) {
-  if (ws?.readyState === WebSocket.OPEN) { if (onOpen) onOpen(); return; }
+  if (typeof onOpen === 'function') _connectCallbacks.push(onOpen);
+  if (ws?.readyState === WebSocket.OPEN) {
+    const callbacks = _connectCallbacks.splice(0);
+    callbacks.forEach(callback => callback());
+    return;
+  }
   if (_connecting) return;
   _connecting = true;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host);
   updateConnStatus(false);
+  clearTimeout(_connectTimer);
+  _connectTimer = setTimeout(() => {
+    if (ws?.readyState !== WebSocket.OPEN) {
+      failPendingConnection('Unable to connect. Check your network and try again.');
+      ws?.close();
+    }
+  }, 10000);
   ws.onopen = () => {
+    clearTimeout(_connectTimer);
+    _connectTimer = null;
     _connecting = false;
     updateConnStatus(true);
-    if (onOpen) onOpen();
+    const callbacks = _connectCallbacks.splice(0);
+    callbacks.forEach(callback => callback());
   };
   ws.onmessage = (e) => {
     let msg;
@@ -80,16 +113,19 @@ function connect(onOpen) {
   };
   ws.onerror = () => { _connecting = false; updateConnStatus(false); };
   ws.onclose = () => {
+    clearTimeout(_connectTimer);
+    _connectTimer = null;
     _connecting = false;
     updateConnStatus(false);
+    if (_connectCallbacks.length) {
+      failPendingConnection('Unable to connect. Check your network and try again.');
+    }
     setTimeout(() => {
       const pid = myId || tryGet('chud_pid');
       const code = roomCode || tryGet('chud_room');
       const token = resumeToken || tryGet('chud_resume');
       if (pid && code && token) {
         connect(() => send({ type:'reconnect', playerId:pid, code, resumeToken:token }));
-      } else {
-        connect();
       }
     }, 2000);
   };

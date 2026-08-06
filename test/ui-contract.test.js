@@ -26,3 +26,9 @@ test('client stores and returns private resume tokens', () => {
   assert.match(network, /chud_resume/);
   assert.match(network, /type:'reconnect'.*resumeToken/);
 });
+
+test('HTML cache-busts every local stylesheet and script', () => {
+  const localAssets = [...html.matchAll(/(?:href|src)="((?:style|js)\/[^"]+)"/g)].map(match => match[1]);
+  assert.ok(localAssets.length > 0);
+  assert.ok(localAssets.every(asset => /\?v=\d{8}\.\d+$/.test(asset)), localAssets.join('\n'));
+});

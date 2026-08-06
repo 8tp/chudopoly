@@ -8,34 +8,48 @@
 //
 // So the claim table below is not decoration: a missing claim is a nonzero
 // driftCount in tools/playtest.mjs, which is exactly the signal that the
-// animation told the player something the server did not say.
+// animation told the player something the server did not say. Three claims
+// exist because the engine emits NO per-card event for them and never will:
+// upgrades silently discarded when a set breaks, the discard pile folding into
+// the deck on a reshuffle, and a scoop sweeping a whole board. P4 kept all
+// three unchanged.
 //
-// P3 scope: each event maps to move/spawn primitives plus an sfx name on the
-// bus. The motion agent (P4) replaces the durations and adds arcs/flips; the
-// claim table should survive that unchanged.
+// STEP vs FLIGHT. `stepFor(ev)` is how long this event holds the queue before
+// the next one starts — not how long its motion lasts. Flights are allowed to
+// overlap the next event (a caravan's tail is still landing while the next
+// card lifts), but no single event's own choreography may exceed 600ms (§10),
+// which is why every stagger is capped rather than open-ended.
 
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import { wait } from '../core/clock.js';
-import { prefersReducedMotion } from '../core/dom.js';
 import * as table from '../table/index.js';
 import { getNode } from '../table/cardnode.js';
 import { isPropertyCard } from '../core/cards.js';
+import * as flight from './flight.js';
+import { cueEl, CUE } from './cues.js';
 
 const MAX_STEP = 600;                    // §10 — nothing uninterruptible over 600ms
-const STEP_MS = {
-  deal: 90, draw: 140, play_money: 220, play_property: 240, play_action: 220,
-  payment: 280, steal: 300, set_stolen: 320, swap: 300, upgrade: 220,
-  move_property: 200, discard: 180, shuffle: 240, opsec: 260,
-  rent_charged: 200, demand: 160, action_blocked: 200, insolvent: 160,
-  set_completed: 240, win: 320, stalemate: 320, scoop: 300,
-  turn_start: 120, turn_end: 80, game_start: 120,
-};
+
+/* Measured on the seeded playtest game (CHUD_SEED=1337, desktop 1280×720):
+   the numbers are "the queue may move on", and each is the point where the
+   card that matters has landed or is unambiguously on its way.
+
+   deal      70ms/card — 5 cards at 55ms read as one shuffled blur; at 90ms the
+                         opening deal of a 3-player table took over 2s.
+   draw      60ms/card — only ever 2 (or 5 on an empty hand).
+   payment   70ms/card — same beat as the deal; the caravan has to read as a
+                         procession, and a 5-card payment is the worst case.
+   discard   55ms/card — up to 4 cards, and the turn is already over.
+   steal     480      — 120ms hold + a 420ms deliberate flight, §6's ceiling.
+   shuffle   420      — fold (240 + 5×24 stagger) then the riffle overlaps it. */
+const STAGGER = { deal: 70, draw: 60, payment: 70, discard: 55, set_stolen: 60 };
 
 const queue = [];
 let running = false;
 let instant = false;
 let selfId = null;
+let catchUp = false;                     // dropping cinematics: place, do not perform
 
 export function setSelf(id) { selfId = id; }
 export function setInstant(on) { instant = !!on; }
@@ -67,8 +81,22 @@ export function enqueue(snapshot, events, opts = {}) {
   queue.push({ snapshot, events });
   // Backpressure: multiplayer cannot wait on cinematics. Three jobs deep the
   // table is already a second behind the server, so collapse to the newest.
+  //
+  // Skipping a cinematic is not the same as not knowing about it: the dropped
+  // jobs still declare their claims, carried into the surviving job, so
+  // driftCount keeps meaning "the animation told a different story" rather
+  // than "we fell behind". Measured over three 60s animated playthroughs:
+  // 2–5 drift corrections before this, 0 after, with 5–9 jobs dropped.
   if (queue.length > 3) {
     const newest = queue[queue.length - 1];
+    const carry = newest.carry || (newest.carry = new Set());
+    catchUp = true;
+    try {
+      for (let i = 0; i < queue.length - 1; i++) {
+        const job = queue[i];
+        for (const ev of job.events) safeApply(ev, job.snapshot, carry, false);
+      }
+    } finally { catchUp = false; }
     queue.length = 0;
     queue.push(newest);
   }
@@ -90,13 +118,40 @@ async function drain() {
   }
 }
 
+/**
+ * One event's choreography can never take the queue down with it. An event
+ * type this build has never heard of (the engine may add rows to §4 at any
+ * time) falls through to a 120ms pure-signal step; an event that THROWS is
+ * reported and skipped, because a stalled queue means a table that stops
+ * updating for the rest of the game — the one failure the player cannot
+ * recover from without a reload.
+ */
+function safeApply(ev, snapshot, expected, animate) {
+  try {
+    applyEvent(ev, snapshot, expected, animate);
+  } catch (err) {
+    bus.reportError(err);
+  }
+}
+
 async function runJobAsync(job) {
-  const expected = new Set();
-  const animate = !prefersReducedMotion();
+  const expected = job.carry || new Set();
+  // `animate` means "this job is being PERFORMED", not "the player wants
+  // motion". Under prefers-reduced-motion the performance still happens — the
+  // cards fade into place in ≤120ms (table/moveCard) and every FX cue fires on
+  // time, because §0.9 collapses motion and keeps sound. Only the instant path
+  // (harness, catch-up) is unperformed.
+  const animate = true;
   for (const ev of job.events) {
-    applyEvent(ev, job.snapshot, expected, animate);
+    safeApply(ev, job.snapshot, expected, animate);
     bus.emit(EVENTS.CHOREO_EVENT, ev);
-    const step = Math.min(MAX_STEP, STEP_MS[ev.t] ?? 120);
+    // Reduced motion collapses the PACING too, not just the paths: a fade
+    // finishes in 120ms, so holding the queue for a 480ms steal would leave a
+    // player who asked for less motion staring at a table that has stopped for
+    // no visible reason. 140ms still separates one beat's cue from the next.
+    const step = table.reducedMotion()
+      ? Math.min(140, stepFor(ev))
+      : Math.min(MAX_STEP, stepFor(ev));
     if (step > 0) await wait(step);
   }
   table.reconcile(job.snapshot, { expected, count: true, animate });
@@ -105,22 +160,81 @@ async function runJobAsync(job) {
 function runJob(job) {
   const expected = new Set();
   for (const ev of job.events) {
-    applyEvent(ev, job.snapshot, expected, false);
+    safeApply(ev, job.snapshot, expected, false);
     bus.emit(EVENTS.CHOREO_EVENT, ev);
   }
   table.reconcile(job.snapshot, { expected, count: true, animate: false });
+}
+
+function stepFor(ev) {
+  const n = countOf(ev);
+  switch (ev.t) {
+    case 'deal': return Math.min(480, STAGGER.deal * n + 90);
+    case 'draw': return Math.min(360, STAGGER.draw * n + 120);
+    case 'payment': return Math.min(560, STAGGER.payment * n + 140);
+    case 'discard': return Math.min(420, STAGGER.discard * n + 160);
+    case 'set_stolen': return Math.min(560, STAGGER.set_stolen * n + 420);
+    case 'play_money': return 240;
+    case 'play_property': return 240;
+    case 'play_action': return 260;
+    case 'upgrade': return 240;
+    case 'move_property': return 220;
+    case 'opsec': return 300;
+    case 'action_blocked': return 280;
+    case 'steal': return 480;
+    case 'swap': return 460;
+    case 'shuffle': return 420;
+    case 'set_completed': return 300;
+    case 'scoop': return 300;
+    case 'win': return 320;
+    case 'stalemate': return 320;
+    // The armed player's resolving turn gets a longer beat: the win lands on
+    // the next event and it should land into stillness (§3.10).
+    case 'turn_start': return ev.finalApproach ? 300 : 140;
+    case 'turn_end': return 90;
+    case 'final_approach': return 260;
+    case 'final_approach_broken': return 260;
+    case 'rent_charged': return 200;
+    case 'demand': return 160;
+    case 'insolvent': return 160;
+    case 'game_start': return 120;
+    default: return 120;
+  }
+}
+
+function countOf(ev) {
+  if (Array.isArray(ev.cards)) return ev.cards.length || 1;
+  return Math.max(1, ev.count || 1);
 }
 
 /* ── primitives ────────────────────────────────────────────────────────── */
 
 function claim(expected, id) { if (id != null) expected.add(id); }
 
-function move(card, zoneKey, expected, animate, originKey) {
+/**
+ * Move a card, spawning it at its origin if this client has never seen it.
+ *
+ * A node that does not exist yet is a card that was HIDDEN until now — an
+ * opponent's hand card reaching the table, or a card off the deck. So the
+ * spawn-and-flip rule needs no per-event bookkeeping: if we had no node, the
+ * card enters face-down at its origin and turns over in flight.
+ */
+function move(card, zoneKey, expected, animate, originKey, o) {
   if (!card || card.id == null || !zoneKey) return;
   claim(expected, card.id);
-  if (!getNode(card.id) && originKey) table.spawnCard(card, originKey);
-  else if (!getNode(card.id)) table.spawnCard(card, zoneKey);
-  table.moveCard(card.id, zoneKey, { animate });
+  // Catching up: claim only, touch nothing. The job still running owns an
+  // OLDER snapshot, and moving a card to where it will be in two states' time
+  // makes that job's reconcile drag it back — which is exactly the drift this
+  // path exists to avoid. The surviving job's reconcile places it, silently,
+  // because the claim rode along in job.carry.
+  if (catchUp) return;
+  const known = !!getNode(card.id);
+  if (!known) table.spawnCard(card, originKey || zoneKey, { faceDown: animate && !!originKey });
+
+  const opts = o || {};
+  opts.animate = animate;
+  if (!known && animate && originKey) { opts.flip = true; if (opts.flipAt == null) opts.flipAt = 0.5; }
+  table.moveCard(card.id, zoneKey, opts);
 }
 
 /** Every upgrade card a player currently holds — a broken set silently discards
@@ -157,13 +271,66 @@ function claimDiscard(expected) {
 
 const Z = table.zoneKeyFor;
 
+/* ── geometry helpers (layout reads happen per EVENT, never per frame) ──── */
+
+/** An FX cue anchored on an element — silent while we are catching up. */
+function signal(kind, mine, big, el) {
+  if (catchUp) return;
+  cueEl(kind, mine, big, el);
+}
+
+const centre = { x: 0, y: 0 };
+
+function centreOf(el) {
+  if (!el) { centre.x = innerWidth / 2; centre.y = innerHeight / 2; return centre; }
+  const r = el.getBoundingClientRect();
+  centre.x = r.left + r.width / 2;
+  centre.y = r.top + r.height / 2;
+  return centre;
+}
+
+// The action card in flight through a response window. `play_action` discards
+// it before anyone can answer (game.js discardAndSpend), so by the time the
+// engine says who it was aimed at — `demand`, `rent_charged` — or that it was
+// blocked, the card is lying face-up on the pile. Remembering which one it is
+// is the only way left to point it at anybody.
+let actionCardId = null;
+
+/**
+ * Lunge a card `factor` of the way toward `el` and let it snap back.
+ * Positive factor = it slides at the target; negative = it is knocked away.
+ */
+function lungeCard(id, el, factor, opts) {
+  if (id == null || !el) return false;
+  const node = getNode(id);
+  if (!node) return false;
+  const from = centreOf(node);
+  const fx = from.x, fy = from.y;
+  const to = centreOf(el);
+  return table.shoveCard(id, (to.x - fx) * factor, (to.y - fy) * factor, opts);
+}
+
+/* ── the claim table + choreography ────────────────────────────────────── */
+
 function applyEvent(ev, snapshot, expected, animate) {
   const sfx = ev.t;
+  const mine = ev.actor === selfId;
+  // Set pieces that are pure motion (a lunge, a fold, a column snapping shut)
+  // have no reduced-motion form: they are skipped, and their cue carries the
+  // beat instead.
+  const motion = animate && !table.reducedMotion();
+
   switch (ev.t) {
     case 'deal':
     case 'draw': {
       if (!Array.isArray(ev.cards)) break;                 // opponents: backs only
-      for (const card of ev.cards) move(card, Z('hand', ev.to), expected, animate, 'deck');
+      const stagger = ev.t === 'deal' ? STAGGER.deal : STAGGER.draw;
+      const zone = Z('hand', ev.to);
+      for (let i = 0; i < ev.cards.length; i++) {
+        move(ev.cards[i], zone, expected, animate, 'deck', { delay: i * stagger, flipAt: 0.58 });
+      }
+      // Per-card landings already cue; deal_done is the "hands are out" beat.
+      if (animate && ev.t === 'deal') signal(CUE.DEAL_DONE, ev.to === selfId, false, table.zoneFor('hand'));
       break;
     }
 
@@ -175,28 +342,61 @@ function applyEvent(ev, snapshot, expected, animate) {
       move(ev.card, Z('properties', ev.actor, ev.color), expected, animate, Z('hand', ev.actor));
       break;
 
-    case 'play_action':
+    case 'play_action': {
       // upgrade/foc are placed by the `upgrade` event that follows; every other
       // action card is discarded by discardAndSpend() before the response window.
-      if (ev.action === 'upgrade' || ev.action === 'foc') claim(expected, ev.card?.id);
-      else move(ev.card, 'discard', expected, animate, Z('hand', ev.actor));
+      if (ev.action === 'upgrade' || ev.action === 'foc') { claim(expected, ev.card?.id); break; }
+      actionCardId = ev.card?.id ?? null;
+      move(ev.card, 'discard', expected, animate, Z('hand', ev.actor),
+        { big: ev.action === 'chud', arc: 26 });
+      break;
+    }
+
+    // Who the card on the pile is pointed at. 34% of the way is as far as a
+    // card can lunge before it reads as a second flight rather than a threat.
+    case 'demand':
+      if (motion) lungeCard(actionCardId, table.boardEl(ev.target), 0.34, { dur: 300, spin: 5 });
       break;
 
-    case 'opsec':
-      move(ev.card, 'discard', expected, animate, Z('hand', ev.actor));
+    case 'rent_charged':
+      if (motion) lungeCard(actionCardId, table.boardEl((ev.targets || [])[0]), 0.3, { dur: 300, spin: 5 });
       break;
+
+    case 'opsec': {
+      // The clash: the OPSEC card comes in fast and shoves the card it answers
+      // back off the pile's centre.
+      if (motion) lungeCard(actionCardId, table.boardEl(ev.actor), -0.22, { dur: 280, spin: -9, delay: 90 });
+      move(ev.card, 'discard', expected, animate, Z('hand', ev.actor), { speed: 0.85, big: true, arc: 30 });
+      if (animate) signal(CUE.OPSEC_CLASH, mine || ev.against === selfId, true, table.zoneFor('discard'));
+      break;
+    }
 
     case 'upgrade':
       move(ev.card, Z('upgrades', ev.actor, ev.color), expected, animate, Z('hand', ev.actor));
       break;
 
+    case 'action_blocked':
+      if (animate) {
+        if (motion) lungeCard(actionCardId, table.boardEl(ev.target), -0.3, { dur: 320, spin: -8 });
+        signal(CUE.ACTION_BLOCKED, ev.target === selfId || ev.source === selfId, true,
+          table.boardEl(ev.target));
+      }
+      actionCardId = null;
+      break;
+
     case 'payment': {
       claimUpgradesOf(ev.from, expected);
-      for (const card of ev.cards || []) {
+      const cards = ev.cards || [];
+      const forMe = ev.to === selfId || ev.from === selfId;
+      for (let i = 0; i < cards.length; i++) {
+        const card = cards[i];
         const zone = isPropertyCard(card)
           ? Z('properties', ev.to, card.placedColor || card.color)
           : Z('bank', ev.to);
-        move(card, zone, expected, animate, Z('bank', ev.from));
+        move(card, zone, expected, animate, Z('bank', ev.from), { delay: i * STAGGER.payment });
+      }
+      if (animate && cards.length) {
+        signal(CUE.PAYMENT_DONE, forMe, cards.length >= 4, table.boardEl(ev.to));
       }
       break;
     }
@@ -204,35 +404,63 @@ function applyEvent(ev, snapshot, expected, animate) {
     case 'steal':
       claimUpgradesOf(ev.from, expected);
       claimUpgradesOf(ev.actor, expected);
-      move(ev.card, Z('properties', ev.actor, ev.toColor), expected, animate, Z('bank', ev.from));
+      // 120ms hold before it lifts: a theft you can see coming. Total 540ms.
+      move(ev.card, Z('properties', ev.actor, ev.toColor), expected, animate, Z('bank', ev.from),
+        { delay: 120, speed: 1.12, big: true });
+      if (animate) signal(CUE.STEAL_LANDED, mine || ev.from === selfId, true, table.boardEl(ev.actor));
       break;
 
-    case 'set_stolen':
+    case 'set_stolen': {
       claimUpgradesOf(ev.from, expected);
       claimUpgradesOf(ev.actor, expected);
-      for (const card of ev.cards || []) {
-        move(card, Z('properties', ev.actor, ev.color), expected, animate, Z('properties', ev.from, ev.color));
+      const cards = ev.cards || [];
+      for (let i = 0; i < cards.length; i++) {
+        move(cards[i], Z('properties', ev.actor, ev.color), expected, animate,
+          Z('properties', ev.from, ev.color),
+          { delay: Math.min(60 + i * STAGGER.set_stolen, 150), speed: 1.1, big: true });
       }
+      if (animate) signal(CUE.STEAL_LANDED, mine || ev.from === selfId, true, table.boardEl(ev.actor));
       break;
+    }
 
     case 'swap':
       claimUpgradesOf(ev.actor, expected);
       claimUpgradesOf(ev.target, expected);
-      move(ev.took, Z('properties', ev.actor, ev.tookColor), expected, animate);
-      move(ev.gave, Z('properties', ev.target, ev.gaveColor), expected, animate);
+      move(ev.took, Z('properties', ev.actor, ev.tookColor), expected, animate, null,
+        { delay: 100, speed: 1.1, big: true });
+      move(ev.gave, Z('properties', ev.target, ev.gaveColor), expected, animate, null,
+        { delay: 100, speed: 1.1, big: true });
+      if (animate) signal(CUE.STEAL_LANDED, mine || ev.target === selfId, true, table.boardEl(ev.actor));
       break;
 
     case 'move_property':
       claimUpgradesOf(ev.actor, expected);
-      move(ev.card, Z('properties', ev.actor, ev.to), expected, animate);
+      move(ev.card, Z('properties', ev.actor, ev.to), expected, animate, null, { speed: 0.9 });
       break;
 
-    case 'discard':
-      for (const card of ev.cards || []) move(card, 'discard', expected, animate, Z('hand', ev.actor));
+    case 'discard': {
+      const cards = ev.cards || [];
+      for (let i = 0; i < cards.length; i++) {
+        // Tumble: ±26° of spin on top of the seeded resting tilt it lands on.
+        move(cards[i], 'discard', expected, animate, Z('hand', ev.actor), {
+          delay: i * STAGGER.discard,
+          spin: (i % 2 === 0 ? 1 : -1) * 26,
+          arc: 22,
+        });
+      }
       break;
+    }
 
-    case 'shuffle':
+    case 'shuffle': {
       claimDiscard(expected);                              // discard folds back into the deck
+      if (motion) foldDiscardHome();
+      signal(CUE.SHUFFLE, false, true, table.zoneFor('deck'));
+      break;
+    }
+
+    case 'set_completed':
+      if (motion) snapColumn(ev.actor, ev.color);
+      signal(CUE.SET_COMPLETED, mine, true, columnEl(ev.actor, ev.color) || table.boardEl(ev.actor));
       break;
 
     case 'scoop':
@@ -240,9 +468,87 @@ function applyEvent(ev, snapshot, expected, animate) {
       claimUpgradesOf(ev.actor, expected);
       break;
 
+    case 'turn_start':
+      // §3.10: this is the turn the armed player's win resolves on. Settle the
+      // table first — the beat of quiet before it lands is free here, because
+      // finishAll only snaps what is already in the air.
+      if (ev.finalApproach) flight.finishAll();
+      signal(CUE.TURN_START, mine, mine || !!ev.finalApproach, table.boardEl(ev.actor));
+      break;
+
+    // §3.10 final approach: no card moves, the table just got very tense.
+    case 'final_approach':
+      signal(CUE.FINAL_APPROACH, mine, true, table.boardEl(ev.actor));
+      break;
+
+    case 'final_approach_broken':
+      signal(CUE.APPROACH_BROKEN, mine || ev.by === selfId, true, table.boardEl(ev.actor));
+      break;
+
+    case 'win':
+      // §5: the table settles. Everything in the air lands now and nothing new
+      // takes off — the overlay is ui/'s and it must not open over moving cards.
+      flight.finishAll();
+      signal(CUE.WIN, mine, true, table.boardEl(ev.actor));
+      break;
+
+    case 'stalemate':
+      flight.finishAll();
+      signal(CUE.STALEMATE, ev.winner === selfId, true, table.zoneFor('deck'));
+      break;
+
     default:
       break;                                               // pure signal events
   }
 
-  bus.emit(EVENTS.CHOREO_SFX, { name: sfx, ev, mine: ev.actor === selfId });
+  if (!catchUp) bus.emit(EVENTS.CHOREO_SFX, { name: sfx, ev, mine });
 }
+
+/* ── set pieces ────────────────────────────────────────────────────────── */
+
+function columnEl(playerId, color) {
+  const board = table.boardEl(playerId);
+  return board ? board.querySelector(`.propcol[data-color="${color}"]`) : null;
+}
+
+/** The discard pile folds home to the deck, then the deck riffles. */
+function foldDiscardHome() {
+  const zone = table.zoneFor('discard');
+  const deck = table.zoneFor('deck');
+  if (!zone || !deck) return;
+  const to = centreOf(deck);
+  const tx = to.x, ty = to.y;
+  let i = 0;
+  for (let node = zone.lastElementChild; node; node = node.previousElementSibling, i++) {
+    const from = centreOf(node);
+    flight.flyOut(node, tx - from.x, ty - from.y, {
+      dur: 240, delay: i * 24, scale: 0.86, turn: (i % 2 ? 12 : -12),
+    });
+  }
+  table.riffleDeck();
+}
+
+/**
+ * A completed set snaps together: every card in the column converges from
+ * slightly splayed and slightly oversized onto its resting place. The pulse is
+ * the cards themselves — nothing here touches the column's chrome, which is
+ * the design agent's (the FX cue carries the beat for fx/).
+ */
+function snapColumn(playerId, color) {
+  const zone = table.zoneFor('properties', playerId, color);
+  if (!zone) return;
+  const n = zone.childElementCount;
+  if (!n) return;
+  let i = 0;
+  for (let node = zone.firstElementChild; node; node = node.nextElementSibling, i++) {
+    const u = i - (n - 1) / 2;
+    flight.fly(node, {
+      dx: u * 9, dy: -5, scale: 1.06, dur: 260, delay: i * 18, arc: 0,
+      spin: 0, quiet: true, key: i, mine: playerId === selfId,
+    });
+  }
+}
+
+/* ── the hand re-fans when the interaction agent lifts a card ───────────── */
+
+bus.on(EVENTS.INTERACT_CHANGED, () => table.relayoutHand());

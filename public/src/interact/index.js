@@ -18,6 +18,7 @@ import * as table from '../table/index.js';
 import { getNode } from '../table/cardnode.js';
 import { isPropertyCard, COLOR_KEYS } from '../core/cards.js';
 import * as pointer from './pointer.js';
+import * as drag from './drag.js';
 
 export const mode = {
   kind: 'idle',            // idle | strip | target | payment | discard | details
@@ -232,39 +233,180 @@ function dispatch() {
   reset();
 }
 
+/**
+ * Answer the current `needs` step with a value. The ONE place a pick is
+ * recorded — a tap on the table, a drop on the table and (P4) a keyboard
+ * activation all arrive here, so there is no second path to the server.
+ * @returns {boolean} true when the step was consumed
+ */
+export function pick(step, value) {
+  if (mode.kind !== 'target' || mode.needs[0] !== step) return false;
+  switch (step) {
+    case 'player':
+      if (!value) return false;
+      mode.picks.targetId = value;
+      break;
+    case 'myColor':
+    case 'mySet':
+    case 'theirSet':
+      if (!value) return false;
+      mode.picks.targetColor = value;
+      break;
+    case 'theirCard':
+      if (!Number.isInteger(value)) return false;
+      mode.picks.targetCardId = value;
+      break;
+    case 'myCard':
+      if (!Number.isInteger(value)) return false;
+      mode.picks.myCardId = value;
+      break;
+    default: return false;
+  }
+  advance();
+  return true;
+}
+
 function handleTargetTap(el) {
   const step = mode.needs[0];
   if (!step) return;
-  switch (step) {
-    case 'player': {
-      const id = el.getAttribute('data-player');
-      if (!id) return;
-      mode.picks.targetId = id;
-      break;
-    }
-    case 'myColor':
-    case 'mySet':
-    case 'theirSet': {
-      const color = el.getAttribute('data-color');
-      if (!color) return;
-      mode.picks.targetColor = color;
-      break;
-    }
-    case 'theirCard': {
-      const id = Number(el.getAttribute('data-card-id'));
-      if (!Number.isInteger(id)) return;
-      mode.picks.targetCardId = id;
-      break;
-    }
-    case 'myCard': {
-      const id = Number(el.getAttribute('data-card-id'));
-      if (!Number.isInteger(id)) return;
-      mode.picks.myCardId = id;
-      break;
-    }
-    default: return;
+  if (step === 'player') { pick(step, el.getAttribute('data-player')); return; }
+  if (step === 'myColor' || step === 'mySet' || step === 'theirSet') {
+    pick(step, el.getAttribute('data-color'));
+    return;
   }
-  advance();
+  pick(step, Number(el.getAttribute('data-card-id')));
+}
+
+/* ── drag (P4) ─────────────────────────────────────────────────────────── */
+
+/** Boards this card may legally be aimed at — the same filter applyMarks uses. */
+function playerEligible(card, player) {
+  const action = card?.action;
+  if (action === 'inspector_general') return sel.completeSetsOf(player.id).length > 0;
+  if (action === 'midnight_requisition' || action === 'chud' || action === 'tdy_orders') {
+    return sel.stealableCards(player.id, action).length > 0;
+  }
+  return true;
+}
+
+/** What a press on this card would pick up, or null if it is not draggable. */
+export function dragCandidate(cardId) {
+  if (mode.kind === 'payment' || mode.kind === 'discard') return null;   // tap-to-toggle owns these
+  const inHand = sel.handCard(cardId);
+  if (inHand) return sel.canPlay() ? { source: 'hand', card: inHand } : null;
+  const mine = sel.myPropertyCard(cardId);
+  if (mine && mine.card.type === 'wild_property' && sel.canPlay()
+      && sel.moveColors(mine.card, mine.color).length) {
+    return { source: 'board', card: mine.card, from: mine.color };
+  }
+  return null;
+}
+
+/**
+ * Legal landing places for a dragged card, as elements.
+ *   rank 0 — a precise target: a set column, a board, the bank, a card
+ *   rank 1 — a region that means "play it": your own board, the table centre.
+ * drag.js resolves a release inside a region to the nearest precise target it
+ * contains, so a rough drop still lands somewhere the player meant.
+ * An empty target list is legal: the card is draggable but nothing it could do
+ * is legal right now, and `reason` says why.
+ */
+export function dragPlan(cardId) {
+  const cand = dragCandidate(cardId);
+  if (!cand) return null;
+
+  const targets = [];
+  const seen = new Set();
+  const push = (el, drop, rank = 0) => {
+    if (!el || seen.has(el)) return;
+    seen.add(el);
+    targets.push({ el, drop, rank });
+  };
+
+  const myBoard = table.boardEl(store.self.id);
+  const col = (color) => myBoard?.querySelector(`.propcol[data-color="${color}"]`);
+  const card = cand.card;
+
+  if (cand.source === 'board') {
+    for (const color of sel.moveColors(card, cand.from)) push(col(color), { kind: 'move', value: color });
+    return { source: 'board', card, targets, reason: '' };
+  }
+
+  // `reason` is '' only when the card can be PLAYED. Money always has one
+  // ("banked, not played") and a blocked action still banks fine, so the bank
+  // target is decided separately from playability.
+  const reason = sel.blockedReason(card);
+  const bankable = !isPropertyCard(card);
+
+  if (!reason && isPropertyCard(card)) {
+    for (const color of sel.placementColors(card)) {
+      push(col(color), { kind: 'need', step: 'myColor', value: color });
+    }
+    push(myBoard, { kind: 'play' }, 1);
+  } else if (!reason) {
+    // action / rent: the centre of the table always means "play it, I will aim
+    // on the table"; every precise target answers the FIRST thing it needs.
+    const step = (sel.requirementsFor(card) || [])[0];
+    if (step === 'player') {
+      for (const p of sel.opponents()) {
+        if (playerEligible(card, p)) push(table.boardEl(p.id), { kind: 'need', step, value: p.id });
+      }
+    } else if (step === 'myColor') {
+      for (const color of sel.rentColors(card)) push(col(color), { kind: 'need', step, value: color });
+    } else if (step === 'mySet') {
+      const needsHouse = card.action === 'foc';
+      for (const color of sel.myCompleteSets({ needsHouse, needsNoHouse: !needsHouse })) {
+        push(col(color), { kind: 'need', step, value: color });
+      }
+    } else if (step === 'myCard') {
+      const me = selfPlayer();
+      for (const color of COLOR_KEYS) {
+        for (const c of me?.properties?.[color] || []) push(getNode(c.id), { kind: 'need', step, value: c.id });
+      }
+    }
+    push(document.getElementById('table-center'), { kind: 'play' }, 1);
+  }
+
+  if (bankable) {
+    push(bankEl(), { kind: 'bank' });
+    push(myBoard, { kind: 'bank' }, 1);
+  }
+  return { source: 'hand', card, targets, reason };
+}
+
+function bankEl() {
+  const zone = table.zoneFor('bank', store.self.id);
+  return zone?.closest('.board-bank') || zone;
+}
+
+/**
+ * A landed drag. Deliberately goes through selectHandCard → play/bank →
+ * pick(): the drag is a shortcut for the taps, never a second route to
+ * net/send.js.
+ * @returns {boolean} true if the machine took it (dispatched, or now targeting)
+ */
+export function dropCommit(cardId, drop) {
+  if (!drop) return false;
+
+  if (drop.kind === 'move') {
+    beginMove(cardId);
+    return pick('myColor', drop.value);
+  }
+
+  // A tap may already have this card selected; selectHandCard would toggle it off.
+  if (!(mode.kind === 'strip' && mode.cardId === cardId)) selectHandCard(cardId);
+  if (mode.cardId !== cardId) return false;
+
+  if (drop.kind === 'bank') {
+    if (isPropertyCard(mode.card)) return false;
+    bankSelected();
+    return mode.kind === 'idle';
+  }
+
+  playSelected();
+  if (mode.kind === 'strip') return false;                 // refused, still selected
+  if (drop.step) pick(drop.step, drop.value);
+  return true;
 }
 
 /* ── marks ─────────────────────────────────────────────────────────────── */
@@ -273,7 +415,11 @@ function clearMarks() {
   for (const el of qsa('[data-targetable="1"]')) el.removeAttribute('data-targetable');
   for (const el of qsa('[data-payable="1"]')) el.removeAttribute('data-payable');
   for (const el of qsa('.is-picked')) el.classList.remove('is-picked');
-  for (const el of qsa('.is-lifted')) el.classList.remove('is-lifted');
+  // A card under the finger keeps its lift: applyMarks runs on every snapshot
+  // and a mid-drag state broadcast would otherwise drop the card flat.
+  for (const el of qsa('.is-lifted')) {
+    if (!el.classList.contains('is-dragging')) el.classList.remove('is-lifted');
+  }
 }
 
 function mark(el) { if (el) setAttr(el, 'data-targetable', '1'); }
@@ -299,11 +445,7 @@ export function applyMarks() {
     const step = mode.needs[0];
     if (step === 'player') {
       for (const p of sel.opponents()) {
-        if (mode.card?.action === 'inspector_general' && !sel.completeSetsOf(p.id).length) continue;
-        if ((mode.card?.action === 'midnight_requisition' || mode.card?.action === 'chud'
-             || mode.card?.action === 'tdy_orders')
-            && !sel.stealableCards(p.id, mode.card.action).length) continue;
-        mark(table.boardEl(p.id));
+        if (playerEligible(mode.card, p)) mark(table.boardEl(p.id));
       }
     } else if (step === 'theirCard') {
       for (const { card } of sel.stealableCards(mode.picks.targetId, mode.card?.action)) {
@@ -346,6 +488,7 @@ export function applyMarks() {
 /* ── wiring ────────────────────────────────────────────────────────────── */
 
 export function mount() {
+  drag.mount({ dragPlan, dropCommit, dragCandidate, refreshMarks: applyMarks });
   pointer.onEscape(() => cancel());
   pointer.onTargetTap((el) => handleTargetTap(el));
   pointer.onCardTap((id, node) => {
@@ -369,14 +512,22 @@ export function mount() {
   });
 
   // A new snapshot can invalidate the mode: the card was paid away, the target
-  // scooped, the pending action resolved while the sheet was open.
-  bus.on(EVENTS.STATE_APPLIED, () => {
+  // scooped, the pending action resolved while the sheet was open. A reset here
+  // must fall through to the owed check below — a snapshot can BOTH invalidate
+  // the old mode and demand payment (fixture jumps, missed broadcasts).
+  const syncMode = () => {
     if (mode.kind === 'strip' || mode.kind === 'target') {
-      if (mode.intent !== 'move' && mode.cardId != null && !sel.handCard(mode.cardId)) { reset(); return; }
+      if (mode.intent !== 'move' && mode.cardId != null && !sel.handCard(mode.cardId)) reset();
     }
-    if (mode.kind === 'payment' && sel.owedAmount() === 0) { reset(); return; }
-    if (mode.kind === 'discard' && sel.myHand().length <= (store.snapshot?.handLimit || 7)) { reset(); return; }
+    if (mode.kind === 'payment' && sel.owedAmount() === 0) reset();
+    if (mode.kind === 'discard' && sel.myHand().length <= (store.snapshot?.handLimit || 7)) reset();
     if (mode.kind === 'idle' && sel.owedAmount() > 0) { beginPayment(sel.owedAmount()); return; }
     applyMarks();
-  });
+  };
+  bus.on(EVENTS.STATE_APPLIED, () => { drag.revalidate(); syncMode(); });
+
+  // On a fixture/snap load STATE_APPLIED fires before reconcile has created any
+  // card node, so marks (and payment auto-entry) found nothing to act on.
+  // Re-sync when the table settles.
+  bus.on(EVENTS.CHOREO_IDLE, () => syncMode());
 }

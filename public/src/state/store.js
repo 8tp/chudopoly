@@ -103,7 +103,10 @@ export function applyState(msg, opts = {}) {
     const seq = Number(game.eventSeq) || 0;
 
     if (store.lastSeq === 0) {
-      snap = true;                                    // first sight of this game
+      // First sight of this game. If the tail begins at seq 1 we hold the
+      // complete history — the opening deal can animate. Anything else
+      // (reconnect mid-game, fixture) has no safe prefix: snap.
+      snap = snap || !(tail.length && tail[0].seq === 1);
     } else if (seq < store.lastSeq) {
       snap = true;                                    // rematch: seq restarted
       store.lastSeq = 0;

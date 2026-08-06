@@ -138,14 +138,25 @@ try {
           }));
         }
       };
-      const payable = document.querySelector('[data-payable="1"], [data-zone="bank"] [data-card-id]');
-      if (!payable) return { ok: false, why: 'no payable card is selectable' };
-      tap(payable);
-      await new Promise((res) => setTimeout(res, 120));
-      const confirm = document.querySelector('[data-action="confirm-payment"]');
-      if (!confirm) return { ok: false, why: 'no payment confirm control' };
-      tap(confirm);
-      await new Promise((res) => setTimeout(res, 200));
+      const payable = [...document.querySelectorAll('[data-payable="1"], [data-zone="bank"] [data-card-id]')];
+      if (!payable.length) return { ok: false, why: 'no payable card is selectable' };
+      if (!document.querySelector('[data-action="confirm-payment"]')) {
+        return { ok: false, why: 'no payment confirm control' };
+      }
+      // A single card may not cover the debt — keep selecting until the confirm
+      // actually sends (or we run out of cards). The prompt re-renders on every
+      // selection change, so the confirm button must be re-queried each pass: a
+      // detached node swallows events (they no longer bubble to the delegated
+      // window listener).
+      for (const card of payable) {
+        tap(card);
+        await new Promise((res) => setTimeout(res, 120));
+        const confirm = document.querySelector('[data-action="confirm-payment"]');
+        if (confirm) tap(confirm);
+        await new Promise((res) => setTimeout(res, 200));
+        const last = (window.__CHUD.sentLog || []).slice(-1)[0];
+        if (last?.type === 'respond') return { ok: true, sent: last };
+      }
       return { ok: true, sent: (window.__CHUD.sentLog || []).slice(-1)[0] || null };
     });
     if (!pay.ok) r.fail(`pay a rent: ${pay.why}`);

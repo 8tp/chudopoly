@@ -9,6 +9,7 @@
 import { el, setAttr, setText } from '../core/dom.js';
 import { COLORS, kindLabel, isPropertyCard } from '../core/cards.js';
 import { stableSpread } from '../core/rng.js';
+import * as flight from '../anim/flight.js';
 
 const nodes = new Map();      // cardId -> element
 const backs = [];             // pooled face-down nodes (deck + opponent hands)
@@ -34,16 +35,30 @@ export function cardNode(card) {
   return node;
 }
 
+/**
+ * Structure (P4 — the flip needs it, style/motion.css gives it its 3D):
+ *
+ *   .card[data-facing]              ← the transform contract lives here
+ *     .card-inner                   ← rotateY(var(--flip)) ONLY
+ *       .card-face                  ← backface-visibility:hidden
+ *       .card-back                  ← pre-rotated 180deg
+ *
+ * The wrapper exists so a flip never touches the outer transform. Everything
+ * table.css says about .card-face / .card-back still applies — they are all
+ * descendant selectors, and `.card > * { pointer-events:none }` still covers
+ * the whole subtree because pointer-events inherits.
+ */
 function buildCard(card) {
   const node = el('div', {
     class: 'card',
-    attrs: { 'data-card-id': card.id, tabindex: '-1' },
+    attrs: { 'data-card-id': card.id, 'data-facing': 'up', tabindex: '-1' },
     dataset: { type: card.type || 'unknown' },
   });
   node.__card = card;
-  node.appendChild(buildFace(card));
-  node.appendChild(el('div', { class: 'card-back' }, [
-    el('div', { class: 'card-back-roundel', text: '★' }),
+  node.__rx = 0; node.__ry = 0; node.__rt = 0;
+  node.appendChild(el('div', { class: 'card-inner' }, [
+    buildFace(card),
+    el('div', { class: 'card-back' }, [el('div', { class: 'card-back-roundel', text: '★' })]),
   ]));
   refresh(node, card);
   return node;
@@ -89,12 +104,26 @@ export function refresh(node, card) {
   if (band) setText(band, kindLabel(card));
 }
 
-/** Deterministic tilt for discard/table scatter — never Math.random (§5). */
+/* ── rest pose ───────────────────────────────────────────────────────────
+   Where a card SITS when nothing is animating it, as three numbers on the
+   node: __rx/__ry (px offsets from its layout box) and __rt (degrees). Every
+   flight lands on this pose rather than on zero, which is what lets the hand
+   fan and the discard scatter survive a card flying into them. Changing the
+   pose mid-flight retargets the flight instead of fighting it. */
+
+export function setRest(node, x, y, deg) {
+  if (!node) return;
+  if (node.__rx === x && node.__ry === y && node.__rt === deg) return;
+  node.__rx = x; node.__ry = y; node.__rt = deg;
+  flight.retarget(node);
+}
+
+/** Deterministic scatter for the discard pile — never Math.random (§5). */
 export function tilt(node, id, range, salt = 0) {
-  const deg = stableSpread(id, range, salt);
-  const current = node.style.getPropertyValue('--tilt');
-  const next = `${deg.toFixed(2)}deg`;
-  if (current !== next) node.style.setProperty('--tilt', next);
+  setRest(node,
+    stableSpread(id, 3.2, salt + 5),
+    stableSpread(id, 3.2, salt + 9),
+    stableSpread(id, range, salt));
 }
 
 /* ── Face-down pool ──────────────────────────────────────────────────────
@@ -103,6 +132,8 @@ export function tilt(node, id, range, salt = 0) {
    drifted, because it has no card id to drift with. */
 
 export function takeBack() {
+  // No .card-inner: a pooled back has no face, never flips, and keeping it flat
+  // keeps it out of the 3D context the flip rules create.
   const node = backs.pop() || el('div', {
     class: 'card card-facedown',
     attrs: { 'data-back': '1', 'aria-hidden': 'true' },
@@ -112,13 +143,19 @@ export function takeBack() {
 
 export function releaseBack(node) {
   if (!node) return;
+  flight.cancel(node);
   if (node.parentNode) node.parentNode.removeChild(node);
   node.style.cssText = '';
+  node.__rx = 0; node.__ry = 0; node.__rt = 0;
   if (backs.length < 64) backs.push(node);
 }
 
-/** Set a zone's face-down child count to exactly `count`, reusing pooled nodes. */
-export function syncBacks(zone, count, tiltRange = 0) {
+/**
+ * Set a zone's face-down child count to exactly `count`, reusing pooled nodes.
+ * @param {{tilt?:number, lift?:number}} opts  tilt = degrees per step (an
+ *        opponent's fanned hand); lift = px per step (the deck's stack depth).
+ */
+export function syncBacks(zone, count, opts = null) {
   if (!zone) return;
   let have = zone.childElementCount;
   while (have > count) { releaseBack(zone.lastElementChild); have--; }
@@ -127,14 +164,13 @@ export function syncBacks(zone, count, tiltRange = 0) {
     zone.appendChild(back);
     have++;
   }
-  if (tiltRange > 0) {
-    let i = 0;
-    for (let child = zone.firstElementChild; child; child = child.nextElementSibling, i++) {
-      const deg = (i - (count - 1) / 2) * tiltRange;
-      const value = `${deg.toFixed(2)}deg`;
-      if (child.style.getPropertyValue('--tilt') !== value) child.style.setProperty('--tilt', value);
-      const value2 = String(i);
-      if (child.style.getPropertyValue('--i') !== value2) child.style.setProperty('--i', value2);
-    }
+  if (!opts) return;
+  const tiltStep = opts.tilt || 0;
+  const lift = opts.lift || 0;
+  let i = 0;
+  for (let child = zone.firstElementChild; child; child = child.nextElementSibling, i++) {
+    setRest(child, 0, i * lift, tiltStep ? (i - (count - 1) / 2) * tiltStep : 0);
+    const idx = String(i);
+    if (child.style.getPropertyValue('--i') !== idx) child.style.setProperty('--i', idx);
   }
 }

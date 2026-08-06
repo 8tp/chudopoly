@@ -1,1 +1,59 @@
-/* Owned by the interaction agent (P4): drag/targeting/payment interaction states. */
+/* interact.css — owned by the interaction agent (P4).
+   BEHAVIOUR ONLY: what receives pointer input, what the browser is allowed to
+   do with a touch, what the cursor promises. The lift shadow, the glow and
+   every colour belong to the design agent — the rules below reuse the tokens
+   that table.css already spends on [data-targetable] so a droppable zone and a
+   targetable zone cannot drift apart. */
+
+/* ── touch discipline (§P4.4) ───────────────────────────────────────────────
+   touch-action is scoped to the two places a drag can begin. The page, the side
+   panel, the chat and the log keep native scrolling.
+   The hand is a horizontal scroller of overlapping cards with almost no empty
+   space to grab, so `none` there would make a 9-card hand unscrollable by
+   finger: `pan-x` keeps the sideways scroll and leaves every vertical gesture
+   (which is what a play is — every drop target is above the hand) to us.
+   The self board scrolls vertically and is mostly covered by cards, so only the
+   cards that can actually be dragged from it (wilds — free rearranging, §3.8)
+   claim the gesture; every other card there keeps the board scrollable. */
+#hand-dock .card { touch-action: pan-x; }
+#self-board .card[data-type="wild_property"] { touch-action: none; }
+
+/* ── the held card ─────────────────────────────────────────────────────── */
+.card.is-dragging {
+  /* elementFromPoint must see the zone UNDER the finger, and the held card is
+     drawn on top of it by definition. */
+  pointer-events: none;
+  z-index: 60;
+}
+.card.is-dropping {
+  /* released onto a legal zone, still carrying the drop offset until the
+     choreographer's FLIP takes over (interact/drag.js) */
+  pointer-events: none;
+  z-index: 50;
+}
+
+body.is-dragging-card {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── drop targets ──────────────────────────────────────────────────────── */
+[data-droppable="1"] {
+  outline: 2px dashed var(--gold-dim);
+  outline-offset: 2px;
+}
+[data-droppable="1"].is-drop-hover {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+.propcol[data-droppable="1"] { border-style: solid; border-color: var(--gold-dim); }
+.propcol[data-droppable="1"].is-drop-hover { border-color: var(--gold); }
+
+/* ── cursors (hover-capable pointers only, §2) ─────────────────────────── */
+@media (hover: hover) {
+  #hand-dock .card,
+  #self-board .card[data-type="wild_property"] { cursor: grab; }
+  .card.is-dragging, .card.is-dragging * { cursor: grabbing; }
+  [data-droppable="1"] { cursor: copy; }
+}

@@ -1,23 +1,27 @@
-/* base.css — P3 SCAFFOLD: reset, native-app chrome, tap floor. */
+/* base.css — reset, native-app chrome, type scale, THE BUTTON SYSTEM.
+   Owner: design agent (§6). Dark only. */
 
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--navy-900);
+  background: var(--void);
   color: var(--ink-100);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   font-size: var(--s);
+  line-height: 1.35;
   overflow: hidden;
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 [hidden] { display: none !important; }
 
-#app { height: 100%; }
+#app { position: relative; height: 100%; isolation: isolate; }
 
 .screen {
   position: absolute;
@@ -28,67 +32,214 @@ html, body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
-.screen-home, .screen-lobby { align-items: center; justify-content: center; overflow-y: auto; }
+/* Home and lobby stand on the same tarmac the table does — one world. */
+.screen-home, .screen-lobby {
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  background:
+    radial-gradient(120% 74% at 50% -6%, rgba(63, 111, 176, .28) 0%, transparent 62%),
+    radial-gradient(90% 60% at 50% 108%, rgba(232, 185, 85, .07) 0%, transparent 60%),
+    linear-gradient(180deg, #0a1729 0%, #060e1c 55%, #04080f 100%);
+}
+.screen-home::before, .screen-lobby::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--grain);
+  background-size: 180px 180px;
+  opacity: .05;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
 
-h1, h2, h3, h4 { margin: 0 0 .4em; font-weight: 800; letter-spacing: .02em; }
+/* ── type ─────────────────────────────────────────────────────────────── */
+
+h1, h2, h3, h4 {
+  margin: 0 0 .4em;
+  font-weight: 900;
+  letter-spacing: -.01em;
+  line-height: 1.05;
+}
 p { margin: 0 0 .5em; }
-ul { margin: 0 0 .8em; padding-left: 1.2em; }
-li { margin-bottom: .25em; }
+ul { margin: 0 0 .8em; padding-left: 1.15em; }
+li { margin-bottom: .3em; }
+
+/* Every ALL-CAPS chrome label in the app is this one recipe. */
+.field-label, .zone-tag, .pile-label, .hand-label, .propcol-head,
+.side-head, .details-kind, .brand-sub, .lobby-seat-tag {
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--steel-300);
+}
 
 button, input, select { font: inherit; color: inherit; }
 
+/* ── THE BUTTON SYSTEM ────────────────────────────────────────────────────
+   ONE geometry — same height, padding, radius, border, bevel depth and press
+   travel for every button in the game. Role is carried by FILL alone, via two
+   custom properties, so a variant can never accidentally invent its own box:
+
+     .btn            slate    "another way out of here"
+     .btn-primary    green    "the thing to do next"  (gold on ceremony screens)
+     .btn-danger     red      irreversible
+     .btn-ghost      flat     tertiary / dismiss
+     .btn-icon       square   HUD furniture, half the bevel so it stays quiet
+
+   Before this the primary was gold everywhere, which spent the §6 foil budget
+   on "Create Room". Gold is now allowed on exactly two screens (home, win) and
+   the in-game primary is green. */
+
 .btn {
+  --btn-face: var(--steel-600);
+  --btn-deep: var(--steel-900);
+  --btn-ink: var(--ink-100);
+  --btn-drop: .26em;
+
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4em;
   min-height: var(--tap);
   min-width: var(--tap);
-  padding: 0 .9em;
-  border: 1px solid var(--steel-400);
+  padding: 0 1.05em;
+  border: var(--hairline) solid rgba(0, 0, 0, .6);
   border-radius: var(--radius);
-  background: var(--navy-600);
-  color: var(--ink-100);
-  font-weight: 700;
-  letter-spacing: .03em;
+  background: var(--btn-face);
+  color: var(--btn-ink);
+  font-size: .92em;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  white-space: nowrap;
   cursor: pointer;
   touch-action: manipulation;
+  user-select: none;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .45);
+  box-shadow:
+    0 var(--btn-drop) 0 var(--btn-deep),
+    0 calc(var(--btn-drop) + .04em) 0 var(--hairline) rgba(0, 0, 0, .7),
+    0 calc(var(--btn-drop) + .3em) .7em rgba(0, 0, 0, .42),
+    var(--rim);
+  transform: translateY(0);
+  transition: transform .07s ease, box-shadow .07s ease, filter .14s ease, border-color .14s ease;
 }
-.btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn-primary { background: var(--gold-dim); border-color: var(--gold); color: #fff; }
-.btn-ghost { background: transparent; border-color: var(--navy-500); color: var(--ink-300); }
-.btn-danger { background: #3a1512; border-color: var(--danger); }
-.btn-icon { padding: 0; width: var(--tap); }
-.btn-small { padding: 0 .6em; }
-@media (hover: hover) { .btn:hover:not(:disabled) { border-color: var(--gold); } }
-.btn:focus-visible, [data-card-id]:focus-visible, .board:focus-visible {
+.btn:active:not(:disabled) {
+  transform: translateY(var(--btn-drop));
+  box-shadow:
+    0 0 0 var(--btn-deep),
+    0 .04em 0 var(--hairline) rgba(0, 0, 0, .7),
+    0 .14em .34em rgba(0, 0, 0, .5),
+    var(--rim);
+}
+.btn:disabled { opacity: .38; cursor: not-allowed; filter: saturate(.35); }
+
+.btn-primary {
+  --btn-face: linear-gradient(180deg, #38c67a 0%, var(--go) 52%, #1f9d5b 100%);
+  --btn-deep: var(--go-deep);
+  --btn-ink: var(--go-ink);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .28);
+}
+.btn-danger {
+  --btn-face: linear-gradient(180deg, #e2554b 0%, var(--danger) 55%, #a82a23 100%);
+  --btn-deep: var(--danger-deep);
+  --btn-ink: #fff;
+}
+.btn-ghost {
+  --btn-face: transparent;
+  --btn-deep: transparent;
+  --btn-ink: var(--ink-300);
+  border-color: var(--steel-500);
+  box-shadow: none;
+  text-shadow: none;
+}
+.btn-ghost:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+
+/* Ceremony screens spend the foil: the brand CTA and the victory rematch. */
+.screen-home .btn-primary,
+.win-box .btn-primary {
+  --btn-face: var(--foil);
+  --btn-deep: var(--gold-deep);
+  --btn-ink: var(--gold-ink);
+  border-color: rgba(0, 0, 0, .55);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .4);
+}
+
+.btn-icon {
+  --btn-face: var(--steel-700);
+  --btn-drop: .14em;
+  width: var(--tap);
+  padding: 0;
+  font-size: 1.05em;
+  letter-spacing: 0;
+}
+.btn-small { min-height: calc(var(--tap) * .78); padding: 0 .7em; font-size: .78em; }
+
+@media (hover: hover) {
+  .btn:hover:not(:disabled) { filter: brightness(1.14); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--steel-400); filter: none; background: rgba(86, 109, 146, .14); }
+}
+.btn:focus-visible,
+[data-card-id]:focus-visible,
+.board:focus-visible,
+.field:focus-visible,
+.propcol:focus-visible {
   outline: 2px solid var(--gold);
   outline-offset: 2px;
 }
 
+/* ── fields ───────────────────────────────────────────────────────────── */
+
 .field {
   min-height: var(--tap);
   width: 100%;
-  padding: 0 .7em;
-  border: 1px solid var(--steel-400);
+  padding: 0 .8em;
+  border: var(--hairline) solid var(--steel-500);
   border-radius: var(--radius);
-  background: var(--navy-800);
+  background: linear-gradient(180deg, #060d18, #0a1424);
+  color: var(--ink-100);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .6);
+  transition: border-color .14s ease, box-shadow .14s ease;
 }
-.field-code { text-transform: uppercase; text-align: center; letter-spacing: .3em; }
-.field-label { display: block; font-size: .78em; letter-spacing: .14em; color: var(--steel-300); }
+.field::placeholder { color: #5d6f8c; letter-spacing: .06em; }
+.field:focus { border-color: var(--steel-400); box-shadow: inset 0 2px 5px rgba(0, 0, 0, .6), 0 0 0 2px rgba(74, 144, 217, .3); }
+select.field { padding-right: .4em; }
+.field-code { text-transform: uppercase; text-align: center; letter-spacing: .38em; font-weight: 900; }
+.field-label { display: block; font-size: .72em; margin-bottom: -.1em; }
 
-.row { display: flex; gap: .5em; align-items: center; min-width: 0; }
+.row { display: flex; gap: .45em; align-items: center; min-width: 0; }
 .row > .field { flex: 1 1 auto; min-width: 0; }
 
+/* ── chip: the one small readout ──────────────────────────────────────── */
+
 .chip {
-  display: inline-block;
-  padding: .15em .5em;
+  display: inline-flex;
+  align-items: center;
+  gap: .3em;
+  padding: .22em .62em;
   border-radius: 999px;
-  background: var(--navy-600);
-  font-size: .78em;
-  letter-spacing: .08em;
+  border: var(--hairline) solid rgba(143, 160, 186, .2);
+  background: linear-gradient(180deg, rgba(45, 69, 104, .62), rgba(15, 28, 48, .8));
+  color: var(--ink-300);
+  font-size: .72em;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
   white-space: nowrap;
+  box-shadow: var(--rim);
 }
+.chip:empty { display: none; }
 
-.hint { color: var(--steel-300); font-size: .85em; }
-.error { color: var(--danger); min-height: 1.2em; font-size: .85em; }
+.hint { color: var(--steel-300); font-size: .84em; }
+.error { color: var(--danger-lit); min-height: 1.2em; font-size: .84em; font-weight: 700; }
 
+/* ── §0.9: motion collapses; ambient loops stop entirely ──────────────── */
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
 }

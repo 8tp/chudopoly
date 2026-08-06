@@ -21,6 +21,7 @@ export const EVENTS = Object.freeze({
   CHOREO_EVENT: 'choreo:event',       // one engine event reached the table
   CHOREO_SFX: 'choreo:sfx',           // { name, ev, mine } — audio/fx dispatch
   CHOREO_IDLE: 'choreo:idle',
+  FX_CUE: 'fx:cue',                   // { kind, mine, big, at:{x,y} } — anim/cues.js
 
   INTERACT_CHANGED: 'interact:changed',
   UI_DETAILS: 'ui:details',           // card id — open the details sheet

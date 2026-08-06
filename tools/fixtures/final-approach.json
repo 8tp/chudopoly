@@ -1,12 +1,12 @@
 {
  "$schema": "chud-fixture/1",
- "name": "payment-pending",
- "description": "A pending charge this seat owes — stages payment selection and the response timer.",
+ "name": "final-approach",
+ "description": "A player is armed (3 complete sets, win pending) — the dramatic-peak state the alarm treatment stages.",
  "seed": 1337,
  "selfId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
  "room": "FC5J",
- "recordedAt": "2026-08-06T22:04:40.043Z",
- "stateIndex": 268,
+ "recordedAt": "2026-08-06T22:04:40.046Z",
+ "stateIndex": 271,
  "states": [
   {
    "type": "state",
@@ -38,9 +38,9 @@
    "hostId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
    "game": {
     "phase": "playing",
-    "turnPhase": "action_response",
-    "currentPlayerId": "b6de82a0-2f76-4e41-825a-083546eea5cb",
-    "playsRemaining": 2,
+    "turnPhase": "draw",
+    "currentPlayerId": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+    "playsRemaining": 3,
     "deckCount": 12,
     "discardTop": {
      "id": 71,
@@ -250,48 +250,29 @@
       "description": "All other players pay you 2M each"
      }
     ],
-    "pendingAction": {
-     "type": "payment",
-     "action": "roll_call",
-     "sourceId": "b6de82a0-2f76-4e41-825a-083546eea5cb",
-     "amount": 2,
-     "doubled": false,
-     "targets": [
-      {
-       "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
-       "depth": 0,
-       "responderId": "e785093c-63dd-4eb4-8d55-23f60a5324fa"
-      },
-      {
-       "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
-       "depth": 0,
-       "responderId": "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
-      }
-     ]
-    },
-    "responders": [
-     "e785093c-63dd-4eb4-8d55-23f60a5324fa",
-     "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
-    ],
+    "pendingAction": null,
+    "responders": [],
     "winner": null,
     "endReason": null,
-    "armedIds": [],
+    "armedIds": [
+     "b6de82a0-2f76-4e41-825a-083546eea5cb"
+    ],
     "surgeOps": false,
     "handLimit": 7,
     "setsToWin": 3,
     "deckCycle": 1,
     "deckCycleLimit": 16,
-    "turnNumber": 43,
+    "turnNumber": 44,
     "stats": {
-     "turns": 44,
+     "turns": 45,
      "cardsPlayed": {
       "e785093c-63dd-4eb4-8d55-23f60a5324fa": 45,
       "b6de82a0-2f76-4e41-825a-083546eea5cb": 36,
       "963e0e0b-3e66-4188-9dfa-63bd342dde8f": 41
      },
      "payments": {
-      "count": 35,
-      "total": 130,
+      "count": 37,
+      "total": 135,
       "biggest": 13
      },
      "propertiesStolen": {
@@ -301,10 +282,6 @@
      }
     },
     "log": [
-     "HARNESS paid 5M to Blaze",
-     "Phoenix's turn",
-     "Phoenix drew 2 cards.",
-     "Phoenix plays Inspector General on HARNESS's Fighters set!",
      "HARNESS plays OPSEC! Phoenix can counter...",
      "Action blocked by OPSEC — HARNESS is safe.",
      "Phoenix played PCS Orders — drew 2 cards",
@@ -320,53 +297,13 @@
      "HARNESS activates Surge Operations — the next charge this turn is doubled!",
      "Blaze's turn",
      "Blaze drew 2 cards.",
-     "Blaze calls Roll Call — everyone pays 2M!"
+     "Blaze calls Roll Call — everyone pays 2M!",
+     "HARNESS paid 2M to Blaze",
+     "Blaze is on FINAL APPROACH with 3 sets — every other player gets a turn to break it!",
+     "Phoenix paid 3M to Blaze",
+     "Phoenix's turn"
     ],
     "events": [
-     {
-      "seq": 256,
-      "t": "turn_end",
-      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa"
-     },
-     {
-      "seq": 257,
-      "t": "turn_start",
-      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
-      "plays": 3,
-      "finalApproach": false
-     },
-     {
-      "seq": 258,
-      "t": "draw",
-      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
-      "count": 2
-     },
-     {
-      "seq": 259,
-      "t": "play_property",
-      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
-      "card": {
-       "id": 8,
-       "type": "property",
-       "name": "Nellis AFB",
-       "value": 2,
-       "color": "orange",
-       "placedColor": "orange"
-      },
-      "color": "orange"
-     },
-     {
-      "seq": 260,
-      "t": "turn_end",
-      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb"
-     },
-     {
-      "seq": 261,
-      "t": "turn_start",
-      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
-      "plays": 3,
-      "finalApproach": false
-     },
      {
       "seq": 262,
       "t": "draw",
@@ -1889,9 +1826,90 @@
       "amount": 2,
       "reason": "roll_call",
       "doubled": false
+     },
+     {
+      "seq": 376,
+      "t": "payment",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 2,
+      "cards": [
+       {
+        "id": 36,
+        "type": "wild_property",
+        "name": "Wild: Training/Drone",
+        "value": 1,
+        "colors": [
+         "lightblue",
+         "brown"
+        ],
+        "placedColor": "brown"
+       },
+       {
+        "id": 0,
+        "type": "property",
+        "name": "Creech AFB",
+        "value": 1,
+        "color": "brown",
+        "placedColor": "brown"
+       }
+      ],
+      "reason": "roll_call"
+     },
+     {
+      "seq": 377,
+      "t": "set_completed",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "color": "brown"
+     },
+     {
+      "seq": 378,
+      "t": "final_approach",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "sets": 3,
+      "onOwnTurn": true,
+      "turnsToCheckpoint": 3
+     },
+     {
+      "seq": 379,
+      "t": "payment",
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 3,
+      "cards": [
+       {
+        "id": 98,
+        "type": "rent",
+        "name": "Rent: green/darkblue",
+        "value": 1,
+        "colors": [
+         "green",
+         "darkblue"
+        ]
+       },
+       {
+        "id": 45,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       }
+      ],
+      "reason": "roll_call"
+     },
+     {
+      "seq": 380,
+      "t": "turn_end",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb"
+     },
+     {
+      "seq": 381,
+      "t": "turn_start",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "plays": 3,
+      "finalApproach": false
      }
     ],
-    "eventSeq": 375,
+    "eventSeq": 381,
     "players": [
      {
       "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
@@ -1982,27 +2000,7 @@
          "placedColor": "yellow"
         }
        ],
-       "brown": [
-        {
-         "id": 36,
-         "type": "wild_property",
-         "colors": [
-          "lightblue",
-          "brown"
-         ],
-         "name": "Wild: Training/Drone",
-         "value": 1,
-         "placedColor": "brown"
-        },
-        {
-         "id": 0,
-         "type": "property",
-         "color": "brown",
-         "name": "Creech AFB",
-         "value": 1,
-         "placedColor": "brown"
-        }
-       ],
+       "brown": [],
        "green": [
         {
          "id": 19,
@@ -2084,15 +2082,15 @@
         }
        ]
       },
-      "completedSets": 2,
+      "completedSets": 1,
       "eliminated": false,
       "finalApproach": false,
       "finalApproachIn": null,
       "bankValue": 0,
-      "propertyValue": 36,
+      "propertyValue": 34,
       "upgradeValue": 3,
-      "payableValue": 36,
-      "netWorth": 39
+      "payableValue": 34,
+      "netWorth": 37
      },
      {
       "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
@@ -2190,6 +2188,22 @@
         "type": "money",
         "name": "5M",
         "value": 5
+       },
+       {
+        "id": 98,
+        "type": "rent",
+        "colors": [
+         "green",
+         "darkblue"
+        ],
+        "name": "Rent: green/darkblue",
+        "value": 1
+       },
+       {
+        "id": 45,
+        "type": "money",
+        "name": "2M",
+        "value": 2
        }
       ],
       "properties": {
@@ -2239,6 +2253,25 @@
          "type": "property",
          "color": "brown",
          "name": "Cannon AFB",
+         "value": 1,
+         "placedColor": "brown"
+        },
+        {
+         "id": 36,
+         "type": "wild_property",
+         "colors": [
+          "lightblue",
+          "brown"
+         ],
+         "name": "Wild: Training/Drone",
+         "value": 1,
+         "placedColor": "brown"
+        },
+        {
+         "id": 0,
+         "type": "property",
+         "color": "brown",
+         "name": "Creech AFB",
          "value": 1,
          "placedColor": "brown"
         }
@@ -2309,15 +2342,15 @@
         }
        ]
       },
-      "completedSets": 2,
+      "completedSets": 3,
       "eliminated": false,
-      "finalApproach": false,
-      "finalApproachIn": null,
-      "bankValue": 29,
-      "propertyValue": 20,
+      "finalApproach": true,
+      "finalApproachIn": 2,
+      "bankValue": 32,
+      "propertyValue": 22,
       "upgradeValue": 3,
-      "payableValue": 49,
-      "netWorth": 52
+      "payableValue": 54,
+      "netWorth": 57
      },
      {
       "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
@@ -2345,12 +2378,6 @@
         "name": "Full Operational Capability (Hotel)",
         "value": 4,
         "description": "Add to a complete set with Upgrade: +4M rent"
-       },
-       {
-        "id": 45,
-        "type": "money",
-        "name": "2M",
-        "value": 2
        },
        {
         "id": 47,
@@ -2383,16 +2410,6 @@
         "type": "money",
         "name": "3M",
         "value": 3
-       },
-       {
-        "id": 98,
-        "type": "rent",
-        "colors": [
-         "green",
-         "darkblue"
-        ],
-        "name": "Rent: green/darkblue",
-        "value": 1
        }
       ],
       "properties": {
@@ -2522,17 +2539,17 @@
       "eliminated": false,
       "finalApproach": false,
       "finalApproachIn": null,
-      "bankValue": 28,
+      "bankValue": 25,
       "propertyValue": 26,
       "upgradeValue": 0,
-      "payableValue": 54,
-      "netWorth": 54
+      "payableValue": 51,
+      "netWorth": 51
      }
     ]
    },
    "turnTimer": {
     "timeout": 60,
-    "startedAt": 1786053866675
+    "startedAt": 1786053869281
    },
    "responseTimer": null
   }

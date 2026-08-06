@@ -176,6 +176,18 @@ const MOMENTS = [
     },
   },
   {
+    name: 'final-approach',
+    description: 'A player is armed (3 complete sets, win pending) — the dramatic-peak state the alarm treatment stages.',
+    pick: (states) => {
+      const hits = states.filter((s) => (s.game?.armedIds || []).length > 0 && s.game.phase === 'playing');
+      if (!hits.length) return null;
+      // Busiest armed board; prefer states where the viewer is NOT the armed one (threat view).
+      const threat = hits.filter((s) => s.game.armedIds[0] !== s.game.currentPlayerId);
+      const pool = threat.length ? threat : hits;
+      return pool.reduce((best, s) => (boardCount(s.game) > boardCount(best.game) ? s : best));
+    },
+  },
+  {
     name: 'finished',
     description: 'Win screen state — winner set, phase finished, final boards intact.',
     pick: (states) => [...states].reverse().find((s) => s.game?.phase === 'finished') || null,

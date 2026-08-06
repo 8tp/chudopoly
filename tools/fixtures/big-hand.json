@@ -3,43 +3,43 @@
  "name": "big-hand",
  "description": "Largest hand this seat ever held — the fan-layout worst case (hand limit is 7 plus draws).",
  "seed": 1337,
- "selfId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
- "room": "FW5A",
- "recordedAt": "2026-08-06T20:10:31.468Z",
+ "selfId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+ "room": "FC5J",
+ "recordedAt": "2026-08-06T22:04:40.046Z",
  "stateIndex": 18,
  "states": [
   {
    "type": "state",
-   "code": "FW5A",
+   "code": "FC5J",
    "phase": "playing",
    "players": [
     {
-     "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+     "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
      "name": "HARNESS",
      "connected": true,
      "isBot": false,
      "botMode": null
     },
     {
-     "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-     "name": "Warlock",
+     "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+     "name": "Blaze",
      "connected": true,
      "isBot": true,
      "botMode": "chud"
     },
     {
-     "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-     "name": "Iceman",
+     "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+     "name": "Phoenix",
      "connected": true,
      "isBot": true,
      "botMode": "aggressive"
     }
    ],
-   "hostId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+   "hostId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
    "game": {
     "phase": "playing",
     "turnPhase": "play",
-    "currentPlayerId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+    "currentPlayerId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
     "playsRemaining": 3,
     "deckCount": 81,
     "discardTop": {
@@ -80,15 +80,19 @@
     "responders": [],
     "winner": null,
     "endReason": null,
+    "armedIds": [],
     "surgeOps": false,
     "handLimit": 7,
     "setsToWin": 3,
+    "deckCycle": 0,
+    "deckCycleLimit": 16,
+    "turnNumber": 3,
     "stats": {
      "turns": 4,
      "cardsPlayed": {
-      "1667cc2c-c718-4908-8fdb-c1fb1870e666": 3,
-      "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a": 2,
-      "1a6a2722-7982-45bc-a130-7e2a3543c020": 3
+      "e785093c-63dd-4eb4-8d55-23f60a5324fa": 3,
+      "b6de82a0-2f76-4e41-825a-083546eea5cb": 2,
+      "963e0e0b-3e66-4188-9dfa-63bd342dde8f": 3
      },
      "payments": {
       "count": 2,
@@ -98,23 +102,23 @@
      "propertiesStolen": {}
     },
     "log": [
-     "Game started! HARNESS, Warlock, Iceman are playing.",
+     "Game started! HARNESS, Blaze, Phoenix are playing.",
      "HARNESS drew 2 cards.",
      "HARNESS banked 2M (2M)",
      "HARNESS played PCS Orders — drew 2 cards",
      "HARNESS played Schriever SFB on Space Force",
-     "Warlock's turn",
-     "Warlock drew 2 cards.",
-     "Warlock played F-35 Lightning II on Fighters",
-     "Warlock calls Roll Call — everyone pays 2M!",
-     "HARNESS paid 2M to Warlock",
-     "Iceman has nothing to pay!",
-     "Iceman's turn",
-     "Iceman drew 2 cards.",
-     "Iceman played Wild: Elite/Command on Command",
-     "Iceman demands 5M from Warlock (Finance Office)",
-     "Warlock paid 5M to Iceman",
-     "Iceman played F-15 Eagle on Fighters",
+     "Blaze's turn",
+     "Blaze drew 2 cards.",
+     "Blaze calls Roll Call — everyone pays 2M!",
+     "HARNESS paid 2M to Blaze",
+     "Phoenix has nothing to pay!",
+     "Blaze played F-35 Lightning II on Fighters",
+     "Phoenix's turn",
+     "Phoenix drew 2 cards.",
+     "Phoenix played Wild: Elite/Command on Command",
+     "Phoenix demands 5M from Blaze (Finance Office)",
+     "Blaze paid 5M to Phoenix",
+     "Phoenix played F-15 Eagle on Fighters",
      "HARNESS's turn",
      "HARNESS drew 2 cards."
     ],
@@ -123,20 +127,20 @@
       "seq": 1,
       "t": "game_start",
       "order": [
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-       "1a6a2722-7982-45bc-a130-7e2a3543c020"
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+       "b6de82a0-2f76-4e41-825a-083546eea5cb",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
       ],
       "names": {
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666": "HARNESS",
-       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a": "Warlock",
-       "1a6a2722-7982-45bc-a130-7e2a3543c020": "Iceman"
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa": "HARNESS",
+       "b6de82a0-2f76-4e41-825a-083546eea5cb": "Blaze",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f": "Phoenix"
       }
      },
      {
       "seq": 2,
       "t": "deal",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "count": 5,
       "cards": [
        {
@@ -181,25 +185,26 @@
      {
       "seq": 3,
       "t": "deal",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "count": 5
      },
      {
       "seq": 4,
       "t": "deal",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "count": 5
      },
      {
       "seq": 5,
       "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "plays": 3,
+      "finalApproach": false
      },
      {
       "seq": 6,
       "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "count": 2,
       "cards": [
        {
@@ -224,7 +229,7 @@
      {
       "seq": 7,
       "t": "play_money",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "card": {
        "id": 46,
        "type": "money",
@@ -235,7 +240,7 @@
      {
       "seq": 8,
       "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "card": {
        "id": 77,
        "type": "action",
@@ -249,7 +254,7 @@
      {
       "seq": 9,
       "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "count": 2,
       "cards": [
        {
@@ -271,7 +276,7 @@
      {
       "seq": 10,
       "t": "play_property",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "card": {
        "id": 6,
        "type": "property",
@@ -285,38 +290,25 @@
      {
       "seq": 11,
       "t": "turn_end",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666"
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa"
      },
      {
       "seq": 12,
       "t": "turn_start",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "plays": 3
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "plays": 3,
+      "finalApproach": false
      },
      {
       "seq": 13,
       "t": "draw",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "count": 2
      },
      {
       "seq": 14,
-      "t": "play_property",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 12,
-       "type": "property",
-       "name": "F-35 Lightning II",
-       "value": 3,
-       "color": "red",
-       "placedColor": "red"
-      },
-      "color": "red"
-     },
-     {
-      "seq": 15,
       "t": "play_action",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "card": {
        "id": 73,
        "type": "action",
@@ -328,28 +320,28 @@
       "action": "roll_call"
      },
      {
+      "seq": 15,
+      "t": "demand",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "amount": 2,
+      "reason": "roll_call",
+      "doubled": false
+     },
+     {
       "seq": 16,
       "t": "demand",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "target": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "target": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "amount": 2,
       "reason": "roll_call",
       "doubled": false
      },
      {
       "seq": 17,
-      "t": "demand",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "target": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
-     },
-     {
-      "seq": 18,
       "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "total": 2,
       "cards": [
        {
@@ -362,33 +354,48 @@
       "reason": "roll_call"
      },
      {
-      "seq": 19,
+      "seq": 18,
       "t": "insolvent",
-      "from": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "amount": 2
+     },
+     {
+      "seq": 19,
+      "t": "play_property",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 12,
+       "type": "property",
+       "name": "F-35 Lightning II",
+       "value": 3,
+       "color": "red",
+       "placedColor": "red"
+      },
+      "color": "red"
      },
      {
       "seq": 20,
       "t": "turn_end",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a"
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb"
      },
      {
       "seq": 21,
       "t": "turn_start",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "plays": 3
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "plays": 3,
+      "finalApproach": false
      },
      {
       "seq": 22,
       "t": "draw",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "count": 2
      },
      {
       "seq": 23,
       "t": "play_property",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "card": {
        "id": 33,
        "type": "wild_property",
@@ -405,7 +412,7 @@
      {
       "seq": 24,
       "t": "play_action",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "card": {
        "id": 70,
        "type": "action",
@@ -419,8 +426,8 @@
      {
       "seq": 25,
       "t": "demand",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "target": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "target": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "amount": 5,
       "reason": "finance_office",
       "doubled": false
@@ -428,8 +435,8 @@
      {
       "seq": 26,
       "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "total": 5,
       "cards": [
        {
@@ -452,7 +459,7 @@
      {
       "seq": 27,
       "t": "play_property",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "card": {
        "id": 13,
        "type": "property",
@@ -466,18 +473,19 @@
      {
       "seq": 28,
       "t": "turn_end",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020"
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
      },
      {
       "seq": 29,
       "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "plays": 3,
+      "finalApproach": false
      },
      {
       "seq": 30,
       "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "count": 2,
       "cards": [
        {
@@ -500,7 +508,7 @@
     "eventSeq": 30,
     "players": [
      {
-      "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "name": "HARNESS",
       "handCount": 8,
       "hand": [
@@ -582,6 +590,8 @@
       "upgrades": {},
       "completedSets": 0,
       "eliminated": false,
+      "finalApproach": false,
+      "finalApproachIn": null,
       "bankValue": 0,
       "propertyValue": 2,
       "upgradeValue": 0,
@@ -589,8 +599,8 @@
       "netWorth": 2
      },
      {
-      "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "name": "Warlock",
+      "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "name": "Blaze",
       "handCount": 5,
       "bank": [],
       "properties": {
@@ -599,6 +609,8 @@
       "upgrades": {},
       "completedSets": 0,
       "eliminated": false,
+      "finalApproach": false,
+      "finalApproachIn": null,
       "bankValue": 0,
       "propertyValue": 0,
       "upgradeValue": 0,
@@ -606,8 +618,8 @@
       "netWorth": 0
      },
      {
-      "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "name": "Iceman",
+      "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "name": "Phoenix",
       "handCount": 4,
       "bank": [
        {
@@ -653,6 +665,8 @@
       "upgrades": {},
       "completedSets": 0,
       "eliminated": false,
+      "finalApproach": false,
+      "finalApproachIn": null,
       "bankValue": 2,
       "propertyValue": 10,
       "upgradeValue": 0,
@@ -663,7 +677,7 @@
    },
    "turnTimer": {
     "timeout": 60,
-    "startedAt": 1786046908425
+    "startedAt": 1786053724696
    },
    "responseTimer": null
   }

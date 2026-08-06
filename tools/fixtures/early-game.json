@@ -3,43 +3,43 @@
  "name": "early-game",
  "description": "First play phase of the opening turn — small hands, empty boards, full deck.",
  "seed": 1337,
- "selfId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
- "room": "FW5A",
- "recordedAt": "2026-08-06T20:10:31.464Z",
+ "selfId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+ "room": "FC5J",
+ "recordedAt": "2026-08-06T22:04:40.041Z",
  "stateIndex": 1,
  "states": [
   {
    "type": "state",
-   "code": "FW5A",
+   "code": "FC5J",
    "phase": "playing",
    "players": [
     {
-     "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+     "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
      "name": "HARNESS",
      "connected": true,
      "isBot": false,
      "botMode": null
     },
     {
-     "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-     "name": "Warlock",
+     "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+     "name": "Blaze",
      "connected": true,
      "isBot": true,
      "botMode": "chud"
     },
     {
-     "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-     "name": "Iceman",
+     "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+     "name": "Phoenix",
      "connected": true,
      "isBot": true,
      "botMode": "aggressive"
     }
    ],
-   "hostId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+   "hostId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
    "game": {
     "phase": "playing",
     "turnPhase": "play",
-    "currentPlayerId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+    "currentPlayerId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
     "playsRemaining": 3,
     "deckCount": 89,
     "discardTop": null,
@@ -48,9 +48,13 @@
     "responders": [],
     "winner": null,
     "endReason": null,
+    "armedIds": [],
     "surgeOps": false,
     "handLimit": 7,
     "setsToWin": 3,
+    "deckCycle": 0,
+    "deckCycleLimit": 16,
+    "turnNumber": 0,
     "stats": {
      "turns": 1,
      "cardsPlayed": {},
@@ -62,7 +66,7 @@
      "propertiesStolen": {}
     },
     "log": [
-     "Game started! HARNESS, Warlock, Iceman are playing.",
+     "Game started! HARNESS, Blaze, Phoenix are playing.",
      "HARNESS drew 2 cards."
     ],
     "events": [
@@ -70,20 +74,20 @@
       "seq": 1,
       "t": "game_start",
       "order": [
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-       "1a6a2722-7982-45bc-a130-7e2a3543c020"
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+       "b6de82a0-2f76-4e41-825a-083546eea5cb",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
       ],
       "names": {
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666": "HARNESS",
-       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a": "Warlock",
-       "1a6a2722-7982-45bc-a130-7e2a3543c020": "Iceman"
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa": "HARNESS",
+       "b6de82a0-2f76-4e41-825a-083546eea5cb": "Blaze",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f": "Phoenix"
       }
      },
      {
       "seq": 2,
       "t": "deal",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "count": 5,
       "cards": [
        {
@@ -128,25 +132,26 @@
      {
       "seq": 3,
       "t": "deal",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "count": 5
      },
      {
       "seq": 4,
       "t": "deal",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "count": 5
      },
      {
       "seq": 5,
       "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "plays": 3,
+      "finalApproach": false
      },
      {
       "seq": 6,
       "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "count": 2,
       "cards": [
        {
@@ -172,7 +177,7 @@
     "eventSeq": 6,
     "players": [
      {
-      "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "name": "HARNESS",
       "handCount": 7,
       "hand": [
@@ -236,6 +241,8 @@
       "upgrades": {},
       "completedSets": 0,
       "eliminated": false,
+      "finalApproach": false,
+      "finalApproachIn": null,
       "bankValue": 0,
       "propertyValue": 0,
       "upgradeValue": 0,
@@ -243,14 +250,16 @@
       "netWorth": 0
      },
      {
-      "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "name": "Warlock",
+      "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "name": "Blaze",
       "handCount": 5,
       "bank": [],
       "properties": {},
       "upgrades": {},
       "completedSets": 0,
       "eliminated": false,
+      "finalApproach": false,
+      "finalApproachIn": null,
       "bankValue": 0,
       "propertyValue": 0,
       "upgradeValue": 0,
@@ -258,14 +267,16 @@
       "netWorth": 0
      },
      {
-      "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "name": "Iceman",
+      "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "name": "Phoenix",
       "handCount": 5,
       "bank": [],
       "properties": {},
       "upgrades": {},
       "completedSets": 0,
       "eliminated": false,
+      "finalApproach": false,
+      "finalApproachIn": null,
       "bankValue": 0,
       "propertyValue": 0,
       "upgradeValue": 0,
@@ -276,7 +287,7 @@
    },
    "turnTimer": {
     "timeout": 60,
-    "startedAt": 1786046899154
+    "startedAt": 1786053715322
    },
    "responseTimer": null
   }

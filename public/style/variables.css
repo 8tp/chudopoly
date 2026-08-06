@@ -1,40 +1,100 @@
-/* variables.css — P3 SCAFFOLD.
-   The design agent replaces this file wholesale in the next wave (§6). What
-   must survive: the single scale unit --s, the 5:7 card ratio, per-context
-   --card-w, and dark-only. Everything else here is placeholder value. */
+/* variables.css — the "night flight line" token set (§6).
+   Owner: design agent. Everything downstream sizes off --s and these tokens;
+   there are no other px font sizes in the client.
+
+   MUST-PRESERVE (client depends on these): --s is the one scale unit,
+   --card-ratio is 5/7 everywhere, --card-w is set per context (hand / table /
+   mini / pile), --tap is the 44px floor (§0.9). Dark only — no light theme. */
 
 :root {
-  --s: clamp(13px, 1.6vw + 8px, 17px);
+  /* One scale unit. Width AND height bound it: at 1280×720 the vh term wins
+     (720 × 3.1% = 22.3 → clamped to 19) so a short desktop window cannot push
+     the table taller than it is; at 390×844 the vw term wins (14.35px).
+     Measured: at a flat 17px the 1280×720 mid-game shot left 70px of dead felt
+     under the self board and the hand cards read at 8px. */
+  --s: clamp(12px, min(1.5vw + 8.5px, 2.3vh), 18px);
 
-  --navy-900: #05090f;
-  --navy-800: #080d16;
-  --navy-700: #0d1626;
-  --navy-600: #142033;
-  --navy-500: #1d2c44;
-  --steel-400: #4a5c78;
-  --steel-300: #7c8ca6;
-  --ink-100: #e8eef7;
-  --ink-300: #b3c0d4;
-  --gold: #d9a441;
-  --gold-dim: #8a6a2b;
-  --danger: #c0392b;
-  --good: #3f9e63;
+  /* ── felt: navy wool under a hangar light pool ───────────────────────── */
+  --felt-lit:   #1d3d63;
+  --felt-mid:   #102542;
+  --felt-deep:  #08192e;
+  --felt-edge:  #040c18;
+  --void:       #04080f;
 
-  --radius: 8px;
-  --radius-card: 6px;
-  --tap: 44px;                       /* §0.9 floor */
+  /* ── steel: every piece of chrome, in one ramp ───────────────────────── */
+  --steel-950: #070d18;
+  --steel-900: #0a1322;
+  --steel-800: #0f1c30;
+  --steel-700: #16263e;
+  --steel-600: #1f3350;
+  --steel-500: #2d4568;
+  --steel-400: #566d92;
+  --steel-300: #8fa0ba;              /* 5.3:1 on felt — micro-labels only */
+  --ink-300:   #becbdf;
+  --ink-100:   #eef3fb;
+
+  /* ── foil: SCARCE. your turn · selection · CHUD · victory. Nothing else. */
+  --gold:      #e8b955;
+  --gold-hi:   #ffeab4;
+  --gold-mid:  #c8922f;
+  --gold-deep: #7d5a18;
+  --gold-ink:  #2a1d05;
+  --gold-glow: rgba(232, 185, 85, .55);
+  --gold-dim: var(--gold-mid);       /* alias kept: interact.css builds its drop
+                                        outlines on it (P4 owns that file) */
+  --foil: linear-gradient(155deg, var(--gold-hi) 0%, var(--gold) 34%,
+                          var(--gold-mid) 56%, var(--gold-hi) 74%, var(--gold-mid) 100%);
+
+  /* ── signal roles (buttons + states). Never decorative. ──────────────── */
+  --go:         #2ab36a;             /* taxiway green — "the next thing to do" */
+  --go-deep:    #12703f;
+  --go-ink:     #04160c;
+  --danger:     #d0342c;             /* 4.99:1 with white */
+  --danger-deep:#7a1a14;
+  --danger-lit: #ff9184;
+  --info:       #4a90d9;
+  --warn:       #e8903a;
+
+  /* ── geometry ────────────────────────────────────────────────────────── */
+  --radius:      .6em;
+  --radius-lg:   1em;
+  --tap:         44px;               /* §0.9 floor */
+  --hairline:    1px;
 
   --card-ratio: 5 / 7;
-  --card-w: 54px;
+  --card-w:     calc(var(--s) * 2.6);
+  --card-r:     calc(var(--card-w) * .075);
 
-  --set-brown: #8B4513;
-  --set-lightblue: #87CEEB;
-  --set-pink: #FF69B4;
-  --set-orange: #FF8C00;
-  --set-red: #DC143C;
-  --set-yellow: #FFD700;
-  --set-green: #228B22;
-  --set-darkblue: #00308F;
-  --set-base: #2F4F4F;
-  --set-intel: #708090;
+  /* ── elevation. One ladder; components pick a rung, never invent one. ── */
+  --lift-0: 0 1px 2px rgba(0, 0, 0, .55);
+  --lift-1: 0 2px 4px rgba(0, 0, 0, .5), 0 6px 14px rgba(0, 0, 0, .38);
+  --lift-2: 0 4px 8px rgba(0, 0, 0, .5), 0 14px 34px rgba(0, 0, 0, .5);
+  --lift-3: 0 10px 22px rgba(0, 0, 0, .55), 0 30px 70px rgba(0, 0, 0, .6);
+  --rim:    inset 0 var(--hairline) 0 rgba(255, 255, 255, .13);
+
+  /* ── set colours: the ONLY saturated colour on the table besides foil ── */
+  --set-brown:     #a9622a;          /* Drone Ops   — raised off #8B4513 for 4.6:1 white */
+  --set-lightblue: #7cc4ec;          /* Training    */
+  --set-pink:      #ff6fb2;          /* Space Force */
+  --set-orange:    #ff9127;          /* Test & Eval */
+  --set-red:       #e33b4d;          /* Fighters    */
+  --set-yellow:    #f5c518;          /* Mobility    */
+  --set-green:     #2fa34a;          /* Elite       */
+  --set-darkblue:  #3f6fd8;          /* Command     — #00308F was 1.9:1 on card stock */
+  --set-base:      #4e8d86;          /* Overseas Bases */
+  --set-intel:     #93a4b6;          /* Intelligence */
+
+  /* ── surfaces ────────────────────────────────────────────────────────── */
+  --card-stock: linear-gradient(168deg, #21324e 0%, #16233a 46%, #0e1a2c 100%);
+  --chrome:     linear-gradient(180deg, #14243c 0%, #0c1626 100%);
+  --panel:      linear-gradient(180deg, rgba(23, 39, 63, .96), rgba(9, 17, 30, .97));
+
+  /* ── procedural textures (authored as text — §0.3 allows inline SVG) ─── */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+  --weave:
+    repeating-linear-gradient(45deg,  rgba(255, 255, 255, .022) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .085) 0 1px, transparent 1px 3px);
+
+  /* micro-label type — used by every ALL-CAPS chrome label in the app */
+  --micro-track: .16em;
 }

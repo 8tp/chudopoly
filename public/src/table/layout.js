@@ -43,6 +43,24 @@ export function zoneFor(kind, ownerId, color) {
   return zoneEl(zoneKeyFor(kind, ownerId, color));
 }
 
+/**
+ * Does this zone belong to the viewing player? Falls out of the key scheme
+ * above: my zones are never suffixed with a seat id. Drives the `mine` flag on
+ * every FX cue (§7 wants your own cards louder and centred), so it has to be
+ * derivable without the caller knowing whose event it was.
+ * 'deck' and 'discard' belong to nobody.
+ */
+export function isMineZone(key) {
+  if (!key) return false;
+  if (key === 'hand' || key === 'bank') return true;
+  const i = key.indexOf(':');
+  if (i < 0) return false;                                  // deck / discard
+  const kind = key.slice(0, i);
+  const rest = key.slice(i + 1);
+  if (kind === 'properties' || kind === 'upgrades') return rest.indexOf(':') < 0;
+  return false;                                             // hand:PID / bank:PID
+}
+
 export function mount(rootEl, mySeatId) {
   root = rootEl;
   selfId = mySeatId;
@@ -150,6 +168,13 @@ export function paintBoard(player, snapshot) {
   setText(board.querySelector('.board-sets'), `${player.completedSets}/${snapshot.setsToWin || 3} SETS`);
   setText(board.querySelector('.board-worth'), `${player.netWorth}M`);
   setClass(board, 'is-turn', snapshot.currentPlayerId === player.id && snapshot.phase === 'playing');
+  // §3.10 final approach: this player has the sets and the table has one turn
+  // cycle to break them. The alarm treatment is table.css's; the fact is the
+  // engine's — read the per-player flag, fall back to the game-level list.
+  const armed = player.finalApproach != null
+    ? !!player.finalApproach
+    : Array.isArray(snapshot.armedIds) && snapshot.armedIds.includes(player.id);
+  setAttr(board, 'data-final-approach', armed ? '1' : null);
   setClass(board, 'is-out', !!player.eliminated);
   setClass(board, 'is-winner', snapshot.winner === player.id);
 

@@ -3,63 +3,233 @@
  "name": "finished",
  "description": "Win screen state — winner set, phase finished, final boards intact.",
  "seed": 1337,
- "selfId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
- "room": "FW5A",
- "recordedAt": "2026-08-06T20:10:31.468Z",
- "stateIndex": 232,
+ "selfId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+ "room": "FC5J",
+ "recordedAt": "2026-08-06T22:04:40.047Z",
+ "stateIndex": 290,
  "states": [
   {
    "type": "state",
-   "code": "FW5A",
+   "code": "FC5J",
    "phase": "playing",
    "players": [
     {
-     "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+     "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
      "name": "HARNESS",
      "connected": true,
      "isBot": false,
      "botMode": null
     },
     {
-     "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-     "name": "Warlock",
+     "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+     "name": "Blaze",
      "connected": true,
      "isBot": true,
      "botMode": "chud"
     },
     {
-     "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-     "name": "Iceman",
+     "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+     "name": "Phoenix",
      "connected": true,
      "isBot": true,
      "botMode": "aggressive"
     }
    ],
-   "hostId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+   "hostId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
    "game": {
     "phase": "finished",
     "turnPhase": "finished",
-    "currentPlayerId": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-    "playsRemaining": 2,
-    "deckCount": 27,
+    "currentPlayerId": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+    "playsRemaining": 3,
+    "deckCount": 6,
     "discardTop": {
-     "id": 86,
-     "type": "action",
-     "action": "upgrade",
-     "name": "Upgrade (House)",
-     "value": 3,
-     "description": "Add to a complete set: +3M rent",
-     "upgradeType": "house"
+     "id": 95,
+     "type": "rent",
+     "colors": [
+      "red",
+      "yellow"
+     ],
+     "name": "Rent: red/yellow",
+     "value": 1
     },
     "discardPile": [
      {
-      "id": 86,
+      "id": 95,
+      "type": "rent",
+      "colors": [
+       "red",
+       "yellow"
+      ],
+      "name": "Rent: red/yellow",
+      "value": 1
+     },
+     {
+      "id": 97,
+      "type": "rent",
+      "colors": [
+       "green",
+       "darkblue"
+      ],
+      "name": "Rent: green/darkblue",
+      "value": 1
+     },
+     {
+      "id": 96,
+      "type": "rent",
+      "colors": [
+       "red",
+       "yellow"
+      ],
+      "name": "Rent: red/yellow",
+      "value": 1
+     },
+     {
+      "id": 64,
       "type": "action",
-      "action": "upgrade",
-      "name": "Upgrade (House)",
+      "action": "midnight_requisition",
+      "name": "Midnight Requisition",
       "value": 3,
-      "description": "Add to a complete set: +3M rent",
-      "upgradeType": "house"
+      "description": "Steal a single property from any player. Cannot touch a complete set."
+     },
+     {
+      "id": 80,
+      "type": "action",
+      "action": "pcs_orders",
+      "name": "PCS Orders",
+      "value": 1,
+      "description": "Draw 2 extra cards from the deck"
+     },
+     {
+      "id": 93,
+      "type": "rent",
+      "colors": [
+       "pink",
+       "orange"
+      ],
+      "name": "Rent: pink/orange",
+      "value": 1
+     },
+     {
+      "id": 71,
+      "type": "action",
+      "action": "roll_call",
+      "name": "Roll Call",
+      "value": 2,
+      "description": "All other players pay you 2M each"
+     },
+     {
+      "id": 89,
+      "type": "action",
+      "action": "surge_ops",
+      "name": "Surge Operations",
+      "value": 1,
+      "description": "Double the next charge you make this turn — rent or any demand"
+     },
+     {
+      "id": 63,
+      "type": "action",
+      "action": "midnight_requisition",
+      "name": "Midnight Requisition",
+      "value": 3,
+      "description": "Steal a single property from any player. Cannot touch a complete set."
+     },
+     {
+      "id": 59,
+      "type": "action",
+      "action": "opsec",
+      "name": "OPSEC",
+      "value": 4,
+      "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+     },
+     {
+      "id": 100,
+      "type": "rent",
+      "colors": [
+       "base",
+       "intel"
+      ],
+      "name": "Rent: base/intel",
+      "value": 1
+     },
+     {
+      "id": 82,
+      "type": "action",
+      "action": "pcs_orders",
+      "name": "PCS Orders",
+      "value": 1,
+      "description": "Draw 2 extra cards from the deck"
+     },
+     {
+      "id": 61,
+      "type": "action",
+      "action": "opsec",
+      "name": "OPSEC",
+      "value": 4,
+      "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+     },
+     {
+      "id": 57,
+      "type": "action",
+      "action": "inspector_general",
+      "name": "Inspector General",
+      "value": 5,
+      "description": "Steal a complete property set from any player. OPSEC can block it."
+     },
+     {
+      "id": 69,
+      "type": "action",
+      "action": "finance_office",
+      "name": "Finance Office",
+      "value": 3,
+      "description": "Collect 5M from any one player"
+     },
+     {
+      "id": 81,
+      "type": "action",
+      "action": "pcs_orders",
+      "name": "PCS Orders",
+      "value": 1,
+      "description": "Draw 2 extra cards from the deck"
+     },
+     {
+      "id": 72,
+      "type": "action",
+      "action": "roll_call",
+      "name": "Roll Call",
+      "value": 2,
+      "description": "All other players pay you 2M each"
+     },
+     {
+      "id": 65,
+      "type": "action",
+      "action": "tdy_orders",
+      "name": "TDY Orders",
+      "value": 3,
+      "description": "Swap one of your properties for one of another player's"
+     },
+     {
+      "id": 67,
+      "type": "action",
+      "action": "tdy_orders",
+      "name": "TDY Orders",
+      "value": 3,
+      "description": "Swap one of your properties for one of another player's"
+     },
+     {
+      "id": 79,
+      "type": "action",
+      "action": "pcs_orders",
+      "name": "PCS Orders",
+      "value": 1,
+      "description": "Draw 2 extra cards from the deck"
+     },
+     {
+      "id": 66,
+      "type": "action",
+      "action": "tdy_orders",
+      "name": "TDY Orders",
+      "value": 3,
+      "description": "Swap one of your properties for one of another player's"
      },
      {
       "id": 68,
@@ -70,12 +240,13 @@
       "description": "Collect 5M from any one player"
      },
      {
-      "id": 72,
-      "type": "action",
-      "action": "roll_call",
-      "name": "Roll Call",
-      "value": 2,
-      "description": "All other players pay you 2M each"
+      "id": 102,
+      "type": "rent",
+      "colors": [
+       "any"
+      ],
+      "name": "Rent: any",
+      "value": 3
      },
      {
       "id": 99,
@@ -88,18 +259,45 @@
       "value": 1
      },
      {
-      "id": 37,
-      "type": "money",
-      "name": "1M",
-      "value": 1
+      "id": 105,
+      "type": "action",
+      "action": "chud",
+      "name": "THE CHUD CARD",
+      "value": 4,
+      "description": "Commandeer Hardware Under Directive — Steal ANY property from any player, even out of a complete set. OPSEC can block it."
      },
      {
-      "id": 82,
+      "id": 70,
+      "type": "action",
+      "action": "finance_office",
+      "name": "Finance Office",
+      "value": 3,
+      "description": "Collect 5M from any one player"
+     },
+     {
+      "id": 90,
+      "type": "action",
+      "action": "surge_ops",
+      "name": "Surge Operations",
+      "value": 1,
+      "description": "Double the next charge you make this turn — rent or any demand"
+     },
+     {
+      "id": 83,
       "type": "action",
       "action": "pcs_orders",
       "name": "PCS Orders",
       "value": 1,
       "description": "Draw 2 extra cards from the deck"
+     },
+     {
+      "id": 103,
+      "type": "rent",
+      "colors": [
+       "any"
+      ],
+      "name": "Rent: any",
+      "value": 3
      },
      {
       "id": 73,
@@ -108,361 +306,104 @@
       "name": "Roll Call",
       "value": 2,
       "description": "All other players pay you 2M each"
-     },
-     {
-      "id": 71,
-      "type": "action",
-      "action": "roll_call",
-      "name": "Roll Call",
-      "value": 2,
-      "description": "All other players pay you 2M each"
-     },
-     {
-      "id": 63,
-      "type": "action",
-      "action": "midnight_requisition",
-      "name": "Midnight Requisition",
-      "value": 3,
-      "description": "Steal a single property from any player. Cannot touch a complete set."
-     },
-     {
-      "id": 92,
-      "type": "rent",
-      "colors": [
-       "brown",
-       "lightblue"
-      ],
-      "name": "Rent: brown/lightblue",
-      "value": 1
-     },
-     {
-      "id": 77,
-      "type": "action",
-      "action": "pcs_orders",
-      "name": "PCS Orders",
-      "value": 1,
-      "description": "Draw 2 extra cards from the deck"
      }
     ],
     "pendingAction": null,
     "responders": [],
-    "winner": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+    "winner": "b6de82a0-2f76-4e41-825a-083546eea5cb",
     "endReason": "sets",
+    "armedIds": [
+     "b6de82a0-2f76-4e41-825a-083546eea5cb"
+    ],
     "surgeOps": false,
     "handLimit": 7,
     "setsToWin": 3,
+    "deckCycle": 1,
+    "deckCycleLimit": 16,
+    "turnNumber": 46,
     "stats": {
-     "turns": 40,
+     "turns": 47,
      "cardsPlayed": {
-      "1667cc2c-c718-4908-8fdb-c1fb1870e666": 39,
-      "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a": 29,
-      "1a6a2722-7982-45bc-a130-7e2a3543c020": 35
+      "e785093c-63dd-4eb4-8d55-23f60a5324fa": 48,
+      "b6de82a0-2f76-4e41-825a-083546eea5cb": 36,
+      "963e0e0b-3e66-4188-9dfa-63bd342dde8f": 44
      },
      "payments": {
-      "count": 37,
-      "total": 129,
-      "biggest": 12
+      "count": 45,
+      "total": 185,
+      "biggest": 13
      },
      "propertiesStolen": {
-      "1667cc2c-c718-4908-8fdb-c1fb1870e666": 5,
-      "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a": 3,
-      "1a6a2722-7982-45bc-a130-7e2a3543c020": 1
+      "e785093c-63dd-4eb4-8d55-23f60a5324fa": 6,
+      "963e0e0b-3e66-4188-9dfa-63bd342dde8f": 2,
+      "b6de82a0-2f76-4e41-825a-083546eea5cb": 2
      }
     },
     "log": [
-     "HARNESS paid 2M to Warlock",
-     "Iceman paid 2M to Warlock",
-     "Warlock calls Roll Call — everyone pays 2M!",
-     "HARNESS paid 4M to Warlock",
-     "Iceman paid 3M to Warlock",
-     "Warlock played PCS Orders — drew 2 cards",
-     "Iceman's turn",
-     "Iceman drew 2 cards.",
-     "Iceman charges 5M rent on Intelligence",
-     "HARNESS paid 7M to Iceman",
-     "Warlock paid 6M to Iceman",
-     "Iceman calls Roll Call — everyone pays 2M!",
-     "HARNESS paid 4M to Iceman",
-     "Warlock paid 3M to Iceman",
-     "Iceman banked 2M (2M)",
+     "Phoenix drew 2 cards.",
+     "Phoenix charges 1M rent on Test & Eval",
+     "HARNESS paid 1M to Phoenix",
+     "Blaze paid 1M to Phoenix",
+     "Phoenix played PCS Orders — drew 2 cards",
+     "Phoenix plays Midnight Requisition on Blaze's Peterson SFB",
+     "Phoenix requisitioned Peterson SFB from Blaze",
      "HARNESS's turn",
      "HARNESS drew 2 cards.",
-     "HARNESS demands 5M from Warlock (Finance Office)",
-     "Warlock paid 5M to HARNESS",
-     "HARNESS wins with 3 complete sets!"
+     "HARNESS charges 9M rent on Fighters",
+     "Blaze paid 9M to HARNESS",
+     "Phoenix paid 10M to HARNESS",
+     "HARNESS charges 4M rent on Elite Programs",
+     "Blaze paid 4M to HARNESS",
+     "Phoenix paid 7M to HARNESS",
+     "HARNESS charges 9M rent on Fighters",
+     "Blaze paid 9M to HARNESS",
+     "Phoenix paid 9M to HARNESS",
+     "Blaze's turn",
+     "Blaze held the final approach and wins with 3 complete sets!"
     ],
     "events": [
      {
-      "seq": 212,
-      "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
-     },
-     {
-      "seq": 213,
-      "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "count": 2,
-      "cards": [
-       {
-        "id": 90,
-        "type": "action",
-        "name": "Surge Operations",
-        "value": 1,
-        "action": "surge_ops",
-        "description": "Double the next charge you make this turn — rent or any demand"
-       },
-       {
-        "id": 87,
-        "type": "action",
-        "name": "Full Operational Capability (Hotel)",
-        "value": 4,
-        "action": "foc",
-        "description": "Add to a complete set with Upgrade: +4M rent"
-       }
-      ]
-     },
-     {
-      "seq": 214,
-      "t": "play_money",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 44,
-       "type": "money",
-       "name": "2M",
-       "value": 2
-      }
-     },
-     {
-      "seq": 215,
-      "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 72,
-       "type": "action",
-       "name": "Roll Call",
-       "value": 2,
-       "action": "roll_call",
-       "description": "All other players pay you 2M each"
-      },
-      "action": "roll_call"
-     },
-     {
-      "seq": 216,
-      "t": "demand",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "target": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
-     },
-     {
-      "seq": 217,
-      "t": "demand",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "target": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
-     },
-     {
-      "seq": 218,
-      "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "total": 2,
-      "cards": [
-       {
-        "id": 39,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 38,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       }
-      ],
-      "reason": "roll_call"
-     },
-     {
-      "seq": 219,
-      "t": "payment",
-      "from": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "total": 4,
-      "cards": [
-       {
-        "id": 88,
-        "type": "action",
-        "name": "Full Operational Capability (Hotel)",
-        "value": 4,
-        "action": "foc",
-        "description": "Add to a complete set with Upgrade: +4M rent"
-       }
-      ],
-      "reason": "roll_call"
-     },
-     {
-      "seq": 220,
-      "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 63,
-       "type": "action",
-       "name": "Midnight Requisition",
-       "value": 3,
-       "action": "midnight_requisition",
-       "description": "Steal a single property from any player. Cannot touch a complete set."
-      },
-      "action": "midnight_requisition"
-     },
-     {
-      "seq": 221,
-      "t": "steal",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 11,
-       "type": "property",
-       "name": "F-22 Raptor",
-       "value": 3,
-       "color": "red",
-       "placedColor": "red"
-      },
-      "toColor": "red",
-      "action": "midnight_requisition"
-     },
-     {
-      "seq": 222,
+      "seq": 289,
       "t": "turn_end",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666"
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb"
      },
      {
-      "seq": 223,
+      "seq": 290,
       "t": "turn_start",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "plays": 3
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "plays": 3,
+      "finalApproach": false
      },
      {
-      "seq": 224,
+      "seq": 291,
       "t": "draw",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "count": 2
      },
      {
-      "seq": 225,
-      "t": "play_property",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
+      "seq": 292,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "card": {
-       "id": 7,
-       "type": "property",
-       "name": "Buckley SFB",
-       "value": 2,
-       "color": "pink",
-       "placedColor": "pink"
-      },
-      "color": "pink"
-     },
-     {
-      "seq": 226,
-      "t": "turn_end",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a"
-     },
-     {
-      "seq": 227,
-      "t": "turn_start",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "plays": 3
-     },
-     {
-      "seq": 228,
-      "t": "draw",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "count": 2
-     },
-     {
-      "seq": 229,
-      "t": "play_property",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "card": {
-       "id": 27,
-       "type": "property",
-       "name": "GPS Constellation",
+       "id": 83,
+       "type": "action",
+       "name": "PCS Orders",
        "value": 1,
-       "color": "intel",
-       "placedColor": "intel"
+       "action": "pcs_orders",
+       "description": "Draw 2 extra cards from the deck"
       },
-      "color": "intel"
+      "action": "pcs_orders"
      },
      {
-      "seq": 230,
-      "t": "set_completed",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "color": "intel"
-     },
-     {
-      "seq": 231,
-      "t": "play_property",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "card": {
-       "id": 31,
-       "type": "wild_property",
-       "name": "Wild: Space/Test",
-       "value": 2,
-       "colors": [
-        "pink",
-        "orange"
-       ],
-       "placedColor": "pink"
-      },
-      "color": "pink"
-     },
-     {
-      "seq": 232,
-      "t": "set_completed",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "color": "pink"
-     },
-     {
-      "seq": 233,
-      "t": "turn_end",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020"
-     },
-     {
-      "seq": 234,
-      "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
-     },
-     {
-      "seq": 235,
+      "seq": 293,
       "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "count": 2,
-      "cards": [
-       {
-        "id": 45,
-        "type": "money",
-        "name": "2M",
-        "value": 2
-       },
-       {
-        "id": 68,
-        "type": "action",
-        "name": "Finance Office",
-        "value": 3,
-        "action": "finance_office",
-        "description": "Collect 5M from any one player"
-       }
-      ]
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "count": 2
      },
      {
-      "seq": 236,
+      "seq": 294,
       "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "card": {
        "id": 90,
        "type": "action",
@@ -474,22 +415,11 @@
       "action": "surge_ops"
      },
      {
-      "seq": 237,
-      "t": "play_money",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 45,
-       "type": "money",
-       "name": "2M",
-       "value": 2
-      }
-     },
-     {
-      "seq": 238,
+      "seq": 295,
       "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "card": {
-       "id": 68,
+       "id": 70,
        "type": "action",
        "name": "Finance Office",
        "value": 3,
@@ -499,120 +429,21 @@
       "action": "finance_office"
      },
      {
-      "seq": 239,
+      "seq": 296,
       "t": "demand",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "target": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "amount": 10,
       "reason": "finance_office",
       "doubled": true
      },
      {
-      "seq": 240,
+      "seq": 297,
       "t": "payment",
-      "from": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "total": 12,
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "total": 11,
       "cards": [
-       {
-        "id": 51,
-        "type": "money",
-        "name": "4M",
-        "value": 4
-       },
-       {
-        "id": 54,
-        "type": "money",
-        "name": "5M",
-        "value": 5
-       },
-       {
-        "id": 13,
-        "type": "property",
-        "name": "F-15 Eagle",
-        "value": 3,
-        "color": "red",
-        "placedColor": "red"
-       }
-      ],
-      "reason": "finance_office"
-     },
-     {
-      "seq": 241,
-      "t": "set_completed",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "color": "red"
-     },
-     {
-      "seq": 242,
-      "t": "turn_end",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666"
-     },
-     {
-      "seq": 243,
-      "t": "turn_start",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "plays": 3
-     },
-     {
-      "seq": 244,
-      "t": "draw",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "count": 2
-     },
-     {
-      "seq": 245,
-      "t": "play_property",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 3,
-       "type": "property",
-       "name": "Keesler AFB",
-       "value": 1,
-       "color": "lightblue",
-       "placedColor": "lightblue"
-      },
-      "color": "lightblue"
-     },
-     {
-      "seq": 246,
-      "t": "play_action",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 101,
-       "type": "rent",
-       "name": "Rent: any",
-       "value": 3,
-       "colors": [
-        "any"
-       ]
-      },
-      "action": "rent"
-     },
-     {
-      "seq": 247,
-      "t": "rent_charged",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "color": "brown",
-      "amount": 5,
-      "targets": [
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666"
-      ],
-      "doubled": false
-     },
-     {
-      "seq": 248,
-      "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "total": 5,
-      "cards": [
-       {
-        "id": 39,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
        {
         "id": 94,
         "type": "rent",
@@ -624,7 +455,7 @@
         ]
        },
        {
-        "id": 40,
+        "id": 38,
         "type": "money",
         "name": "1M",
         "value": 1
@@ -636,136 +467,17 @@
         "value": 1
        },
        {
-        "id": 98,
-        "type": "rent",
-        "name": "Rent: green/darkblue",
-        "value": 1,
-        "colors": [
-         "green",
-         "darkblue"
-        ]
-       }
-      ],
-      "reason": "rent"
-     },
-     {
-      "seq": 249,
-      "t": "play_action",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 99,
-       "type": "rent",
-       "name": "Rent: base/intel",
-       "value": 1,
-       "colors": [
-        "base",
-        "intel"
-       ]
-      },
-      "action": "rent"
-     },
-     {
-      "seq": 250,
-      "t": "rent_charged",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "color": "intel",
-      "amount": 1,
-      "targets": [
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-       "1a6a2722-7982-45bc-a130-7e2a3543c020"
-      ],
-      "doubled": false
-     },
-     {
-      "seq": 251,
-      "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "total": 1,
-      "cards": [
-       {
-        "id": 38,
+        "id": 45,
         "type": "money",
-        "name": "1M",
-        "value": 1
-       }
-      ],
-      "reason": "rent"
-     },
-     {
-      "seq": 252,
-      "t": "payment",
-      "from": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "total": 4,
-      "cards": [
+        "name": "2M",
+        "value": 2
+       },
        {
-        "id": 20,
-        "type": "property",
-        "name": "The Pentagon",
-        "value": 4,
-        "color": "darkblue",
-        "placedColor": "darkblue"
-       }
-      ],
-      "reason": "rent"
-     },
-     {
-      "seq": 253,
-      "t": "set_completed",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "color": "darkblue"
-     },
-     {
-      "seq": 254,
-      "t": "turn_end",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a"
-     },
-     {
-      "seq": 255,
-      "t": "turn_start",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "plays": 3
-     },
-     {
-      "seq": 256,
-      "t": "draw",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "count": 2
-     },
-     {
-      "seq": 257,
-      "t": "play_action",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "card": {
-       "id": 102,
-       "type": "rent",
-       "name": "Rent: any",
-       "value": 3,
-       "colors": [
-        "any"
-       ]
-      },
-      "action": "rent"
-     },
-     {
-      "seq": 258,
-      "t": "rent_charged",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "color": "pink",
-      "amount": 4,
-      "targets": [
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666"
-      ],
-      "doubled": false
-     },
-     {
-      "seq": 259,
-      "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "total": 4,
-      "cards": [
+        "id": 47,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
        {
         "id": 44,
         "type": "money",
@@ -779,273 +491,48 @@
         "value": 2
        }
       ],
-      "reason": "rent"
+      "reason": "finance_office"
      },
      {
-      "seq": 260,
-      "t": "play_action",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "card": {
-       "id": 93,
-       "type": "rent",
-       "name": "Rent: pink/orange",
-       "value": 1,
-       "colors": [
-        "pink",
-        "orange"
-       ]
-      },
-      "action": "rent"
-     },
-     {
-      "seq": 261,
-      "t": "rent_charged",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "color": "pink",
-      "amount": 4,
-      "targets": [
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a"
-      ],
-      "doubled": false
-     },
-     {
-      "seq": 262,
-      "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "total": 5,
-      "cards": [
-       {
-        "id": 45,
-        "type": "money",
-        "name": "2M",
-        "value": 2
-       },
-       {
-        "id": 84,
-        "type": "action",
-        "name": "Upgrade (House)",
-        "value": 3,
-        "action": "upgrade",
-        "description": "Add to a complete set: +3M rent"
-       }
-      ],
-      "reason": "rent"
-     },
-     {
-      "seq": 263,
-      "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "total": 4,
-      "cards": [
-       {
-        "id": 41,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 40,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 94,
-        "type": "rent",
-        "name": "Rent: pink/orange",
-        "value": 1,
-        "colors": [
-         "pink",
-         "orange"
-        ]
-       },
-       {
-        "id": 39,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       }
-      ],
-      "reason": "rent"
-     },
-     {
-      "seq": 264,
+      "seq": 298,
       "t": "turn_end",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020"
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
      },
      {
-      "seq": 265,
+      "seq": 299,
       "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "plays": 3,
+      "finalApproach": false
      },
      {
-      "seq": 266,
+      "seq": 300,
       "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "count": 2,
       "cards": [
        {
-        "id": 69,
+        "id": 79,
         "type": "action",
-        "name": "Finance Office",
-        "value": 3,
-        "action": "finance_office",
-        "description": "Collect 5M from any one player"
+        "name": "PCS Orders",
+        "value": 1,
+        "action": "pcs_orders",
+        "description": "Draw 2 extra cards from the deck"
        },
        {
-        "id": 8,
-        "type": "property",
-        "name": "Nellis AFB",
-        "value": 2,
-        "color": "orange"
+        "id": 67,
+        "type": "action",
+        "name": "TDY Orders",
+        "value": 3,
+        "action": "tdy_orders",
+        "description": "Swap one of your properties for one of another player's"
        }
       ]
      },
      {
-      "seq": 267,
-      "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 69,
-       "type": "action",
-       "name": "Finance Office",
-       "value": 3,
-       "action": "finance_office",
-       "description": "Collect 5M from any one player"
-      },
-      "action": "finance_office"
-     },
-     {
-      "seq": 268,
-      "t": "demand",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "target": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "amount": 5,
-      "reason": "finance_office",
-      "doubled": false
-     },
-     {
-      "seq": 269,
-      "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "total": 5,
-      "cards": [
-       {
-        "id": 38,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 98,
-        "type": "rent",
-        "name": "Rent: green/darkblue",
-        "value": 1,
-        "colors": [
-         "green",
-         "darkblue"
-        ]
-       },
-       {
-        "id": 49,
-        "type": "money",
-        "name": "3M",
-        "value": 3
-       }
-      ],
-      "reason": "finance_office"
-     },
-     {
-      "seq": 270,
+      "seq": 301,
       "t": "play_property",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 8,
-       "type": "property",
-       "name": "Nellis AFB",
-       "value": 2,
-       "color": "orange",
-       "placedColor": "orange"
-      },
-      "color": "orange"
-     },
-     {
-      "seq": 271,
-      "t": "turn_end",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666"
-     },
-     {
-      "seq": 272,
-      "t": "turn_start",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "plays": 3
-     },
-     {
-      "seq": 273,
-      "t": "draw",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "count": 2
-     },
-     {
-      "seq": 274,
-      "t": "play_property",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 9,
-       "type": "property",
-       "name": "Eglin AFB",
-       "value": 2,
-       "color": "orange",
-       "placedColor": "orange"
-      },
-      "color": "orange"
-     },
-     {
-      "seq": 275,
-      "t": "turn_end",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a"
-     },
-     {
-      "seq": 276,
-      "t": "turn_start",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "plays": 3
-     },
-     {
-      "seq": 277,
-      "t": "draw",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "count": 2
-     },
-     {
-      "seq": 278,
-      "t": "play_action",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "card": {
-       "id": 76,
-       "type": "action",
-       "name": "PCS Orders",
-       "value": 1,
-       "action": "pcs_orders",
-       "description": "Draw 2 extra cards from the deck"
-      },
-      "action": "pcs_orders"
-     },
-     {
-      "seq": 279,
-      "t": "draw",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "count": 2
-     },
-     {
-      "seq": 280,
-      "t": "play_property",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "card": {
        "id": 35,
        "type": "wild_property",
@@ -1060,9 +547,9 @@
       "color": "base"
      },
      {
-      "seq": 281,
+      "seq": 302,
       "t": "play_action",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "card": {
        "id": 85,
        "type": "action",
@@ -1074,10 +561,10 @@
       "action": "upgrade"
      },
      {
-      "seq": 282,
+      "seq": 303,
       "t": "upgrade",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "color": "intel",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "color": "red",
       "card": {
        "id": 85,
        "type": "action",
@@ -1089,411 +576,57 @@
       }
      },
      {
-      "seq": 283,
-      "t": "turn_end",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020"
-     },
-     {
-      "seq": 284,
-      "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
-     },
-     {
-      "seq": 285,
-      "t": "shuffle",
-      "deckCount": 39
-     },
-     {
-      "seq": 286,
-      "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "count": 2,
-      "cards": [
-       {
-        "id": 77,
-        "type": "action",
-        "name": "PCS Orders",
-        "value": 1,
-        "action": "pcs_orders",
-        "description": "Draw 2 extra cards from the deck"
-       },
-       {
-        "id": 61,
-        "type": "action",
-        "name": "OPSEC",
-        "value": 4,
-        "action": "opsec",
-        "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
-       }
-      ]
-     },
-     {
-      "seq": 287,
-      "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 77,
-       "type": "action",
-       "name": "PCS Orders",
-       "value": 1,
-       "action": "pcs_orders",
-       "description": "Draw 2 extra cards from the deck"
-      },
-      "action": "pcs_orders"
-     },
-     {
-      "seq": 288,
-      "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "count": 2,
-      "cards": [
-       {
-        "id": 92,
-        "type": "rent",
-        "name": "Rent: brown/lightblue",
-        "value": 1,
-        "colors": [
-         "brown",
-         "lightblue"
-        ]
-       },
-       {
-        "id": 63,
-        "type": "action",
-        "name": "Midnight Requisition",
-        "value": 3,
-        "action": "midnight_requisition",
-        "description": "Steal a single property from any player. Cannot touch a complete set."
-       }
-      ]
-     },
-     {
-      "seq": 289,
-      "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 92,
-       "type": "rent",
-       "name": "Rent: brown/lightblue",
-       "value": 1,
-       "colors": [
-        "brown",
-        "lightblue"
-       ]
-      },
-      "action": "rent"
-     },
-     {
-      "seq": 290,
-      "t": "rent_charged",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "color": "lightblue",
-      "amount": 1,
-      "targets": [
-       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-       "1a6a2722-7982-45bc-a130-7e2a3543c020"
-      ],
-      "doubled": false
-     },
-     {
-      "seq": 291,
-      "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "total": 4,
-      "cards": [
-       {
-        "id": 17,
-        "type": "property",
-        "name": "Thunderbirds",
-        "value": 4,
-        "color": "green",
-        "placedColor": "green"
-       }
-      ],
-      "reason": "rent"
-     },
-     {
-      "seq": 292,
-      "t": "payment",
-      "from": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "total": 1,
-      "cards": [
-       {
-        "id": 41,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       }
-      ],
-      "reason": "rent"
-     },
-     {
-      "seq": 293,
-      "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "card": {
-       "id": 63,
-       "type": "action",
-       "name": "Midnight Requisition",
-       "value": 3,
-       "action": "midnight_requisition",
-       "description": "Steal a single property from any player. Cannot touch a complete set."
-      },
-      "action": "midnight_requisition"
-     },
-     {
-      "seq": 294,
-      "t": "steal",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 32,
-       "type": "wild_property",
-       "name": "Wild: Fighter/Mobility",
-       "value": 3,
-       "colors": [
-        "red",
-        "yellow"
-       ],
-       "placedColor": "yellow"
-      },
-      "toColor": "yellow",
-      "action": "midnight_requisition"
-     },
-     {
-      "seq": 295,
-      "t": "turn_end",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666"
-     },
-     {
-      "seq": 296,
-      "t": "turn_start",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "plays": 3
-     },
-     {
-      "seq": 297,
-      "t": "draw",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "count": 2
-     },
-     {
-      "seq": 298,
-      "t": "play_action",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 71,
-       "type": "action",
-       "name": "Roll Call",
-       "value": 2,
-       "action": "roll_call",
-       "description": "All other players pay you 2M each"
-      },
-      "action": "roll_call"
-     },
-     {
-      "seq": 299,
-      "t": "demand",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "target": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
-     },
-     {
-      "seq": 300,
-      "t": "demand",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "target": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
-     },
-     {
-      "seq": 301,
-      "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "total": 2,
-      "cards": [
-       {
-        "id": 98,
-        "type": "rent",
-        "name": "Rent: green/darkblue",
-        "value": 1,
-        "colors": [
-         "green",
-         "darkblue"
-        ]
-       },
-       {
-        "id": 38,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       }
-      ],
-      "reason": "roll_call"
-     },
-     {
-      "seq": 302,
-      "t": "payment",
-      "from": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "total": 2,
-      "cards": [
-       {
-        "id": 94,
-        "type": "rent",
-        "name": "Rent: pink/orange",
-        "value": 1,
-        "colors": [
-         "pink",
-         "orange"
-        ]
-       },
-       {
-        "id": 40,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       }
-      ],
-      "reason": "roll_call"
-     },
-     {
-      "seq": 303,
-      "t": "play_action",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 73,
-       "type": "action",
-       "name": "Roll Call",
-       "value": 2,
-       "action": "roll_call",
-       "description": "All other players pay you 2M each"
-      },
-      "action": "roll_call"
-     },
-     {
       "seq": 304,
-      "t": "demand",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "target": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 105,
+       "type": "action",
+       "name": "THE CHUD CARD",
+       "value": 4,
+       "action": "chud",
+       "description": "Commandeer Hardware Under Directive — Steal ANY property from any player, even out of a complete set. OPSEC can block it."
+      },
+      "action": "chud"
      },
      {
       "seq": 305,
-      "t": "demand",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "target": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
+      "t": "steal",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 15,
+       "type": "property",
+       "name": "C-17 Globemaster III",
+       "value": 3,
+       "color": "yellow",
+       "placedColor": "yellow"
+      },
+      "toColor": "yellow",
+      "action": "chud"
      },
      {
       "seq": 306,
-      "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "total": 4,
-      "cards": [
-       {
-        "id": 41,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 50,
-        "type": "money",
-        "name": "3M",
-        "value": 3
-       }
-      ],
-      "reason": "roll_call"
+      "t": "turn_end",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa"
      },
      {
       "seq": 307,
-      "t": "payment",
-      "from": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "total": 3,
-      "cards": [
-       {
-        "id": 39,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 44,
-        "type": "money",
-        "name": "2M",
-        "value": 2
-       }
-      ],
-      "reason": "roll_call"
+      "t": "turn_start",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "plays": 3,
+      "finalApproach": false
      },
      {
       "seq": 308,
-      "t": "play_action",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "card": {
-       "id": 82,
-       "type": "action",
-       "name": "PCS Orders",
-       "value": 1,
-       "action": "pcs_orders",
-       "description": "Draw 2 extra cards from the deck"
-      },
-      "action": "pcs_orders"
+      "t": "draw",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "count": 2
      },
      {
       "seq": 309,
-      "t": "draw",
-      "to": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "count": 2
-     },
-     {
-      "seq": 310,
-      "t": "discard",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "cards": [
-       {
-        "id": 37,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       }
-      ]
-     },
-     {
-      "seq": 311,
-      "t": "turn_end",
-      "actor": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a"
-     },
-     {
-      "seq": 312,
-      "t": "turn_start",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "plays": 3
-     },
-     {
-      "seq": 313,
-      "t": "draw",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "count": 2
-     },
-     {
-      "seq": 314,
       "t": "play_action",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "card": {
        "id": 99,
        "type": "rent",
@@ -1507,29 +640,105 @@
       "action": "rent"
      },
      {
-      "seq": 315,
+      "seq": 310,
       "t": "rent_charged",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "color": "intel",
-      "amount": 5,
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "color": "base",
+      "amount": 1,
       "targets": [
-       "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-       "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a"
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
       ],
       "doubled": false
      },
      {
-      "seq": 316,
+      "seq": 311,
       "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "total": 7,
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 3,
       "cards": [
        {
         "id": 49,
         "type": "money",
         "name": "3M",
         "value": 3
+       }
+      ],
+      "reason": "rent"
+     },
+     {
+      "seq": 312,
+      "t": "payment",
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 1,
+      "cards": [
+       {
+        "id": 94,
+        "type": "rent",
+        "name": "Rent: pink/orange",
+        "value": 1,
+        "colors": [
+         "pink",
+         "orange"
+        ]
+       }
+      ],
+      "reason": "rent"
+     },
+     {
+      "seq": 313,
+      "t": "play_action",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 102,
+       "type": "rent",
+       "name": "Rent: any",
+       "value": 3,
+       "colors": [
+        "any"
+       ]
+      },
+      "action": "rent"
+     },
+     {
+      "seq": 314,
+      "t": "rent_charged",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "color": "darkblue",
+      "amount": 11,
+      "targets": [
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa"
+      ],
+      "doubled": false
+     },
+     {
+      "seq": 315,
+      "t": "payment",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 13,
+      "cards": [
+       {
+        "id": 50,
+        "type": "money",
+        "name": "3M",
+        "value": 3
+       },
+       {
+        "id": 48,
+        "type": "money",
+        "name": "3M",
+        "value": 3
+       },
+       {
+        "id": 84,
+        "type": "action",
+        "name": "Upgrade (House)",
+        "value": 3,
+        "action": "upgrade",
+        "description": "Add to a complete set: +3M rent"
        },
        {
         "id": 53,
@@ -1541,24 +750,375 @@
       "reason": "rent"
      },
      {
+      "seq": 316,
+      "t": "play_money",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 37,
+       "type": "money",
+       "name": "1M",
+       "value": 1
+      }
+     },
+     {
       "seq": 317,
+      "t": "turn_end",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb"
+     },
+     {
+      "seq": 318,
+      "t": "turn_start",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 319,
+      "t": "draw",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "count": 2
+     },
+     {
+      "seq": 320,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 68,
+       "type": "action",
+       "name": "Finance Office",
+       "value": 3,
+       "action": "finance_office",
+       "description": "Collect 5M from any one player"
+      },
+      "action": "finance_office"
+     },
+     {
+      "seq": 321,
+      "t": "demand",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "target": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "amount": 5,
+      "reason": "finance_office",
+      "doubled": false
+     },
+     {
+      "seq": 322,
       "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "total": 6,
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "total": 7,
       "cards": [
        {
-        "id": 44,
-        "type": "money",
-        "name": "2M",
-        "value": 2
+        "id": 84,
+        "type": "action",
+        "name": "Upgrade (House)",
+        "value": 3,
+        "action": "upgrade",
+        "description": "Add to a complete set: +3M rent"
        },
        {
-        "id": 39,
+        "id": 49,
         "type": "money",
-        "name": "1M",
-        "value": 1
+        "name": "3M",
+        "value": 3
        },
+       {
+        "id": 98,
+        "type": "rent",
+        "name": "Rent: green/darkblue",
+        "value": 1,
+        "colors": [
+         "green",
+         "darkblue"
+        ]
+       }
+      ],
+      "reason": "finance_office"
+     },
+     {
+      "seq": 323,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 66,
+       "type": "action",
+       "name": "TDY Orders",
+       "value": 3,
+       "action": "tdy_orders",
+       "description": "Swap one of your properties for one of another player's"
+      },
+      "action": "tdy_orders"
+     },
+     {
+      "seq": 324,
+      "t": "swap",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "gave": {
+       "id": 26,
+       "type": "property",
+       "name": "PAVE PAWS Radar",
+       "value": 1,
+       "color": "intel",
+       "placedColor": "intel"
+      },
+      "took": {
+       "id": 18,
+       "type": "property",
+       "name": "Weapons School",
+       "value": 4,
+       "color": "green",
+       "placedColor": "green"
+      },
+      "gaveColor": "intel",
+      "tookColor": "green"
+     },
+     {
+      "seq": 325,
+      "t": "play_property",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 27,
+       "type": "property",
+       "name": "GPS Constellation",
+       "value": 1,
+       "color": "intel",
+       "placedColor": "intel"
+      },
+      "color": "intel"
+     },
+     {
+      "seq": 326,
+      "t": "set_completed",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "color": "intel"
+     },
+     {
+      "seq": 327,
+      "t": "turn_end",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
+     },
+     {
+      "seq": 328,
+      "t": "turn_start",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 329,
+      "t": "draw",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "count": 2,
+      "cards": [
+       {
+        "id": 65,
+        "type": "action",
+        "name": "TDY Orders",
+        "value": 3,
+        "action": "tdy_orders",
+        "description": "Swap one of your properties for one of another player's"
+       },
+       {
+        "id": 61,
+        "type": "action",
+        "name": "OPSEC",
+        "value": 4,
+        "action": "opsec",
+        "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+       }
+      ]
+     },
+     {
+      "seq": 330,
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 79,
+       "type": "action",
+       "name": "PCS Orders",
+       "value": 1,
+       "action": "pcs_orders",
+       "description": "Draw 2 extra cards from the deck"
+      },
+      "action": "pcs_orders"
+     },
+     {
+      "seq": 331,
+      "t": "draw",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "count": 2,
+      "cards": [
+       {
+        "id": 63,
+        "type": "action",
+        "name": "Midnight Requisition",
+        "value": 3,
+        "action": "midnight_requisition",
+        "description": "Steal a single property from any player. Cannot touch a complete set."
+       },
+       {
+        "id": 89,
+        "type": "action",
+        "name": "Surge Operations",
+        "value": 1,
+        "action": "surge_ops",
+        "description": "Double the next charge you make this turn — rent or any demand"
+       }
+      ]
+     },
+     {
+      "seq": 332,
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 67,
+       "type": "action",
+       "name": "TDY Orders",
+       "value": 3,
+       "action": "tdy_orders",
+       "description": "Swap one of your properties for one of another player's"
+      },
+      "action": "tdy_orders"
+     },
+     {
+      "seq": 333,
+      "t": "swap",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "target": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "gave": {
+       "id": 6,
+       "type": "property",
+       "name": "Schriever SFB",
+       "value": 2,
+       "color": "pink",
+       "placedColor": "pink"
+      },
+      "took": {
+       "id": 19,
+       "type": "property",
+       "name": "Red Flag",
+       "value": 4,
+       "color": "green",
+       "placedColor": "green"
+      },
+      "gaveColor": "pink",
+      "tookColor": "green"
+     },
+     {
+      "seq": 334,
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 65,
+       "type": "action",
+       "name": "TDY Orders",
+       "value": 3,
+       "action": "tdy_orders",
+       "description": "Swap one of your properties for one of another player's"
+      },
+      "action": "tdy_orders"
+     },
+     {
+      "seq": 335,
+      "t": "swap",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "target": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "gave": {
+       "id": 31,
+       "type": "wild_property",
+       "name": "Wild: Space/Test",
+       "value": 2,
+       "colors": [
+        "pink",
+        "orange"
+       ],
+       "placedColor": "orange"
+      },
+      "took": {
+       "id": 17,
+       "type": "property",
+       "name": "Thunderbirds",
+       "value": 4,
+       "color": "green",
+       "placedColor": "green"
+      },
+      "gaveColor": "orange",
+      "tookColor": "green"
+     },
+     {
+      "seq": 336,
+      "t": "turn_end",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa"
+     },
+     {
+      "seq": 337,
+      "t": "turn_start",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 338,
+      "t": "draw",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "count": 2
+     },
+     {
+      "seq": 339,
+      "t": "play_action",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 72,
+       "type": "action",
+       "name": "Roll Call",
+       "value": 2,
+       "action": "roll_call",
+       "description": "All other players pay you 2M each"
+      },
+      "action": "roll_call"
+     },
+     {
+      "seq": 340,
+      "t": "demand",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "amount": 2,
+      "reason": "roll_call",
+      "doubled": false
+     },
+     {
+      "seq": 341,
+      "t": "demand",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "target": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "amount": 2,
+      "reason": "roll_call",
+      "doubled": false
+     },
+     {
+      "seq": 342,
+      "t": "payment",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 4,
+      "cards": [
+       {
+        "id": 52,
+        "type": "money",
+        "name": "4M",
+        "value": 4
+       }
+      ],
+      "reason": "roll_call"
+     },
+     {
+      "seq": 343,
+      "t": "payment",
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 2,
+      "cards": [
        {
         "id": 41,
         "type": "money",
@@ -1566,15 +1126,526 @@
         "value": 1
        },
        {
-        "id": 94,
-        "type": "rent",
-        "name": "Rent: pink/orange",
+        "id": 38,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       }
+      ],
+      "reason": "roll_call"
+     },
+     {
+      "seq": 344,
+      "t": "play_action",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 81,
+       "type": "action",
+       "name": "PCS Orders",
+       "value": 1,
+       "action": "pcs_orders",
+       "description": "Draw 2 extra cards from the deck"
+      },
+      "action": "pcs_orders"
+     },
+     {
+      "seq": 345,
+      "t": "draw",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "count": 2
+     },
+     {
+      "seq": 346,
+      "t": "play_action",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 69,
+       "type": "action",
+       "name": "Finance Office",
+       "value": 3,
+       "action": "finance_office",
+       "description": "Collect 5M from any one player"
+      },
+      "action": "finance_office"
+     },
+     {
+      "seq": 347,
+      "t": "demand",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "amount": 5,
+      "reason": "finance_office",
+      "doubled": false
+     },
+     {
+      "seq": 348,
+      "t": "payment",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 5,
+      "cards": [
+       {
+        "id": 55,
+        "type": "money",
+        "name": "5M",
+        "value": 5
+       }
+      ],
+      "reason": "finance_office"
+     },
+     {
+      "seq": 349,
+      "t": "turn_end",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb"
+     },
+     {
+      "seq": 350,
+      "t": "turn_start",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 351,
+      "t": "draw",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "count": 2
+     },
+     {
+      "seq": 352,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 57,
+       "type": "action",
+       "name": "Inspector General",
+       "value": 5,
+       "action": "inspector_general",
+       "description": "Steal a complete property set from any player. OPSEC can block it."
+      },
+      "action": "inspector_general"
+     },
+     {
+      "seq": 353,
+      "t": "opsec",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "against": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "depth": 1,
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "action": "inspector_general",
+      "card": {
+       "id": 61,
+       "type": "action",
+       "name": "OPSEC",
+       "value": 4,
+       "action": "opsec",
+       "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+      }
+     },
+     {
+      "seq": 354,
+      "t": "action_blocked",
+      "source": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "action": "inspector_general",
+      "depth": 1
+     },
+     {
+      "seq": 355,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 82,
+       "type": "action",
+       "name": "PCS Orders",
+       "value": 1,
+       "action": "pcs_orders",
+       "description": "Draw 2 extra cards from the deck"
+      },
+      "action": "pcs_orders"
+     },
+     {
+      "seq": 356,
+      "t": "draw",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "count": 2
+     },
+     {
+      "seq": 357,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 100,
+       "type": "rent",
+       "name": "Rent: base/intel",
+       "value": 1,
+       "colors": [
+        "base",
+        "intel"
+       ]
+      },
+      "action": "rent"
+     },
+     {
+      "seq": 358,
+      "t": "rent_charged",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "color": "base",
+      "amount": 2,
+      "targets": [
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+       "b6de82a0-2f76-4e41-825a-083546eea5cb"
+      ],
+      "doubled": false
+     },
+     {
+      "seq": 359,
+      "t": "payment",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "total": 2,
+      "cards": [
+       {
+        "id": 4,
+        "type": "property",
+        "name": "Goodfellow AFB",
+        "value": 1,
+        "color": "lightblue",
+        "placedColor": "lightblue"
+       },
+       {
+        "id": 30,
+        "type": "wild_property",
+        "name": "Wild: Drone/Training",
         "value": 1,
         "colors": [
-         "pink",
-         "orange"
+         "brown",
+         "lightblue"
+        ],
+        "placedColor": "brown"
+       }
+      ],
+      "reason": "rent"
+     },
+     {
+      "seq": 360,
+      "t": "opsec",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "against": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "depth": 1,
+      "target": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "action": "rent",
+      "card": {
+       "id": 59,
+       "type": "action",
+       "name": "OPSEC",
+       "value": 4,
+       "action": "opsec",
+       "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+      }
+     },
+     {
+      "seq": 361,
+      "t": "action_blocked",
+      "source": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "target": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "action": "rent",
+      "depth": 1
+     },
+     {
+      "seq": 362,
+      "t": "turn_end",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
+     },
+     {
+      "seq": 363,
+      "t": "turn_start",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 364,
+      "t": "draw",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "count": 2,
+      "cards": [
+       {
+        "id": 96,
+        "type": "rent",
+        "name": "Rent: red/yellow",
+        "value": 1,
+        "colors": [
+         "red",
+         "yellow"
         ]
        },
+       {
+        "id": 97,
+        "type": "rent",
+        "name": "Rent: green/darkblue",
+        "value": 1,
+        "colors": [
+         "green",
+         "darkblue"
+        ]
+       }
+      ]
+     },
+     {
+      "seq": 365,
+      "t": "play_property",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 0,
+       "type": "property",
+       "name": "Creech AFB",
+       "value": 1,
+       "color": "brown",
+       "placedColor": "brown"
+      },
+      "color": "brown"
+     },
+     {
+      "seq": 366,
+      "t": "set_completed",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "color": "brown"
+     },
+     {
+      "seq": 367,
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 63,
+       "type": "action",
+       "name": "Midnight Requisition",
+       "value": 3,
+       "action": "midnight_requisition",
+       "description": "Steal a single property from any player. Cannot touch a complete set."
+      },
+      "action": "midnight_requisition"
+     },
+     {
+      "seq": 368,
+      "t": "steal",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 25,
+       "type": "property",
+       "name": "Thule AB",
+       "value": 2,
+       "color": "base",
+       "placedColor": "base"
+      },
+      "toColor": "base",
+      "action": "midnight_requisition"
+     },
+     {
+      "seq": 369,
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 89,
+       "type": "action",
+       "name": "Surge Operations",
+       "value": 1,
+       "action": "surge_ops",
+       "description": "Double the next charge you make this turn — rent or any demand"
+      },
+      "action": "surge_ops"
+     },
+     {
+      "seq": 370,
+      "t": "turn_end",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa"
+     },
+     {
+      "seq": 371,
+      "t": "turn_start",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 372,
+      "t": "draw",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "count": 2
+     },
+     {
+      "seq": 373,
+      "t": "play_action",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 71,
+       "type": "action",
+       "name": "Roll Call",
+       "value": 2,
+       "action": "roll_call",
+       "description": "All other players pay you 2M each"
+      },
+      "action": "roll_call"
+     },
+     {
+      "seq": 374,
+      "t": "demand",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "target": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "amount": 2,
+      "reason": "roll_call",
+      "doubled": false
+     },
+     {
+      "seq": 375,
+      "t": "demand",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "target": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "amount": 2,
+      "reason": "roll_call",
+      "doubled": false
+     },
+     {
+      "seq": 376,
+      "t": "payment",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 2,
+      "cards": [
+       {
+        "id": 36,
+        "type": "wild_property",
+        "name": "Wild: Training/Drone",
+        "value": 1,
+        "colors": [
+         "lightblue",
+         "brown"
+        ],
+        "placedColor": "brown"
+       },
+       {
+        "id": 0,
+        "type": "property",
+        "name": "Creech AFB",
+        "value": 1,
+        "color": "brown",
+        "placedColor": "brown"
+       }
+      ],
+      "reason": "roll_call"
+     },
+     {
+      "seq": 377,
+      "t": "set_completed",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "color": "brown"
+     },
+     {
+      "seq": 378,
+      "t": "final_approach",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "sets": 3,
+      "onOwnTurn": true,
+      "turnsToCheckpoint": 3
+     },
+     {
+      "seq": 379,
+      "t": "payment",
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "total": 3,
+      "cards": [
+       {
+        "id": 98,
+        "type": "rent",
+        "name": "Rent: green/darkblue",
+        "value": 1,
+        "colors": [
+         "green",
+         "darkblue"
+        ]
+       },
+       {
+        "id": 45,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       }
+      ],
+      "reason": "roll_call"
+     },
+     {
+      "seq": 380,
+      "t": "turn_end",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb"
+     },
+     {
+      "seq": 381,
+      "t": "turn_start",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 382,
+      "t": "draw",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "count": 2
+     },
+     {
+      "seq": 383,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 93,
+       "type": "rent",
+       "name": "Rent: pink/orange",
+       "value": 1,
+       "colors": [
+        "pink",
+        "orange"
+       ]
+      },
+      "action": "rent"
+     },
+     {
+      "seq": 384,
+      "t": "rent_charged",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "color": "orange",
+      "amount": 1,
+      "targets": [
+       "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+       "b6de82a0-2f76-4e41-825a-083546eea5cb"
+      ],
+      "doubled": false
+     },
+     {
+      "seq": 385,
+      "t": "payment",
+      "from": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "total": 1,
+      "cards": [
+       {
+        "id": 26,
+        "type": "property",
+        "name": "PAVE PAWS Radar",
+        "value": 1,
+        "color": "intel",
+        "placedColor": "intel"
+       }
+      ],
+      "reason": "rent"
+     },
+     {
+      "seq": 386,
+      "t": "payment",
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "total": 1,
+      "cards": [
        {
         "id": 98,
         "type": "rent",
@@ -1589,42 +1660,254 @@
       "reason": "rent"
      },
      {
-      "seq": 318,
+      "seq": 387,
       "t": "play_action",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
       "card": {
-       "id": 72,
+       "id": 80,
        "type": "action",
-       "name": "Roll Call",
-       "value": 2,
-       "action": "roll_call",
-       "description": "All other players pay you 2M each"
+       "name": "PCS Orders",
+       "value": 1,
+       "action": "pcs_orders",
+       "description": "Draw 2 extra cards from the deck"
       },
-      "action": "roll_call"
+      "action": "pcs_orders"
      },
      {
-      "seq": 319,
-      "t": "demand",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "target": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "amount": 2,
-      "reason": "roll_call",
+      "seq": 388,
+      "t": "draw",
+      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "count": 2
+     },
+     {
+      "seq": 389,
+      "t": "play_action",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "card": {
+       "id": 64,
+       "type": "action",
+       "name": "Midnight Requisition",
+       "value": 3,
+       "action": "midnight_requisition",
+       "description": "Steal a single property from any player. Cannot touch a complete set."
+      },
+      "action": "midnight_requisition"
+     },
+     {
+      "seq": 390,
+      "t": "steal",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "card": {
+       "id": 5,
+       "type": "property",
+       "name": "Peterson SFB",
+       "value": 2,
+       "color": "pink",
+       "placedColor": "pink"
+      },
+      "toColor": "pink",
+      "action": "midnight_requisition"
+     },
+     {
+      "seq": 391,
+      "t": "turn_end",
+      "actor": "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
+     },
+     {
+      "seq": 392,
+      "t": "turn_start",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "plays": 3,
+      "finalApproach": false
+     },
+     {
+      "seq": 393,
+      "t": "draw",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "count": 2,
+      "cards": [
+       {
+        "id": 95,
+        "type": "rent",
+        "name": "Rent: red/yellow",
+        "value": 1,
+        "colors": [
+         "red",
+         "yellow"
+        ]
+       },
+       {
+        "id": 62,
+        "type": "action",
+        "name": "Midnight Requisition",
+        "value": 3,
+        "action": "midnight_requisition",
+        "description": "Steal a single property from any player. Cannot touch a complete set."
+       }
+      ]
+     },
+     {
+      "seq": 394,
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 96,
+       "type": "rent",
+       "name": "Rent: red/yellow",
+       "value": 1,
+       "colors": [
+        "red",
+        "yellow"
+       ]
+      },
+      "action": "rent"
+     },
+     {
+      "seq": 395,
+      "t": "rent_charged",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "color": "red",
+      "amount": 9,
+      "targets": [
+       "b6de82a0-2f76-4e41-825a-083546eea5cb",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
+      ],
       "doubled": false
      },
      {
-      "seq": 320,
-      "t": "demand",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "target": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "amount": 2,
-      "reason": "roll_call",
-      "doubled": false
-     },
-     {
-      "seq": 321,
+      "seq": 396,
       "t": "payment",
-      "from": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "total": 9,
+      "cards": [
+       {
+        "id": 41,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       },
+       {
+        "id": 37,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       },
+       {
+        "id": 53,
+        "type": "money",
+        "name": "4M",
+        "value": 4
+       },
+       {
+        "id": 94,
+        "type": "rent",
+        "name": "Rent: pink/orange",
+        "value": 1,
+        "colors": [
+         "pink",
+         "orange"
+        ]
+       },
+       {
+        "id": 91,
+        "type": "rent",
+        "name": "Rent: brown/lightblue",
+        "value": 1,
+        "colors": [
+         "brown",
+         "lightblue"
+        ]
+       },
+       {
+        "id": 39,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       }
+      ],
+      "reason": "rent"
+     },
+     {
+      "seq": 397,
+      "t": "payment",
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "total": 10,
+      "cards": [
+       {
+        "id": 98,
+        "type": "rent",
+        "name": "Rent: green/darkblue",
+        "value": 1,
+        "colors": [
+         "green",
+         "darkblue"
+        ]
+       },
+       {
+        "id": 84,
+        "type": "action",
+        "name": "Upgrade (House)",
+        "value": 3,
+        "action": "upgrade",
+        "description": "Add to a complete set: +3M rent"
+       },
+       {
+        "id": 46,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 44,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 47,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       }
+      ],
+      "reason": "rent"
+     },
+     {
+      "seq": 398,
+      "t": "play_action",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "card": {
+       "id": 97,
+       "type": "rent",
+       "name": "Rent: green/darkblue",
+       "value": 1,
+       "colors": [
+        "green",
+        "darkblue"
+       ]
+      },
+      "action": "rent"
+     },
+     {
+      "seq": 399,
+      "t": "rent_charged",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "color": "green",
+      "amount": 4,
+      "targets": [
+       "b6de82a0-2f76-4e41-825a-083546eea5cb",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
+      ],
+      "doubled": false
+     },
+     {
+      "seq": 400,
+      "t": "payment",
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "total": 4,
       "cards": [
        {
@@ -1634,106 +1917,72 @@
         "value": 4
        }
       ],
-      "reason": "roll_call"
+      "reason": "rent"
      },
      {
-      "seq": 322,
+      "seq": 401,
       "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "total": 3,
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "total": 7,
       "cards": [
        {
-        "id": 50,
+        "id": 49,
         "type": "money",
         "name": "3M",
         "value": 3
-       }
-      ],
-      "reason": "roll_call"
-     },
-     {
-      "seq": 323,
-      "t": "play_money",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "card": {
-       "id": 43,
-       "type": "money",
-       "name": "2M",
-       "value": 2
-      }
-     },
-     {
-      "seq": 324,
-      "t": "turn_end",
-      "actor": "1a6a2722-7982-45bc-a130-7e2a3543c020"
-     },
-     {
-      "seq": 325,
-      "t": "turn_start",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "plays": 3
-     },
-     {
-      "seq": 326,
-      "t": "draw",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "count": 2,
-      "cards": [
-       {
-        "id": 68,
-        "type": "action",
-        "name": "Finance Office",
-        "value": 3,
-        "action": "finance_office",
-        "description": "Collect 5M from any one player"
        },
        {
-        "id": 101,
-        "type": "rent",
-        "name": "Rent: any",
-        "value": 3,
-        "colors": [
-         "any"
-        ]
+        "id": 88,
+        "type": "action",
+        "name": "Full Operational Capability (Hotel)",
+        "value": 4,
+        "action": "foc",
+        "description": "Add to a complete set with Upgrade: +4M rent"
        }
-      ]
+      ],
+      "reason": "rent"
      },
      {
-      "seq": 327,
+      "seq": 402,
       "t": "play_action",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "card": {
-       "id": 68,
-       "type": "action",
-       "name": "Finance Office",
-       "value": 3,
-       "action": "finance_office",
-       "description": "Collect 5M from any one player"
+       "id": 95,
+       "type": "rent",
+       "name": "Rent: red/yellow",
+       "value": 1,
+       "colors": [
+        "red",
+        "yellow"
+       ]
       },
-      "action": "finance_office"
+      "action": "rent"
      },
      {
-      "seq": 328,
-      "t": "demand",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "target": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "amount": 5,
-      "reason": "finance_office",
+      "seq": 403,
+      "t": "rent_charged",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "color": "red",
+      "amount": 9,
+      "targets": [
+       "b6de82a0-2f76-4e41-825a-083546eea5cb",
+       "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
+      ],
       "doubled": false
      },
      {
-      "seq": 329,
+      "seq": 404,
       "t": "payment",
-      "from": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "to": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "total": 5,
+      "from": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "total": 9,
       "cards": [
        {
-        "id": 40,
+        "id": 45,
         "type": "money",
-        "name": "1M",
-        "value": 1
+        "name": "2M",
+        "value": 2
        },
        {
         "id": 38,
@@ -1742,88 +1991,178 @@
         "value": 1
        },
        {
-        "id": 3,
-        "type": "property",
-        "name": "Keesler AFB",
-        "value": 1,
-        "color": "lightblue",
-        "placedColor": "lightblue"
+        "id": 50,
+        "type": "money",
+        "name": "3M",
+        "value": 3
        },
        {
-        "id": 1,
-        "type": "property",
-        "name": "Cannon AFB",
-        "value": 1,
-        "color": "brown",
-        "placedColor": "brown"
+        "id": 43,
+        "type": "money",
+        "name": "2M",
+        "value": 2
        },
        {
-        "id": 36,
-        "type": "wild_property",
-        "name": "Wild: Training/Drone",
-        "value": 1,
-        "colors": [
-         "lightblue",
-         "brown"
-        ],
-        "placedColor": "brown"
+        "id": 42,
+        "type": "money",
+        "name": "1M",
+        "value": 1
        }
       ],
-      "reason": "finance_office"
+      "reason": "rent"
      },
      {
-      "seq": 330,
-      "t": "set_completed",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
-      "color": "brown"
+      "seq": 405,
+      "t": "payment",
+      "from": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "total": 9,
+      "cards": [
+       {
+        "id": 87,
+        "type": "action",
+        "name": "Full Operational Capability (Hotel)",
+        "value": 4,
+        "action": "foc",
+        "description": "Add to a complete set with Upgrade: +4M rent"
+       },
+       {
+        "id": 54,
+        "type": "money",
+        "name": "5M",
+        "value": 5
+       }
+      ],
+      "reason": "rent"
      },
      {
-      "seq": 331,
+      "seq": 406,
+      "t": "turn_end",
+      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa"
+     },
+     {
+      "seq": 407,
+      "t": "turn_start",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "plays": 3,
+      "finalApproach": true
+     },
+     {
+      "seq": 408,
       "t": "win",
-      "actor": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "actor": "b6de82a0-2f76-4e41-825a-083546eea5cb",
       "sets": 3,
       "reason": "sets"
      }
     ],
-    "eventSeq": 331,
+    "eventSeq": 408,
     "players": [
      {
-      "id": "1667cc2c-c718-4908-8fdb-c1fb1870e666",
+      "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
       "name": "HARNESS",
-      "handCount": 3,
+      "handCount": 1,
       "hand": [
        {
-        "id": 87,
+        "id": 62,
         "type": "action",
-        "action": "foc",
-        "name": "Full Operational Capability (Hotel)",
-        "value": 4,
-        "description": "Add to a complete set with Upgrade: +4M rent"
-       },
-       {
-        "id": 61,
-        "type": "action",
-        "action": "opsec",
-        "name": "OPSEC",
-        "value": 4,
-        "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
-       },
-       {
-        "id": 101,
-        "type": "rent",
-        "colors": [
-         "any"
-        ],
-        "name": "Rent: any",
-        "value": 3
+        "action": "midnight_requisition",
+        "name": "Midnight Requisition",
+        "value": 3,
+        "description": "Steal a single property from any player. Cannot touch a complete set."
        }
       ],
       "bank": [
        {
-        "id": 55,
+        "id": 41,
         "type": "money",
-        "name": "5M",
-        "value": 5
+        "name": "1M",
+        "value": 1
+       },
+       {
+        "id": 37,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       },
+       {
+        "id": 53,
+        "type": "money",
+        "name": "4M",
+        "value": 4
+       },
+       {
+        "id": 94,
+        "type": "rent",
+        "colors": [
+         "pink",
+         "orange"
+        ],
+        "name": "Rent: pink/orange",
+        "value": 1
+       },
+       {
+        "id": 91,
+        "type": "rent",
+        "colors": [
+         "brown",
+         "lightblue"
+        ],
+        "name": "Rent: brown/lightblue",
+        "value": 1
+       },
+       {
+        "id": 39,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       },
+       {
+        "id": 98,
+        "type": "rent",
+        "colors": [
+         "green",
+         "darkblue"
+        ],
+        "name": "Rent: green/darkblue",
+        "value": 1
+       },
+       {
+        "id": 84,
+        "type": "action",
+        "action": "upgrade",
+        "name": "Upgrade (House)",
+        "value": 3,
+        "description": "Add to a complete set: +3M rent"
+       },
+       {
+        "id": 46,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 44,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 47,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 52,
+        "type": "money",
+        "name": "4M",
+        "value": 4
+       },
+       {
+        "id": 49,
+        "type": "money",
+        "name": "3M",
+        "value": 3
        },
        {
         "id": 88,
@@ -1834,44 +2173,54 @@
         "description": "Add to a complete set with Upgrade: +4M rent"
        },
        {
-        "id": 51,
+        "id": 45,
         "type": "money",
-        "name": "4M",
-        "value": 4
-       },
-       {
-        "id": 54,
-        "type": "money",
-        "name": "5M",
-        "value": 5
-       },
-       {
-        "id": 40,
-        "type": "money",
-        "name": "1M",
-        "value": 1
+        "name": "2M",
+        "value": 2
        },
        {
         "id": 38,
         "type": "money",
         "name": "1M",
         "value": 1
+       },
+       {
+        "id": 50,
+        "type": "money",
+        "name": "3M",
+        "value": 3
+       },
+       {
+        "id": 43,
+        "type": "money",
+        "name": "2M",
+        "value": 2
+       },
+       {
+        "id": 42,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       },
+       {
+        "id": 87,
+        "type": "action",
+        "action": "foc",
+        "name": "Full Operational Capability (Hotel)",
+        "value": 4,
+        "description": "Add to a complete set with Upgrade: +4M rent"
+       },
+       {
+        "id": 54,
+        "type": "money",
+        "name": "5M",
+        "value": 5
        }
       ],
       "properties": {
        "pink": [],
-       "darkblue": [
-        {
-         "id": 33,
-         "type": "wild_property",
-         "colors": [
-          "green",
-          "darkblue"
-         ],
-         "name": "Wild: Elite/Command",
-         "value": 4,
-         "placedColor": "darkblue"
-        },
+       "darkblue": [],
+       "lightblue": [
         {
          "id": 29,
          "type": "wild_property",
@@ -1880,24 +2229,6 @@
          ],
          "name": "Wild Property",
          "value": 0,
-         "placedColor": "darkblue"
-        }
-       ],
-       "lightblue": [
-        {
-         "id": 4,
-         "type": "property",
-         "color": "lightblue",
-         "name": "Goodfellow AFB",
-         "value": 1,
-         "placedColor": "lightblue"
-        },
-        {
-         "id": 3,
-         "type": "property",
-         "color": "lightblue",
-         "name": "Keesler AFB",
-         "value": 1,
          "placedColor": "lightblue"
         }
        ],
@@ -1911,18 +2242,21 @@
          "placedColor": "red"
         },
         {
-         "id": 11,
-         "type": "property",
-         "color": "red",
-         "name": "F-22 Raptor",
+         "id": 32,
+         "type": "wild_property",
+         "colors": [
+          "red",
+          "yellow"
+         ],
+         "name": "Wild: Fighter/Mobility",
          "value": 3,
          "placedColor": "red"
         },
         {
-         "id": 13,
+         "id": 11,
          "type": "property",
          "color": "red",
-         "name": "F-15 Eagle",
+         "name": "F-22 Raptor",
          "value": 3,
          "placedColor": "red"
         }
@@ -1937,23 +2271,21 @@
          "placedColor": "yellow"
         },
         {
-         "id": 32,
-         "type": "wild_property",
-         "colors": [
-          "red",
-          "yellow"
-         ],
-         "name": "Wild: Fighter/Mobility",
+         "id": 15,
+         "type": "property",
+         "color": "yellow",
+         "name": "C-17 Globemaster III",
          "value": 3,
          "placedColor": "yellow"
         }
        ],
+       "brown": [],
        "green": [
         {
-         "id": 18,
+         "id": 19,
          "type": "property",
          "color": "green",
-         "name": "Weapons School",
+         "name": "Red Flag",
          "value": 4,
          "placedColor": "green"
         },
@@ -1974,8 +2306,119 @@
          "name": "Osan AB",
          "value": 2,
          "placedColor": "base"
+        },
+        {
+         "id": 35,
+         "type": "wild_property",
+         "colors": [
+          "base",
+          "green"
+         ],
+         "name": "Wild: Bases/Elite",
+         "value": 4,
+         "placedColor": "base"
+        },
+        {
+         "id": 25,
+         "type": "property",
+         "color": "base",
+         "name": "Thule AB",
+         "value": 2,
+         "placedColor": "base"
         }
        ],
+       "orange": [
+        {
+         "id": 10,
+         "type": "property",
+         "color": "orange",
+         "name": "Edwards AFB",
+         "value": 2,
+         "placedColor": "orange"
+        }
+       ],
+       "intel": []
+      },
+      "upgrades": {
+       "red": [
+        {
+         "id": 85,
+         "type": "action",
+         "action": "upgrade",
+         "name": "Upgrade (House)",
+         "value": 3,
+         "description": "Add to a complete set: +3M rent",
+         "upgradeType": "house"
+        }
+       ]
+      },
+      "completedSets": 1,
+      "eliminated": false,
+      "finalApproach": false,
+      "finalApproachIn": null,
+      "bankValue": 48,
+      "propertyValue": 33,
+      "upgradeValue": 3,
+      "payableValue": 81,
+      "netWorth": 84
+     },
+     {
+      "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "name": "Blaze",
+      "handCount": 3,
+      "bank": [
+       {
+        "id": 40,
+        "type": "money",
+        "name": "1M",
+        "value": 1
+       },
+       {
+        "id": 48,
+        "type": "money",
+        "name": "3M",
+        "value": 3
+       },
+       {
+        "id": 55,
+        "type": "money",
+        "name": "5M",
+        "value": 5
+       }
+      ],
+      "properties": {
+       "red": [],
+       "yellow": [],
+       "pink": [
+        {
+         "id": 28,
+         "type": "wild_property",
+         "colors": [
+          "any"
+         ],
+         "name": "Wild Property",
+         "value": 0,
+         "placedColor": "pink"
+        },
+        {
+         "id": 7,
+         "type": "property",
+         "color": "pink",
+         "name": "Buckley SFB",
+         "value": 2,
+         "placedColor": "pink"
+        },
+        {
+         "id": 6,
+         "type": "property",
+         "color": "pink",
+         "name": "Schriever SFB",
+         "value": 2,
+         "placedColor": "pink"
+        }
+       ],
+       "green": [],
+       "base": [],
        "brown": [
         {
          "id": 1,
@@ -1995,84 +2438,38 @@
          "name": "Wild: Training/Drone",
          "value": 1,
          "placedColor": "brown"
-        }
-       ],
-       "orange": [
-        {
-         "id": 10,
-         "type": "property",
-         "color": "orange",
-         "name": "Edwards AFB",
-         "value": 2,
-         "placedColor": "orange"
         },
         {
-         "id": 8,
+         "id": 0,
          "type": "property",
-         "color": "orange",
-         "name": "Nellis AFB",
-         "value": 2,
-         "placedColor": "orange"
-        }
-       ]
-      },
-      "upgrades": {},
-      "completedSets": 3,
-      "eliminated": false,
-      "bankValue": 20,
-      "propertyValue": 37,
-      "upgradeValue": 0,
-      "payableValue": 57,
-      "netWorth": 57
-     },
-     {
-      "id": "bcc9d3a4-5d3a-4b07-8c17-77f6513ab24a",
-      "name": "Warlock",
-      "handCount": 7,
-      "bank": [],
-      "properties": {
-       "red": [],
-       "yellow": [],
-       "pink": [
-        {
-         "id": 6,
-         "type": "property",
-         "color": "pink",
-         "name": "Schriever SFB",
-         "value": 2,
-         "placedColor": "pink"
-        },
-        {
-         "id": 7,
-         "type": "property",
-         "color": "pink",
-         "name": "Buckley SFB",
-         "value": 2,
-         "placedColor": "pink"
+         "color": "brown",
+         "name": "Creech AFB",
+         "value": 1,
+         "placedColor": "brown"
         }
        ],
-       "green": [
+       "lightblue": [
         {
-         "id": 19,
+         "id": 2,
          "type": "property",
-         "color": "green",
-         "name": "Red Flag",
-         "value": 4,
-         "placedColor": "green"
+         "color": "lightblue",
+         "name": "Lackland AFB (BMT)",
+         "value": 1,
+         "placedColor": "lightblue"
         }
        ],
-       "base": [
-        {
-         "id": 25,
-         "type": "property",
-         "color": "base",
-         "name": "Thule AB",
-         "value": 2,
-         "placedColor": "base"
-        }
-       ],
-       "brown": [],
        "darkblue": [
+        {
+         "id": 33,
+         "type": "wild_property",
+         "colors": [
+          "green",
+          "darkblue"
+         ],
+         "name": "Wild: Elite/Command",
+         "value": 4,
+         "placedColor": "darkblue"
+        },
         {
          "id": 21,
          "type": "property",
@@ -2080,7 +2477,60 @@
          "name": "Air Force One",
          "value": 4,
          "placedColor": "darkblue"
+        }
+       ],
+       "orange": [
+        {
+         "id": 8,
+         "type": "property",
+         "color": "orange",
+         "name": "Nellis AFB",
+         "value": 2,
+         "placedColor": "orange"
         },
+        {
+         "id": 31,
+         "type": "wild_property",
+         "colors": [
+          "pink",
+          "orange"
+         ],
+         "name": "Wild: Space/Test",
+         "value": 2,
+         "placedColor": "orange"
+        }
+       ]
+      },
+      "upgrades": {
+       "darkblue": [
+        {
+         "id": 86,
+         "type": "action",
+         "action": "upgrade",
+         "name": "Upgrade (House)",
+         "value": 3,
+         "description": "Add to a complete set: +3M rent",
+         "upgradeType": "house"
+        }
+       ]
+      },
+      "completedSets": 3,
+      "eliminated": false,
+      "finalApproach": true,
+      "finalApproachIn": 0,
+      "bankValue": 9,
+      "propertyValue": 20,
+      "upgradeValue": 3,
+      "payableValue": 29,
+      "netWorth": 32
+     },
+     {
+      "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "name": "Phoenix",
+      "handCount": 3,
+      "bank": [],
+      "properties": {
+       "darkblue": [
         {
          "id": 20,
          "type": "property",
@@ -2088,6 +2538,16 @@
          "name": "The Pentagon",
          "value": 4,
          "placedColor": "darkblue"
+        }
+       ],
+       "red": [
+        {
+         "id": 13,
+         "type": "property",
+         "color": "red",
+         "name": "F-15 Eagle",
+         "value": 3,
+         "placedColor": "red"
         }
        ],
        "intel": [
@@ -2101,149 +2561,20 @@
          "name": "Wild: Bases/Intel",
          "value": 2,
          "placedColor": "intel"
-        }
-       ],
-       "lightblue": [
-        {
-         "id": 2,
-         "type": "property",
-         "color": "lightblue",
-         "name": "Lackland AFB (BMT)",
-         "value": 1,
-         "placedColor": "lightblue"
-        }
-       ],
-       "orange": [
-        {
-         "id": 9,
-         "type": "property",
-         "color": "orange",
-         "name": "Eglin AFB",
-         "value": 2,
-         "placedColor": "orange"
-        }
-       ]
-      },
-      "upgrades": {},
-      "completedSets": 1,
-      "eliminated": false,
-      "bankValue": 0,
-      "propertyValue": 23,
-      "upgradeValue": 0,
-      "payableValue": 23,
-      "netWorth": 23
-     },
-     {
-      "id": "1a6a2722-7982-45bc-a130-7e2a3543c020",
-      "name": "Iceman",
-      "handCount": 2,
-      "bank": [
-       {
-        "id": 46,
-        "type": "money",
-        "name": "2M",
-        "value": 2
-       },
-       {
-        "id": 45,
-        "type": "money",
-        "name": "2M",
-        "value": 2
-       },
-       {
-        "id": 84,
-        "type": "action",
-        "action": "upgrade",
-        "name": "Upgrade (House)",
-        "value": 3,
-        "description": "Add to a complete set: +3M rent"
-       },
-       {
-        "id": 49,
-        "type": "money",
-        "name": "3M",
-        "value": 3
-       },
-       {
-        "id": 53,
-        "type": "money",
-        "name": "4M",
-        "value": 4
-       },
-       {
-        "id": 44,
-        "type": "money",
-        "name": "2M",
-        "value": 2
-       },
-       {
-        "id": 39,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 41,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 94,
-        "type": "rent",
-        "colors": [
-         "pink",
-         "orange"
-        ],
-        "name": "Rent: pink/orange",
-        "value": 1
-       },
-       {
-        "id": 98,
-        "type": "rent",
-        "colors": [
-         "green",
-         "darkblue"
-        ],
-        "name": "Rent: green/darkblue",
-        "value": 1
-       },
-       {
-        "id": 52,
-        "type": "money",
-        "name": "4M",
-        "value": 4
-       },
-       {
-        "id": 50,
-        "type": "money",
-        "name": "3M",
-        "value": 3
-       },
-       {
-        "id": 43,
-        "type": "money",
-        "name": "2M",
-        "value": 2
-       }
-      ],
-      "properties": {
-       "darkblue": [],
-       "red": [],
-       "intel": [
-        {
-         "id": 26,
-         "type": "property",
-         "color": "intel",
-         "name": "PAVE PAWS Radar",
-         "value": 1,
-         "placedColor": "intel"
         },
         {
          "id": 27,
          "type": "property",
          "color": "intel",
          "name": "GPS Constellation",
+         "value": 1,
+         "placedColor": "intel"
+        },
+        {
+         "id": 26,
+         "type": "property",
+         "color": "intel",
+         "name": "PAVE PAWS Radar",
          "value": 1,
          "placedColor": "intel"
         }
@@ -2264,48 +2595,6 @@
          "name": "Ramstein AB",
          "value": 2,
          "placedColor": "base"
-        },
-        {
-         "id": 35,
-         "type": "wild_property",
-         "colors": [
-          "base",
-          "green"
-         ],
-         "name": "Wild: Bases/Elite",
-         "value": 4,
-         "placedColor": "base"
-        }
-       ],
-       "pink": [
-        {
-         "id": 5,
-         "type": "property",
-         "color": "pink",
-         "name": "Peterson SFB",
-         "value": 2,
-         "placedColor": "pink"
-        },
-        {
-         "id": 28,
-         "type": "wild_property",
-         "colors": [
-          "any"
-         ],
-         "name": "Wild Property",
-         "value": 0,
-         "placedColor": "pink"
-        },
-        {
-         "id": 31,
-         "type": "wild_property",
-         "colors": [
-          "pink",
-          "orange"
-         ],
-         "name": "Wild: Space/Test",
-         "value": 2,
-         "placedColor": "pink"
         }
        ],
        "brown": [
@@ -2329,45 +2618,72 @@
          "name": "KC-135 Stratotanker",
          "value": 3,
          "placedColor": "yellow"
+        }
+       ],
+       "lightblue": [
+        {
+         "id": 3,
+         "type": "property",
+         "color": "lightblue",
+         "name": "Keesler AFB",
+         "value": 1,
+         "placedColor": "lightblue"
         },
         {
-         "id": 15,
+         "id": 4,
          "type": "property",
-         "color": "yellow",
-         "name": "C-17 Globemaster III",
-         "value": 3,
-         "placedColor": "yellow"
+         "color": "lightblue",
+         "name": "Goodfellow AFB",
+         "value": 1,
+         "placedColor": "lightblue"
         }
-       ]
-      },
-      "upgrades": {
-       "intel": [
+       ],
+       "orange": [
         {
-         "id": 85,
-         "type": "action",
-         "action": "upgrade",
-         "name": "Upgrade (House)",
-         "value": 3,
-         "description": "Add to a complete set: +3M rent",
-         "upgradeType": "house"
+         "id": 9,
+         "type": "property",
+         "color": "orange",
+         "name": "Eglin AFB",
+         "value": 2,
+         "placedColor": "orange"
+        }
+       ],
+       "green": [
+        {
+         "id": 18,
+         "type": "property",
+         "color": "green",
+         "name": "Weapons School",
+         "value": 4,
+         "placedColor": "green"
+        }
+       ],
+       "pink": [
+        {
+         "id": 5,
+         "type": "property",
+         "color": "pink",
+         "name": "Peterson SFB",
+         "value": 2,
+         "placedColor": "pink"
         }
        ]
       },
-      "completedSets": 2,
+      "upgrades": {},
+      "completedSets": 1,
       "eliminated": false,
-      "bankValue": 29,
-      "propertyValue": 21,
-      "upgradeValue": 3,
-      "payableValue": 50,
-      "netWorth": 53
+      "finalApproach": false,
+      "finalApproachIn": null,
+      "bankValue": 0,
+      "propertyValue": 29,
+      "upgradeValue": 0,
+      "payableValue": 29,
+      "netWorth": 29
      }
     ]
    },
    "turnTimer": null,
-   "responseTimer": {
-    "timeout": 30,
-    "startedAt": 1786047030732
-   }
+   "responseTimer": null
   }
  ]
 }

@@ -3,52 +3,52 @@
  "name": "lobby",
  "description": "Real 5-seat lobby broadcast: host, four bots with modes, no game yet.",
  "seed": 1338,
- "selfId": "3bab29b1-93e3-4209-9a03-04be1c12f138",
- "room": "GQWL",
- "recordedAt": "2026-08-06T20:12:12.280Z",
+ "selfId": "bc61445a-ebb8-45b8-b812-d7e632c35a0a",
+ "room": "8AZZ",
+ "recordedAt": "2026-08-06T22:06:10.670Z",
  "states": [
   {
    "type": "state",
-   "code": "GQWL",
+   "code": "8AZZ",
    "phase": "lobby",
    "players": [
     {
-     "id": "3bab29b1-93e3-4209-9a03-04be1c12f138",
+     "id": "bc61445a-ebb8-45b8-b812-d7e632c35a0a",
      "name": "HARNESS",
      "connected": true,
      "isBot": false,
      "botMode": null
     },
     {
-     "id": "8091e101-fb0a-4cb0-b16e-7b353444f3d3",
-     "name": "Reaper",
+     "id": "7535ec46-c485-4deb-b5fb-b85dd13d8d31",
+     "name": "Slider",
      "connected": true,
      "isBot": true,
      "botMode": "conservative"
     },
     {
-     "id": "cb3d9494-e171-4da1-944d-74916a362a8e",
-     "name": "Hangman",
+     "id": "14660b3c-276b-4b4b-8b95-f791e37660a0",
+     "name": "Iceman",
      "connected": true,
      "isBot": true,
      "botMode": "neutral"
     },
     {
-     "id": "d4160fc1-c7a2-4028-8327-37a2a1dea36a",
-     "name": "Slider",
+     "id": "4e093595-d614-4459-9f12-e5750a8a8bc3",
+     "name": "Raptor",
      "connected": true,
      "isBot": true,
      "botMode": "aggressive"
     },
     {
-     "id": "9d290557-c99a-4241-9239-fbbb0c90cfed",
-     "name": "Ace",
+     "id": "922724de-17c2-43b2-b82c-1005a34c047b",
+     "name": "Coyote",
      "connected": true,
      "isBot": true,
      "botMode": "chud"
     }
    ],
-   "hostId": "3bab29b1-93e3-4209-9a03-04be1c12f138",
+   "hostId": "bc61445a-ebb8-45b8-b812-d7e632c35a0a",
    "game": null,
    "turnTimer": null,
    "responseTimer": null

@@ -69,6 +69,9 @@ export function install(readyPromise, applyStateFn) {
   bridge.drainEvents = () => {
     choreographer.clear();
     if (store.store.snapshot) table.reconcile(store.store.snapshot, { count: false, animate: false });
+    // The table just settled outside the choreographer's drain loop — announce
+    // it, or CHOREO_IDLE listeners (interaction marks) never re-run on fixtures.
+    bus.emit(bus.EVENTS.CHOREO_IDLE, null);
     return true;
   };
 

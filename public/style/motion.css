@@ -1,2 +1,70 @@
-/* Owned by the motion agent (P4): JS-driven card motion support only.
-   The .card transform contract lives in table.css — never claim transform here. */
+/* motion.css — owned by the motion agent (P4).
+   ONLY what JS-driven card motion needs to work. No colour, no chrome, no
+   shadow: the design agent owns the look, including how .is-flying reads.
+
+   The .card transform contract (§5) is
+       translate(var(--fx),var(--fy)) rotate(var(--tilt)) scale(var(--fs))
+   and its home is table.css. This file never claims transform on a .card
+   except to RESTATE that exact contract where a zone-local rule would
+   otherwise win (see .is-flying below). anim/flight.js is the only writer of
+   those four variables while a card is moving. */
+
+/* ── the flip ────────────────────────────────────────────────────────────
+   A card turns over on an inner wrapper so the outer transform stays exactly
+   the contract above. .card-inner is built by table/cardnode.js; a pooled card
+   back has no wrapper (it never flips) and is untouched by any of this. */
+
+.card { perspective: 800px; }
+
+.card-inner {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(var(--flip, 0deg));
+  transform-style: preserve-3d;
+}
+
+/* Both faces exist at all times — the flip is real geometry, not a swap.
+   backface-visibility does the hiding, so nothing has to be display:none at
+   the exact frame the card is edge-on. */
+.card-inner > .card-face,
+.card-inner > .card-back {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.card[data-facing] .card-inner > .card-back {
+  display: flex;
+  transform: rotateY(180deg);
+}
+.card[data-facing="down"] { --flip: 180deg; }
+
+/* ── in flight ───────────────────────────────────────────────────────────
+   Nothing restates the transform here: table.css declares the contract once
+   and no longer lets a zone-local rule (the old `.zone-deck .card` stack
+   depth) override it — the deck's depth is a rest-pose --fy from
+   table/cardnode.js syncBacks() instead, so the shuffle riffle moves.
+
+   will-change discipline is all that is left, and it is the whole rule: a
+   5-player table is 60+ card nodes, and promoting all of them holds 60+
+   compositor layers for a whole game to buy nothing while they sit still.
+   A/B over a full 60s animated playthrough (headless Chromium 1280×720,
+   frame dt with ≥4 cards in the air): promote-all p95 9.7ms / max 14.3ms,
+   promote-on-takeoff p95 10.0ms / max 12.7ms — no measurable frame-time
+   difference either way at this table size. What is NOT measurable in
+   headless is layer memory on a real phone, so promotion stays scoped to the
+   cards actually moving (anim/flight.js adds and removes .is-flying, and
+   interact/ owns .is-dragging). Re-measure on device before widening it. */
+.card.is-flying,
+.card.is-riffling,
+.card.is-dragging { will-change: transform; }
+
+/* ── reduced motion (§0.9) ───────────────────────────────────────────────
+   Flights are already collapsed to a ≤120ms in-place fade in JS
+   (table/moveCard), and the FX cue vocabulary is unchanged — sound and
+   haptics do not go quiet just because the table stopped moving. All that is
+   left here is the flip, which becomes an instant face swap. */
+@media (prefers-reduced-motion: reduce) {
+  .card-inner { transform: none; }
+  .card[data-facing="down"] .card-inner > .card-face { visibility: hidden; }
+  .card[data-facing="down"] .card-inner > .card-back { transform: none; }
+  .card[data-facing="up"] .card-inner > .card-back { visibility: hidden; }
+}

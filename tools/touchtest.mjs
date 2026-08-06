@@ -98,7 +98,8 @@ try {
       const B = window.__CHUD;
       const before = B.driftCount;
       const card = document.querySelector('[data-zone="hand"] [data-card-id]');
-      const zone = document.querySelector('[data-zone^="properties"], [data-zone="bank"]');
+      // Own board only — dropping a hand card on an opponent's set must never play it.
+      const zone = document.querySelector('#self-board [data-zone^="properties"], [data-zone="bank"]');
       if (!card || !zone) return { ok: false, why: 'no hand card or no drop zone in the DOM' };
       const from = card.getBoundingClientRect();
       const to = zone.getBoundingClientRect();
@@ -158,8 +159,31 @@ try {
   /* ---- 4. target a steal -------------------------------------------------- */
   if (await stage('targeting')) {
     const target = await h.page.evaluate(async () => {
+      const tap = (el) => {
+        const rct = el.getBoundingClientRect();
+        for (const t of ['pointerdown', 'pointerup', 'click']) {
+          el.dispatchEvent(new PointerEvent(t, {
+            pointerId: 1, pointerType: 'touch', isPrimary: true,
+            clientX: rct.left + rct.width / 2, clientY: rct.top + rct.height / 2,
+            bubbles: true, cancelable: true,
+          }));
+        }
+      };
+      // Targeting is a client-side mode — a recorded state can't stage it.
+      // Drive it: try hand cards until playing one enters targeting mode.
+      const handCards = [...document.querySelectorAll('[data-zone="hand"] [data-card-id]')];
+      for (const handCard of handCards) {
+        tap(handCard);
+        await new Promise((res) => setTimeout(res, 150));
+        const play = document.querySelector('[data-action="play-card"]');
+        if (play) { tap(play); await new Promise((res) => setTimeout(res, 200)); }
+        if (document.querySelector('[data-targetable="1"]')) break;
+        const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+        document.dispatchEvent(esc);
+        await new Promise((res) => setTimeout(res, 100));
+      }
       const glow = document.querySelectorAll('[data-targetable="1"]');
-      if (!glow.length) return { ok: false, why: 'no targetable board is marked' };
+      if (!glow.length) return { ok: false, why: 'no targetable board is marked after playing a targeted card' };
       const el = glow[0];
       const rct = el.getBoundingClientRect();
       for (const t of ['pointerdown', 'pointerup', 'click']) {

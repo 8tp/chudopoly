@@ -98,7 +98,10 @@ try {
   if (bridge.lastError) r.fail(`__CHUD.lastError: ${bridge.lastError}`);
   else r.pass('__CHUD.lastError is null');
 
-  r.info(`sfx events ${bridge.sfx}, haptic events ${bridge.haptics}`);
+  if (bridge.sfx > 0) r.pass(`sfx dispatched (${bridge.sfx} events)`);
+  else r.fail('no sfx events reached the recorder — §7 audio path is dead');
+  if (bridge.haptics > 0) r.pass(`haptics dispatched (${bridge.haptics} patterns)`);
+  else r.fail('no haptic patterns recorded — §7 haptics path is dead');
 
   if (h.errors.length) {
     r.fail(`${h.errors.length} console/page error(s)`);

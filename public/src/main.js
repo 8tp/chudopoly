@@ -65,13 +65,15 @@ function wireNet() {
   });
 
   // §7 sound dispatch is structured-event driven — never log prose (§0.5).
-  bus.on(EVENTS.CHOREO_SFX, ({ name, mine }) => {
-    audio.play(audio.SFX_FOR_EVENT[name] || name, { mine });
+  // SFX_FOR_EVENT null means the FX_CUE channel owns that moment — don't fall
+  // back to the raw event name. `ev` rides along so virtual families
+  // (action/steal/set_progress) resolve without registration-order tricks.
+  bus.on(EVENTS.CHOREO_SFX, ({ name, ev, mine }) => {
+    const mapped = audio.SFX_FOR_EVENT[name];
+    if (mapped !== null) audio.play(mapped || name, { mine, ev });
   });
-  bus.on(EVENTS.CHOREO_EVENT, (ev) => {
-    if (ev.t === 'set_completed' && ev.actor === store.store.self.id) fx.haptic(fx.HAPTICS.setComplete);
-    if (ev.t === 'win' && ev.actor === store.store.self.id) fx.haptic(fx.HAPTICS.win);
-  });
+  // Haptics live in fx/ off the cue channel — dispatching them here too would
+  // just be eaten by fx's 300ms floor.
 }
 
 function wireConnectionChrome() {

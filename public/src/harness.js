@@ -86,9 +86,12 @@ export function install(readyPromise, applyStateFn) {
   audio.setRecorder((name, opts) => {
     bridge.sfxLog.push({ name, t: Math.round(performance.now()), mine: !!opts?.mine });
   });
+  bridge.audio = audio.harnessApi();
   fx.setHapticRecorder((pattern) => {
     bridge.hapticLog.push({ pattern, t: Math.round(performance.now()) });
   });
+  // fx/ self-attaches `bridge.fxLog` with its live cue log on first cue — do
+  // not pre-create the key here, a foreign empty array would shadow the log.
 
   const record = (err) => {
     bridge.lastError = err && err.message ? `${err.message}` : String(err);

@@ -130,6 +130,19 @@
   background:var(--af-gold); color:#000; font-size:16px; font-weight:700;
   cursor:pointer; text-transform:uppercase; letter-spacing:2px; min-height:44px;
 }
+.winner-summary { margin:16px 0 4px; min-width:min(420px, 75vw); text-align:left; }
+.winner-match-stats { color:var(--af-gold); text-align:center; font-size:12px; margin-bottom:8px; }
+.winner-stat-row { display:flex; justify-content:space-between; gap:16px; padding:5px 0; border-bottom:1px solid #1a2a44; font-size:12px; }
+.winner-stat-row span:last-child { color:#889; text-align:right; }
+.winner-box .btn-winner-home { background:transparent; color:var(--af-silver); border:1px solid #2a3a54; margin-left:6px; }
+
+button:focus-visible, input:focus-visible, [role="button"]:focus-visible {
+  outline:3px solid var(--af-gold); outline-offset:2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; scroll-behavior:auto !important; }
+}
 
 /* ── Confetti ───────────────────────────────────────────────────────── */
 

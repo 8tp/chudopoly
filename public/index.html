@@ -27,16 +27,18 @@
     <label class="input-label" for="player-name">CALL SIGN</label>
     <input type="text" id="player-name" placeholder="Enter your name" maxlength="16" autocomplete="off">
     <div class="divider"></div>
-    <button id="btn-create" onclick="createRoom()">Create Room</button>
+    <button id="btn-create" data-action="create-room">Create Room</button>
+    <button id="btn-quick-play" data-action="quick-play">Quick Play vs Bots</button>
     <div class="divider">— OR —</div>
     <input type="text" id="room-code-input" placeholder="Room Code" maxlength="4" autocomplete="off"
            style="text-transform:uppercase">
-    <button id="btn-join" onclick="joinRoom()">Join Room</button>
+    <button id="btn-join" data-action="join-room">Join Room</button>
   </div>
 
   <div id="lobby-waiting" class="lobby-panel" style="display:none">
     <h2>Room: <span id="room-code-display"></span></h2>
     <p class="hint">Share this code with your squad</p>
+    <button id="btn-share-room" class="btn-share-room" data-action="share-room">Share Invite Link</button>
     <div id="player-list"></div>
     <div id="room-settings" class="room-settings" style="display:none">
       <label class="input-label" for="turn-timeout">TURN TIMER (seconds, 0 = off)</label>
@@ -45,22 +47,21 @@
       <input type="number" id="response-timeout" value="30" min="0" max="120" step="5" style="text-align:center;width:100px;margin:0 auto">
     </div>
     <div id="bot-controls" style="display:none">
-      <button id="btn-add-bot" class="btn-add-bot" onclick="showBotModePicker()">+ Add Bot</button>
+      <button id="btn-add-bot" class="btn-add-bot" data-action="show-bot-picker">+ Add Bot</button>
     </div>
-    <button id="btn-start" onclick="startGame()" style="display:none">Launch Mission</button>
+    <button id="btn-start" data-action="start-game" style="display:none">Launch Mission</button>
     <p id="waiting-msg" class="hint">Waiting for host to start...</p>
-    <button id="btn-leave-lobby" class="btn-leave-lobby" onclick="leaveLobby()">Leave Room</button>
+    <button id="btn-leave-lobby" class="btn-leave-lobby" data-action="leave-lobby">Leave Room</button>
     <div id="lobby-chat" class="chat-box" style="display:none">
       <div class="chat-tabs">
-        <button class="chat-tab active" data-scope="room" onclick="switchChatTab('room')">Room</button>
-        <button class="chat-tab" data-scope="global" onclick="switchChatTab('global')">Global <span id="lobby-unread-global" class="chat-unread" style="display:none">0</span></button>
+        <button class="chat-tab active" data-action="switch-chat" data-scope="room">Room</button>
+        <button class="chat-tab" data-action="switch-chat" data-scope="global">Global <span id="lobby-unread-global" class="chat-unread" style="display:none">0</span></button>
       </div>
       <div id="lobby-chat-msgs" class="chat-msgs"></div>
       <div class="chat-input-row">
-        <input type="text" id="lobby-chat-input" placeholder="Message..." maxlength="500" autocomplete="off"
-               onkeydown="if(event.key==='Enter')sendChat('lobby')">
-        <button class="btn-gif" onclick="showGifPicker('lobby')" title="GIF" style="display:none">GIF</button>
-        <button onclick="sendChat('lobby')">Send</button>
+        <input type="text" id="lobby-chat-input" data-chat-from="lobby" placeholder="Message..." maxlength="500" autocomplete="off">
+        <button class="btn-gif" data-action="show-gif" data-from="lobby" title="GIF" style="display:none">GIF</button>
+        <button data-action="send-chat" data-from="lobby">Send</button>
       </div>
     </div>
   </div>
@@ -75,7 +76,7 @@
       <span class="hdr-title">CHUDOPOLY GO</span>
       <span id="hdr-room" class="hdr-badge"></span>
       <span id="conn-status" class="conn-dot connected" title="Connected"></span>
-      <button id="btn-leave-game" class="hdr-btn btn-leave" onclick="leaveGame()" title="Leave Game">&#10005;</button>
+      <button id="btn-leave-game" class="hdr-btn btn-leave" data-action="leave-game" title="Leave Game">&#10005;</button>
     </div>
     <div class="hdr-center">
       <span id="hdr-turn"></span>
@@ -85,16 +86,17 @@
     </div>
     <div class="hdr-right">
       <span id="hdr-deck"></span>
-      <button id="btn-help" class="hdr-btn" onclick="showHelpModal()" title="Rules">?</button>
-      <button id="btn-sound" class="hdr-btn" onclick="toggleSound()" title="Toggle Sound">&#9835;</button>
+      <button id="btn-help" class="hdr-btn" data-action="show-help" title="Rules">?</button>
+      <button id="btn-sound" class="hdr-btn" data-action="toggle-sound" title="Toggle Sound">&#9835;</button>
     </div>
   </div>
 
   <!-- Targeting banner (steal/swap mode) -->
   <div id="targeting-banner" class="targeting-banner" style="display:none">
     <span id="targeting-msg"></span>
-    <button onclick="cancelTargeting()">Cancel</button>
+    <button data-action="cancel-targeting">Cancel</button>
   </div>
+  <div id="waiting-status" class="waiting-status" style="display:none" aria-live="polite"></div>
 
   <div class="game-body">
     <!-- Other players -->
@@ -121,15 +123,14 @@
           </div>
           <div class="chat-panel">
             <div class="chat-tabs">
-              <button class="chat-tab active" data-scope="room" onclick="switchChatTab('room')">Room <span id="game-unread-room" class="chat-unread" style="display:none">0</span></button>
-              <button class="chat-tab" data-scope="global" onclick="switchChatTab('global')">Global <span id="game-unread-global" class="chat-unread" style="display:none">0</span></button>
+              <button class="chat-tab active" data-action="switch-chat" data-scope="room">Room <span id="game-unread-room" class="chat-unread" style="display:none">0</span></button>
+              <button class="chat-tab" data-action="switch-chat" data-scope="global">Global <span id="game-unread-global" class="chat-unread" style="display:none">0</span></button>
             </div>
             <div id="game-chat-msgs" class="chat-msgs"></div>
             <div class="chat-input-row">
-              <input type="text" id="game-chat-input" placeholder="Message..." maxlength="500" autocomplete="off"
-                     onkeydown="if(event.key==='Enter')sendChat('game')">
-              <button class="btn-gif" onclick="showGifPicker('game')" title="GIF" style="display:none">GIF</button>
-              <button onclick="sendChat('game')">Send</button>
+              <input type="text" id="game-chat-input" data-chat-from="game" placeholder="Message..." maxlength="500" autocomplete="off">
+              <button class="btn-gif" data-action="show-gif" data-from="game" title="GIF" style="display:none">GIF</button>
+              <button data-action="send-chat" data-from="game">Send</button>
             </div>
           </div>
         </div>
@@ -141,11 +142,11 @@
       <div class="hand-bar">
         <span class="hand-label">YOUR HAND <span id="hand-count" class="hand-count"></span></span>
         <div class="hand-actions">
-          <button id="btn-chat-toggle" class="btn-chat-toggle" onclick="toggleChatDrawer()">&#9993;<span id="chat-badge" class="chat-badge" style="display:none">0</span></button>
-          <button id="btn-emote" class="btn-emote" onclick="showEmotePicker()">&#9786;</button>
-          <button id="btn-draw" onclick="doDraw()" style="display:none">Draw Cards</button>
-          <button id="btn-end-turn" onclick="doEndTurn()">End Turn</button>
-          <button id="btn-scoop" class="btn-scoop" onclick="confirmScoop()">Scoop</button>
+          <button id="btn-chat-toggle" class="btn-chat-toggle" data-action="toggle-chat">&#9993;<span id="chat-badge" class="chat-badge" style="display:none">0</span></button>
+          <button id="btn-emote" class="btn-emote" data-action="show-emotes">&#9786;</button>
+          <button id="btn-draw" data-action="draw" style="display:none">Draw Cards</button>
+          <button id="btn-end-turn" data-action="end-turn">End Turn</button>
+          <button id="btn-scoop" class="btn-scoop" data-action="confirm-scoop">Scoop</button>
         </div>
       </div>
       <div id="my-hand" class="card-row hand-cards"></div>
@@ -159,18 +160,17 @@
   <div id="chat-drawer" class="chat-drawer" style="display:none">
     <div class="chat-drawer-header">
       <span>COMMS</span>
-      <button onclick="toggleChatDrawer()">&times;</button>
+      <button data-action="toggle-chat">&times;</button>
     </div>
     <div class="chat-tabs">
-      <button class="chat-tab active" data-scope="room" onclick="switchChatTab('room')">Room <span id="drawer-unread-room" class="chat-unread" style="display:none">0</span></button>
-      <button class="chat-tab" data-scope="global" onclick="switchChatTab('global')">Global <span id="drawer-unread-global" class="chat-unread" style="display:none">0</span></button>
+      <button class="chat-tab active" data-action="switch-chat" data-scope="room">Room <span id="drawer-unread-room" class="chat-unread" style="display:none">0</span></button>
+      <button class="chat-tab" data-action="switch-chat" data-scope="global">Global <span id="drawer-unread-global" class="chat-unread" style="display:none">0</span></button>
     </div>
     <div id="drawer-chat-msgs" class="chat-msgs"></div>
     <div class="chat-input-row">
-      <input type="text" id="drawer-chat-input" placeholder="Message..." maxlength="500" autocomplete="off"
-             onkeydown="if(event.key==='Enter')sendChat('drawer')">
-      <button class="btn-gif" onclick="showGifPicker('drawer')" title="GIF" style="display:none">GIF</button>
-      <button onclick="sendChat('drawer')">Send</button>
+      <input type="text" id="drawer-chat-input" data-chat-from="drawer" placeholder="Message..." maxlength="500" autocomplete="off">
+      <button class="btn-gif" data-action="show-gif" data-from="drawer" title="GIF" style="display:none">GIF</button>
+      <button data-action="send-chat" data-from="drawer">Send</button>
     </div>
   </div>
 
@@ -182,13 +182,13 @@
   </div>
 
   <!-- Toast -->
-  <div id="toast" class="toast"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </div>
 
 <!-- ── Action modal (global, accessible from lobby + game) ──────────── -->
-<div id="modal-overlay" class="modal-overlay" style="display:none" onclick="closeModal(event)">
-  <div class="modal" onclick="event.stopPropagation()">
-    <button class="modal-close" onclick="closeModalDirect()" aria-label="Close">&times;</button>
+<div id="modal-overlay" class="modal-overlay" style="display:none" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <button class="modal-close" data-action="close-modal" aria-label="Close">&times;</button>
     <h3 id="modal-title"></h3>
     <div id="modal-body"></div>
     <div id="modal-actions" class="modal-actions"></div>
@@ -202,7 +202,9 @@
     <h1 id="winner-name"></h1>
     <p>MISSION ACCOMPLISHED</p>
     <p class="hint">3 Complete Property Sets</p>
-    <button onclick="location.reload()">New Game</button>
+    <div id="winner-summary" class="winner-summary"></div>
+    <button id="btn-rematch" data-action="rematch">Rematch</button>
+    <button id="btn-winner-home" class="btn-winner-home" data-action="leave-now">Leave Room</button>
   </div>
 </div>
 

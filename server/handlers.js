@@ -1,7 +1,7 @@
 // server/handlers.js — WebSocket message handlers
 
 let G, Bot, broadcast, timers, absent;
-let rooms, globalChat, CHAT_MAX, chatIdRef, genCode, genId, wss;
+let rooms, globalChat, CHAT_MAX, chatIdRef, genCode, genId, genResumeToken, wss;
 
 function init(deps) {
   G = deps.G;
@@ -15,7 +15,24 @@ function init(deps) {
   chatIdRef = deps.chatIdRef;
   genCode = deps.genCode;
   genId = deps.genId;
+  genResumeToken = deps.genResumeToken;
   wss = deps.wss;
+}
+
+function sendJoined(ws, room, player) {
+  broadcast.send(ws, {
+    type: 'joined', code: room.code, playerId: player.id,
+    resumeToken: player.resumeToken, name: player.name,
+  });
+}
+
+function startRoomGame(room, turnTimeout = 60, responseTimeout = 30) {
+  room.phase = 'playing';
+  room.turnTimeout = Math.max(0, Math.min(300, Number(turnTimeout) || 0));
+  room.responseTimeout = Math.max(0, Math.min(120, Number(responseTimeout) || 0));
+  room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })));
+  if (room.turnTimeout > 0) timers.startTurnTimer(room);
+  broadcast.broadcastAndScheduleBot(room);
 }
 
 function handleMessage(ws, msg, state) {
@@ -25,34 +42,50 @@ function handleMessage(ws, msg, state) {
   switch (msg.type) {
 
     case 'create_room': {
+      if (state.playerId) { broadcast.send(ws, { type: 'error', message: 'Already joined to a room' }); break; }
       const code = genCode();
       state.playerId = genId();
       state.roomCode = code;
-      const player = { id: state.playerId, name: msg.name || 'Player 1', ws };
+      const player = { id: state.playerId, resumeToken: genResumeToken(), name: msg.name, ws };
       const room = { code, phase: 'lobby', hostId: state.playerId, players: [player], state: null, chat: [] };
       rooms.set(code, room);
-      broadcast.send(ws, { type: 'joined', code, playerId: state.playerId, name: player.name });
+      sendJoined(ws, room, player);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
       broadcast.broadcastRoom(room);
       console.log(`[ROOM] ${code} created by ${player.name}`);
       break;
     }
 
+    case 'quick_play': {
+      if (state.playerId) { broadcast.send(ws, { type: 'error', message: 'Already joined to a room' }); break; }
+      const code = genCode();
+      state.playerId = genId();
+      state.roomCode = code;
+      const player = { id: state.playerId, resumeToken: genResumeToken(), name: msg.name, ws };
+      const room = { code, phase: 'lobby', hostId: player.id, players: [player], state: null, chat: [] };
+      for (const mode of ['neutral', 'aggressive']) {
+        room.players.push({ id: genId(), name: absent.generateBotName(room), ws: null, isBot: true, botMode: mode });
+      }
+      rooms.set(code, room);
+      sendJoined(ws, room, player);
+      broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
+      startRoomGame(room, 0, 30);
+      console.log(`[GAME] ${code} quick play started for ${player.name}`);
+      break;
+    }
+
     case 'join_room': {
+      if (state.playerId) { broadcast.send(ws, { type: 'error', message: 'Already joined to a room' }); break; }
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
       if (!room) { broadcast.send(ws, { type: 'error', message: 'Room not found' }); break; }
       if (room.phase !== 'lobby') {
-        const rjName = (msg.name || '').trim();
-        const dc = room.players.find(x =>
-          (!x.isBot || x._wasHuman) &&
-          (!x.ws || x.ws.readyState !== 1) &&
-          x.name.toLowerCase() === rjName.toLowerCase()
-        );
+        const dc = room.players.find(x => x.id === msg.playerId && x.resumeToken === msg.resumeToken);
         if (!dc) {
-          broadcast.send(ws, { type: 'error', message: 'Game in progress. To rejoin, enter the EXACT call sign you used when you joined (case doesn\'t matter).' });
+          broadcast.send(ws, { type: 'error', message: 'Game in progress. This browser does not have the private resume key for that seat.' });
           break;
         }
+        if (dc.ws?.readyState === 1) { broadcast.send(ws, { type: 'error', message: 'That player is already connected' }); break; }
         dc.ws = ws;
         if (dc.isBot && dc._wasHuman) {
           dc.isBot = false;
@@ -63,7 +96,7 @@ function handleMessage(ws, msg, state) {
         }
         state.playerId = dc.id;
         state.roomCode = code;
-        broadcast.send(ws, { type: 'joined', code, playerId: dc.id, name: dc.name });
+        sendJoined(ws, room, dc);
         broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
         if (room.chat.length) broadcast.send(ws, { type: 'chat_history', scope: 'room', msgs: room.chat.slice(-CHAT_MAX) });
         broadcast.broadcastRoom(room);
@@ -71,12 +104,15 @@ function handleMessage(ws, msg, state) {
         break;
       }
       if (room.players.length >= 5) { broadcast.send(ws, { type: 'error', message: 'Room is full (max 5)' }); break; }
+      if (room.players.some(p => p.name.toLowerCase() === msg.name.toLowerCase())) {
+        broadcast.send(ws, { type: 'error', message: 'That call sign is already in use' }); break;
+      }
       state.playerId = genId();
       state.roomCode = code;
-      const name = msg.name || ('Player ' + (room.players.length + 1));
-      const player = { id: state.playerId, name, ws };
+      const name = msg.name;
+      const player = { id: state.playerId, resumeToken: genResumeToken(), name, ws };
       room.players.push(player);
-      broadcast.send(ws, { type: 'joined', code, playerId: state.playerId, name });
+      sendJoined(ws, room, player);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
       if (room.chat.length) broadcast.send(ws, { type: 'chat_history', scope: 'room', msgs: room.chat.slice(-CHAT_MAX) });
       broadcast.broadcastRoom(room);
@@ -85,11 +121,13 @@ function handleMessage(ws, msg, state) {
     }
 
     case 'reconnect': {
+      if (state.playerId) { broadcast.send(ws, { type: 'error', message: 'Already joined to a room' }); break; }
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
       if (!room) { broadcast.send(ws, { type: 'error', message: 'Room not found' }); break; }
       const p = room.players.find(x => x.id === msg.playerId);
-      if (!p) { broadcast.send(ws, { type: 'error', message: 'Player not found in room' }); break; }
+      if (!p || p.resumeToken !== msg.resumeToken) { broadcast.send(ws, { type: 'error', message: 'Invalid resume credentials' }); break; }
+      if (p.ws?.readyState === 1) { broadcast.send(ws, { type: 'error', message: 'That player is already connected' }); break; }
       p.ws = ws;
       if (p.isBot && p._wasHuman) {
         p.isBot = false;
@@ -100,7 +138,7 @@ function handleMessage(ws, msg, state) {
       }
       state.playerId = msg.playerId;
       state.roomCode = code;
-      broadcast.send(ws, { type: 'joined', code, playerId: msg.playerId, name: p.name });
+      sendJoined(ws, room, p);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
       if (room.chat.length) broadcast.send(ws, { type: 'chat_history', scope: 'room', msgs: room.chat.slice(-CHAT_MAX) });
       broadcast.broadcastRoom(room);
@@ -185,13 +223,18 @@ function handleMessage(ws, msg, state) {
       const room = rooms.get(roomCode);
       if (!room || room.hostId !== playerId) { broadcast.send(ws, { type: 'error', message: 'Only host can start' }); break; }
       if (room.players.length < 2) { broadcast.send(ws, { type: 'error', message: 'Need at least 2 players' }); break; }
-      room.phase = 'playing';
-      room.turnTimeout = Math.max(0, Math.min(300, parseInt(msg.turnTimeout) || 0));
-      room.responseTimeout = Math.max(0, Math.min(120, parseInt(msg.responseTimeout) || 0));
-      room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })));
-      if (room.turnTimeout > 0) timers.startTurnTimer(room);
-      broadcast.broadcastAndScheduleBot(room);
+      startRoomGame(room, msg.turnTimeout, msg.responseTimeout);
       console.log(`[GAME] ${roomCode} started with ${room.players.length} players, timeout=${room.turnTimeout}s, responseTimeout=${room.responseTimeout}s`);
+      break;
+    }
+
+    case 'rematch': {
+      const room = rooms.get(roomCode);
+      if (!room || room.hostId !== playerId) { broadcast.send(ws, { type: 'error', message: 'Only host can start a rematch' }); break; }
+      if (room.state?.phase !== 'finished') { broadcast.send(ws, { type: 'error', message: 'Current game is not finished' }); break; }
+      timers.clearTurnTimer(room);
+      startRoomGame(room, room.turnTimeout, room.responseTimeout);
+      console.log(`[GAME] ${roomCode} rematch started`);
       break;
     }
 
@@ -285,6 +328,12 @@ function handleMessage(ws, msg, state) {
 
     case 'chat': {
       if (!playerId) break;
+      const now = Date.now();
+      if (state.lastChatAt && now - state.lastChatAt < 500) {
+        broadcast.send(ws, { type: 'error', message: 'Please slow down' });
+        break;
+      }
+      state.lastChatAt = now;
       const text = (msg.text || '').slice(0, 500);
       if (!text) break;
       const scope = msg.scope === 'global' ? 'global' : 'room';

@@ -2,8 +2,10 @@
 
 var ws;
 var _connecting = false;
+var resumeToken = null;
 
 function connect(onOpen) {
+  if (ws?.readyState === WebSocket.OPEN) { if (onOpen) onOpen(); return; }
   if (_connecting) return;
   _connecting = true;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -15,13 +17,19 @@ function connect(onOpen) {
     if (onOpen) onOpen();
   };
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
     switch (msg.type) {
       case 'joined':
         myId = msg.playerId;
         myName = msg.name;
         roomCode = msg.code;
-        try { sessionStorage.setItem('chud_pid', myId); sessionStorage.setItem('chud_room', roomCode); } catch {}
+        resumeToken = msg.resumeToken;
+        try {
+          sessionStorage.setItem('chud_pid', myId);
+          sessionStorage.setItem('chud_room', roomCode);
+          sessionStorage.setItem('chud_resume', resumeToken);
+        } catch {}
         if ($('lobby-error')) $('lobby-error').textContent = '';
         showLobbyWaiting();
         break;
@@ -40,7 +48,8 @@ function connect(onOpen) {
         break;
       case 'kicked':
         myId = null; roomCode = '';
-        try { sessionStorage.removeItem('chud_pid'); sessionStorage.removeItem('chud_room'); } catch {}
+        resumeToken = null;
+        clearResumeCredentials();
         toast('You were removed from the room');
         $('lobby-join').style.display = 'flex';
         $('lobby-waiting').style.display = 'none';
@@ -76,8 +85,9 @@ function connect(onOpen) {
     setTimeout(() => {
       const pid = myId || tryGet('chud_pid');
       const code = roomCode || tryGet('chud_room');
-      if (pid && code) {
-        connect(() => send({ type:'reconnect', playerId:pid, code }));
+      const token = resumeToken || tryGet('chud_resume');
+      if (pid && code && token) {
+        connect(() => send({ type:'reconnect', playerId:pid, code, resumeToken:token }));
       } else {
         connect();
       }
@@ -93,5 +103,13 @@ function updateConnStatus(connected) {
 }
 
 function tryGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
+
+function clearResumeCredentials() {
+  try {
+    sessionStorage.removeItem('chud_pid');
+    sessionStorage.removeItem('chud_room');
+    sessionStorage.removeItem('chud_resume');
+  } catch {}
+}
 
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }

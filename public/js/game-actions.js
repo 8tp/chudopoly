@@ -228,7 +228,7 @@ function showMoveWildModal(card, fromColor, validColors) {
   body += '<div class="color-picker">';
   for (const col of validColors) {
     const info = COLORS[col];
-    body += `<button class="color-btn" style="background:${info.bg};color:${info.fg}" onclick="doMoveWild(${card.id},'${col}')">${info.name}</button>`;
+    body += `<button class="color-btn" style="background:${info.bg};color:${info.fg}" data-action="move-wild" data-card-id="${card.id}" data-color="${col}">${info.name}</button>`;
   }
   body += '</div>';
   showModal('Move Wild Property', body, [
@@ -246,7 +246,7 @@ window.doMoveWild = function(cardId, toColor) {
 function showEmotePicker() {
   let body = '<div class="emote-grid">';
   EMOTES.forEach(e => {
-    body += `<button class="emote-btn" onclick="sendEmote('${e}')">${e}</button>`;
+    body += `<button class="emote-btn" data-action="send-emote" data-text="${e}">${e}</button>`;
   });
   body += '</div>';
   showModal('Quick Comms', body, [

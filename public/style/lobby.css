@@ -26,6 +26,8 @@
 }
 #btn-create { background:var(--af-blue); color:#fff; }
 #btn-create:hover { background:#004adf; }
+#btn-quick-play { background:#176b3a; color:#fff; }
+#btn-quick-play:hover { background:#218c4f; }
 #btn-join { background:#1a2a44; color:var(--af-silver); border:1px solid #2a3a54; }
 #btn-join:hover { background:#2a3a54; }
 #btn-start { background:var(--af-gold); color:#000; }
@@ -68,3 +70,8 @@
 }
 .room-settings input[type="number"]:focus { border-color:var(--af-gold); }
 #room-code-display { color:var(--af-gold); font-family:monospace; font-size:28px; letter-spacing:4px; }
+.btn-share-room {
+  background:transparent; color:var(--af-silver); border:1px solid #2a3a54 !important;
+  font-size:12px !important; letter-spacing:1px !important; padding:8px !important;
+}
+.btn-share-room:hover { border-color:var(--af-gold) !important; color:var(--af-gold); }

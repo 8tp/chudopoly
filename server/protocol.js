@@ -1,0 +1,95 @@
+// Strict validation for every client-to-server WebSocket command.
+
+const MESSAGE_TYPES = new Set([
+  'create_room', 'quick_play', 'join_room', 'reconnect', 'kick', 'add_bot',
+  'remove_bot', 'leave_room', 'start_game', 'rematch', 'draw', 'play_money',
+  'play_property', 'move_property', 'play_action', 'respond', 'emote', 'chat',
+  'chat_history', 'scoop', 'end_turn',
+]);
+const BOT_MODES = new Set(['random', 'conservative', 'neutral', 'aggressive', 'chud']);
+const COLORS = new Set(['brown', 'lightblue', 'pink', 'orange', 'red', 'yellow', 'green', 'darkblue', 'base', 'intel']);
+const ID_PATTERN = /^[a-f0-9-]{16,64}$/i;
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+const ROOM_PATTERN = /^[A-HJ-NP-Z2-9]{4}$/;
+
+function fail(error) { return { ok: false, error }; }
+function isObject(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function isInt(value, min = 0, max = 100000) {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+function validOptionalId(value) { return value === undefined || (typeof value === 'string' && ID_PATTERN.test(value)); }
+function validOptionalCardId(value) { return value === undefined || isInt(value, 0, 1000); }
+function validOptionalColor(value) { return value === undefined || COLORS.has(value); }
+function validName(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9 ._'-]{0,15}$/.test(value.trim());
+}
+function validUniqueCardIds(value, maxLength = 110) {
+  return Array.isArray(value) && value.length <= maxLength
+    && value.every(id => isInt(id, 0, 1000))
+    && new Set(value).size === value.length;
+}
+
+function validateMessage(message) {
+  if (!isObject(message)) return fail('Message must be a JSON object');
+  if (typeof message.type !== 'string' || !MESSAGE_TYPES.has(message.type)) return fail('Unknown message type');
+
+  switch (message.type) {
+    case 'create_room':
+    case 'quick_play':
+      if (!validName(message.name)) return fail('Call sign must be 1-16 letters, numbers, spaces, or . _ - characters');
+      break;
+    case 'join_room':
+      if (typeof message.code !== 'string' || !ROOM_PATTERN.test(message.code.toUpperCase())) return fail('Invalid room code');
+      if (!validName(message.name)) return fail('Call sign must be 1-16 letters, numbers, spaces, or . _ - characters');
+      if (message.playerId !== undefined && !validOptionalId(message.playerId)) return fail('Invalid player ID');
+      if (message.resumeToken !== undefined && (typeof message.resumeToken !== 'string' || !TOKEN_PATTERN.test(message.resumeToken))) return fail('Invalid resume token');
+      break;
+    case 'reconnect':
+      if (typeof message.code !== 'string' || !ROOM_PATTERN.test(message.code.toUpperCase())) return fail('Invalid room code');
+      if (!validOptionalId(message.playerId) || message.playerId === undefined) return fail('Invalid player ID');
+      if (typeof message.resumeToken !== 'string' || !TOKEN_PATTERN.test(message.resumeToken)) return fail('Invalid resume token');
+      break;
+    case 'kick':
+    case 'remove_bot':
+      if (!validOptionalId(message.targetId) || message.targetId === undefined) return fail('Invalid target ID');
+      break;
+    case 'add_bot':
+      if (!BOT_MODES.has(message.mode)) return fail('Invalid bot mode');
+      break;
+    case 'start_game':
+      if (!isInt(message.turnTimeout, 0, 300) || !isInt(message.responseTimeout, 0, 120)) return fail('Invalid timer setting');
+      break;
+    case 'play_money':
+      if (!isInt(message.cardIndex, 0, 110)) return fail('Invalid card index');
+      break;
+    case 'play_property':
+      if (!isInt(message.cardIndex, 0, 110) || !validOptionalColor(message.targetColor)) return fail('Invalid property play');
+      break;
+    case 'move_property':
+      if (!isInt(message.cardId, 0, 1000) || !COLORS.has(message.toColor)) return fail('Invalid property move');
+      break;
+    case 'play_action':
+      if (!isInt(message.cardIndex, 0, 110) || !validOptionalId(message.targetId)
+        || !validOptionalCardId(message.targetCardId) || !validOptionalCardId(message.myCardId)
+        || !validOptionalColor(message.targetColor)) return fail('Invalid action play');
+      break;
+    case 'respond':
+      if (!['accept', 'opsec'].includes(message.response)) return fail('Invalid response');
+      if (message.paymentCards !== undefined && !validUniqueCardIds(message.paymentCards)) return fail('Invalid payment selection');
+      break;
+    case 'emote':
+      if (typeof message.text !== 'string' || message.text.length < 1 || message.text.length > 30) return fail('Invalid emote');
+      break;
+    case 'chat':
+      if (typeof message.text !== 'string' || message.text.trim().length < 1 || message.text.length > 500) return fail('Invalid chat message');
+      if (!['room', 'global'].includes(message.scope)) return fail('Invalid chat scope');
+      break;
+    case 'end_turn':
+      if (message.discardIds !== undefined && !validUniqueCardIds(message.discardIds)) return fail('Invalid discard selection');
+      break;
+  }
+
+  return { ok: true, value: { ...message, name: typeof message.name === 'string' ? message.name.trim() : message.name } };
+}
+
+module.exports = { validateMessage };

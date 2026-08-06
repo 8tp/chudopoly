@@ -22,6 +22,22 @@ function renderGame() {
   $('hdr-deck').textContent = 'Deck: ' + g.deckCount;
   if (g.surgeOps && isMyTurn) $('hdr-plays').textContent += ' | SURGE OPS';
 
+  const waitingEl = $('waiting-status');
+  if (waitingEl) {
+    let waitingText = '';
+    if (pa) {
+      const responderIds = new Set();
+      if (pa.responderId) responderIds.add(pa.responderId);
+      for (const id of pa.pending || []) responderIds.add(id);
+      for (const chain of Object.values(pa.opsecChains || {})) if (chain.responderId) responderIds.add(chain.responderId);
+      const names = [...responderIds].map(id => g.players.find(p => p.id === id)?.name).filter(Boolean);
+      waitingText = responderIds.has(myId) ? 'Your response is required' : 'Waiting for ' + (names.join(', ') || 'a response');
+    }
+    waitingEl.textContent = waitingText;
+    waitingEl.style.display = waitingText ? 'block' : 'none';
+    waitingEl.classList.toggle('needs-you', pa && amResponder);
+  }
+
   // Turn timer — only show when no response timer active
   const timerEl = $('hdr-timer');
   if (S.responseTimer) {
@@ -100,7 +116,7 @@ function renderGame() {
     const botInfo = pIsBot && pBotMode && BOT_MODES[pBotMode]
       ? `<span class="opp-bot-indicator"><span class="bot-badge mode-${pBotMode}">${BOT_MODES[pBotMode].icon} ${pBotMode}</span></span>`
       : '';
-    return `<div class="opp-card ${isTurn?'active-turn':''} ${isResp?'responding':''} ${targetCls}" data-pid="${p.id}" onclick="showOpponentDetail('${p.id}')">
+    return `<div class="opp-card ${isTurn?'active-turn':''} ${isResp?'responding':''} ${targetCls}" role="button" tabindex="0" data-action="show-opponent" data-player-id="${p.id}" data-pid="${p.id}">
       <div class="opp-name">${p.id===S.hostId?'<span class="opp-host" title="Host">&#9733;</span>':''}${pIsBot?'<span class="bot-icon">\u2699</span>':''}${esc(p.name)} <span class="sets">${p.completedSets}/3 sets</span>${botInfo}</div>
       <div class="opp-stats">
         <span>Hand: ${p.handCount}</span>
@@ -158,14 +174,41 @@ function renderGame() {
     const winner = g.players.find(p => p.id === g.winner);
     $('winner-name').textContent = winner ? winner.name : '???';
     $('winner-overlay').style.display = 'flex';
-    spawnConfetti();
+    renderWinnerSummary(g);
+    if (_winnerShownFor !== g.winner) {
+      _winnerShownFor = g.winner;
+      spawnConfetti();
+    }
     if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
     if (_responseTimerInterval) { clearInterval(_responseTimerInterval); _responseTimerInterval = null; }
     _alarmPlayed = false; _responseAlarmPlayed = false;
     $('hdr-timer').style.display = 'none';
   } else {
+    _winnerShownFor = null;
     $('winner-overlay').style.display = 'none';
   }
+}
+
+function renderWinnerSummary(game) {
+  const stats = game.stats || {};
+  const summary = $('winner-summary');
+  if (!summary) return;
+  const rows = [...game.players].sort((a, b) => (b.completedSets || 0) - (a.completedSets || 0)).map(player => {
+    const stolen = stats.propertiesStolen?.[player.id] || 0;
+    return `<div class="winner-stat-row"><span>${esc(player.name)}</span><span>${player.completedSets || 0} sets · ${netWorth(player)}M · ${stolen} stolen</span></div>`;
+  }).join('');
+  summary.innerHTML = `<div class="winner-match-stats">${stats.turns || 1} turns · ${stats.payments?.total || 0}M paid · biggest payment ${stats.payments?.biggest || 0}M</div>${rows}`;
+  const rematch = $('btn-rematch');
+  const isHost = S.hostId === myId;
+  rematch.style.display = isHost ? '' : 'none';
+  let waiting = $('winner-rematch-waiting');
+  if (!waiting) {
+    waiting = document.createElement('p');
+    waiting.id = 'winner-rematch-waiting';
+    waiting.className = 'hint';
+    rematch.before(waiting);
+  }
+  waiting.textContent = isHost ? '' : 'Waiting for the host to start a rematch';
 }
 
 /* ── Discard pile ────────────────────────────────────────────────────── */
@@ -297,8 +340,27 @@ function renderCard(card, context, handIndex) {
       <div class="card-value">Value: ${card.value}M</div>`;
   }
 
-  const onclick = context === 'hand' ? ` onclick="selectHandCard(${handIndex})"` : '';
-  return `<div class="${cls}"${onclick}>${inner}</div>`;
+  let interaction = '';
+  if (context === 'hand') {
+    interaction = ` role="button" tabindex="0" data-action="select-hand" data-hand-index="${handIndex}"`;
+  } else if (context !== 'preview') {
+    interaction = ` role="button" tabindex="0" data-action="card-detail" data-card-id="${card.id}"`;
+  }
+  return `<div class="${cls}"${interaction}>${inner}</div>`;
+}
+
+function showCardDetailById(cardId) {
+  const game = S.game;
+  if (!game) return;
+  const pools = [game.discardPile || []];
+  for (const player of game.players || []) {
+    pools.push(player.hand || [], player.bank || []);
+    pools.push(...Object.values(player.properties || {}));
+    pools.push(...Object.values(player.upgrades || {}));
+  }
+  const card = pools.flat().find(item => item?.id === cardId);
+  if (!card) return;
+  showModal(card.name, renderCard(card, 'preview'), [{ label:'Close', cls:'btn-secondary', fn:closeModalDirect }]);
 }
 
 function renderMiniProps(player) {
@@ -313,12 +375,10 @@ function renderMiniProps(player) {
     if (window._pendingIG && !complete) dimmed = true;
     for (const c of cards) {
       const dimCls = dimmed ? ' target-dimmed' : '';
-      const onclick = inTargeting
-        ? `event.stopPropagation();showOpponentDetail('${player.id}')`
-        : `event.stopPropagation();selectTargetProperty('${player.id}',${c.id},'${color}')`;
+      const action = inTargeting ? 'show-opponent' : 'select-target-property';
       html += `<div class="mini-prop ${complete?'complete':''}${dimCls}" style="background:${info.bg};color:${info.fg}"
-        title="${esc(c.name)} (${info.name})"
-        onclick="${onclick}">${complete ? '\u2605' : ''}</div>`;
+        role="button" tabindex="0" title="${esc(c.name)} (${info.name})"
+        data-action="${action}" data-player-id="${player.id}" data-card-id="${c.id}" data-color="${color}">${complete ? '\u2605' : ''}</div>`;
     }
   }
   return html || '<span style="font-size:11px;color:#556">No properties</span>';
@@ -345,7 +405,7 @@ function renderPropertySets(player) {
     const info = COLORS[color];
     if (!info || !cards || cards.length === 0) continue;
     const complete = cards.length >= info.size;
-    const ups = player.upgrades?.[color] || [];
+    const ups = (player.upgrades?.[color] || []).map(u => typeof u === 'string' ? u : u.upgradeType);
     const rentIdx = Math.min(cards.length, info.rent.length) - 1;
     const currentRent = rentIdx >= 0 ? info.rent[rentIdx] : 0;
     let rentExtra = 0;
@@ -364,7 +424,7 @@ function renderPropertySets(player) {
         <span style="color:#556">| ${info.rent.map((r,i) => (i===rentIdx?'<b>'+r+'</b>':r)).join('/')}</span>
       </div>
       <div class="prop-set-cards">
-        ${cards.map(c => `<div class="prop-mini ${swapMine?'my-highlight':''}" onclick="selectMyProperty(${c.id},'${color}')">${esc(c.name)}</div>`).join('')}
+        ${cards.map(c => `<div class="prop-mini ${swapMine?'my-highlight':''}" role="button" tabindex="0" data-action="select-my-property" data-card-id="${c.id}" data-color="${color}">${esc(c.name)}</div>`).join('')}
       </div>
     </div>`;
   }

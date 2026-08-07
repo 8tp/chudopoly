@@ -2,7 +2,7 @@
 /**
  * tools/verify.mjs — the gate. §8, as extended in P7 round 1 and P8:
  *   check → test → checkAssets → checkClient → checkServer → statsfuzz → simbalance →
- *   playtest → touchtest → screenshot → checkContrast → grayscale → audiotest
+ *   playtest → touchtest → screenshot → checkContrast → coverage → grayscale → audiotest
  *
  * P8 adds the two COLOUR gates. ART-DIRECTION §10's ship gate lists "grayscale
  * mid-game@desktop: is hierarchy still readable?" and "both themes ≥4.5:1 on
@@ -20,7 +20,7 @@
  * The five round-1 critics all found defects that gates had reported PASS
  * through; a silently-skipped gate is the same failure with fewer steps.
  *
- * Flags: --fast (skip playtest/simbalance/screenshot/grayscale), --allow-skips
+ * Flags: --fast (skip playtest/simbalance/screenshot/coverage/grayscale), --allow-skips
  *        (restore the old lenient behaviour), --strict (kept as a no-op alias),
  *        --games N (simbalance sample size)
  */
@@ -74,6 +74,18 @@ if (!FAST) steps.push(['node', ['tools/screenshot.mjs'], 'screenshot']);
 // §0.9 / ART §10, both themes. Runs in the inner loop too: a contrast
 // regression is cheap to introduce and expensive to find by eye.
 steps.push(['node', ['tools/checkContrast.mjs'], 'checkContrast']);
+/* THE SURFACE CENSUS (P9). Pure Node, ~40ms: lib/census.mjs enumerates every
+ * conditional visual state public/style/ has a rule for and public/src/ can
+ * produce, and this diffs that against the sidecars touchtest, screenshot and
+ * checkContrast just wrote. It goes after ALL THREE because it reports on what
+ * they saw and asserts nothing on its own — and checkContrast is the only gate
+ * that ever renders ART §2's `[data-theme]` override path, so running the
+ * census before it reported two live theme states as never visited.
+ *
+ * Six surfaces reachable in ordinary play had never been rendered by any gate,
+ * each found by a different agent tripping over it. That needed to become a
+ * report instead of archaeology. */
+if (!FAST) steps.push(['node', ['tools/coverage.mjs'], 'coverage']);
 // ART §10's grayscale ship gate. Skipped by --fast only because it captures
 // its own frames and wants them settled.
 if (!FAST) steps.push(['node', ['tools/grayscale.mjs'], 'grayscale']);
@@ -113,7 +125,7 @@ if (skipped) {
 }
 
 if (FAST) {
-  console.log(yellow(bold('\n  ⚠  --fast: simbalance, playtest, screenshot and grayscale did not run.')));
+  console.log(yellow(bold('\n  ⚠  --fast: simbalance, playtest, screenshot, coverage and grayscale did not run.')));
 }
 
 if (failed) {

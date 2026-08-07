@@ -79,6 +79,29 @@ export function install(readyPromise, applyStateFn) {
     return true;
   };
 
+  /**
+   * Take the seat the fixture was RECORDED FROM, exactly as a real join does.
+   *
+   * MEASURED 2026-08-07: a lobby broadcast carries no `game`, and `game` is the
+   * only thing store.applyState can infer a seat from (it looks for the one
+   * player whose `hand` survived getPlayerView). So a lobby fixture left
+   * `store.self.id` null, `store.room.hostId === store.self.id` was false, and
+   * EVERY `lobby@*.png` in tools/shots was the GUEST view. Nothing in the whole
+   * harness had ever rendered a host lobby, so nothing had ever seen that at
+   * 1280×720 with four seats the host cannot reach Launch Mission.
+   *
+   * This is the same `joined` message the server sends before its first `state`
+   * (server/handlers.js create_room / join_room / quick_play), pushed through
+   * the same bus event main.js already wires, so the seat is adopted by the
+   * client's own code path and not by a harness back door. Nothing here is
+   * reachable without ?harness=1.
+   */
+  bridge.joinAs = (playerId, name) => {
+    if (!playerId) return false;
+    bus.emit(bus.EVENTS.NET_JOINED, { type: 'joined', playerId, name: name || null });
+    return store.store.self.id === playerId;
+  };
+
   bridge.drainEvents = () => {
     choreographer.clear();
     if (store.store.snapshot) table.reconcile(store.store.snapshot, { count: false, animate: false });

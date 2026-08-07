@@ -314,11 +314,25 @@ export function auditOcclusion() {
    * they are covered by other cards constantly and by design, and that noise is
    * what buried the real finding last time.
    */
-  const CTA = '[data-action]:not([disabled]), #prompt button, #hand-dock button, '
+  /* `[data-seat-toggle]` added P9: table/layout.js builds the collapse/expand
+   * control on every opponent seat with its OWN attribute rather than
+   * `data-action`, so the rule below — which was written as "every enabled
+   * [data-action]" precisely to stop being a list of remembered ids — had
+   * silently gone back to being a list that missed one. It is the control a
+   * phone player uses most (three of four seats ship collapsed at 390×844),
+   * and it is the one the `.announce` banner lands on. */
+  const CTA = '[data-action]:not([disabled]), [data-seat-toggle], #prompt button, #hand-dock button, '
     + '#win-overlay button, #sheet button, .btn-primary, '
     + '[data-droppable="1"], [data-targetable="1"], .is-targetable';
+  /* `.announce` added P9. ui/journal.js lays a full-width banner over the
+   * table for 2600ms on final_approach / set_stolen, and it was found sitting
+   * on collapsed opponent seats at 51% and 42% in portrait and 70% in
+   * landscape — by an agent, by hand, because no gate had ever raised it. It
+   * is `pointer-events` transparent and therefore invisible to every hit test,
+   * which is exactly the class of occluder this rectangle-overlap audit exists
+   * for (see §D in touchtest.mjs). */
   const VEIL = '.hints, .hint-card, #toast, #emotes, .floaters, .floater, .burst, '
-    + '.fx, .fx-layer, .overlay, .scrim, .coach, .tip, .tooltip';
+    + '.fx, .fx-layer, .overlay, .scrim, .coach, .tip, .tooltip, .announce';
 
   const box = (el) => {
     const r = el.getBoundingClientRect();
@@ -577,7 +591,7 @@ export function auditOccludedText() {
    * first place. So: veil → warn, layout → fail, and the split is printed.
    */
   const VEIL = '.hints, .hint-card, #toast, #emotes, .floaters, .floater, .burst, '
-    + '.fx, .fx-layer, .coach, .tip, .tooltip';
+    + '.fx, .fx-layer, .coach, .tip, .tooltip, .announce';
 
   const roots = [];
   for (const s of SCOPES) {

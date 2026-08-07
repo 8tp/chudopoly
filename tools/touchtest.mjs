@@ -68,16 +68,19 @@
  *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import {
-  FIXTURE_DIR, PHONE, PHONE_DPR, LANDSCAPE, SEED, parseArgs, launchBrowser,
-  reporter, readJSON, green, red, dim, bold, EXIT_PASS, EXIT_FAIL,
+  PHONE, PHONE_DPR, LANDSCAPE, SEED, SHOT_DIR, ensureDir, parseArgs, launchBrowser,
+  reporter, green, red, dim, bold, EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
 import {
   openTouchPage, centre, settleLayout, waitForBridge, KEYBOARD_PX,
 } from './lib/touch.mjs';
 import * as audit from './lib/audit.mjs';
+import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
+import { drive } from './lib/drivers.mjs';
+import { census, observeMarkers } from './lib/census.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
 import { startServer } from './serve.mjs';
 
 const args = parseArgs();
@@ -90,12 +93,7 @@ const server = await startServer({ seed });
 let browser = null;
 let code = EXIT_PASS;
 
-function fixture(name) {
-  const file = path.join(FIXTURE_DIR, `${name}.json`);
-  if (!fs.existsSync(file)) return null;
-  const f = readJSON(file);
-  return Array.isArray(f) ? f[f.length - 1] : f.states[f.states.length - 1];
-}
+const fixture = (name) => loadFixture(name);
 
 try {
   browser = await launchBrowser();
@@ -122,6 +120,12 @@ try {
 
   /* ═══ §B/§C: one audit routine, run per surface ════════════════════════ */
   let surfaceIssues = [];
+  /* The mobile half of tools/coverage.mjs's evidence. touchtest opens surfaces
+   * screenshot never does (a live game, a soft keyboard, the offline window),
+   * so its census is not a subset of the review set's. */
+  const CENSUS = census().markers;
+  const markerSeen = new Map();
+  let captures = 0;
   /**
    * Staged surfaces that never got measured.
    *
@@ -142,6 +146,12 @@ try {
     const t = await page.evaluate(audit.auditTapTargets);
     const occ = await page.evaluate(audit.auditOcclusion);
     const dup = await page.evaluate(audit.auditDuplicateCTAs);
+    captures++;
+    for (const key of await page.evaluate(observeMarkers, CENSUS)) {
+      if (!markerSeen.has(key)) markerSeen.set(key, []);
+      const at = markerSeen.get(key);
+      if (at.length < 4) at.push(label);
+    }
     const rec = {
       label, live, small: t.fatal, zones: t.zones, advisory: t.advisory,
       off: t.offscreen, clipped: t.clipped, occ, dup, t,
@@ -425,9 +435,10 @@ try {
    * geometry, measure. Interaction-driven measurements still happen afterwards
    * and are labelled separately.
    */
-  const stage = async (name, { cold = true } = {}) => {
-    const state = fixture(name);
-    if (!state) { r.fail(`fixture ${name}.json missing — run npm run tool:record`); stagesFailed.push(name); return false; }
+  const stage = async (name, opts = {}) => {
+    const { cold = true, label = name } = opts;
+    const fx = fixture(name);
+    if (!fx) { r.fail(`fixture ${name}.json missing — run npm run tool:record`); stagesFailed.push(name); return false; }
     /* §H leaves CDP network emulation behind on some runs, and a later stage
      * then dies on ERR_CONNECTION_REFUSED — one aborted run in four. Clearing
      * the emulation and retrying once distinguishes "the harness left the wire
@@ -463,8 +474,22 @@ try {
     }
     const b = await waitForBridge(page, BRIDGE_MS);
     if (!b.ok) { r.fail(`stage ${name}: the bridge never appeared in ${b.ms}ms`); return false; }
-    await page.evaluate((s) => { window.__CHUD.applyState(s); window.__CHUD.drainEvents?.(); }, state);
-    if (cold) await measureSurface(`${name} (cold)`);
+    /* Seat first, THEN state — see tools/lib/stage.mjs. Passing the fixture's
+     * own `selfId` is what makes a LOBBY fixture render the seat it was
+     * recorded from; without it `store.self.id` is null, `#lobby-host` never
+     * appears and this gate measures a screen nobody is looking at. */
+    await stageFixture(page, fx, { at: opts.at, from: opts.from, drain: !opts.transient });
+    if (!opts.transient) await quietTransients(page);
+    if (opts.drive) {
+      const reached = await drive(page, opts.drive);
+      if (opts.expect && !String(reached).startsWith(opts.expect)) {
+        r.fail(`stage ${label}: driver '${opts.drive}' reached '${reached}', expected '${opts.expect}*'`);
+        stagesFailed.push(label);
+        return false;
+      }
+      r.info(`${label}: ${reached}`);
+    }
+    if (cold) await measureSurface(`${label} (cold)`);
     return true;
   };
 
@@ -578,6 +603,81 @@ try {
     await measureSurface('win overlay');
   }
 
+  /* ═══ P9: surfaces reachable in ordinary play that no gate had opened ═══
+   *
+   * Every one of these was hand-staged by the agent who happened to need it,
+   * and none of them was in any tool's list. tools/coverage.mjs is the thing
+   * that now says so out loud; these are the six it named first.
+   *
+   * The LOBBY is the priority and it is not a subtlety: it is the busiest
+   * pre-game screen in the product and it had never been under this gate at
+   * all, because the harness could not set `store.self.id` from a broadcast
+   * with no `game` in it, so every capture in every tool was the guest view of
+   * a transcript recorded by the host.                                        */
+  if (await stage('lobby', { label: 'lobby (host)', drive: 'lobby-host', expect: 'lobby:host' })) {
+    const seen = await page.evaluate(() => {
+      const code = document.getElementById('lobby-code');
+      const start = document.getElementById('btn-start');
+      const rect = (el) => (el ? el.getBoundingClientRect() : null);
+      const r = rect(start);
+      const c = rect(code);
+      const doc = document.scrollingElement;
+      return {
+        start: r && { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) },
+        code: c && { top: Math.round(c.top), bottom: Math.round(c.bottom) },
+        innerH: innerHeight,
+        scrollH: doc ? doc.scrollHeight : 0,
+      };
+    });
+    /* The host's two irreducible jobs are READ THE CODE OUT LOUD and LAUNCH.
+     * Neither is a tap-target question or an overflow question, so neither of
+     * the verdicts below would have caught them: they are "is it on the
+     * screen", asked of the two specific controls the screen exists for. */
+    for (const [what, box] of [['the room code', seen.code], ['Launch Mission', seen.start]]) {
+      if (!box) { r.fail(`[lobby] ${what} is not in the DOM at all`); continue; }
+      if (box.top >= seen.innerH || box.bottom <= 0) {
+        r.fail(`[lobby] ${what} is entirely off-screen for the HOST at ${PHONE.width}×${PHONE.height} `
+          + `(y ${box.top}..${box.bottom} of ${seen.innerH}; the panel is ${seen.scrollH}px of content)`);
+      } else if (box.bottom > seen.innerH) {
+        r.fail(`[lobby] ${what} is ${Math.round(box.bottom - seen.innerH)}px below the fold for the HOST `
+          + `(${seen.scrollH}px of content in ${seen.innerH}px)`);
+      } else r.pass(`[lobby] ${what} is on screen for the host ${dim(`y ${box.top}..${box.bottom}`)}`);
+    }
+  }
+  await stage('lobby-guest', { label: 'lobby (guest)', drive: 'lobby-guest', expect: 'lobby:guest' });
+
+  /* The `myColor` step: ten mats, each carrying printed placement advice.
+   * §0.9's 44px rule lands on the MAT, and interact.css says the chit is
+   * `pointer-events: none` so it cannot shadow the thing being tapped — a
+   * claim nothing had ever tested on a phone. */
+  await stage('mid-game', { label: 'wild placement', drive: 'wild-place', expect: 'myColor:' });
+
+  /* The opponent half of the table. An upgrade lane, a second mat row and the
+   * ARMED treatment only exist on a seat that is not yours, and three seperate
+   * agents each had to build one by hand to check their own work. */
+  for (const name of ['opponent-upgrade', 'opponent-wide', 'opponent-armed']) await stage(name);
+
+  /* The two transient message layers. `#toast` is measured for what it covers;
+   * `.announce` is a full-width banner over the table that is now part of
+   * §D's veil set (lib/audit.mjs) — it was found on collapsed opponent seats
+   * at 51%/42% portrait and 70% landscape by an agent, by hand, because
+   * nothing raised it. Landscape gets its own pass: that is where the banner
+   * has the least room to fall clear of the seats. */
+  await stage('approach-called', { label: 'announce', from: 0, at: 1, transient: true, drive: 'announce', expect: 'announce:' });
+  await page.setViewportSize(LANDSCAPE);
+  await stage('approach-called', { label: 'announce · landscape', from: 0, at: 1, transient: true, drive: 'announce', expect: 'announce:' });
+  await page.setViewportSize(PHONE);
+  /* The toast is reached from the HOME screen — join a room that is not there.
+   * Not from a staged table: `#btn-join-room` lives inside `#screen-home`,
+   * which is `hidden` behind a game, and a click routed from inside a hidden
+   * ancestor is not a click a player can make. */
+  await page.goto(`${server.url}/?harness=1&seed=${seed}&stage=toast`, { waitUntil: 'load' });
+  if ((await waitForBridge(page, BRIDGE_MS)).ok) {
+    const reached = await drive(page, 'toast');
+    if (!String(reached).startsWith('toast:"')) { r.fail(`toast: driver reached '${reached}'`); stagesFailed.push('toast'); }
+    else { r.info(`toast: ${reached}`); await measureSurface('toast (cold)'); }
+  }
+
   /* ═══════════════ verdict over every surface measured ══════════════════ */
   if (stagesFailed.length) {
     r.fail(`${stagesFailed.length} staged surface(s) were never measured (${stagesFailed.join(', ')}) `
@@ -623,7 +723,13 @@ try {
   if (zoneHits.size) {
     r.fail(`${zoneHits.size} distinct card zone(s) under 44px — §5 says tapping any zone zooms it, `
       + 'so a zone thinner than a thumb hides the data it is supposed to reveal');
-    r.info([...zoneHits].slice(0, 10).join(', '));
+    // WHICH SURFACE, not just which signature. P9: this verdict went red on the
+    // first run that staged an opponent holding six colours, and the line as
+    // written named `div.cardzone 46×11` without saying where — which is the
+    // difference between a finding somebody can fix and a number.
+    for (const su of surfaceIssues.filter((x) => (x.zones || []).length)) {
+      r.info(`${su.label}: ${[...new Set(su.zones)].slice(0, 6).join(', ')}`);
+    }
   } else summary(true, 'every card zone is at least 44px');
 
   const offs = surfaceIssues.filter((s) => s.off.length);
@@ -751,6 +857,151 @@ try {
     }
   }
 
+  /* ═══ --prove-surfaces: every P9 surface, watched going red ════════════
+   *
+   * §8: "A gate must be proven to fail. Before a new assertion is trusted,
+   * break the fix it guards and watch it go red — an assertion nobody has seen
+   * fail is a decoration." A SURFACE is not an assertion, so the thing to break
+   * is the defect the surface exists to catch: for the lobby, the host's
+   * primary control leaving the viewport; for the mats, a target under a thumb;
+   * for the opponent seats, a lane clipped out of its own scroller; for the two
+   * message layers, a veil over a control.
+   *
+   * Each case measures the surface CLEAN, injects, measures again, and requires
+   * the number to move. Injection is per-page CSS/DOM and is discarded with the
+   * next navigation, so nothing here can leak into the gated numbers above —
+   * this block runs after them and after `h.close()`'s counterpart passes.  */
+  if (args['prove-surfaces']) {
+    console.log(dim('\n  ── --prove-surfaces: the P9 surfaces, against injected defects ──'));
+    const distinct = (t, key) => new Set(t[key] || []).size;
+    const CASES = [
+      {
+        label: 'lobby (host)',
+        stage: ['lobby', { cold: false, drive: 'lobby-host', expect: 'lobby:host' }],
+        defect: 'Launch Mission pushed below the fold',
+        /* The metric is the assertion this surface ADDED, not the generic
+         * off-viewport list — and that is a measurement, not a preference.
+         * `auditTapTargets` drops any element entirely below the fold
+         * (`vis()`: `if (r.top >= innerHeight) return false`), so a primary
+         * control pushed 30px past the bottom edge disappears from the
+         * off-viewport count instead of appearing in it. Worth knowing on its
+         * own; here it means the generic verdict cannot demonstrate the exact
+         * defect the host lobby was added for. */
+        measure: async () => page.evaluate(() => {
+          const b = document.getElementById('btn-start');
+          const r = b.getBoundingClientRect();
+          return r.bottom > innerHeight || r.top >= innerHeight ? 1 : 0;
+        }),
+        inject: () => {
+          const b = document.getElementById('btn-start');
+          Object.assign(b.style, { position: 'fixed', left: '20px', top: `${innerHeight + 30}px` });
+        },
+      },
+      {
+        label: 'lobby (guest)',
+        stage: ['lobby-guest', { cold: false, drive: 'lobby-guest', expect: 'lobby:guest' }],
+        defect: 'the host-only block shown to a guest',
+        // The verdict here is the DRIVER's, not an audit's: "this guest is
+        // being offered controls the server would refuse" is the whole point
+        // of having a guest surface at all.
+        measure: async () => (String(await drive(page, 'lobby-guest')).startsWith('lobby:guest') ? 0 : 1),
+        inject: () => { document.getElementById('lobby-host').hidden = false; },
+      },
+      {
+        label: 'wild placement',
+        stage: ['mid-game', { cold: false, drive: 'wild-place', expect: 'myColor:' }],
+        defect: 'a set column shrunk under the 44px floor while it IS the primary action',
+        measure: async () => distinct(await page.evaluate(audit.auditTapTargets), 'fatal'),
+        inject: () => {
+          const st = document.createElement('style');
+          st.textContent = '.propcol { height: 20px !important; min-height: 20px !important; }';
+          document.head.appendChild(st);
+        },
+      },
+      {
+        label: 'opponent upgrade lane',
+        stage: ['opponent-upgrade', { cold: false }],
+        defect: 'the seat clipped to a 40px scrollport',
+        measure: async () => distinct(await page.evaluate(audit.auditTapTargets), 'clipped'),
+        inject: () => {
+          const st = document.createElement('style');
+          st.textContent = '#opponents .board { max-height: 40px !important; overflow: hidden !important; }';
+          document.head.appendChild(st);
+        },
+      },
+      {
+        label: 'opponent second mat row',
+        stage: ['opponent-wide', { cold: false }],
+        defect: 'the mat grid narrowed until the second row runs off its own scroller',
+        measure: async () => distinct(await page.evaluate(audit.auditTapTargets), 'clipped'),
+        // Narrowed rather than shortened: on a six-colour holding the row break
+        // is horizontal, and a 60px height clamp changed nothing measurable
+        // because the seat-toggle still fitted inside it.
+        inject: () => {
+          const st = document.createElement('style');
+          st.textContent = '#opponents .board { max-width: 90px !important; overflow: hidden !important; }';
+          document.head.appendChild(st);
+        },
+      },
+      {
+        label: 'announce banner',
+        stage: ['approach-called', { cold: false, from: 0, at: 1, transient: true, drive: 'announce', expect: 'announce:' }],
+        defect: 'the banner laid over the seat controls it sits above',
+        measure: async () => (await page.evaluate(audit.auditOcclusion)).length,
+        inject: () => {
+          const a = document.querySelector('.announce');
+          Object.assign(a.style, { position: 'fixed', left: '0', top: '0', width: '100%', height: '60%' });
+        },
+      },
+      {
+        label: 'toast',
+        stage: null,        // home screen — see the toast driver
+        defect: 'the toast laid over the primary control',
+        measure: async () => (await page.evaluate(audit.auditOcclusion)).length,
+        inject: () => {
+          const t = document.getElementById('toast');
+          // `is-on` is dropped 2600ms after the toast is raised and the audit
+          // skips anything invisible, so without re-asserting it the injection
+          // lands on an element nothing is looking at — measured: the verdict
+          // stayed at 0 with a full-screen veil in the DOM.
+          t.classList.add('is-on');
+          // Full height, not 70%: measured at 390×844 the home CTAs start at
+          // y687 and a 70% veil stops at y591, so the injection covered nothing
+          // and the demonstration failed for a reason that had nothing to do
+          // with whether §D can see a toast.
+          Object.assign(t.style, {
+            position: 'fixed', left: '0', top: '0', width: '100%', height: '100%',
+            maxWidth: 'none', opacity: '1', visibility: 'visible', transform: 'none',
+          });
+        },
+      },
+    ];
+
+    for (const c of CASES) {
+      if (c.stage) {
+        if (!(await stage(c.stage[0], { ...c.stage[1], label: `prove ${c.label}` }))) {
+          r.fail(`--prove-surfaces [${c.label}]: could not stage it — the demonstration cannot run`);
+          continue;
+        }
+      } else {
+        await page.goto(`${server.url}/?harness=1&seed=${seed}&stage=prove-toast`, { waitUntil: 'load' });
+        if (!(await waitForBridge(page, BRIDGE_MS)).ok) continue;
+        await drive(page, 'toast');
+      }
+      await settleLayout(page);
+      const clean = await c.measure();
+      await page.evaluate(c.inject);
+      await page.waitForTimeout(200);
+      const dirty = await c.measure();
+      if (dirty > clean) {
+        r.pass(`--prove-surfaces [${c.label}]: ${c.defect} took the verdict ${clean} → ${dirty}`);
+      } else {
+        r.fail(`--prove-surfaces [${c.label}]: ${c.defect} left the verdict at ${dirty} — `
+          + 'this surface cannot report the defect it was added for');
+      }
+    }
+  }
+
   await h.close();
 
   /* ═══ ART §2 ships TWO appearances; this file measured one ══════════════
@@ -766,11 +1017,12 @@ try {
     if (!lb.ok) r.fail('light-theme pass: the bridge never appeared');
     else {
       for (const name of ['mid-game', 'discard-limit', 'five-player']) {
-        const state = fixture(name);
-        if (!state) continue;
+        const fx = fixture(name);
+        if (!fx) continue;
         await lh.page.goto(`${server.url}/?harness=1&seed=${seed}&stage=${name}&theme=light`, { waitUntil: 'load' });
         if (!(await waitForBridge(lh.page, BRIDGE_MS)).ok) continue;
-        await lh.page.evaluate((s) => { window.__CHUD.applyState(s); window.__CHUD.drainEvents?.(); }, state);
+        await stageFixture(lh.page, fx);
+        await quietTransients(lh.page);
         await settleLayout(lh.page);
         const t = await lh.page.evaluate(audit.auditTapTargets);
         const occ = await lh.page.evaluate(audit.auditOcclusion);
@@ -796,6 +1048,15 @@ try {
     }
     await lh.close();
   }
+
+  ensureDir(SHOT_DIR);
+  fs.writeFileSync(path.join(SHOT_DIR, 'coverage-touchtest.json'), JSON.stringify({
+    tool: 'touchtest',
+    generatedAt: new Date().toISOString(),
+    captures,
+    seen: Object.fromEntries(markerSeen),
+  }, null, 1) + '\n');
+  r.info(`${markerSeen.size}/${CENSUS.length} surface marker(s) seen → coverage-touchtest.json`);
 
   code = r.code;
 } catch (e) {

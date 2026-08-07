@@ -76,6 +76,8 @@ import {
 } from './lib/harness.mjs';
 import * as audit from './lib/audit.mjs';
 import { drive, releaseInput } from './lib/drivers.mjs';
+import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
+import { census, observeMarkers } from './lib/census.mjs';
 import { applyTheme, sameAppearance, THEMES } from './lib/theme.mjs';
 import { startServer } from './serve.mjs';
 
@@ -92,7 +94,15 @@ const seed = args.seed ? Number(args.seed) : SEED;
 const SHOTS = [
   { name: 'home', route: '/?harness=1', fixture: null, themes: true },
   { name: 'help', fixture: null, drive: 'help', expect: 'sheet:open', themes: true },
-  { name: 'lobby', fixture: 'lobby' },
+  /* ── P9: the HOST lobby, which no gate had ever rendered ────────────────
+   * `lobby@*.png` was the guest view for the whole life of this file: a lobby
+   * broadcast carries no `game`, `game` is the only thing store.applyState can
+   * infer a seat from, so `store.self.id` stayed null and `#lobby-host` stayed
+   * hidden. The name changes with the fix, because the old name was describing
+   * the wrong screen. The guest lobby is a real screen too and keeps its own
+   * shot, off its own recorded fixture instead of off an accident.            */
+  { name: 'lobby-host', fixture: 'lobby', drive: 'lobby-host', expect: 'lobby:host', themes: true },
+  { name: 'lobby-guest', fixture: 'lobby-guest', drive: 'lobby-guest', expect: 'lobby:guest' },
   { name: 'early-game', fixture: 'early-game' },
   { name: 'mid-game', fixture: 'mid-game', themes: true },
   { name: 'big-hand', fixture: 'big-hand' },
@@ -139,6 +149,26 @@ const SHOTS = [
   // interesting refusal in the set — a RULES one ("Needs a complete set without
   // an Upgrade") rather than "it is not your turn", which the arc fixtures give.
   { name: 'refusal', fixture: 'targeting', drive: 'refusal', expect: 'refusing:' },
+  /* ── P9 surfaces: reachable in ordinary play, in no gate ────────────────
+   * Each of these had to be hand-staged by the agent that needed it, which is
+   * the definition of a surface the harness cannot see (see tools/coverage.mjs).
+   *   wild-place       the §3.8/§3.9 placement advice printed on the mats
+   *   opponent-*       the three renderings that only exist on somebody else's
+   *                    seat: an upgrade lane, a second mat row, ARMED as threat
+   *   announce/toast   the two transient message layers                        */
+  { name: 'wild-place', fixture: 'mid-game', drive: 'wild-place', expect: 'myColor:', themes: true },
+  { name: 'opponent-upgrade', fixture: 'opponent-upgrade' },
+  { name: 'opponent-wide', fixture: 'opponent-wide' },
+  { name: 'opponent-armed', fixture: 'opponent-armed', themes: true },
+  // Two states applied in order, and the shutter falls INSIDE the 2600ms the
+  // banner is up — `transient` opts out of the quiet-down wait every other
+  // shot now performs.
+  {
+    name: 'announce', fixture: 'approach-called', from: 0, at: 1,
+    drive: 'announce', expect: 'announce:', transient: true,
+    screen: ['desktop', 'phone', 'landscape'],
+  },
+  { name: 'toast', fixture: null, drive: 'toast', expect: 'toast:"', transient: true },
   // Landscape — the viewport where `.self-board` was 0px tall and no shot looked.
   { name: 'landscape-mid', fixture: 'mid-game', screen: 'landscape' },
   { name: 'landscape-armed', fixture: 'final-approach', screen: 'landscape' },
@@ -175,7 +205,9 @@ const THEME_LIST = PROVE_THEME
   : THEMES;
 
 /** Shots that only exist on one screen still have to be asked for by name. */
-const screenTakes = (shot, tag) => (shot.screen ? shot.screen === tag : tag !== 'landscape');
+const screenTakes = (shot, tag) => (shot.screen
+  ? (Array.isArray(shot.screen) ? shot.screen.includes(tag) : shot.screen === tag)
+  : tag !== 'landscape');
 
 /** Every (shot, screen) pair expands into one take per theme it asks for. */
 function takesFor(shot, tag) {
@@ -193,13 +225,6 @@ console.log(bold('screenshot')
   + dim(`  ${SHOT_LIST.length} shots × ${SCREEN_LIST.length} screens × ${THEME_LIST.length} themes = ${planned} takes → tools/shots/`)
   + (PROVE_THEME ? yellow('  --prove-theme: the light pass is deliberately rendered dark') : ''));
 
-function loadStates(name) {
-  const file = path.join(FIXTURE_DIR, `${name}.json`);
-  if (!fs.existsSync(file)) return null;
-  const f = readJSON(file);
-  return Array.isArray(f) ? f : f.states;
-}
-
 ensureDir(SHOT_DIR);
 const server = await startServer({ seed });
 let browser = null;
@@ -211,6 +236,13 @@ const buried = [];                 // {shot, items[]} — text under another lay
 const veiled = [];                 // {shot, n} — text under a decorative layer
 const problems = [];
 const themePairs = new Map();      // `${shot}@${screen}` → {dark:{hash,fp}, light:{…}}
+/* tools/coverage.mjs's half of the bargain: this file knows which surfaces it
+ * visited, and it is the only thing that does. The census is enumerated from
+ * public/ (lib/census.mjs) and sampled off the SAME settled frame every other
+ * measurement here uses, so "the review set saw this state" means the state
+ * was in the picture and not merely in the DOM. */
+const CENSUS = census().markers;
+const markerSeen = new Map();      // marker key → [shot labels]
 const unsettled = [];              // shots whose frame never stopped changing
 
 const fail = (m) => { code = EXIT_FAIL; problems.push(m); console.log(`  ${red('✗')} ${m}`); };
@@ -231,18 +263,25 @@ async function take(h, screen, shot, theme) {
     const fp = await applyTheme(h.page, theme);
 
     if (shot.fixture) {
-      const states = loadStates(shot.fixture);
-      if (!states?.length) {
+      const fx = loadFixture(shot.fixture);
+      if (!fx) {
         fail(`${label} — fixture ${shot.fixture}.json missing; run npm run tool:record`);
         return;
       }
-      const idx = shot.at == null ? states.length - 1 : (shot.at < 0 ? states.length + shot.at : shot.at);
-      const state = states[Math.max(0, Math.min(states.length - 1, idx))];
-      await h.page.evaluate((s) => {
-        window.__CHUD.applyState(s);
-        window.__CHUD.drainEvents?.();
-      }, state);
+      // Seat first, THEN state (lib/stage.mjs). Without the seat a lobby
+      // fixture renders as somebody else's screen and says nothing about it.
+      await stageFixture(h.page, fx, { at: shot.at, from: shot.from, drain: !shot.transient });
       await h.page.waitForTimeout(120);
+      /* A state application can raise a 2600ms `.announce` over the table (any
+       * tail carrying final_approach / set_stolen — `final-approach.json` and
+       * `finished.json` both do). Whether it was still up when the shutter fell
+       * used to depend on how long the take spent settling, which is a coin
+       * flip inside a file whose two central rules are byte comparisons. Shots
+       * that are ABOUT a transient say so; every other shot waits it out. */
+      if (!shot.transient) {
+        const waited = await quietTransients(h.page);
+        if (waited.length) console.log(dim(`      ${label}: waited out ${waited.join(', ')}`));
+      }
     }
 
     /* ---- drive into the client-side mode this shot is ABOUT -------------- */
@@ -267,7 +306,9 @@ async function take(h, screen, shot, theme) {
      * moments. A review set whose evidence changes between two identical runs
      * cannot support either assertion.                                       */
     const file = path.join(SHOT_DIR, `${label}.png`);
-    const frame = await stableScreenshot(h.page);
+    // A transient layer is up for 2600ms; the default 3s settle budget would
+    // let the shutter fall on its fade-out and make the bytes a coin flip.
+    const frame = await stableScreenshot(h.page, shot.transient ? { gap: 90, budgetMs: 1100 } : {});
     fs.writeFileSync(file, frame.buffer);
     if (!frame.settled) unsettled.push(label);
 
@@ -295,6 +336,18 @@ async function take(h, screen, shot, theme) {
     const layout = occl.filter((o) => !o.veil);
     if (layout.length) buried.push({ shot: label, items: layout });
     if (occl.length - layout.length) veiled.push({ shot: label, n: occl.length - layout.length });
+
+    /* Surface census (tools/coverage.mjs). BEFORE releaseInput, for the same
+     * reason the two audits above are: the held-input shots (`drag-mid`, the
+     * peeks) are the only captures in the whole harness that ever produce
+     * `[data-droppable]`, `.is-drop-hover`, `.is-held` or `.peek`, and sampling
+     * after the pointer came up reported all seven of them as never-visited.
+     * A census of the review set has to be a census of the frame that shipped. */
+    for (const key of await h.page.evaluate(observeMarkers, CENSUS)) {
+      if (!markerSeen.has(key)) markerSeen.set(key, []);
+      const at = markerSeen.get(key);
+      if (at.length < 4) at.push(label);
+    }
 
     // A host driver may still be holding the pointer down (`drag-mid`).
     // Released only AFTER the shutter and the audits, before the next nav.
@@ -492,6 +545,14 @@ try {
         problems,
       }, null, 1)
     );
+    fs.writeFileSync(path.join(SHOT_DIR, 'coverage-screenshot.json'), JSON.stringify({
+      tool: 'screenshot',
+      generatedAt: new Date().toISOString(),
+      captures: captured.length,
+      seen: Object.fromEntries(markerSeen),
+    }, null, 1) + '\n');
+    console.log(`  ${green('✓')} ${markerSeen.size}/${CENSUS.length} surface marker(s) seen `
+      + dim('→ coverage-screenshot.json (tools/coverage.mjs reports the difference)'));
     console.log(`  ${green('✓')} contactsheet.png ${dim(`${COLS}×${rows}, ${captured.length} tiles`)}`);
     console.log(`  ${green('✓')} ${hashes.size} distinct image(s) from ${captured.length} shot(s)`);
   } else {

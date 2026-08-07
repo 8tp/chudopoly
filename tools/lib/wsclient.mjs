@@ -298,7 +298,26 @@ export function planMoves(stateMsg, selfId, opts = {}) {
   const hand = me.hand || [];
   const msgs = [];
 
-  if (g.playsRemaining > 0) {
+  /**
+   * PASSIVE: draw, discard to the limit, end turn. Never play a card.
+   *
+   * This is not a strategy, it is a CAMERA ANGLE. Every fixture in tools/ was
+   * recorded from a seat that plays as hard as it can, so the recorded seat
+   * always won the race — across a full 3-player game (137 broadcasts, seed
+   * 1337) no opponent ever held an Upgrade, no opponent ever reached six
+   * colours, and the only player who ever armed was the seat holding the
+   * camera. Three whole classes of OPPONENT rendering — the seat's upgrade
+   * lane, its second mat row, the ARMED treatment on a collapsed seat — had
+   * therefore never been drawn by any gate, and each of the three agents who
+   * needed one had to hand-stage it.
+   *
+   * A seat that folds is a seat a real game reaches (§0.7): a player who
+   * disconnects, times out on every turn, or simply refuses to act produces
+   * exactly this transcript, and the server drives it identically — every state
+   * below is still a real, validated, integrity-checked broadcast. What it buys
+   * is bots with enough turns to finish what they start.
+   */
+  if (g.playsRemaining > 0 && !opts.passive) {
     const myColors = Object.keys(me.properties || {}).filter((c) => (me.properties[c] || []).length > 0);
     const foes = opponents(stateMsg, selfId);
     const richest = [...foes].sort(

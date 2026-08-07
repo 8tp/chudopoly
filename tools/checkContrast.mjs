@@ -95,16 +95,19 @@
  *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { PNG } from 'pngjs';
 import {
-  FIXTURE_DIR, DESKTOP, SEED,
-  parseArgs, launchBrowser, openPage, requireBridge, readJSON, reporter,
+  DESKTOP, SEED, SHOT_DIR, ensureDir,
+  parseArgs, launchBrowser, openPage, requireBridge, reporter,
   stableScreenshot, pristineStorage, dim, red, yellow, EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
 import * as audit from './lib/audit.mjs';
 import { contrastRatio, sampledBackground } from './lib/pixels.mjs';
 import { drive } from './lib/drivers.mjs';
+import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
+import { census, observeMarkers } from './lib/census.mjs';
 import { applyTheme, THEME_MODES } from './lib/theme.mjs';
 import { startServer } from './serve.mjs';
 
@@ -120,6 +123,27 @@ const SURFACES = [
   { name: 'win', fixture: 'finished' },
   { name: 'discard-browser', fixture: 'mid-game', drive: 'discard', expect: 'sheet:open' },
   { name: 'payment', fixture: 'payment-pending', drive: 'payment', expect: 'mode:payment' },
+  /* ── P9: five surfaces this gate had never had an entry for ─────────────
+   * Each one carries text, each one is reachable in ordinary play, and each
+   * had to be hand-checked by the agent that built it because there was
+   * nowhere in this list to put it (see tools/coverage.mjs).
+   *   lobby-host   the busiest PRE-GAME screen. It had never been measured at
+   *                all, in any gate: `store.self.id` was never set from a lobby
+   *                broadcast, so every capture was the guest view.
+   *   wild-place   §3.8/§3.9's placement advice — rent ladders and a BEST mark
+   *                printed straight onto the mats, over ten saturated set
+   *                colours. It is the one piece of rules text painted ON the
+   *                table and it shipped verified only by its author.
+   *   opponent-*   the upgrade lane and the ARMED treatment, which only ever
+   *                render on a seat that is not yours.
+   *   announce     a full-width banner over the table, ~2600ms, two colourways.
+   *   toast        the client's only other transient message surface.          */
+  { name: 'lobby-host', fixture: 'lobby', drive: 'lobby-host', expect: 'lobby:host' },
+  { name: 'wild-place', fixture: 'mid-game', drive: 'wild-place', expect: 'myColor:' },
+  { name: 'opponent-upgrade', fixture: 'opponent-upgrade' },
+  { name: 'opponent-armed', fixture: 'opponent-armed' },
+  { name: 'announce', fixture: 'approach-called', from: 0, at: 1, transient: true, drive: 'announce', expect: 'announce:' },
+  { name: 'toast', fixture: null, drive: 'toast', expect: 'toast:"' },
 ];
 
 /**
@@ -163,16 +187,14 @@ const MIN_TEXT_PX = 8;
 const MUTATION = '#sheet, #sheet * { color: #6a6f78 !important; }';
 const MUTATION_SURFACE = 'help';
 
+const CENSUS = census().markers;
+const markerSeen = new Map();
+let captures = 0;
+
 const r = reporter('checkContrast');
 const server = await startServer({ seed });
 let browser = null;
 let hardError = null;
-
-function loadStates(name) {
-  const file = path.join(FIXTURE_DIR, `${name}.json`);
-  const f = readJSON(file);
-  return Array.isArray(f) ? f : f.states;
-}
 
 /** Measure one (surface, theme). Returns {violations, samples, sheet} or null. */
 async function measureSurface(h, surface, theme, extraCss) {
@@ -185,13 +207,16 @@ async function measureSurface(h, surface, theme, extraCss) {
   if (extraCss) await h.page.addStyleTag({ content: extraCss });
 
   if (surface.fixture) {
-    const states = loadStates(surface.fixture);
-    if (!states?.length) return { error: `fixture ${surface.fixture}.json missing` };
-    await h.page.evaluate((s) => {
-      window.__CHUD.applyState(s);
-      window.__CHUD.drainEvents?.();
-    }, states[states.length - 1]);
+    const fx = loadFixture(surface.fixture);
+    if (!fx) return { error: `fixture ${surface.fixture}.json missing` };
+    // Seat first (lib/stage.mjs): without it a lobby fixture measures the
+    // guest's screen and reports it under the host's name.
+    await stageFixture(h.page, fx, { at: surface.at, from: surface.from, drain: !surface.transient });
     await h.page.waitForTimeout(150);
+    // Same reason as screenshot.mjs: a state application can raise a 2600ms
+    // `.announce` over the table, and a surface that is not about it must not
+    // have its numbers depend on whether the banner was still up.
+    if (!surface.transient) await quietTransients(h.page);
   }
   if (surface.drive) {
     const reached = await drive(h.page, surface.drive);
@@ -206,6 +231,16 @@ async function measureSurface(h, surface, theme, extraCss) {
   const png = PNG.sync.read(frame.buffer);
   const scale = png.width / (await h.page.evaluate(() => innerWidth));
   const { samples, hidden } = await h.page.evaluate(audit.auditTextContrast);
+  /* tools/coverage.mjs. This gate is the ONLY one that drives ART §2's third
+   * selection path (`[data-theme]` over a media query), so without its sidecar
+   * the census correctly reported `data-theme=light` and `=dark` as states no
+   * gate had ever rendered — while this file was rendering both, every run. */
+  for (const key of await h.page.evaluate(observeMarkers, CENSUS)) {
+    if (!markerSeen.has(key)) markerSeen.set(key, []);
+    const at = markerSeen.get(key);
+    if (at.length < 4) at.push(`${surface.name}@${theme.key}`);
+  }
+  captures++;
 
   const violations = [];
   const decorative = [];
@@ -333,6 +368,15 @@ try {
     console.log(dim('  (run with --prove to watch the gate catch an injected low-contrast '
       + 'mutation, and to see the CSS-only false positives it avoids)'));
   }
+
+  ensureDir(SHOT_DIR);
+  fs.writeFileSync(path.join(SHOT_DIR, 'coverage-checkContrast.json'), JSON.stringify({
+    tool: 'checkContrast',
+    generatedAt: new Date().toISOString(),
+    captures,
+    seen: Object.fromEntries(markerSeen),
+  }, null, 1) + '\n');
+  console.log(dim(`  ${markerSeen.size}/${CENSUS.length} surface marker(s) seen → coverage-checkContrast.json`));
 
   if (h.errors.length) r.warn(`${h.errors.length} console/page error(s) while measuring`);
   await h.close();

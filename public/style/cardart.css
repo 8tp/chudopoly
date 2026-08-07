@@ -218,14 +218,27 @@
    against card STOCK, not against a colour fill. Filling the coin makes the
    contrast a property of the coin itself (ink vs bone, 17:1) rather than of
    whatever the coin happens to be sitting on. */
+/* ROUND-5: it was a PILL, not a disc — `border-radius: 999px` with no
+   aspect-ratio, so "4M" set a 25×14 lozenge that overhung the card's own 6px
+   corner on the rent chassis. §6 says disc. A disc is `aspect-ratio: 1` plus a
+   floor of 22% of the card width, and the numerals are centred in it rather
+   than padding it out sideways. */
 .ca-val {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  aspect-ratio: 1;
+  min-width: 24cqw;
+  padding: 0;
   font-family: var(--ca-mono);
   font-weight: 700;
   white-space: nowrap;
+  line-height: 1;
   color: var(--ca-paper);
   background: var(--ca-ink);
-  border: 1px solid var(--ca-ink);
-  border-radius: 999px;
+  border: 0;
+  border-radius: 50%;
 }
 
 .ca-rents { flex: none; display: flex; gap: .25em; font-family: var(--ca-mono); font-weight: 400; }
@@ -297,11 +310,14 @@
    opponent's bank this coin is the only thing that matters. */
 .ca-val-float {
   position: absolute;
-  left: 5cqw; top: 5cqw;
+  /* 7cqw, not 5: a DISC (see .ca-val) at 5cqw crossed the card's own 6px corner
+     radius on the rent chassis, where the colour field bleeds to the trim and
+     there is no margin to hide in. */
+  left: 7cqw; top: 7cqw;
   z-index: 2;
   /* Inherits the filled ink coin from .ca-val. It used to repaint itself paper,
      which after the coin was filled left bone numerals on bone (1.00:1). */
-  padding: 0 .4em;
+  padding: 0;
 }
 
 /* ── WILD PROPERTY — the same colours, CONTAINED on the property chassis ─── */
@@ -384,7 +400,7 @@
 .ca-hand .ca-art { min-height: 24cqw; }
 .ca-hand .ca-glyph { width: 44cqw; height: 44cqw; }
 .ca-hand .ca-rents { font-size: 7.4cqw; }
-.ca-hand .ca-val { font-size: 9cqw; padding: 0 1.6cqw; }
+.ca-hand .ca-val { font-size: 9cqw; min-width: 26cqw; }
 /* The rosette has to CONTAIN the numeral, not collide with it: at 44cqw ring /
    34cqw numeral the "4M" in the bank overlapped the ring on both sides. */
 .ca-hand.ca-money .ca-glyph { width: 58cqw; height: 58cqw; }
@@ -410,6 +426,16 @@
 /* ── ≤66px — a crowded hand, the discard browser. Drop the ladder. ──────── */
 @container (max-width: 66px) {
   .ca-hand .ca-rents { display: none; }
+  /* "TO-14 · USAF ED." is a flavour mark and it sits at the FAR RIGHT of the
+     foot — which is the exact strip the hand fan's next card stands on. On
+     landscape-mid it rendered as two grey letters hanging off each card. It is
+     the first thing §6's degradation ladder should drop and it was never in
+     the ≤60px three-mark list at all. */
+  .ca-hand .ca-serial, .ca-hand .ca-sub { display: none; }
+  /* Same defect, same cause: the mono set/action code was pinned right:0 and
+     the fan covered its last character ("PCS" → "PC", "SRG" → "SR"). Every
+     other mark on this card is already left-aligned for that reason. */
+  .ca-hand .ca-code { right: auto; left: 0; }
   .ca-hand .ca-title { -webkit-line-clamp: 2; font-size: 12cqw; }
   .ca-hand .ca-glyph { width: 50cqw; height: 50cqw; }
   .ca-hand .ca-pips { display: none; }
@@ -422,20 +448,36 @@
   .ca-hand .ca-mnum i { display: none; }
 }
 
-/* ── ≤48px — your own board. THREE MARKS: band, glyph, coin. ────────────── */
-@container (max-width: 48px) {
+/* ── ≤60px — your own board, a landscape hand. THREE MARKS: band, glyph, coin.
+   ROUND-5: this tier used to start at 48px, and §6 says 60. The 12px between
+   them is where a 59px landscape hand card sat, printing a 7px title and a
+   clipped mono code — "Nothing that can truncate" is the tier's own rule. ── */
+@container (max-width: 60px) {
   .ca-hand { padding: 5cqw; gap: 2cqw; }
   .ca-hand .ca-title { display: none; }
   .ca-hand .ca-tick { display: none; }
-  .ca-hand .ca-band { font-size: 11cqw; padding: 1cqw 2cqw; justify-content: center; }
+  /* THE BAND STAYS; ITS LETTERING DOES NOT. MEASURED across the review set: at
+     11cqw on a 46px board card the set name sets at 5.1px, which is below the
+     size at which type is type — 21 of them per desktop frame, and the contrast
+     gate was letting them through as decorative. §6's ≤60px tier lists three
+     marks and the band is a MARK, not a caption: a solid rule of the set colour
+     across the top of the card. The name is carried by the glyph (§1's primary
+     channel), by the mat it is standing on (table.css's restored nameplate),
+     and at full size by the peek. */
+  .ca-hand .ca-band-name { display: none; }
+  .ca-hand .ca-band { height: 15%; min-height: 5px; padding: 0; justify-content: center; }
   .ca-hand .ca-glyph { width: 58cqw; height: 58cqw; }
-  /* MEASURED on final-approach@desktop-light: at 44px the boxed coin rendered
-     as a 4.8px string inside a 1px border and read as a solid black blob — the
-     third of ART-DIRECTION's "three marks" was noise. The box goes; the digits
-     take the space it was using. */
+  /* §6 asks for a filled ink DISC. The previous pass deleted the disc instead
+     of sizing it — measured, a 1px-bordered box around a 4.8px string read as a
+     blob — but bare digits are not one of the three marks, a coin is. At 40cqw
+     the disc is 18px on a 46px card with 7.8px numerals inside it, which is the
+     largest coin this tier can carry and still leave the glyph its 58%. */
   .ca-hand .ca-val {
-    font-size: 16cqw; padding: 0; border: none; font-weight: 800;
-    font-family: var(--ca-head); letter-spacing: -.02em;
+    font-size: 17cqw;
+    min-width: 40cqw;
+    font-weight: 800;
+    font-family: var(--ca-head);
+    letter-spacing: -.04em;
   }
   /* The bank is where you count fast. Drop the rosette and let the numeral own
      the card — a ring at 24px is texture, not information. */
@@ -443,9 +485,10 @@
   .ca-hand .ca-mnum b { font-size: 52cqw; }
   .ca-hand .ca-mnum i { display: none; }
   .ca-hand.ca-money .ca-title { display: none; }
-  /* the mono code earns its keep here: ten ORDER cards otherwise differ only
-     by glyph, and this is the size the discard pile stacks at */
-  .ca-hand.ca-action .ca-code { display: block; font-size: 10cqw; }
+  /* the mono code earns its keep here: with the title gone, ten ORDER cards
+     otherwise differ only by glyph, and this is the size the discard pile
+     stacks at. Floored at 8px — below that it is texture, not a code. */
+  .ca-hand.ca-action .ca-code { display: block; font-size: max(8px, 15cqw); }
   .ca-hand.ca-back .ca-back-word { display: none; }
   .ca-hand.ca-back .ca-back-art { width: 68%; }
   .ca-hand .ca-medal b { display: none; }

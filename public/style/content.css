@@ -440,10 +440,13 @@
   text-transform: none;
   padding: .24em .55em;
   border-radius: 2px;
-  border: var(--hairline) solid var(--shade);
+  /* §3.2: furniture gets material, never a 1px outline on a slightly-lighter
+     ground. A tag is a stamped plate, cut into the sheet it sits on. */
+  background: var(--ground);
+  box-shadow: var(--deboss);
   color: var(--fg-mute);
 }
-.dt-tag.is-block { color: var(--accent); border-color: var(--accent); }
+.dt-tag.is-block { color: var(--accent); box-shadow: var(--deboss), inset 0 0 0 2px var(--accent); }
 .dt-why { font-size: .78em; font-weight: 700; color: var(--danger-ink); margin: 0; }
 
 /* ── final approach strip (inside the HUD) ────────────────────────────── */
@@ -504,7 +507,16 @@
    So in landscape ONLY the strip floats over the top of the felt instead of
    reserving a row: the arming beat still shifts what is UNDER it there, and
    that is the stated trade. Same query table.css uses for its landscape pass. */
-@media (orientation: landscape) and (max-height: 560px) and (max-width: 1024px) {
+/* ROUND-5: the same trade is now taken in PORTRAIT, for the same reason and
+   with a bigger number behind it. MEASURED at 390×844, the reserved row is
+   24px of an 82px HUD, and #self-board is a 228px scrollport around 353px of
+   your own board — four of your thirteen property mats at 0% visible. A
+   permanently reserved band that is empty in most frames cannot outrank the
+   player being able to see their own properties. Floating, the arming beat
+   still does not GROW the header (which is what the reserve was protecting
+   against); what it does instead is overlay the top of the seats strip for the
+   ~3s it is up. Landscape has taken exactly this trade since round 4. */
+@media (max-width: 1023px) {
   .hud { position: relative; }
   .hud-strip {
     position: absolute;
@@ -515,6 +527,31 @@
     margin-top: 0;
     z-index: 8;
   }
+}
+/* ── DESKTOP: THE STRIP RIDES THE HUD ROW, IT IS NOT A SECOND BAND ────────
+   ROUND-5 REVIEW. §3.1 names full-width stacked bands as the top slop pattern,
+   and the desktop frame was carrying four of them — MEASURED at 1280×720:
+   HUD 88 (of which 27 is this strip, reserved and EMPTY in most frames) +
+   prompt 28 + dock 128 = 244px of 720. A 1280px bar has 1002px of unused
+   middle; the alert has no business claiming a row of its own there.
+
+   Inline, the HUD is 61px, the empty band is gone, and the 27px it was holding
+   is what pays for the opponents' seats to stop being sliced (table.css's
+   fit-content(11.4em)). The reserve-don't-grow contract is untouched: the box
+   is still a fixed size that exists whether or not it has anything in it, so
+   arming still cannot move the felt. */
+@media (min-width: 1024px) {
+  .hud-strip {
+    flex: 0 1 26em;
+    order: 1;
+    min-width: 0;
+    margin-top: 0;
+    align-self: center;
+  }
+  .hud-right { order: 2; }
+  /* the centre gives ground first: "YOUR TURN" plus its plays plate needs
+     ~150px and .hud-mid still has 600+ once the strip has taken its 26em */
+  .hud-mid { flex: 1 1 0; }
 }
 .hud-strip.is-threat {
   background: var(--ground);
@@ -565,6 +602,38 @@
 .chip.strip-chip.is-hot { color: var(--fg); border-color: var(--accent); }
 
 .prompt-why.is-approach { color: var(--fg); }
+
+/* ── the refusal sentence: HAZARD MATERIAL, not coloured text ─────────────
+   ROUND-5 REVIEW (refusal@desktop): "Needs a complete set without an Upgrade"
+   was plain vermillion prose in a bar full of other prose. §1 is explicit —
+   danger is a MATERIAL (45° caution stripes + vermillion), never a plain
+   coloured chip, and never a hue on its own, because a hue on its own is
+   exactly what a colourblind player and a grayscale frame cannot read. So the
+   sentence gets the same stripe vocabulary every other danger in the app wears:
+   a hazard rule struck down its left edge and a solid warning mark ahead of it.
+   The INK stays --danger-ink (7.51 light / 8.86 dark on ground) because a
+   stripe is a graphical object and text still owes 4.5:1. */
+.prompt-why {
+  display: flex;
+  align-items: baseline;
+  gap: .45em;
+  padding: .2em 0 .2em .5em;
+  background: var(--hazard-fine) left / 5px 100% no-repeat;
+}
+.prompt-why::before {
+  content: "";
+  flex: 0 0 auto;
+  align-self: center;
+  width: .82em;
+  height: .82em;
+  background: var(--danger);
+  /* a solid triangle with a knocked-out bar and dot — a mark, not a dingbat */
+  -webkit-mask: var(--ico-hazard) center / contain no-repeat;
+  mask: var(--ico-hazard) center / contain no-repeat;
+}
+/* the approach note is news, not a refusal: it keeps the bar, drops the alarm */
+.prompt-why.is-approach { background: var(--stencil-hi) left / 3px 100% no-repeat; }
+.prompt-why.is-approach::before { background: var(--fg); }
 
 /* ── first-game hints ─────────────────────────────────────────────────── */
 
@@ -653,6 +722,85 @@ body:has(#prompt:not([hidden])) .hints {
     transform: none;
   }
 }
+/* ── the beat feed: a MARKING, not a stack of pills ───────────────────────
+   ROUND-5 REVIEW (five-player@desktop, refusal@desktop). ui/feed.js ships its
+   own injected stylesheet and drew each line as a rounded, bordered, shadowed
+   plate floating over the table — landing squarely on the discard pile. That is
+   §3.7's named pattern ("floating hint pills over the board") reintroduced by
+   this round's own new module, one block after this file removed it from the
+   coach layer.
+
+   Two things are wrong and both are fixed here rather than in ui/feed.js, which
+   this agent does not own (the request to fold this back into that file is in
+   the report):
+
+   1. MATERIAL. A beat is painted on the apron, in the apron's own colour with
+      dashed edges, exactly like .hint-card above — not a plate with a radius
+      and a drop shadow. The weight rail stays, because it is the one thing
+      carrying attack/big/hit in grayscale, but it becomes a hazard-width
+      stencil rule rather than a pill's rounded border.
+   2. PLACE. On desktop it moves off the table entirely, into the ~350×130 of
+      dead concrete inside the dock between the hand bar and the fan — the same
+      empty region this file already parks the coach stencil in, and the one
+      part of that viewport that nothing is ever placed on. The coach stencil
+      steps up above it; the two are the only things in that column.
+
+   These selectors carry an extra class on purpose: ui/feed.js's own rules are
+   `#chud-feed .feed-row` (1,1,0) and are injected into <head> AFTER this
+   stylesheet, so equal specificity would lose the cascade. */
+#chud-feed .feed-stack .feed-row {
+  padding: .3em .6em;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-weight: 700;
+  color: var(--fg);
+  background:
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 3px 100% no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 8px, transparent 8px 14px) 0 0 / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 8px, transparent 8px 14px) 0 100% / 100% 2px no-repeat,
+    var(--ground);
+}
+#chud-feed .feed-stack .feed-row.is-big {
+  background:
+    linear-gradient(var(--foil), var(--foil)) 0 0 / 3px 100% no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 8px, transparent 8px 14px) 0 0 / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 8px, transparent 8px 14px) 0 100% / 100% 2px no-repeat,
+    var(--ground);
+}
+/* a line that happened to YOU is the one that wears hazard material */
+#chud-feed .feed-stack .feed-row.is-hit {
+  color: var(--fg);
+  background:
+    var(--hazard-fine) 0 0 / 5px 100% no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 8px, transparent 8px 14px) 0 0 / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 8px, transparent 8px 14px) 0 100% / 100% 2px no-repeat,
+    var(--ground);
+}
+#chud-feed .feed-stack .feed-you {
+  border-radius: 0;
+  background: var(--danger);
+  color: var(--card-stock);
+  letter-spacing: 0;
+}
+#chud-feed .feed-stack .feed-mark { opacity: 1; color: var(--fg-mute); }
+@media (min-width: 1024px) {
+  /* fixed, not absolute: the host is a height:0 div pinned above #prompt, and
+     the dock is the box this belongs in. Bottom-anchored so the newest line is
+     always the one nearest the hand. */
+  #chud-feed.floaters .feed-stack {
+    position: fixed;
+    left: 13.2em;
+    right: auto;
+    top: auto;
+    bottom: calc(env(safe-area-inset-bottom) + .5em);
+    max-width: 21em;
+  }
+  /* the coach stencil steps up so the two share the column instead of the
+     same 60px of it */
+  .hints { bottom: calc(env(safe-area-inset-bottom) + 5.2em); }
+}
+
 .hint-card.is-in { opacity: 1; transform: translateY(0); }
 .hint-card.is-out { opacity: 0; transform: translateY(.3em); }
 .hint-mark {
@@ -674,6 +822,14 @@ body:has(#prompt:not([hidden])) .hints {
 /* ── settings sheet ───────────────────────────────────────────────────── */
 
 .settings { display: flex; flex-direction: column; gap: .6em; }
+/* MOBILE REVIEW round 5: at 844×390 the sheet body is 246px and this column ran
+   past it, so "How to play" and "Show first-game hints" — the two controls a
+   first-timer is looking for — were below the fold of a sheet nobody knows
+   scrolls. A landscape viewport is short and wide; the list lies down. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3em .9em; }
+  .settings-row { min-height: calc(var(--tap) * .92); }
+}
 .settings-row { display: flex; align-items: center; gap: .7em; min-height: var(--tap); }
 .settings-label {
   flex: 0 0 5em;
@@ -767,7 +923,9 @@ body:has(#prompt:not([hidden])) .hints {
   color: var(--foil-ink);
   padding: .2em .7em;
   border-radius: 2px;
-  border: var(--hairline) solid var(--foil);
+  /* §3.2: a struck plate, not an outlined pill. The brass reads as a rim on
+     the material rather than as a hairline drawn round a chip. */
+  box-shadow: var(--deboss), inset 0 0 0 2px var(--foil);
   background: var(--ground);
   letter-spacing: 0;
   margin-bottom: .5em;
@@ -1234,9 +1392,11 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   align-items: center;
   gap: .3em;
   padding: .16em .45em;
-  border: var(--hairline) solid var(--shade);
+  border: 0;
   border-radius: 2px;
+  /* §3.2 again: a card reference in the log is a stamped plate. */
   background: var(--ground);
+  box-shadow: var(--deboss);
   color: var(--fg);
   font-size: .82em;
   font-weight: 700;
@@ -1247,7 +1407,7 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 }
 .jr-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (hover: hover) {
-  .jr-card:hover { border-color: var(--accent); color: var(--fg); }
+  .jr-card:hover { box-shadow: var(--deboss), inset 0 0 0 2px var(--accent); color: var(--fg); }
 }
 
 .jr-panel { display: flex; flex-direction: column; gap: .4em; min-width: 0; }
@@ -1362,9 +1522,15 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent);
-  mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent);
-  padding-bottom: 1.1em;
+  /* ROUND-5 REVIEW (win-recap@desktop): the fade and the sticky button were
+     fighting for the same 1.1em. The button is `align-self: flex-start`, so it
+     covered the LEFT third of the row underneath it and the fade greyed the
+     rest — a half-sentence with a control parked on top of it, on the most
+     celebratory screen in the game. It read as a z-index accident because it
+     was one. The mask goes: a sticky footer that spans the column IS the
+     bottom edge, and its own top rule says content passes under it. */
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 .win-summary::-webkit-scrollbar { width: 5px; }
 .win-summary::-webkit-scrollbar-thumb { background: var(--fg-mute); border-radius: 999px; }
@@ -1373,12 +1539,19 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 .jr-list.is-recap { max-height: none; overflow: visible; }
 /* MEASURED (touchtest, `finished`): "Open the full log" is the last thing in the
    recap, so once the recap became the scroll region the button measured 186×0
-   reachable — the owner's own bug report twice over. It rides the bottom. */
+   reachable — the owner's own bug report twice over. It rides the bottom, and
+   it rides the WHOLE bottom: full width, opaque, with the apron's own hairline
+   above it, so a row scrolling under it is a scroll and not a collision. */
 .win-summary .jr-more {
   position: sticky;
   bottom: 0;
   z-index: 2;
+  align-self: stretch;
+  width: 100%;
+  margin-top: .25em;
+  border-radius: 0;
   background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--fg-mute), 0 -1px 0 var(--shade-2);
 }
 
 /* The card's NAME, under its mini face. At the mini tier table.css degrades the

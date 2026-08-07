@@ -123,6 +123,21 @@ function endingCopy(snap) {
         + 'the moment it happens — there was no window to break it.',
     };
   }
+  // MD Faithful is NOT Final Approach with a different name: game.js
+  // checkpointThreshold() (441-443) returns 1 for 'mdFaithful' and activeCount(state)
+  // for 'finalApproach'. The grace window is ONE turn — your own next one — not a
+  // full lap of the table, so "held it through the whole grace window" described a
+  // wait that never happened. Verified: under mdFaithful an armed seat converts at
+  // the start of its very next own turn.
+  if (active.winRule === 'mdFaithful') {
+    return {
+      title: mine ? 'MISSION ACCOMPLISHED' : `${seatName(winner)} WINS`,
+      tag: 'DECLARED ON THEIR OWN TURN',
+      reason: `Completed ${active.setsToWin} sets and declared at the start of their own next `
+        + 'turn, the way Monopoly Deal is written. The table had that one turn to break the '
+        + 'sets, and did not.',
+    };
+  }
   return {
     title: mine ? 'MISSION ACCOMPLISHED' : `${seatName(winner)} WINS`,
     tag: 'FINAL APPROACH HELD',
@@ -319,4 +334,26 @@ export function mount() {
   const syncFromHash = () => { if (location.hash === '#help') help.show(); else if (sheetOpen()) closeSheet(); };
   window.addEventListener('hashchange', syncFromHash);
   if (location.hash === '#help') queueMicrotask(() => syncFromHash());
+
+  /* ── long-press an opponent board → who is that? ────────────────────────
+   *
+   * The bot personalities were reachable only from the lobby's add-bot <select>,
+   * so after launch nothing on any screen said what a WILDCARD does. table/
+   * layout.js now prints the label in the board head and stamps `data-bot`; this
+   * is the long form.
+   *
+   * `contextmenu` IS the long-press on touch and the right-click on desktop, and
+   * using it costs no new control: interact/lib audit measures every `button` and
+   * `[data-action]` against the 44px floor, and a tag in a 12px board head cannot
+   * meet it. The default menu is suppressed only when there is actually a bot
+   * brief to show, so a long-press on a human board still behaves normally.
+   */
+  document.addEventListener('contextmenu', (e) => {
+    const board = e.target?.closest?.('.board[data-player]');
+    if (!board) return;
+    const brief = help.botBrief(board.dataset.player);
+    if (!brief) return;
+    e.preventDefault();
+    screens.openSheet(brief.title, brief.body);
+  });
 }

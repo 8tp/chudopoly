@@ -330,9 +330,21 @@
   --rail: color-mix(in oklab,
           var(--band, var(--fg-mute)) calc(100% - var(--rail-lift)),
           var(--fg) var(--rail-lift));
-  /* the mat wash: same hue as the rail, laid over the surface it sits in */
-  --mat-alpha: 14%;
+  /* the mat wash: same hue as the rail, laid over the surface it sits in.
+     ROUND-5, MEASURED and this supersedes §2's published 14%/22%. Sampled off
+     mid-game@desktop-light at 14% over the L*70 plate, the ten mats came back:
+         Drone  175,164,146   T&E  177,165,146   Fighters 180,163,148
+         Mobility/Overseas/Intelligence within 4 of the same taupe
+     — six sets rendering as ONE colour, which makes the glyph the only channel
+     and leaves an occupied mat (whose name this file's caps budget had removed)
+     with no set identity at all. §2's 14% was derived against the near-white
+     surface the light theme had BEFORE the furniture stepped down to L*70; a
+     wash is a fraction of the distance between the plate and the hue, and that
+     distance halved. 32% restores the separation the number was buying.
+     Dark keeps a lower figure because the night plate (L*30) is far from every
+     set hue already; 26% is one step for parity, not a rescue. */
+  --mat-alpha: 32%;
 }
-@media (prefers-color-scheme: dark) { :root { --mat-alpha: 22%; } }
-:root[data-theme="light"] { --mat-alpha: 14%; }
-:root[data-theme="dark"]  { --mat-alpha: 22%; }
+@media (prefers-color-scheme: dark) { :root { --mat-alpha: 26%; } }
+:root[data-theme="light"] { --mat-alpha: 32%; }
+:root[data-theme="dark"]  { --mat-alpha: 26%; }

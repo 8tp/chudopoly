@@ -86,9 +86,11 @@ test('host rematch preserves the room roster and creates a fresh game', () => {
 });
 
 // The lobby's pending ruleset must not fight the rule that a rematch keeps the ruleset the
-// table just played. `set_rules` is lobby-only, so pendingRules cannot be changed once a
-// game exists; startRoomGame re-points it at room.rules on every launch, so the field the
-// broadcast carries stays the LIVE ruleset through any number of rematches.
+// table just played. `set_rules` is refused while a game is LIVE, and startRoomGame re-points
+// pendingRules at room.rules on every launch — so pendingRules === rules unless the host has
+// deliberately picked something else since the game ended (which they now can: a finished
+// room is configurable again). Rematch therefore launches pendingRules: sticky by default,
+// and never a picker that says one thing while the table plays another.
 test('a rematch replays the agreed ruleset, and the broadcast never reports a stale one', () => {
   const ws = { readyState:1, send() {} };
   const players = [

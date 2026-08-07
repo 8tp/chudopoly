@@ -16,6 +16,8 @@ import {
   RENT_COUNTS, colorName, opsecFlag, DECK_CYCLE_LIMIT, deckCycleNotice,
 } from '../core/cards.js';
 import { activeRules, winRuleSummary, WIN_RULE_NAMES } from './ruleset.js';
+import { BOT_LABEL, BOT_BLURB, BOT_ORDER, botLabel, botBlurb } from '../core/bots.js';
+import { store } from '../state/store.js';
 
 /* ── small builders ──────────────────────────────────────────────────────── */
 
@@ -88,11 +90,15 @@ function ruleBadge(active) {
 function breakBullets() {
   return bullets([
     // playAction 'chud' (game.js:1173) is the ONLY steal left with no
-    // zoneRequisitionable guard, and nothing goes back the other way.
+    // zoneRequisitionable guard, and nothing goes back the other way. It is NOT
+    // the only card that can be pointed at a complete set — Inspector General
+    // (game.js:1082) REQUIRES one — so the claim is card-vs-set, not touch-at-all.
     'THE CHUD CARD — takes a property straight out of a complete set and gives nothing '
-    + 'back. Since §3.1 it is the only card in the deck that can reach into one at all.',
-    // executeEntry 'steal_set'.
-    'Inspector General — seizes the whole set, Upgrade and FOC included.',
+    + 'back. It is the only card that can pull ONE card out of a set and break it.',
+    // playAction 'inspector_general' (game.js:1082) refuses anything that is not
+    // already a complete set: "That set is not complete". executeEntry 'steal_set'.
+    'Inspector General — seizes the whole set, Upgrade and FOC included. It can ONLY be '
+    + 'aimed at a set that is already complete; an unfinished colour refuses it.',
     // processPayment: propCards come out of properties, then syncSets(payer).
     // Upgrades are payable now, so a big enough charge can also strip those.
     'Charge them more than their bank covers, so they must pay with a set card.',
@@ -361,6 +367,14 @@ function pageSets() {
         + 'another for free — it costs no play. The destination must already be a complete '
         + 'set, an FOC needs an Upgrade waiting there, and an Upgrade cannot leave its own '
         + 'FOC stranded behind it.'],
+      // The same invariant, the other way round. moveUpgrade() REFUSES to strand an
+      // FOC; normalizeUpgrades() (game.js:806-830) does not refuse a payment, it
+      // banks the FOC behind the Upgrade you spent. Stating only the refusal read
+      // as a promise that the FOC is safe.
+      ['An FOC never stands alone',
+        'That rule has a second half: nothing REFUSES a payment made with the Upgrade under '
+        + 'an FOC. The Upgrade goes to whoever charged you and the FOC drops into your own '
+        + 'bank behind it, so the set keeps standing at 7M less rent.'],
       ['Wilds', 'A two-colour wild counts as either of its colours. The "any" wild counts as '
         + 'every colour but is worth 0M — that is what you pay for it.'],
       // receiveProperty(): `ordered` puts preferredColor first — every caller
@@ -408,6 +422,16 @@ function pagePaying() {
         'Any Upgrade or FOC standing on that set then falls into your bank at face value — '
         + 'you keep the money, you lose the rent. And the break can end a final approach, '
         + 'yours or theirs.'],
+      // normalizeUpgrades() (game.js:806-830), reached from processPayment()'s
+      // upgradeCards path. An FOC may not stand without an Upgrade beneath it, and
+      // that rule fires on a PAYMENT as well as on a break. Measured: complete
+      // Command + Upgrade + FOC charges 15M; pay 3M with the Upgrade and it charges
+      // 8M with the set still complete — the FOC is in your own bank.
+      ['Pay with an Upgrade and its FOC comes off too',
+        'An FOC cannot stand on a set with no Upgrade under it. Hand the Upgrade over and the '
+        + 'engine banks the FOC behind it at face value — the set stays complete, but you have '
+        + 'given up 7M of rent to settle a 3M bill. Pay with something else if the set is '
+        + 'earning.'],
       // upgradeCards path in processPayment (game.js:1467-1479): upgradeType and
       // placedColor are stripped, so it arrives as an ordinary card.
       ['An Upgrade you pay with stops being an Upgrade',
@@ -649,6 +673,49 @@ function pageControls() {
   ];
 }
 
+/* ── page: the bots ──────────────────────────────────────────────────────── */
+
+/**
+ * WHO YOU ARE PLAYING, answerable AFTER launch.
+ *
+ * The five personalities existed only in the lobby's add-bot dropdown blurb —
+ * host-only, one-mode-at-a-time, and gone the instant the game started. So the
+ * single most common in-game question about the opposition ("why does Reaper
+ * never block anything?") had no answer on any screen in the game. core/bots.js
+ * is the one source; ui/lobby.js prints the seated bot's line on its seat row and
+ * ui/overlays.js long-press opens this page's entry for one board.
+ */
+function pageBots() {
+  const seated = (store.room?.players || []).filter(x => x.isBot);
+  const out = [
+    p('Every bot plays the same rules you do. What changes is how hard it hits, what it '
+      + 'bothers to block, and how fast it thinks.', 'brief-lede'),
+  ];
+  if (seated.length) {
+    out.push(el('h5', { class: 'brief-sub', text: 'At this table' }));
+    out.push(rules(seated.map(x => [`${x.name} — ${botLabel(x.botMode)}`, botBlurb(x.botMode)])));
+    out.push(el('h5', { class: 'brief-sub', text: 'Every personality' }));
+  }
+  out.push(rules(BOT_ORDER.map(mode => [BOT_LABEL[mode], BOT_BLURB[mode]])));
+  out.push(note('A seat a player leaves mid-game is taken over by a bot, and the server picks '
+    + 'its personality. The board says which one — long-press an opponent board to read it.'));
+  return out;
+}
+
+/** One bot's entry, for the long-press on their board. */
+export function botBrief(playerId) {
+  const seat = (store.room?.players || []).find(x => x.id === playerId) || null;
+  if (!seat?.isBot) return null;
+  return {
+    title: `${seat.name} — ${botLabel(seat.botMode)}`,
+    body: el('div', { class: 'details' }, [
+      el('p', { class: 'details-kind', text: 'Bot opponent' }),
+      el('p', { class: 'details-rule', text: botBlurb(seat.botMode) }),
+      note('All five personalities are in the brief under Bots.'),
+    ]),
+  };
+}
+
 /* ── the sheet ───────────────────────────────────────────────────────────── */
 
 const PAGES = [
@@ -659,6 +726,7 @@ const PAGES = [
   { id: 'cards', tab: 'Cards', title: 'Every action card', build: pageCards },
   { id: 'opsec', tab: 'OPSEC', title: 'OPSEC chains', build: pageOpsec },
   { id: 'endings', tab: 'Endings', title: 'How games end', build: pageEndings },
+  { id: 'bots', tab: 'Bots', title: 'Who you are playing', build: pageBots },
   { id: 'controls', tab: 'Controls', title: 'Controls', build: pageControls },
 ];
 

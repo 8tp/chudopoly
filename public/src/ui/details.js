@@ -11,7 +11,7 @@ import { store, selfPlayer } from '../state/store.js';
 import * as sel from '../state/selectors.js';
 import {
   COLORS, COLOR_KEYS, cardName, cardText, colorName, rentFor, setSize,
-  opsecFlag, isPropertyCard, upgradeKinds,
+  opsecFlag, isPropertyCard, upgradeKinds, isComplete,
 } from '../core/cards.js';
 import { openSheet } from './screens.js';
 
@@ -87,15 +87,27 @@ function propertyContext(card) {
       ? 'any colour' : card.colors.map(colorName).join(' or ')));
   }
   const colors = color ? [color] : (card.colors?.[0] === 'any' ? COLOR_KEYS : card.colors || []);
+  // COMPLETE is the SET question, and `held >= size` is not it. game.js zoneIsSet()
+  // (351-356) takes at least one real property when `pureSetRequired` is on (the MD
+  // Faithful preset), so a full zone of nothing but wilds is a full zone and NOT a
+  // set. Measured: two "any" wilds in Command printed "Command 2/2 — COMPLETE ·
+  // rent 8M" while the engine's completedSets for that seat was 0.
+  const rules = sel.activeRuleFlags();
   for (const c of colors) {
     const held = me?.properties?.[c]?.length || 0;
     if (!color && !held) continue;                       // don't list ten empty columns
     const size = setSize(c);
-    const done = held >= size;
+    const done = isComplete(me, c, rules);
+    const full = held >= size;
     out.push(row(`${colorName(c)}`,
       done ? `${held}/${size} — COMPLETE · rent ${rentFor(me, c)}M`
-        : `${held}/${size} · rent ${rentFor(me, c) || 0}M`,
-      done ? 'good' : ''));
+        : full
+          // The state that has no name on the board: nothing more fits, and it is
+          // still not a set. Say WHY, because the rule is a lobby toggle and the
+          // player may not know it is on.
+          ? `${held}/${size} — FULL, not a set: needs one real property · rent ${rentFor(me, c)}M`
+          : `${held}/${size} · rent ${rentFor(me, c) || 0}M`,
+      done ? 'good' : (full ? 'bad' : '')));
   }
   return out;
 }
@@ -165,13 +177,18 @@ function actionContext(card) {
       break;
     }
     case 'surge_ops': {
-      // §3.1c: it stacks, and playAction never refuses a second copy.
+      // §3.1c: it stacks, and playAction never refuses a second copy. The Effect row
+      // used to be hard-coded "x2" and sat two lines above "makes it x8" — so the
+      // sheet contradicted itself on the one card whose whole point is that it
+      // stacks. It states what playing THIS copy would actually do, from the live
+      // stack: chargeAmount() (game.js:994-1000) multiplies by 2**stack.
       const n = Number(store.snapshot?.surgeOps) || 0;
-      out.push(row('Effect', 'your next RENT this turn is x2 — rent only, not Finance Office '
-        + 'or Roll Call'));
+      const next = 2 ** (n + 1);
+      out.push(row('Effect', `play it and your next RENT this turn is x${next} — rent only, `
+        + 'not Finance Office or Roll Call', n ? 'hot' : ''));
       if (n) {
         out.push(row('Already running', `${n} stacked (x${surgeMultiplier()}) — `
-          + `playing this one makes it x${2 ** (n + 1)}`, 'hot'));
+          + `playing this one makes it x${next}`, 'hot'));
       }
       break;
     }

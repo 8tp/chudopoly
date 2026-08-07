@@ -22,16 +22,45 @@ function broadcastRoom(room) {
     // broadcast, so this is the one hook that catches all of them. It records at most once
     // per game and can never throw into the room.
     require('./gamelog').recordFinished(room, G);
+
+    // …and the same hook is the one place that can honestly say "this table is no longer
+    // playing". `room.phase` went to 'playing' in startRoomGame and was NEVER reset, so a
+    // room was frozen at its first ruleset for life: after one game `set_rules`, `add_bot`,
+    // `remove_bot` and `kick` were all permanently refused and `rematch` silently re-used
+    // room.rules. Trying Blitz after one Chudopoly game meant dissolving the room and
+    // re-inviting everybody — which defeats the entire point of the lobby's picker.
+    //
+    // A FINISHED game is not a LIVE game. The round-2 guard that stops `start_game` wiping a
+    // game in progress keys off this same flag, and it keeps working exactly as measured:
+    // room.phase only returns to 'lobby' once room.state.phase has left 'playing', so a live
+    // table is still unconfigurable and still un-restartable.
+    if (room.state.phase !== 'playing' && room.phase === 'playing') {
+      room.phase = 'lobby';
+      console.log(`[ROOM] ${room.code} game finished — room is configurable again`);
+    }
   }
   const timerInfo = room.turnTimeout > 0 && room.turnStartedAt
     ? { timeout: room.turnTimeout, startedAt: room.turnStartedAt }
     : null;
-  const responseTimerInfo = room.responseTimeout > 0 && room.responseStartedAt
-    ? { timeout: room.responseTimeout, startedAt: room.responseStartedAt }
-    : null;
+  // The answer clock is PER SEAT, because the deadlines are (see server/timers.js). A single
+  // room-level `startedAt` was a lie the moment a pending action owed answers from more than
+  // one player: one target answering restamped it, and the two seats who had done nothing
+  // watched their countdown jump back to full. Each seat is now shown the clock it is
+  // actually running against; a seat that owes nothing is shown the next deadline the TABLE
+  // is waiting on, which is the honest answer to "how long until something happens".
+  const timers = require('./timers');
+  const fallbackResponseAt = room.responseTimeout > 0 ? (room.responseStartedAt || null) : null;
+  const responseTimerFor = (pid) => {
+    if (!(room.responseTimeout > 0)) return null;
+    const startedAt = timers.responseDeadlineFor(room, pid)
+      ?? timers.earliestResponseDeadline(room)
+      ?? fallbackResponseAt;
+    return startedAt ? { timeout: room.responseTimeout, startedAt } : null;
+  };
   room.players.forEach(p => {
     if (p.ws?.readyState === 1) {
       const view = room.state ? G.getPlayerView(room.state, p.id) : null;
+      const responseTimerInfo = responseTimerFor(p.id);
       p.ws.send(JSON.stringify({
         type: 'state', code: room.code,
         phase: room.phase,

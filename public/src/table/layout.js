@@ -6,7 +6,10 @@
 // turn never touches this code and never orphans a card node mid-FLIP.
 
 import { el, clear, setText, setAttr, setClass } from '../core/dom.js';
-import { COLORS, COLOR_KEYS } from '../core/cards.js';
+import { COLORS, COLOR_KEYS, isComplete } from '../core/cards.js';
+import { botLabel } from '../core/bots.js';
+import { store } from '../state/store.js';
+import * as sel from '../state/selectors.js';
 
 const zones = new Map();          // zoneKey -> element
 const boards = new Map();         // playerId -> board element
@@ -154,6 +157,15 @@ function buildBoard(player, isSelf) {
 
   const head = el('div', { class: 'board-head' }, [
     el('span', { class: 'board-name', text: player.name || '' }),
+    // WHO IS THIS. server/broadcast.js ships `isBot`/`botMode` on every room
+    // player, in the lobby AND for the whole game — the client simply never read
+    // it once the table was up, so a seat called "Reaper" that never blocks
+    // anything was indistinguishable from a human who never blocks anything.
+    // A SPAN, not a button: tools/lib/audit.mjs measures every `button`/
+    // `[data-action]` against the 44px floor and a 12px tag in a board head is a
+    // gate failure, not an affordance. The full personality is one long-press
+    // away (ui/overlays.js botBriefFromEvent) and always in ? → Bots.
+    el('span', { class: 'board-bot', attrs: { hidden: true } }),
     el('span', { class: 'board-sets', text: '0/3' }),
     el('span', { class: 'board-worth', text: '0M' }),
   ]);
@@ -208,6 +220,21 @@ export function paintBoard(player, snapshot) {
   const board = boards.get(player.id);
   if (!board) return;
   setText(board.querySelector('.board-name'), player.name);
+  // The seat's nature, from the ROOM list (getPlayerView carries no `isBot`; the
+  // `state` frame's `players` array does, for the whole game). `data-bot` is also
+  // what ui/overlays.js's long-press reads to open that bot's brief.
+  const seat = (store.room?.players || []).find(x => x.id === player.id) || null;
+  const botTag = board.querySelector('.board-bot');
+  if (botTag) {
+    if (seat?.isBot) {
+      setText(botTag, botLabel(seat.botMode));
+      botTag.hidden = false;
+      setAttr(board, 'data-bot', seat.botMode || 'bot');
+    } else {
+      botTag.hidden = true;
+      setAttr(board, 'data-bot', null);
+    }
+  }
   setText(board.querySelector('.board-sets'), `${player.completedSets}/${snapshot.setsToWin || 3} SETS`);
   setText(board.querySelector('.board-worth'), `${player.netWorth}M`);
   setClass(board, 'is-turn', snapshot.currentPlayerId === player.id && snapshot.phase === 'playing');
@@ -221,13 +248,29 @@ export function paintBoard(player, snapshot) {
   setClass(board, 'is-out', !!player.eliminated);
   setClass(board, 'is-winner', snapshot.winner === player.id);
 
+  // `is-complete` is the SET badge, and a set is not a full zone.
+  //
+  // MEASURED under MD Faithful: two "any" wilds in Command is a full 2/2 zone that
+  // game.js zoneIsSet() (351-356) refuses, because `pureSetRequired` takes at least
+  // one real property. The engine's own `completedSets` beside it on this very board
+  // read 0/3 SETS while this column read "2/2" with the complete treatment on it —
+  // the number and the swatch it labels, disagreeing, six pixels apart.
+  //
+  // isComplete() is the client mirror of zoneIsSet(); ui/overlays.js already counts
+  // the win screen's swatches with it, and this is the same question asked of the
+  // same board, so it is asked the same way.
+  const rules = sel.activeRuleFlags();
   for (const color of COLOR_KEYS) {
     const col = board.querySelector(`.propcol[data-color="${color}"]`);
     if (!col) continue;
     const cards = player.properties?.[color] || [];
     const size = COLORS[color].size;
     setAttr(col, 'data-empty', cards.length === 0 ? '1' : null);
-    setClass(col, 'is-complete', cards.length >= size);
+    setClass(col, 'is-complete', isComplete(player, color, rules));
+    // A zone that is FULL but not a set is its own state, and it is the one a player
+    // has to be told about: nothing more can be played there and it still is not a
+    // set. Without it the column just reads 2/2 and looks like a bug.
+    setClass(col, 'is-fullnotset', cards.length >= size && !isComplete(player, color, rules));
     setText(col.querySelector('.propcol-count'), `${cards.length}/${size}`);
   }
 }

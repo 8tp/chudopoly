@@ -511,6 +511,112 @@ test('the whole ruleset is sticky across a rematch', async () => {
   host.close();
 });
 
+/* ── a finished game is not a live game ──────────────────────────────── */
+//
+// `room.phase` went to 'playing' in startRoomGame and was never reset, so a room was frozen
+// at its first ruleset for life: after one game `set_rules`, `add_bot`, `remove_bot` and
+// `kick` were all permanently refused and `rematch` silently replayed room.rules. Wanting to
+// try Blitz after one Chudopoly game meant dissolving the room and re-inviting everyone.
+// The guard that must NOT regress is the other half of the same flag: a game actually in
+// progress stays unconfigurable and un-restartable.
+
+test('a live game is unconfigurable, and a finished one hands the room back', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'Reconfig' });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  assert.ok(joined);
+  send(host, { type: 'add_bot', mode: 'neutral' });
+  await sleep(150);
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30, preset: 'chudopoly' });
+  const first = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  assert.equal(first.game.rules.preset, 'chudopoly');
+
+  // ── while it is LIVE: every configuration command is still refused ──
+  const botId = first.players.find(p => p.isBot).id;
+  for (const [msg, pattern] of [
+    [{ type: 'set_rules', preset: 'blitz' }, /rules during a game/],
+    [{ type: 'add_bot', mode: 'neutral' }, /bots during a game/],
+    [{ type: 'remove_bot', targetId: botId }, /bots during a game/],
+    [{ type: 'kick', targetId: botId }, /during a game/],
+    [{ type: 'start_game' }, /already under way/],
+  ]) {
+    host._messages.length = 0;
+    send(host, msg);
+    const err = await waitFor(host, m => m.type === 'error' && pattern.test(m.message), 1500);
+    assert.ok(err, `${msg.type} must still be refused mid-game`);
+  }
+  const live = host._messages.filter(m => m.type === 'state').pop()
+    || first;
+  assert.equal(live.game.rules.preset, 'chudopoly', 'and nothing about the live game changed');
+
+  // ── end it: scooping out of a 2-seat table leaves the bot last standing ──
+  send(host, { type: 'scoop' });
+  const finished = await waitFor(host, m => m.type === 'state' && m.game?.phase === 'finished', 4000);
+  assert.ok(finished, 'the game reached an ending');
+  assert.equal(finished.phase, 'lobby', 'the room announces that it is configurable again');
+
+  // ── now the picker, the bots and the roster all work again ──
+  host._messages.length = 0;
+  send(host, { type: 'set_rules', preset: 'blitz' });
+  const ruled = await waitFor(host, m => m.type === 'state' && m.rules?.preset === 'blitz', 2000);
+  assert.ok(ruled, 'the rules picker is usable after a game');
+  send(host, { type: 'add_bot', mode: 'aggressive' });
+  const grown = await waitFor(host, m => m.type === 'state' && m.players.length === 3, 2000);
+  assert.ok(grown, 'and so is the bot roster');
+  assert.equal(host._messages.some(m => m.type === 'error'), false, 'with no refusals at all');
+
+  // ── and Rematch plays what the picker now says, instead of the old ruleset ──
+  host._messages.length = 0;
+  send(host, { type: 'rematch' });
+  const again = await waitFor(host, m => m.type === 'state' && m.game?.phase === 'playing', 4000);
+  assert.ok(again, 'rematch started');
+  assert.equal(again.game.rules.preset, 'blitz', 'the NEW ruleset is what launched');
+  assert.equal(again.phase, 'playing', 'and the room is locked down again while it runs');
+  assert.equal(again.game.players.length, 3, 'the seat added between games is dealt in');
+
+  send(host, { type: 'leave_room' });
+  host.close();
+});
+
+test('a seat can still be reclaimed with its token after the game has finished', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'ComeBack' });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  send(host, { type: 'add_bot', mode: 'neutral' });
+  await sleep(150);
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30 });
+  await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  send(host, { type: 'scoop' });
+  assert.ok(await waitFor(host, m => m.type === 'state' && m.game?.phase === 'finished', 4000));
+  host.close();
+  await sleep(150);
+
+  // The room is back in 'lobby', and the seat is still on the roster — so the reclaim path
+  // has to be tried BEFORE the "that call sign is already in use" check, or a player who
+  // blinked at the end of a game could never get back into their own room.
+  const back = await openClient();
+  send(back, {
+    type: 'join_room', code: joined.code, name: 'ComeBack',
+    playerId: joined.playerId, resumeToken: joined.resumeToken,
+  });
+  const rejoined = await waitFor(back, m => m.type === 'joined', 2000);
+  assert.ok(rejoined, 'the token got the seat back');
+  assert.equal(rejoined.playerId, joined.playerId, 'the same seat, not a second one');
+  const view = await waitFor(back, m => m.type === 'state', 2000);
+  assert.equal(view.players.length, 2, 'and no duplicate seat was created');
+
+  // A wrong token still buys nothing.
+  const thief = await openClient();
+  send(thief, {
+    type: 'join_room', code: joined.code, name: 'Thief',
+    playerId: joined.playerId, resumeToken: 'x'.repeat(43),
+  });
+  const stolen = await waitFor(thief, m => m.type === 'joined', 1200);
+  assert.ok(!stolen || stolen.playerId !== joined.playerId, 'a wrong token never gets that seat');
+  send(back, { type: 'leave_room' });
+  back.close(); thief.close();
+});
+
 /* ── owner directive: automatic turn draw over the wire ──────────────── */
 
 test('a reconnecting player never draws twice and never sees a draw phase', async () => {

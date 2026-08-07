@@ -302,12 +302,18 @@ function handleMessage(ws, msg, state) {
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
       if (!room) { broadcast.send(ws, { type: 'error', message: 'Room not found' }); break; }
-      if (room.phase !== 'lobby') {
-        const dc = findClaimableSeat(room, msg.playerId, msg.resumeToken);
-        if (!dc) {
-          broadcast.send(ws, { type: 'error', message: 'Game in progress. This browser does not have the private resume key for that seat.' });
-          break;
-        }
+      // Reclaiming a seat you hold the private token for is tried FIRST, in every phase.
+      // It used to be reachable only while room.phase !== 'lobby', which was harmless while
+      // a room never left 'playing' — but a room that correctly returns to the lobby when
+      // its game ends would then answer a legitimate reconnect with "That call sign is
+      // already in use", because the seat is still on the roster. Same credential gate, same
+      // refusals; only the order changed.
+      const dc = findClaimableSeat(room, msg.playerId, msg.resumeToken);
+      if (!dc && room.phase !== 'lobby') {
+        broadcast.send(ws, { type: 'error', message: 'Game in progress. This browser does not have the private resume key for that seat.' });
+        break;
+      }
+      if (dc) {
         if (dc.ws?.readyState === 1) { broadcast.send(ws, { type: 'error', message: 'That player is already connected' }); break; }
         dc.ws = ws;
         reclaimFromBot(room, dc, code, 'rejoin');
@@ -451,7 +457,10 @@ function handleMessage(ws, msg, state) {
         broadcast.send(ws, { type: 'error', message: 'Only host can change the rules' });
         break;
       }
-      // Lobby-only, matching start_game: the ruleset of a table already in play is fixed.
+      // Refused only while a game is actually LIVE — the ruleset of a table in play is
+      // fixed. `room.phase` returns to 'lobby' the moment a game finishes (see
+      // server/broadcast.js), so the picker, the bot buttons and kick all come back for the
+      // next game instead of the room being frozen at its first ruleset for life.
       if (room.phase !== 'lobby') {
         broadcast.send(ws, { type: 'error', message: 'Cannot change the rules during a game' });
         break;
@@ -496,7 +505,13 @@ function handleMessage(ws, msg, state) {
       if (!room || room.hostId !== playerId) { broadcast.send(ws, { type: 'error', message: 'Only host can start a rematch' }); break; }
       if (room.state?.phase !== 'finished') { broadcast.send(ws, { type: 'error', message: 'Current game is not finished' }); break; }
       timers.clearTurnTimer(room);
-      startRoomGame(room, room.turnTimeout, room.responseTimeout);
+      // Sticky by default and re-pickable on purpose. startRoomGame re-points pendingRules
+      // at whatever launched, so pendingRules === rules unless the host has actually chosen
+      // something else since the game ended — which they now can, because the room is back
+      // in a configurable state. Passing it makes Rematch honour that choice instead of
+      // silently replaying the old ruleset under a picker that says otherwise.
+      startRoomGame(room, room.turnTimeout, room.responseTimeout,
+        room.pendingRules ? { ...room.pendingRules } : undefined);
       console.log(`[GAME] ${roomCode} rematch started`);
       break;
     }

@@ -31,6 +31,31 @@ import { cueEl, CUE } from './cues.js';
 
 const MAX_STEP = 600;                    // §10 — nothing uninterruptible over 600ms
 
+/* ── "the felt now shows THIS state" (§P9 FEEL round 3) ────────────────────
+ *
+ * CHOREO_IDLE means "the queue is empty". On a five-seat table of `chud` bots
+ * (300–800ms plays) the queue is NEVER empty, so every surface that waited for
+ * idle before it was allowed to speak simply stopped speaking: measured with
+ * 250ms between broadcasts, #hud-turn was stuck on DEALING for 98.0% of the
+ * game and its longest single stale run was 31,857ms.
+ *
+ * The honest sync point was already here and was not published. runJobAsync
+ * ends with table.reconcile(job.snapshot), and reconcile is the moment the felt
+ * is made to EQUAL that snapshot — every card in its zone, every board seated.
+ * So after it, "the table is showing job.snapshot" is not an estimate, it is
+ * the definition of what reconcile just did.
+ *
+ * Emitting it costs nothing and gives the header a third option between the two
+ * bad ones: not the store's snapshot (the future — that is the spoiler this
+ * hold exists to prevent) and not an idle that never comes, but the newest
+ * state that has actually been PERFORMED. Lag is therefore bounded by one job
+ * rather than by the length of the game.
+ *
+ * core/bus.js is architect-owned; the channel follows the same "string literal
+ * until the constant exists" pattern ui/peek.js and interact/drag.js use.
+ */
+export const CHOREO_SETTLED = EVENTS.CHOREO_SETTLED || 'choreo:settled';
+
 /* Measured on the seeded playtest game (CHUD_SEED=1337, desktop 1280×720):
    the numbers are "the queue may move on", and each is the point where the
    card that matters has landed or is unambiguously on its way.
@@ -146,6 +171,7 @@ export function enqueue(snapshot, events, opts = {}) {
   if (!events || events.length === 0) {
     if (running) { queue.push({ snapshot, events: [] }); return; }
     table.reconcile(snapshot, { count: true, animate: false });
+    bus.emit(CHOREO_SETTLED, snapshot);
     return;
   }
   if (instant) { runJob({ snapshot, events }); return; }
@@ -231,12 +257,29 @@ async function runJobAsync(job) {
     // finishes in 120ms, so holding the queue for a 480ms steal would leave a
     // player who asked for less motion staring at a table that has stopped for
     // no visible reason. 140ms still separates one beat's cue from the next.
+    //
+    // AND IT COMPRESSES WHEN IT IS BEHIND (§P9 FEEL round 3). Backpressure used
+    // to be all-or-nothing: perform at full length until three jobs are stacked
+    // up, then throw two of them away. In between, the table played every beat
+    // at its leisurely best while falling further behind the server — which is
+    // the whole of the header's residual lag on a fast table, and it is also
+    // why the felt could sit a second behind a five-seat bot game.
+    //
+    // With a job already waiting, the beats play at half length (never under
+    // 45ms, which is above audio's 26ms rate floor, so nothing is deleted from
+    // the mix). Nothing is skipped and no claim changes — only the pacing —
+    // and it reverts the moment the queue drains.
+    const behind = queue.length >= 1;
     const step = table.reducedMotion()
       ? Math.min(140, stepFor(ev))
-      : Math.min(MAX_STEP, stepFor(ev));
+      : behind
+        ? Math.max(45, Math.min(MAX_STEP, stepFor(ev)) * 0.5)
+        : Math.min(MAX_STEP, stepFor(ev));
     if (step > 0) await wait(step);
   }
   table.reconcile(job.snapshot, { expected, count: true, animate });
+  // The felt is now this snapshot, by construction. See CHOREO_SETTLED.
+  bus.emit(CHOREO_SETTLED, job.snapshot);
 }
 
 function runJob(job) {
@@ -246,6 +289,7 @@ function runJob(job) {
     bus.emit(EVENTS.CHOREO_EVENT, ev);
   }
   table.reconcile(job.snapshot, { expected, count: true, animate: false });
+  bus.emit(CHOREO_SETTLED, job.snapshot);
 }
 
 function stepFor(ev) {

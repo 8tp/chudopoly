@@ -61,8 +61,21 @@
   /* shrink priority: when the apron is short, the seats and the piles give way
      and YOUR mat keeps its height. */
   flex: 0 4 auto;
-  min-height: calc(var(--s) * 5.4);
+  /* ROUND-5, MEASURED at 390×844: the strip shrank to 112px around a 161px
+     seat, so every phone shot cut the opponents' property row exactly where
+     the mat captions end and the cards begin — the "counter caps visible with
+     the cards gone" the review named. 11.6s = 166px is ONE WHOLE SEAT with the
+     one-row property line; the second seat is then a scroll, which is an
+     honest thing for a strip to be and a sliced card is not. The 20px this
+     costs comes off .table-center below, not off your own board. */
+  min-height: calc(var(--s) * 12.5);
   max-height: 50%;
+  /* MOBILE REVIEW round 5: "the seat header is the first thing to leave the
+     window, so a scrolled rail shows unattributed property columns". With a
+     one-row property line every seat is the same height, so the scroll can be
+     made to land ON seat boundaries — a flick reveals a WHOLE seat, nameplate
+     and bank total included, rather than the bottom two thirds of one. */
+  scroll-snap-type: y proximity;
   /* start, not stretch: a stretched seat is shorter than its own content when
      the strip is capped, and the rows inside then get squeezed — which sliced
      every opponent's cards at ~40% height (measured .board-props
@@ -161,7 +174,9 @@
   white-space: nowrap;
 }
 .board-sets { color: var(--fg-mute); font-weight: 700; white-space: nowrap; }
-/* the worth plate: a figure, stamped into the seat */
+/* the worth plate: a figure, stamped into the seat. --ground, not
+   --ground-deep: at the deepest tone this read as a solid ink slab (base.css's
+   .chip note) and §1 reserves that material for the primary action. */
 .board-worth {
   margin-left: auto;
   white-space: nowrap;
@@ -169,7 +184,7 @@
   color: var(--fg);
   padding: .05em .4em;
   border-radius: 2px;
-  background: var(--ground-deep);
+  background: var(--ground);
   box-shadow: var(--deboss);
 }
 
@@ -215,14 +230,24 @@
 .board-self .board-bank { justify-content: center; }
 /* An empty bank is a PLACE, not a hole: the mat prints the same empty card
    slot a colour mat does. */
+/* Same registration box as an empty colour mat — see the note there: a dashed
+   outline is the drag's landing silhouette and nothing else's. */
 .board-self .zone-bank:empty::after {
   content: "";
   display: block;
   width: max(var(--card-w), var(--tap));
   aspect-ratio: var(--card-ratio);
-  border: 1px dashed var(--fg-mute);
-  border-radius: var(--card-r);
-  opacity: .45;
+  border: 0;
+  background:
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 0 0 / 26% 1.5px no-repeat,
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 0 0 / 1.5px 20% no-repeat,
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 100% 0 / 26% 1.5px no-repeat,
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 100% 0 / 1.5px 20% no-repeat,
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 0 100% / 26% 1.5px no-repeat,
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 0 100% / 1.5px 20% no-repeat,
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 100% 100% / 26% 1.5px no-repeat,
+    linear-gradient(var(--fg-mute), var(--fg-mute)) 100% 100% / 1.5px 20% no-repeat;
+  opacity: .5;
 }
 .board-self .zone-bank { flex: 0 1 auto; justify-content: center; }
 /* §5: a zone holding cards owes a thumb on both axes. Empty zones collapse. */
@@ -283,9 +308,15 @@
     color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) / 2), var(--surface));
   box-shadow: inset 0 1px 2px var(--shade);
 }
-/* The slot is PRINTED on the mat: a dashed card outline at the card's own
-   aspect, in the set's own ink. A filled block read as a skeleton loader in
-   both themes (round-1 review, mid-game@desktop). */
+/* The slot is PRINTED on the mat, and ROUND-5 changes WHAT is printed. It was
+   a dashed card outline — and so is §5.3's landing silhouette, the ghost that
+   appears under a card in the air. Five to eight of them standing on the
+   resting table meant the affordance was spent before the drag began (the
+   critic's read: "the resting table looks like a wireframe"), and a dashed box
+   that is always there cannot also mean "your card is going HERE".
+   So an empty slot is a REGISTRATION BOX — four painted corner ticks, the same
+   marking vocabulary as the lobby's marshalling box and the card's own trim
+   ticks. Dashed outlines now belong to the drag and to nothing else. */
 .propcol[data-empty="1"]::after {
   content: "";
   display: block;
@@ -293,10 +324,17 @@
   height: calc(var(--tap) - 1.5em);
   min-height: .9em;
   margin: .28em auto 0;
-  border: 1px dashed var(--rail);
-  border-radius: calc(var(--card-r) * .8);
-  background: none;
-  opacity: .5;
+  border: 0;
+  background:
+    linear-gradient(var(--rail), var(--rail)) 0 0 / 30% 1.5px no-repeat,
+    linear-gradient(var(--rail), var(--rail)) 0 0 / 1.5px 30% no-repeat,
+    linear-gradient(var(--rail), var(--rail)) 100% 0 / 30% 1.5px no-repeat,
+    linear-gradient(var(--rail), var(--rail)) 100% 0 / 1.5px 30% no-repeat,
+    linear-gradient(var(--rail), var(--rail)) 0 100% / 30% 1.5px no-repeat,
+    linear-gradient(var(--rail), var(--rail)) 0 100% / 1.5px 30% no-repeat,
+    linear-gradient(var(--rail), var(--rail)) 100% 100% / 30% 1.5px no-repeat,
+    linear-gradient(var(--rail), var(--rail)) 100% 100% / 1.5px 30% no-repeat;
+  opacity: .55;
 }
 /* A completed set signs itself in ITS OWN colour — the rail thickens and the
    wash comes up. Never in foil: foil is the victory modal and nothing else. */
@@ -321,27 +359,81 @@
   white-space: nowrap;
   color: var(--fg);
 }
-.propcol-name { font-weight: 700; }
-.propcol-count { font-weight: 700; }
-/* ── §3.6, THE CAPS BUDGET ────────────────────────────────────────────────
-   The spec allows tracked caps in exactly ONE place — the set name in a card's
-   colour band — and mid-game@desktop was carrying forty-odd shouted micro
-   labels, eleven of them mat names and up to twenty-five more repeating those
-   same names on the opponents' mini-mats.
+.propcol-count { font-weight: 700; flex: 0 0 auto; }
+/* ── §3.6, THE CAPS BUDGET — AND WHAT IT COST (round-5 correction) ─────────
+   The previous pass read §3.6 ("~40 tracked-uppercase micro-labels per screen")
+   as a licence to delete the mat nameplate wherever a card was standing on it.
+   That was the wrong cut and the review caught it: with the name gone, an
+   OCCUPIED mat is identified by the rail wash and nothing else, which makes hue
+   the sole set channel on the one surface a player reads sets off. §1 bans that
+   outright — colour and material are independent, and identification is GLYPH
+   FIRST, name second. The budget was about SHOUTING, not about naming.
 
-   The rule that removes them without removing information: A MAT IS NAMED BY
-   WHAT IS STANDING ON IT. A mat with cards on it already says which set it is
-   three times over — the rail, the set glyph on every card, and the set name
-   printed in each card's own band. The nameplate is scaffolding for an EMPTY
-   mat and is kept there, on your own board, where it is the only thing that
-   says what the empty place is for. An opponent's empty mats are not rendered
-   at all, so their nameplates go entirely.
-   The COUNT stays everywhere: it is a figure, it is mono, and it is the one
-   thing the cards cannot tell you. */
-.opponents .propcol-name { display: none; }
+   So the name comes back on every mat, in the form §3.6 actually wants:
+   sentence case, untracked, small, and the FULL set name rather than a five-
+   letter shout. The DOM text stays what table/layout.js writes ("DRONE") for
+   the accessibility tree; what is PAINTED is --set-name, declared beside
+   --band below so the two can never disagree about which set a mat is.
+   The count keeps its own line-end: it is a figure, it is mono, and it is the
+   one thing the cards cannot tell you. */
+.propcol-name {
+  font-weight: 700;
+  /* the DOM string is the a11y name and is not painted; --set-name is */
+  font-size: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* NOT nowrap+ellipsis: tools/lib/audit.mjs fails an ellipsised run as clipped
+     text, and it is right to. A name that does not fit wraps. */
+  white-space: normal;
+  overflow-wrap: break-word;
+  color: var(--fg-mute);
+}
+/* The SHORT tag is the default and the full name is the desktop upgrade, not
+   the other way round. MEASURED at 390×844: with "Overseas Bases" and "Elite
+   Programs" on the nameplate, a phone mat is wide enough that the 5×2 wrap
+   became four rows and .self-board went from 226px of mats to 320 — the
+   keyhole the mobile review is about, made worse by the fix for the naming.
+   Ten mats fit three rows with the tag and the set is still NAMED. */
+.propcol-name::after {
+  content: var(--set-tag, "");
+  font-size: 9.6px;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+.propcol.is-complete .propcol-name { color: var(--fg); }
+/* Below the desktop grid a mat is only ~53px wide (the tap floor plus a card),
+   and a nameplate SHARING the line with the tally sets the mat's min-content
+   width — measured at 390×844, that took .self-board from 226px of mats to 320
+   and turned a three-row wrap into four. On its own line at 8px the widest tag
+   ("Mobility") is 35px, under the 53px the mat already owes, so the nameplate
+   costs a line of height and no width at all. */
+@media (max-width: 1023px) {
+  .board-self .propcol-head { flex-wrap: wrap; line-height: 1.2; }
+  /* `1 1 auto` + min-width 0, NOT `1 1 100%`: forcing the caption onto its own
+     line cost 8px on all ten mats when only the three longest tags need it.
+     It wraps when it must and shares the line when it fits. */
+  .board-self .propcol-name { flex: 1 1 auto; min-width: 0; }
+  .board-self .propcol-name::after { font-size: 8px; }
+  /* The Upgrade badge beside the set rather than under it — the same cut
+     desktop and landscape make. MEASURED at 390×844: the Command mat carrying
+     a House was 147px against 98 for every other mat, i.e. one badge cost the
+     board half a mat row of the 220px scrollport it has. */
+  .board-self .propcol {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "head head" "props ups";
+    align-content: start;
+    column-gap: 2px;
+  }
+  .board-self .propcol-head { grid-area: head; }
+  .board-self .zone-props { grid-area: props; }
+  .board-self .zone-ups { grid-area: ups; margin-top: 0; align-self: start; }
+}
+/* An opponent's mat is 46px wide and their empty mats are not rendered at all,
+   so the short tag is what fits — still sentence case, still untracked, and
+   floored at 8px because a 6px label is not a label. */
+.opponents .propcol-name::after { content: var(--set-tag, ""); font-size: 8px; }
 .opponents .propcol-head { justify-content: center; }
-.board-self .propcol:not([data-empty="1"]) .propcol-name { display: none; }
-.board-self .propcol:not([data-empty="1"]) .propcol-head { justify-content: flex-end; }
 /* "2/3 SETS" ×3 per screen, and the word is redundant beside a tally sitting
    next to a player's name. Lowercased rather than deleted: the count is the
    information, the word is the unit. */
@@ -351,9 +443,11 @@
 .zone-tag::first-letter { text-transform: uppercase; }
 /* The nameplate, not the card, was setting an opponent mat's width: at .54em
    "DRONE 0/2" is 45px against a 28px card, so a 186px seat fitted three mats
-   instead of five and an eight-colour player wrapped to four rows. */
+   instead of five and an eight-colour player wrapped to four rows. On its own
+   line at 8px the widest tag ("Fighters") is 30px against a 46px mat floor, so
+   it cannot drive the width any more. */
 .opponents .propcol-head { font-size: .46em; flex-wrap: wrap; justify-content: center; gap: 0 .22em; line-height: 1.25; }
-.opponents .propcol-name { flex: 1 1 100%; text-align: center; }
+.opponents .propcol-name { flex: 1 1 100%; min-width: 0; text-align: center; }
 
 .zone-props, .zone-ups { flex-wrap: wrap; gap: 2px; }
 /* Property cards inside a mat: the same derived overlap the bank uses, so the
@@ -367,12 +461,56 @@
 .zone-ups .card:first-child { margin-left: 0; }
 .board-opponent .propcol[data-empty="1"] { display: none; }
 
-/* Opponent colour mats WRAP. Nothing about an opponent's board is allowed to
-   be invisible — that is the information the whole game is played against. */
-.opponents .board-props { flex-wrap: wrap; margin-top: .28em; gap: .2em; }
+/* ── AN OPPONENT'S PROPERTY LINE IS ONE ROW, AT EVERY VIEWPORT ────────────
+   These mats used to WRAP, on the principle that nothing about an opponent's
+   board may be invisible. The principle was right and the mechanism was wrong,
+   because the seats strip is height-capped at every viewport and a wrapped
+   seat simply grew past the cap: MEASURED, five-player@desktop 236px of seat in
+   a 189px strip, mid-game@phone 242px of seats in 112. Wrapping did not keep
+   the mats visible, it guillotined them mid-card — and a clipped .propcol still
+   lays out under whatever is below the strip, which is where the screenshot
+   gate's buried-text runs were coming from.
+
+   One row, scrolled sideways, is the honest version of the same principle: the
+   seat is a constant height, nothing is ever cut across a card, and the end of
+   the line says so with an edge shade built out of `background-attachment:
+   local` — the two cover layers travel with the content, so a shade can only
+   appear at an end that has something behind it. No JS, no scroll listener, and
+   it cannot lie. */
+.opponents .board-props {
+  flex-wrap: nowrap;
+  margin-top: .28em;
+  gap: .2em;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  padding: 0 .55em;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .6em, #000 calc(100% - .6em), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 .6em, #000 calc(100% - .6em), transparent 100%);
+  background:
+    linear-gradient(90deg, var(--surface) 40%, rgba(0, 0, 0, 0)) 0 0 / 1.2em 100% no-repeat local,
+    linear-gradient(-90deg, var(--surface) 40%, rgba(0, 0, 0, 0)) 100% 0 / 1.2em 100% no-repeat local,
+    linear-gradient(90deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / .9em 100% no-repeat,
+    linear-gradient(-90deg, var(--shade-2), rgba(0, 0, 0, 0)) 100% 0 / .9em 100% no-repeat;
+}
+.opponents .board-props::-webkit-scrollbar { height: 0; }
+.opponents .propcol { flex: 0 0 auto; }
 /* An opponent's mat is a targeting surface too (Inspector General takes a whole
-   set), so it owes the same 44px. */
-.opponents .propcol { min-width: calc(var(--tap) + .2em); padding: 0 .1em .12em; }
+   set), so it owes the same 44px — MEASURED at 36×50 portrait and 30×42
+   landscape before this, i.e. under the floor on BOTH axes on the tap surface
+   for steps 2-3 of every steal and swap chain. `flex: 0 0 auto` is the half
+   that was missing: min-width alone does not survive a flex line that is wider
+   than its box, which is exactly what a seat's property line is. */
+.opponents .propcol {
+  flex: 0 0 auto;
+  min-width: calc(var(--tap) + .2em);
+  min-height: var(--tap);
+  padding: 0 .1em .12em;
+  scroll-snap-align: start;
+}
+.opponents .board { scroll-snap-align: start; }
 .opponents .board { --card-w: max(calc(var(--s) * 2.2), 36px); }
 /* Opponent money stacks 88% deep — the denomination is unreadable there and the
    worth plate in the nameplate already carries the total. */
@@ -396,8 +534,11 @@
      where the seats strip fades out — which is what read as "DRONE" and "FIGH"
      bleeding half-rendered from beneath the deck layer. */
   flex: 1 10 auto;
-  min-height: calc(var(--s) * 7.6);
-  max-height: calc(var(--s) * 8.2);
+  /* 6.8s = 98px, which is a 78px pile (a 56px card at 5:7) plus its painted
+     caption and the gap between them — i.e. exactly the content, with the
+     ~20px of air above it given to the seats strip (see .opponents). */
+  min-height: calc(var(--s) * 6.2);
+  max-height: calc(var(--s) * 6.6);
   display: flex;
   gap: 1.4em;
   justify-content: center;
@@ -529,10 +670,13 @@
   align-items: flex-end;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: .5em .3em 1em;
+  /* 1em of padding under the fan was 14px of dock spent on nothing, and the
+     board above it is the scrollport that needed it (see the .hud-strip note
+     in content.css). The fan's own rotated bounding box is in min-height. */
+  padding: .4em .3em .45em;
   /* 1.56 is the rotated bounding box of a 5:7 card at the fan's ±12°
      (1.4·cos12 + sin12); the em term is padding plus the edge drop. */
-  min-height: calc(var(--card-w) * 1.56 + 1.5em);
+  min-height: calc(var(--card-w) * 1.56 + .9em);
   justify-content: safe center;
   scrollbar-width: none;
 }
@@ -608,8 +752,18 @@
     grid-template-columns: 150px minmax(0, 1fr);
     /* fit-content(), not auto. With `auto` the TRACK sized to the seats'
        max-content (213px) while max-height capped the ITEM at 147 — 40px of
-       apron went to a track holding nothing, and your own mat lost it. */
-    grid-template-rows: fit-content(8.6em) minmax(0, 1fr);
+       apron went to a track holding nothing, and your own mat lost it.
+
+       ROUND-5, MEASURED on five-player@desktop: at 8.6em the track was 142px
+       against seats that measure 140/140/140/150 plus the strip's own padding
+       — so the last seat's PROPERTY ROW was cut in half and its mat captions
+       sat over the cut. That is the "sliced mid-property-row" the review named,
+       and it is also where nine of the gate's buried-text runs came from (a
+       clipped opponent .propcol-count still lays out at y=250, under your own
+       board head). 11.4em = 189px holds a five-player seat WITH the restored
+       mat nameplate and its scroll padding. The 28px comes from the HUD, whose
+       alert strip stopped being a second full-width band (content.css). */
+    grid-template-rows: fit-content(11.4em) minmax(0, 1fr);
     grid-template-areas: "seats seats" "rail centre";
     align-items: stretch;
     gap: calc(var(--s) * .4) calc(var(--s) * .7);
@@ -633,6 +787,14 @@
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--fg-mute) transparent;
+    /* The portrait rule's bottom fade LEAKED into this layout: it was eating
+       the last 15px of every seat whether or not there was anything below to
+       scroll to, which is what made four intact seats read as four cut ones.
+       Here the clear padding comes FIRST and is bigger than the fade, so the
+       fade only ever falls on a card when the strip genuinely has more below. */
+    padding-bottom: 1.1em;
+    -webkit-mask-image: linear-gradient(#000 calc(100% - .8em), transparent);
+    mask-image: linear-gradient(#000 calc(100% - .8em), transparent);
   }
   /* A seat is ~146px however it is cut, and 720px cannot hold four of them plus
      your own mat. The strip scrolls, and it is the row that CAN scroll — your
@@ -642,6 +804,8 @@
   .opponents .board-head { font-size: .82em; padding-bottom: .06em; margin-bottom: .1em; }
   .opponents .zone-hand-oppo { --card-w: 22px; }
   .opponents .board-bank { padding: .1em .25em; }
+  /* the one-row property line (see the base rule) needs no re-statement here;
+     only its margin and the 46px mat floor this width can afford */
   .opponents .board-props { margin-top: .16em; justify-content: flex-start; }
   .opponents .propcol { min-width: 46px; }
 
@@ -723,6 +887,10 @@
     padding: 0 0 .2em;
   }
   .board-self .board-head .board-worth { margin-left: 0; }
+  /* A 200px mat has room for the whole set name; a phone mat does not (see the
+     .propcol-name note). This is the one width where the nameplate can be the
+     thing §1 actually asks for. */
+  .board-self .propcol-name::after { content: var(--set-name, ""); }
 
   /* §5: 5 × 2 grid, each mat 156 × 132, 8px gutter. The mats may compress
      below 156 when the log is docked (1280 − 220 log − 168 rail − 200 seats
@@ -758,7 +926,11 @@
   .board-self .propcol {
     min-width: 0;
     width: auto;
-    padding: 0 3px 6px;
+    /* 4px, not 6: the mats gained a nameplate line this round and the self
+       board went from 291px of content in a 291px pane to 307 in 278 on
+       final-approach@desktop — which is what put the sticky bank over the
+       Command mat. Every px below was measured out of a specific box. */
+    padding: 0 3px 4px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "head head" "props ups";
@@ -796,9 +968,12 @@
     width: fit-content;
     min-width: 340px;
     max-width: 100%;
-    min-height: 68px;
+    /* 56 = a 46px note plus the mat's own padding. 68 was 12px of air under
+       the cards, and the self board did not have 12px to spare (see the
+       .board-self .propcol note). */
+    min-height: 56px;
     justify-content: center;
-    padding: .2em .5em;
+    padding: .18em .5em;
   }
   .board-self .zone-bank { --card-w: 46px; }
 
@@ -1096,16 +1271,20 @@
    --band is the fill; --band-ink is the lettering on it; --rail (variables.css)
    is the derived mat rail. One declaration each, nothing per-theme. */
 
-[data-color="brown"]     { --band: var(--set-brown); }
-[data-color="lightblue"] { --band: var(--set-lightblue); }
-[data-color="pink"]      { --band: var(--set-pink); }
-[data-color="orange"]    { --band: var(--set-orange); }
-[data-color="red"]       { --band: var(--set-red); }
-[data-color="yellow"]    { --band: var(--set-yellow); }
-[data-color="green"]     { --band: var(--set-green); }
-[data-color="darkblue"]  { --band: var(--set-darkblue); }
-[data-color="base"]      { --band: var(--set-base); }
-[data-color="intel"]     { --band: var(--set-intel); }
+/* --set-name / --set-tag are PAINTED strings, not decoration: they are what a
+   mat nameplate prints (see .propcol-name). They live here so a set's colour
+   and a set's name are declared on the same line and cannot drift. Sentence
+   case by law (§3.6) — the app's only caps are a card band's. */
+[data-color="brown"]     { --band: var(--set-brown);     --set-name: "Drone Ops";      --set-tag: "Drone"; }
+[data-color="lightblue"] { --band: var(--set-lightblue); --set-name: "Training";       --set-tag: "Training"; }
+[data-color="pink"]      { --band: var(--set-pink);      --set-name: "Space Force";    --set-tag: "Space"; }
+[data-color="orange"]    { --band: var(--set-orange);    --set-name: "Test & Eval";    --set-tag: "T&E"; }
+[data-color="red"]       { --band: var(--set-red);       --set-name: "Fighters";       --set-tag: "Fighters"; }
+[data-color="yellow"]    { --band: var(--set-yellow);    --set-name: "Mobility";       --set-tag: "Mobility"; }
+[data-color="green"]     { --band: var(--set-green);     --set-name: "Elite Programs"; --set-tag: "Elite"; }
+[data-color="darkblue"]  { --band: var(--set-darkblue);  --set-name: "Command";        --set-tag: "Command"; }
+[data-color="base"]      { --band: var(--set-base);      --set-name: "Overseas Bases"; --set-tag: "Bases"; }
+[data-color="intel"]     { --band: var(--set-intel);     --set-name: "Intelligence";   --set-tag: "Intel"; }
 
 /* Ten glyphs, one per set — the colourblind channel and the primary identity
    (§1: glyph first, colour second). Placeholders until cardart.css lands. */
@@ -1516,8 +1695,12 @@
     mask-image: linear-gradient(#000 calc(100% - 1.4em), transparent);
   }
   .opponents .board { flex: 0 0 auto; scroll-margin: .4em 0 1.6em; --card-w: 30px; }
-  .opponents .board-props { flex-wrap: wrap; }
   .opponents .zone-hand-oppo { --card-w: 22px; }
+  /* the rail is 236px wide, so the nameplate does not need the two lines the
+     ≤899px rule gives it for an 88px phone seat — that was 17px per seat of a
+     rail that is 116px tall in total */
+  .opponents .board-name { flex: 1 1 auto; font-size: 1em; }
+  .opponents .board-head { padding-bottom: .1em; margin-bottom: .12em; }
 
   /* ── left rail, bottom: the piles ───────────────────────────────────────
      flex: 0 0 auto and a min-height that actually holds the content. As
@@ -1528,7 +1711,7 @@
     grid-area: centre;
     flex: 0 0 auto;
     flex-direction: row;
-    min-height: calc(var(--card-tap) * 1.4 + 1.4em);
+    min-height: calc(var(--card-tap) * 1.4 + .9em);
     max-height: none;
     gap: .9em;
     padding: .2em 0 0;
@@ -1604,15 +1787,35 @@
     overflow-y: hidden;
     overscroll-behavior-x: contain;
     scrollbar-width: none;
-    padding: 0 .9em;
-    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .9em, #000 calc(100% - .9em), transparent 100%);
-    mask-image: linear-gradient(90deg, transparent 0, #000 .9em, #000 calc(100% - .9em), transparent 100%);
-    /* the painted track the line runs along — a rail is a marking on the apron,
-       not a piece of scrollbar chrome */
+    /* ROUND-5 REVIEW (landscape-mid): MEASURED scrollWidth 687 in a 591px port
+       — mats 9 and 10 ran off the right edge — and the fade meant to say so was
+       .9em of a 12px root, i.e. 10.8px. Ten pixels is not a fade; the row read
+       as guillotined. Two things change and they work as a pair:
+
+       1. The fade is 2.2em (26px), wide enough to dissolve a whole mat edge.
+       2. THE FADE IS NOT THE CUE — the cue is a shade at whichever end has
+          something behind it, built out of `background-attachment: local`. The
+          two `local` layers travel WITH the content, so at scrollLeft 0 the
+          left cover sits exactly over the left shade and hides it; scroll away
+          and the shade appears. It cannot lie about whether the row scrolls,
+          and it costs no JS and no scroll listener. It is painted BEHIND the
+          mats, which is precisely why it needs the mask: the shade is only
+          visible in the strip where the mats have faded out. */
+    padding: 0 2em;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 2.2em, #000 calc(100% - 2.2em), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 2.2em, #000 calc(100% - 2.2em), transparent 100%);
     background:
+      linear-gradient(90deg, var(--ground) 40%, rgba(0, 0, 0, 0)) 0 0 / 3em 100% no-repeat local,
+      linear-gradient(-90deg, var(--ground) 40%, rgba(0, 0, 0, 0)) 100% 0 / 3em 100% no-repeat local,
+      linear-gradient(90deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 1.8em 100% no-repeat,
+      linear-gradient(-90deg, var(--shade-2), rgba(0, 0, 0, 0)) 100% 0 / 1.8em 100% no-repeat,
+      /* the painted track the line runs along — a rail is a marking on the
+         apron, not a piece of scrollbar chrome */
       repeating-linear-gradient(90deg, var(--stencil) 0 12px, transparent 12px 22px)
       0 100% / 100% 2px no-repeat;
   }
+  /* 50px of mat is narrow even for the tag */
+  .board-self .propcol-name::after { font-size: 8px; }
   .board-self .board-props::-webkit-scrollbar { height: 0; }
   .board-self .propcol {
     flex: 0 0 auto;
@@ -1626,6 +1829,22 @@
      before it, so the exposed strip IS 44px by construction and the mat grows
      sideways — along the axis that scrolls. */
   .board-self .zone-props, .board-self .zone-ups { flex-wrap: nowrap; }
+  /* ROUND-5, MEASURED: the property line was 132px tall around a 64px card,
+     because the Upgrade badge stacked UNDER the set (CMD measured 16 head + 64
+     props + 49 ups). Beside it — the same cut desktop already makes — the row
+     is 84px and the 48px it gives back is what the hand fan needs to stop
+     being clipped by the viewport bottom. The mat grows along the axis that
+     scrolls, which is the whole premise of this layout. */
+  .board-self .propcol {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "head head" "props ups";
+    align-content: start;
+    column-gap: 2px;
+  }
+  .board-self .propcol-head { grid-area: head; }
+  .board-self .zone-props { grid-area: props; }
+  .board-self .zone-ups { grid-area: ups; margin-top: 0; align-self: start; }
   /* the printed empty slot is KEPT here — the one row has the height for it,
      and an unnamed, card-less mat is otherwise just a dark rectangle */
   .board-self .propcol[data-empty="1"]::after { height: calc(var(--tap) - 1.4em); }
@@ -1650,7 +1869,20 @@
     flex: 1 1 auto;
     min-width: 0;
     margin-top: 0;
-    min-height: calc(var(--card-w) * 1.5 + .8em);
+    /* ROUND-5, MEASURED on landscape-mid: the zone was 85px tall and a card
+       laid out at 59 × 76 inside it — a 5:7 card 59 wide is 82.6 tall, so the
+       fan was being squeezed 7px and then clipped by `overflow-y: hidden`, one
+       pixel above the viewport edge. 1.62 is the rotated bounding box of a 5:7
+       card at the fan's ±12° (1.4·cos12 + sin12 = 1.58) plus a pixel of slack;
+       the em term is the padding and the edge drop. The height comes from the
+       property line, which stopped being 132px tall when the Upgrade badge
+       moved beside the set instead of under it. */
+    /* MEASURED again after the first pass: the fan's cards render 59px wide
+       against a --card-w that computes to 50.4 (table/hand.js sizes the node),
+       so a min-height derived from --card-w under-reserves by ~20%. 2.0 is that
+       ratio folded in — measured 101px of zone around a 59 × 83 card, and the
+       card stops being squeezed to 76 and clipped by the viewport edge. */
+    min-height: calc(var(--card-w) * 1.78 + .5em);
     padding: .25em .3em .3em;
     /* ~600px of dock for at most eight cards: the fan never has to overlap, so
        every name sets whole at the biggest card the height allows. */

@@ -96,6 +96,24 @@ const EVENT_LOG_MAX = 400;       // retained in state; never grows unbounded
 const LOG_MAX = 400;
 const LOG_TAIL = 40;             // sent in getPlayerView; 20 lost a 5-player Roll Call turn in <3 turns
 
+// §3.8 — rearranging your own wilds (and, per §3.1b, your Upgrades) is FREE: it costs no
+// play, and that freedom is a real part of the game, because a wild is only worth what the
+// board lets it become. "Free" was implemented as "unlimited", and an ACCEPTED command that
+// fans a full room state to every seat for a 62-byte request is an amplifier no wire rate
+// limit can see. Measured on a solo room: 60 moves in 9.0s returned 785,471 B to one seat
+// (85 KB/s, ~x211 per request) with playsRemaining and turnNumber both untouched, and five
+// concurrent flooders pulled 1.5 MB in 3.5s. It was also a turn-holding grief — 184 moves
+// sprayed 184 forced card-flight animations across every client while the turn never moved.
+//
+// Every guard added before this one sat on a REJECTED or COOLED path, so none of them saw a
+// command the engine happily accepts. This is the accepted-path bound: a per-turn budget,
+// refilled by beginTurn exactly like playsRemaining. It cannot be felt in normal play — one
+// seat can hold at most 10 wilds, so moving every one of them and still having budget left
+// is the ordinary case — and it is finite under abuse: 12 fan-outs per turn, after which the
+// command costs a ~60-byte error instead of a ~13 KB state, and the abuser must actually end
+// their turn (or run out their turn clock) to get more.
+const REARRANGE_BUDGET = 12;
+
 /* ── Card definitions ────────────────────────────────────────────────── */
 
 function buildDeck() {
@@ -278,6 +296,7 @@ function createGame(players, opts = {}) {
     turnPhase: 'draw',
     currentPlayerIndex: 0,
     playsRemaining: 3,
+    rearrangesRemaining: REARRANGE_BUDGET,
     deck,
     discardPile: [],
     players: players.map(p => ({
@@ -509,6 +528,18 @@ function resolveFinalApproach(state, player) {
     // "I had 3 sets, I finished my turn, and someone else won" — an off-turn arming under
     // the strict full-cycle rule does NOT convert at your very next own turn. Say so out
     // loud instead of starting the turn in silence.
+    //
+    // ANNOUNCED AT MOST ONCE PER TURN, PER SEAT. This function is a QUERY that anything may
+    // ask (checkWin() is literally an alias for it), but the sentence and the event are a
+    // NARRATION, and a narration that fires per call is a narration that lies about how many
+    // times the thing happened. Measured: beginTurn() resolves at turn start and then
+    // drawCards() asks again through checkWin() — two `final_approach_pending` events and two
+    // identical log lines for one checkpoint, doubled in the live feed and in the journal.
+    // Gating on turnCounter keeps the safety-net call harmless for every caller, present and
+    // future, instead of making the invariant "nobody may ask twice".
+    const stamp = (state.turnCounter || 0) + ':' + player.id;
+    if (state._faPendingStamp === stamp) return false;
+    state._faPendingStamp = stamp;
     const forecast = checkpointForecast(state, player);
     logLine(state, player.name + ' is still on FINAL APPROACH — the win locks in at the'
       + ' start of their turn on turn ' + (forecast ? forecast.turn : '?')
@@ -538,6 +569,7 @@ function beginTurn(state) {
   state.turnCounter = (state.turnCounter || 0) + 1;
   state.turnPhase = 'draw';
   state.playsRemaining = 3;
+  state.rearrangesRemaining = REARRANGE_BUDGET;
   const p = currentPlayer(state);
   emit(state, 'turn_start', { actor: p.id, plays: state.playsRemaining, finalApproach: !!p.finalApproach });
   if (resolveFinalApproach(state, p)) return true;   // won at the checkpoint; no draw
@@ -803,14 +835,29 @@ function bankUpgrades(state, player, color) {
 
 // FOC may not stand without an Upgrade beneath it. Called after anything removes an
 // upgrade from a set so a lone hotel can never keep paying +4M rent.
+//
+// THIS COSTS THE PLAYER RENT AND IT USED TO DO IT IN SILENCE. Measured: a complete Command
+// set carrying Upgrade + FOC charges 15M; pay a 2M Roll Call with the Upgrade alone and the
+// FOC follows it off the set, into your own bank — the set is still complete, but rent is
+// 8M. Two cards left the board for a 2M demand and nothing said so. bankUpgradeCard() emits
+// `upgrade_banked`, but bankUpgrades() (the set-broke path) was the only one that also wrote
+// a LINE, so the log read "paid 3M" and stopped. It says it now, and the client's payment
+// prompt warns BEFORE the tap (ui/prompt.js focWarning) — the only moment it can be avoided.
 function normalizeUpgrades(state, player, color) {
   const kinds = upgradeKinds(player, color);
   if (!kinds.includes('hotel') || kinds.includes('house')) return;
   const list = player.upgrades[color] || [];
+  let banked = 0;
   for (const upgrade of list.slice()) {
     if ((upgrade?.upgradeType) !== 'hotel') continue;
     list.splice(list.indexOf(upgrade), 1);
     bankUpgradeCard(state, player, upgrade, color);
+    banked++;
+  }
+  if (banked) {
+    logLine(state, player.name + '\'s ' + (COLORS[color]?.name || color)
+      + ' FOC lost the Upgrade under it and goes to the bank — the set keeps standing, '
+      + 'the rent does not.');
   }
   if (list.length === 0) delete player.upgrades[color];
 }
@@ -894,8 +941,13 @@ function drawCards(state, playerId) {
   // no-op instead of an error, and makes a second draw impossible.
   if (state.turnPhase !== 'draw') return { error: 'Not draw phase', alreadyDrawn: true };
 
-  // Auto-win check at turn start: if player already has 3+ complete sets
-  // (e.g. gained from opponent's payment/swap on a previous turn), they win now
+  // SAFETY NET, not the resolution point. beginTurn() calls resolveFinalApproach() before it
+  // calls this function, and startGame()'s turn-1 draw runs before syncSets() can arm anybody,
+  // so every path into drawCards() has already resolved. It is kept because `autoWin` is still
+  // part of this function's contract (server/handlers.js 'draw' reads it to stop the turn
+  // clock) and because a future caller that draws without begining a turn would otherwise skip
+  // the checkpoint entirely. It can no longer DOUBLE-NARRATE: resolveFinalApproach() stamps
+  // its "still on final approach" announcement with the turn, so asking twice is silent.
   if (checkWin(state, p.id)) return { ok: true, autoWin: true };
 
   const count = p.hand.length === 0 ? 5 : 2;
@@ -1049,28 +1101,34 @@ function playAction(state, playerId, cardIndex, opts) {
       const target = getPlayer(state, targetId);
       if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       discardAndSpend();
-      const { amount, doubled } = chargeAmount(state, 5);   // §3.1c: never surgeable
+      // §3.1c: never surgeable, so `multiplier` here is always 1 — which is exactly what the
+      // client needs to be TOLD, rather than left to infer from a bare `doubled:false`.
+      const { amount, doubled, multiplier } = chargeAmount(state, 5);
       startPending(state, {
         type: 'payment', action: 'finance_office',
-        sourceId: p.id, amount, doubled,
+        sourceId: p.id, amount, doubled, multiplier,
       }, [target.id]);
       logLine(state, p.name + ' demands ' + amount + 'M from ' + target.name + ' (Finance Office)'
-        + (doubled ? ' — DOUBLED' : ''));
-      emit(state, 'demand', { actor: p.id, target: target.id, amount, reason: 'finance_office', doubled });
+        + (doubled ? ' — SURGED x' + multiplier : ''));
+      emit(state, 'demand', {
+        actor: p.id, target: target.id, amount, reason: 'finance_office', doubled, multiplier,
+      });
       return { ok: true, card, pending: true };
     }
 
     case 'roll_call': {
       discardAndSpend();
       const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
-      const { amount, doubled } = chargeAmount(state, 2);   // §3.1c: never surgeable
+      const { amount, doubled, multiplier } = chargeAmount(state, 2);   // §3.1c: never surgeable
       startPending(state, {
         type: 'payment', action: 'roll_call',
-        sourceId: p.id, amount, doubled,
+        sourceId: p.id, amount, doubled, multiplier,
       }, targets.map(t => t.id));
       logLine(state, p.name + ' calls Roll Call — everyone pays ' + amount + 'M!');
       for (const t of targets) {
-        emit(state, 'demand', { actor: p.id, target: t.id, amount, reason: 'roll_call', doubled });
+        emit(state, 'demand', {
+          actor: p.id, target: t.id, amount, reason: 'roll_call', doubled, multiplier,
+        });
       }
       return { ok: true, card, pending: true };
     }
@@ -1219,16 +1277,21 @@ function playAction(state, playerId, cardIndex, opts) {
 
     discardAndSpend();
     const { amount, doubled, multiplier } = chargeAmount(state, calcRent(p, targetColor), { surgeable: true });
+    // `multiplier` travels with the charge, on the pendingAction AND on the event. Without it
+    // the only thing on the wire was `doubled`, so a x4 or x8 surge reached the client as a
+    // boolean and every surface printed "x2"/"(DOUBLED)" one line under the engine's own
+    // "SURGED x4" log line. 2**stack is not derivable client-side after the fact: endTurn()
+    // deletes the counter, and a reconnect never saw it at all.
     startPending(state, {
       type: 'payment', action: 'rent',
-      sourceId: p.id, amount, color: targetColor, doubled, wild: isWildRent,
+      sourceId: p.id, amount, color: targetColor, doubled, multiplier, wild: isWildRent,
     }, targets.map(t => t.id));
     logLine(state, p.name + ' charges ' + amount + 'M rent on ' + COLORS[targetColor].name
       + (isWildRent ? ' from ' + targets[0].name : '')
       + (doubled ? ' — SURGED x' + multiplier : ''));
     emit(state, 'rent_charged', {
       actor: p.id, color: targetColor, amount,
-      targets: targets.map(t => t.id), doubled,
+      targets: targets.map(t => t.id), doubled, multiplier,
     });
     return { ok: true, card, pending: true };
   }
@@ -1553,6 +1616,17 @@ function moveUpgrade(state, p, hit, toColor) {
   return { ok: true };
 }
 
+// How many free rearranges this turn still has. Missing/absent (a hand-built fixture, a
+// state created before this field existed) reads as a full budget, never as zero.
+function rearrangesLeft(state) {
+  const left = state?.rearrangesRemaining;
+  return Number.isFinite(left) ? left : REARRANGE_BUDGET;
+}
+
+function spendRearrange(state) {
+  state.rearrangesRemaining = rearrangesLeft(state) - 1;
+}
+
 function moveProperty(state, playerId, cardId, toColor) {
   const phaseError = ensurePlaying(state);
   if (phaseError) return phaseError;
@@ -1560,11 +1634,22 @@ function moveProperty(state, playerId, cardId, toColor) {
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase !== 'play') return { error: 'Cannot rearrange now' };
   if (!COLORS[toColor]) return { error: 'Invalid color' };
+  // The budget is checked BEFORE anything is inspected and spent only when the board
+  // actually changed, so a rejected move (wrong colour, full zone, "already there") is free
+  // — a player fumbling a drag never loses a rearrange, and the refusal itself is one small
+  // error frame rather than a full state fan-out.
+  if (rearrangesLeft(state) <= 0) {
+    return { error: 'No free rearranges left this turn — end your turn to reset them' };
+  }
 
   // §3.1b — upgrades may be moved between complete sets on your turn. Handled through the
   // same free-rearrange command so the wire protocol stays unchanged.
   const upgradeHit = findUpgrade(p, cardId);
-  if (upgradeHit) return moveUpgrade(state, p, upgradeHit, toColor);
+  if (upgradeHit) {
+    const upgradeRes = moveUpgrade(state, p, upgradeHit, toColor);
+    if (upgradeRes.ok) spendRearrange(state);
+    return upgradeRes;
+  }
 
   // Find the card in player's properties
   let card = null, fromColor = null, fromIdx = -1;
@@ -1593,6 +1678,7 @@ function moveProperty(state, playerId, cardId, toColor) {
   // Clean up upgrades if the source set is no longer complete
   if (!isSetComplete(p, fromColor)) bankUpgrades(state, p, fromColor);
 
+  spendRearrange(state);
   logLine(state, p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
   emit(state, 'move_property', { actor: playerId, card: publicCard(card), from: fromColor, to: toColor });
   syncSets(state, p, before);
@@ -1810,6 +1896,10 @@ function getPlayerView(state, playerId) {
     turnPhase: state.turnPhase,
     currentPlayerId: currentPlayer(state).id,
     playsRemaining: state.playsRemaining,
+    // Free rearranges left this turn (§3.8). On the wire so the client can say why a drag
+    // was refused instead of showing a card that silently snaps back.
+    rearrangesRemaining: rearrangesLeft(state),
+    rearrangeBudget: REARRANGE_BUDGET,
     deckCount: state.deck.length,
     discardTop: state.discardPile.length > 0 ? state.discardPile[state.discardPile.length-1] : null,
     discardPile: [...state.discardPile].reverse(),
@@ -1865,7 +1955,7 @@ function getPlayerView(state, playerId) {
 }
 
 module.exports = {
-  COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL, DECK_CYCLE_LIMIT,
+  COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL, DECK_CYCLE_LIMIT, REARRANGE_BUDGET,
   buildDeck, shuffle, makeRng, createGame, currentPlayer, getPlayer,
   completedSets, checkWin, isSetComplete, calcRent, playerTotalValue, playerNetWorth,
   playerUpgradeValue, payableCards, zoneFull, zoneCount, zoneRequisitionable, legalColorsFor,

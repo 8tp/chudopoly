@@ -13,7 +13,7 @@ import { clamp } from '../core/math.js';
 import { deckCycleNotice } from '../core/cards.js';
 import * as send from '../net/send.js';
 import * as socket from '../net/socket.js';
-import { store, seatName, isMyTurn } from '../state/store.js';
+import { store, seatName, isMyTurn, selfPlayer } from '../state/store.js';
 import * as sel from '../state/selectors.js';
 import * as choreographer from '../anim/choreographer.js';
 import * as interact from '../interact/index.js';
@@ -29,6 +29,11 @@ let urgency = 0;
 function activeTimer() {
   const snap = store.snapshot;
   if (!snap || snap.phase !== 'playing') return null;
+  // §P9 round 3: the header printed a live "60s" turn countdown next to the
+  // word DEALING, i.e. it was counting down a turn that had not visibly begun.
+  // The clock belongs to the turn the player can SEE; until the narration has
+  // landed for this game there is no such turn.
+  if (!narrated) return null;
   if (snap.pendingAction && store.timers.response) return store.timers.response;
   if (!snap.pendingAction && store.timers.turn) return store.timers.turn;
   return null;
@@ -215,8 +220,10 @@ function stripLine(player, mine) {
   return 'converts at their own turn start';
 }
 
-function renderStrip() {
-  const snap = store.snapshot;
+/** @param {object|null} [view] the state the header is narrating — the strip
+ *  is part of the narration and must describe the same table it does. */
+function renderStrip(view) {
+  const snap = view === undefined ? store.snapshot : view;
   const box = stripEl();
   if (!snap || snap.phase !== 'playing') { stripBlank(box); return; }
 
@@ -358,9 +365,46 @@ function renderConn() {
  *   • the terminal hold is CELEBRATION_MS on top of idle, the same 850ms
  *     ui/overlays.js spends, so the header can only ever land WITH or AFTER the
  *     screen that is supposed to break the news.
+ *
+ * ── …AND IT MAY NOT NARRATE NOTHING EITHER (§P9 FEEL round 3) ─────────────
+ *
+ * The rule above was written against CHOREO_IDLE, and idle means "the queue is
+ * EMPTY". A five-seat table of `chud` bots plays every 300–800ms, so on a real
+ * fast table the queue is never empty and the header never got its word.
+ * MEASURED, rAF-sampled, animation on, one broadcast every:
+ *
+ *            HUD names the wrong player   longest single stale run
+ *   120ms              98.7%                       16,636ms
+ *   250ms              98.1%                       31,857ms
+ *   500ms              34.4%                        3,976ms
+ *
+ * — i.e. the fix for the spoiler had turned the header off. "Whose turn is it"
+ * is the header's entire job, and 31 seconds of DEALING is a worse lie than a
+ * 300ms spoiler.
+ *
+ * So the narration follows THE BEAT BEING SHOWN, which is a third thing,
+ * neither the snapshot nor idle. Two sources, both of them published by the
+ * choreographer and both of them statements about the felt rather than about
+ * the server:
+ *
+ *   CHOREO_SETTLED(snapshot)  emitted right after table.reconcile(snapshot) —
+ *                             the table has been MADE to equal that state, so
+ *                             narrating it is describing what is on screen.
+ *                             Bounds the header's lag at one job.
+ *   CHOREO_EVENT turn_start   finer than a job: the turn pass is being
+ *                             performed right now, so the name can change with
+ *                             it instead of waiting for the job's last event.
+ *
+ * The ending keeps the old rule exactly — a `finished` view is not printed
+ * while the queue is still running, so ui/overlays.js still breaks the news
+ * first. Everything else is now allowed to keep up.
  */
 const CELEBRATION_MS = 850;          // must match ui/overlays.js
 const FALLBACK_MS = 2600;            // ditto — the promise that nothing is lost
+
+// anim/choreographer.js publishes it; core/bus.js is architect-owned, so the
+// same "string literal until the constant exists" pattern ui/peek.js uses.
+const CHOREO_SETTLED = EVENTS.CHOREO_SETTLED || 'choreo:settled';
 
 /* ── END TURN is sent once (P9 harness round 1) ────────────────────────────
  * MEASURED: a double-tap sent two `endTurn` frames on ~1 run in 6. The server
@@ -396,6 +440,14 @@ let holding = false;
  *  False through the opening deal and again after an ending, which is what lets
  *  a rematch's deal show DEALING instead of the last game's result. */
 let narrated = false;
+/** The newest state the FELT has actually been reconciled to (CHOREO_SETTLED).
+ *  This is what the header narrates while a performance is running — never
+ *  store.snapshot, which is the future. */
+let felt = null;
+/** Whose turn the table is CURRENTLY showing. Set by every performed
+ *  `turn_start` and by every settle, so it can run ahead of `felt` by the
+ *  events inside the job that is playing — which is the point. */
+let feltTurn;
 
 function clearHold() { clearTimeout(holdTimer); holdTimer = 0; holding = false; }
 
@@ -433,18 +485,54 @@ function holdPlaceholder(snap) {
   setText($('hand-count'), '0');
 }
 
+/** The hand as of a GIVEN state — sel.myHand() only ever reads the live store,
+ *  and the whole point of a settled view is that it is not the live store. */
+function handOf(view) {
+  const me = selfPlayer(view);
+  return Array.isArray(me?.hand) ? me.hand : [];
+}
+
+/**
+ * The state the header is describing.
+ *
+ * Not holding → the store, which is also what is on the felt (the queue is
+ * empty or this payload had nothing to perform). Holding → the newest settled
+ * state, i.e. the last thing the table was actually made to show. Holding with
+ * nothing settled yet is only ever the opening deal, and DEALING is true.
+ */
+function narrationView() {
+  return holding ? felt : store.snapshot;
+}
+
 function renderNarration() {
-  const snap = store.snapshot;
-  if (!snap) return;
-  const mine = isMyTurn();
+  const live = store.snapshot;
+  if (!live) return;
+  const snap = narrationView();
+  if (!snap) { holdPlaceholder(live); return; }
+  // The ending stays gated on the whole performance plus CELEBRATION_MS: the
+  // overlay owns the news and the header must not scoop it (see the header
+  // note). Everything else is narrated as soon as it is on the felt.
+  if (snap.phase === 'finished' && holding) return;
+  // `feltTurn` is the finer of the two: a turn_start inside the job that is
+  // playing has already been performed, so the name may move before the job's
+  // reconcile catches the rest of the state up.
+  const turnId = holding && feltTurn !== undefined ? feltTurn : snap.currentPlayerId;
+  const mine = turnId != null && turnId === store.self.id && snap.phase === 'playing';
   const turnName = snap.phase === 'finished'
     ? endingLine(snap)
-    : (mine ? 'YOUR TURN' : `${seatName(snap.currentPlayerId)}'s turn`);
+    : (mine ? 'YOUR TURN' : `${seatName(turnId)}'s turn`);
   setText($('hud-turn'), turnName);
   setClass($('hud-turn'), 'is-mine', mine && snap.phase !== 'finished');
-  setText($('hud-plays'), mine && snap.turnPhase === 'play' ? `${snap.playsRemaining} plays` : '');
-  setText($('hand-count'), String(sel.myHand().length));
-  setClass($('hand-dock'), 'over-limit', sel.myHand().length > (snap.handLimit || 7));
+  // The counters describe the SETTLED state, so they may only be printed when
+  // the turn they belong to is the turn being named. A turn_start performed
+  // ahead of its job's reconcile has no play count yet, and inventing one is
+  // how the header started narrating the future in the first place.
+  const counted = turnId === snap.currentPlayerId;
+  const hand = handOf(snap);
+  setText($('hud-plays'),
+    mine && counted && snap.turnPhase === 'play' ? `${snap.playsRemaining} plays` : '');
+  setText($('hand-count'), String(hand.length));
+  setClass($('hand-dock'), 'over-limit', hand.length > (snap.handLimit || 7));
 
   // #btn-draw is suppressed by ui/prompt.js — the draw is automatic now, so
   // there is no draw affordance anywhere (§P7.9). Nothing here touches it.
@@ -453,10 +541,10 @@ function renderNarration() {
   // are holding it. Both actions re-check the store when they fire, so a late
   // disable can never let an illegal one through.
   setAttr($('btn-end-turn'), 'disabled',
-    !mine || snap.turnPhase !== 'play' || endTurnSent ? true : null);
+    !mine || !counted || snap.turnPhase !== 'play' || endTurnSent ? true : null);
   setAttr($('btn-scoop'), 'disabled', snap.phase !== 'playing' ? true : null);
   setClass($('table'), 'surge-on', !!snap.surgeOps);
-  renderStrip();
+  renderStrip(snap);
   narrated = snap.phase === 'playing';
 }
 
@@ -476,10 +564,13 @@ function render(payload) {
     && (payload.events?.length || 0) > 0
     && !choreographer.isInstant();
 
-  if (!performing) { clearHold(); renderNarration(); return; }
+  if (!performing) { clearHold(); felt = snap; feltTurn = snap.currentPlayerId; renderNarration(); return; }
 
   holding = true;
-  holdPlaceholder(snap);
+  // Not a blank: the last SETTLED state is still what is on the felt, so keep
+  // narrating it. holdPlaceholder only takes over when there is no settled
+  // state at all, which is the opening deal and nothing else.
+  renderNarration();
   releaseHold(FALLBACK_MS);
 }
 
@@ -546,13 +637,34 @@ export function mount() {
   });
 
   bus.on(EVENTS.STATE_APPLIED, render);
-  // The choreographer's word (§P9). CHOREO_EVENT only re-arms the deadline —
-  // the narration is not allowed out until the whole job has been performed.
-  bus.on(EVENTS.CHOREO_EVENT, () => releaseHold(FALLBACK_MS));
+  // The choreographer's word (§P9). CHOREO_EVENT re-arms the deadline, and a
+  // performed `turn_start` moves the name with the beat that is being shown.
+  bus.on(EVENTS.CHOREO_EVENT, (ev) => {
+    releaseHold(FALLBACK_MS);
+    if (ev?.t === 'turn_start' && ev.actor !== undefined && holding) {
+      feltTurn = ev.actor;
+      renderNarration();
+    }
+  });
+  // The felt has been reconciled to this state — see the header. This is what
+  // keeps the header alive on a table that never goes idle.
+  bus.on(CHOREO_SETTLED, (snapshot) => {
+    if (!snapshot) return;
+    felt = snapshot;
+    feltTurn = snapshot.currentPlayerId;
+    if (holding) renderNarration();
+  });
   bus.on(EVENTS.CHOREO_IDLE, () => {
+    felt = store.snapshot;
+    feltTurn = store.snapshot?.currentPlayerId;
     releaseHold(store.snapshot?.phase === 'finished' ? CELEBRATION_MS : 0);
   });
-  bus.on(EVENTS.STATE_SCREEN, () => { clearHold(); narrated = false; });
+  bus.on(EVENTS.STATE_SCREEN, () => {
+    clearHold();
+    narrated = false;
+    felt = null;
+    feltTurn = undefined;
+  });
   bus.on(EVENTS.NET_OPEN, renderConn);
   bus.on(EVENTS.NET_CLOSE, renderConn);
   subscribe(tickTimer);

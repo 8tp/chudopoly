@@ -261,15 +261,101 @@ test('state.log is bounded and the view tail is 40 lines', () => {
   assert.equal(G.getPlayerView(state, 'p1').log.length, 40);
 });
 
-test('move_property spam cannot grow the log without bound', () => {
+// THE INVARIANT THIS FILE GOT WRONG THE FIRST TIME.
+//
+// The original test spammed 3,000 rearranges, asserted `playsRemaining === 3` with the
+// comment 'still free, still spammable', and then checked only that the log and the event
+// ring were capped. Those two rings are internal to `state`; they say nothing about what
+// LEAVES the process. Every ACCEPTED move_property broadcasts a full room state to every
+// seat, so "spammable" is the defect, not the contract: measured over a socket, 60 moves in
+// 9.0s returned 785,471 B to one seat (~x211 per 62-byte request), playsRemaining never
+// moved, turnNumber never moved, and every client was forced to animate a card flight for
+// each one. The behaviour was measured and the wrong thing was gated.
+//
+// What actually has to hold is a bound on ACCEPTED moves per turn — because accepted moves
+// are the fan-out — while the rule stays genuinely free (§3.8) for anybody playing normally.
+// So: count the acceptances, not the log length.
+
+test('move_property is free but BOUNDED: a spam burst fans out a finite number of states', () => {
   const state = fresh();
   const [a] = state.players;
   const wild = take(state, c => c.type === 'wild_property' && c.colors[0] !== 'any');
   a.properties[wild.colors[0]] = [{ ...wild, placedColor: wild.colors[0] }];
-  for (let i = 0; i < 3000; i++) G.moveProperty(state, 'p1', wild.id, i % 2 ? wild.colors[0] : wild.colors[1]);
-  assert.equal(state.playsRemaining, 3, 'still free, still spammable');
+
+  const results = [];
+  for (let i = 0; i < 3000; i++) {
+    results.push(G.moveProperty(state, 'p1', wild.id, i % 2 ? wild.colors[0] : wild.colors[1]));
+  }
+  const accepted = results.filter(r => r.ok).length;
+
+  // 1. The fan-out is finite. This is the byte-amplification bound: one accepted move is one
+  //    full state to every seat, so 3,000 requests must not buy 3,000 broadcasts.
+  assert.equal(accepted, G.REARRANGE_BUDGET,
+    `3,000 rearranges bought exactly ${G.REARRANGE_BUDGET} board changes, not 3,000`);
+  assert.equal(state.rearrangesRemaining, 0, 'the turn\'s budget is spent');
+
+  // 2. Everything past the budget is REFUSED, and refused with a reason a player can act on.
+  //    A refusal costs a ~60-byte error frame instead of a ~13 KB state.
+  assert.equal(results.slice(G.REARRANGE_BUDGET).filter(r => r.ok).length, 0);
+  assert.match(results[G.REARRANGE_BUDGET].error, /No free rearranges left this turn/);
+  assert.match(results[2999].error, /No free rearranges left this turn/,
+    'the refusal never lapses inside the turn');
+
+  // 3. One broadcastable event per accepted move and not one more — the client's forced
+  //    card-flight animation is driven by this event, so this is the animation-spray bound.
+  assert.equal(state.events.filter(e => e.t === 'move_property').length, accepted);
+  assert.equal(state.log.filter(l => / moved /.test(l)).length, accepted);
+
+  // 4. Still FREE where it counts: §3.8's rearrange costs no play and does not consume the
+  //    turn. That is the part of the old assertion worth keeping.
+  assert.equal(state.playsRemaining, 3, 'a rearrange still costs no play');
+  assert.equal(G.currentPlayer(state).id, 'p1', 'and it does not end the turn');
+
+  // 5. The rings the old test checked are still capped (kept — it was not wrong, only weak).
   assert.ok(state.log.length <= G.LOG_MAX);
   assert.ok(state.events.length <= 400);
+});
+
+test('the rearrange budget refills every turn and refused moves never spend it', () => {
+  const state = fresh();
+  const [a] = state.players;
+  const wild = take(state, c => c.type === 'wild_property' && c.colors[0] !== 'any');
+  a.properties[wild.colors[0]] = [{ ...wild, placedColor: wild.colors[0] }];
+  assert.equal(state.rearrangesRemaining, G.REARRANGE_BUDGET);
+
+  // A fumbled drag — same colour, illegal colour, unknown card — is refused and costs
+  // nothing. A player who mis-drops a card must never lose a rearrange for it.
+  assert.match(G.moveProperty(state, 'p1', wild.id, wild.colors[0]).error, /Already in that set/);
+  assert.match(G.moveProperty(state, 'p1', wild.id, 'nonsense').error, /Invalid color/);
+  assert.match(G.moveProperty(state, 'p1', 99999, 'brown').error, /not found/);
+  assert.equal(state.rearrangesRemaining, G.REARRANGE_BUDGET, 'refusals are free');
+
+  // Ordinary play: a few rearranges in a turn all land.
+  for (let i = 0; i < 6; i++) {
+    assert.ok(G.moveProperty(state, 'p1', wild.id, i % 2 ? wild.colors[0] : wild.colors[1]).ok,
+      'normal play is never rate-limited');
+  }
+  assert.equal(state.rearrangesRemaining, G.REARRANGE_BUDGET - 6);
+
+  // Round the table back to p1: the budget is a per-TURN allowance, not a per-game one.
+  G.forceEndTurn(state);
+  assert.equal(state.rearrangesRemaining, G.REARRANGE_BUDGET, 'refilled for the next seat');
+  G.forceEndTurn(state);
+  assert.equal(G.currentPlayer(state).id, 'p1');
+  assert.equal(state.rearrangesRemaining, G.REARRANGE_BUDGET, 'and refilled again for p1');
+  state.turnPhase = 'play';
+  assert.ok(G.moveProperty(state, 'p1', wild.id, wild.colors[1]).ok);
+});
+
+test('the free-rearrange budget is on the wire, so a refusal is explicable', () => {
+  const state = fresh();
+  const view = G.getPlayerView(state, 'p1');
+  assert.equal(view.rearrangeBudget, G.REARRANGE_BUDGET);
+  assert.equal(view.rearrangesRemaining, G.REARRANGE_BUDGET);
+  // A state built before this field existed (a fixture, an in-flight room) reads as a full
+  // budget, never as an accidental zero that would refuse every drag.
+  delete state.rearrangesRemaining;
+  assert.equal(G.getPlayerView(state, 'p1').rearrangesRemaining, G.REARRANGE_BUDGET);
 });
 
 /* ── 12. honest final-approach countdown ─────────────────────────────── */
@@ -479,6 +565,153 @@ test('an expiring response clock says who ran out of time and what was decided f
   assert.ok(line, 'and a prose line for the log');
   assert.match(line, /P2/);
   assert.match(line, /45s/, 'the line states the clock, so "why did that happen" is answerable');
+  timers.clearTurnTimer(room);
+});
+
+/* ── one clock per outstanding answer ────────────────────────────────── */
+//
+// A pending action can owe answers from several seats at once. The clock used to be ONE
+// shared `responseStartedAt`, restamped by `startResponseTimer` — which `case 'respond'`
+// calls after every successful answer. Measured on a 3-target Roll Call: one target answered
+// at +4s and the shared clock jumped +4,344 ms, giving the two who had done nothing a
+// brand-new full clock, and making the countdown widget on their screens jump back to full.
+
+function rollCallRoom() {
+  const room = fakeRoom({ turnTimeout: 0, responseTimeout: 45 });
+  room.state = fresh(4);
+  room.players = room.state.players.map(p => ({ id: p.id, name: p.name }));
+  for (const p of room.state.players.slice(1)) {
+    p.bank.push(take(room.state, c => c.type === 'money' && c.value === 2));
+  }
+  room.state.players[0].hand.push(take(room.state, c => c.action === 'roll_call'));
+  assert.ok(G.playAction(room.state, 'p1', 0).ok);
+  assert.deepEqual(G.pendingResponders(room.state), ['p2', 'p3', 'p4']);
+  timers.startResponseTimer(room);
+  return room;
+}
+
+const deadlinesOf = room =>
+  Object.fromEntries([...room.responseDeadlines.values()].map(r => [r.responderId, r.startedAt]));
+
+test('one target answering never restarts the clock of a target who has done nothing', () => {
+  const room = rollCallRoom();
+  const armed = deadlinesOf(room);
+  assert.deepEqual(Object.keys(armed).sort(), ['p2', 'p3', 'p4']);
+
+  // The table thinks for 4 seconds…
+  for (const record of room.responseDeadlines.values()) record.startedAt -= 4000;
+  const aged = deadlinesOf(room);
+
+  // …then p2 answers, exactly as server/handlers.js `respond` does it.
+  assert.ok(G.respondToAction(room.state, 'p2', 'accept',
+    [room.state.players[1].bank[0].id]).ok);
+  timers.startResponseTimer(room);
+
+  const after = deadlinesOf(room);
+  assert.equal(after.p2, undefined, 'the seat that answered no longer holds a deadline');
+  assert.equal(after.p3, aged.p3, 'p3 keeps the 4 seconds it has already burned');
+  assert.equal(after.p4, aged.p4, 'and so does p4 — no free full clock for doing nothing');
+  assert.equal(room.responseStartedAt, Math.min(after.p3, after.p4),
+    'the room-level field is the NEXT deadline, not a restamp');
+  timers.clearTurnTimer(room);
+});
+
+test('each seat is shown its own answer deadline, and it is true', () => {
+  const room = rollCallRoom();
+  const sent = {};
+  room.players.forEach(p => {
+    p.ws = { readyState: 1, send: (raw) => { sent[p.id] = JSON.parse(raw); } };
+  });
+  // p3 has been sitting on this for 30s; p2 and p4 arrived at the decision just now.
+  for (const record of room.responseDeadlines.values()) {
+    if (record.responderId === 'p3') record.startedAt -= 30000;
+  }
+  const armed = deadlinesOf(room);
+
+  broadcast.broadcastRoom(room);
+
+  assert.equal(sent.p2.responseTimer.startedAt, armed.p2, 'p2 sees p2\'s clock');
+  assert.equal(sent.p3.responseTimer.startedAt, armed.p3, 'p3 sees the 30s it has burned');
+  assert.equal(sent.p4.responseTimer.startedAt, armed.p4);
+  assert.notEqual(sent.p3.responseTimer.startedAt, sent.p2.responseTimer.startedAt,
+    'two seats with different deadlines are never shown the same countdown');
+  // The attacker owes nothing, so they are shown what the TABLE is waiting on: the next
+  // deadline to expire. That is a true statement about the room, not somebody else's clock
+  // relabelled as theirs.
+  assert.equal(sent.p1.responseTimer.startedAt, Math.min(armed.p2, armed.p3, armed.p4));
+  room.players.forEach(p => { p.ws = null; });
+  timers.clearTurnTimer(room);
+});
+
+test('an expiry resolves every seat that is out of time, not just the first in the queue', () => {
+  const room = rollCallRoom();
+  // All three ran the whole 45s out. The old resolver took pendingResponders()[0] and armed
+  // a FRESH full clock for the rest, so three absent seats held the table for 3 × 45s.
+  for (const record of room.responseDeadlines.values()) record.startedAt -= 45000;
+
+  timers.autoResolveResponse(room);
+
+  assert.equal(room.state.pendingAction, null, 'one expiry cleared the whole pending action');
+  assert.equal(room.state.events.filter(e => e.t === 'response_timeout').length, 3,
+    'and each seat was told, individually, that its own clock ran out');
+  assert.equal(room.responseTimerId, null, 'no response clock is left armed');
+  assert.deepEqual(G.validateState(room.state), { ok: true });
+  timers.clearTurnTimer(room);
+});
+
+test('a seat still inside its own deadline is never auto-answered by somebody else expiring', () => {
+  const room = rollCallRoom();
+  for (const record of room.responseDeadlines.values()) {
+    if (record.responderId !== 'p2') continue;
+    record.startedAt -= 45000;                       // only p2 is out of time
+  }
+  timers.autoResolveResponse(room);
+
+  assert.deepEqual(G.pendingResponders(room.state), ['p3', 'p4'], 'the other two still owe an answer');
+  assert.equal(room.state.events.filter(e => e.t === 'response_timeout').length, 1);
+  assert.ok(room.responseTimerId, 'and the clock is re-armed for them');
+  timers.clearTurnTimer(room);
+});
+
+/* ── an expiry at odd OPSEC depth is a CONCESSION, and must say so ───── */
+// `owed` is 0 when the responder is the source, so the event read
+// `pending:'payment', decision:'accept', amount:0` — while what actually happened was that
+// the attacker declined to counter and the defender's OPSEC stood. The client now surfaces
+// this event prominently, so those were the wrong words on screen at the moment a player
+// goes looking for what just happened.
+
+test('a response clock expiring on the attacker says the OPSEC stood, not "accepted 0M"', () => {
+  const room = fakeRoom({ turnTimeout: 0, responseTimeout: 45 });
+  room.players = [{ id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' }];
+  room.state = fresh(2);
+  const money = take(room.state, c => c.type === 'money' && c.value === 5);
+  room.state.players[1].bank.push(money);
+  room.state.players[1].hand.push(take(room.state, c => c.action === 'opsec'));
+  room.state.players[0].hand.push(take(room.state, c => c.action === 'finance_office'));
+  assert.ok(G.playAction(room.state, 'p1', 0, { targetId: 'p2' }).ok);
+  // P2 defends. The question is now P1's: counter, or concede.
+  assert.ok(G.respondToAction(room.state, 'p2', 'opsec').ok);
+  assert.deepEqual(G.pendingResponders(room.state), ['p1']);
+  timers.startResponseTimer(room);
+  for (const record of room.responseDeadlines.values()) record.startedAt -= 45000;
+
+  timers.autoResolveResponse(room);
+
+  const ev = room.state.events.find(e => e.t === 'response_timeout');
+  assert.ok(ev);
+  assert.equal(ev.actor, 'p1', 'it was the ATTACKER\'s clock that expired');
+  assert.equal(ev.decision, 'concede', 'and conceding is not accepting');
+  assert.equal(ev.pending, 'opsec', 'the question was "do you counter?", not "do you pay?"');
+  assert.equal(ev.blocked, true);
+  assert.equal(ev.depth, 1);
+  assert.equal(ev.target, 'p2', 'the seat the original action was aimed at');
+  assert.equal(ev.amount, 0);
+  assert.ok(room.state.log.some(l => /OPSEC stands/.test(l)),
+    'and the prose says what actually happened');
+  // The action really was blocked: P2 keeps the money.
+  assert.ok(room.state.players[1].bank.some(c => c.id === money.id), 'no payment was made');
+  assert.equal(room.state.pendingAction, null);
+  assert.ok(room.state.events.some(e => e.t === 'action_blocked'));
   timers.clearTurnTimer(room);
 });
 

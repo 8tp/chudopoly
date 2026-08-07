@@ -48,12 +48,13 @@ import { $, el, setHidden, setText, setAttr } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import * as send from '../net/send.js';
-import { store, seatName, playerById } from '../state/store.js';
+import { store, seatName, playerById, selfPlayer } from '../state/store.js';
 import * as sel from '../state/selectors.js';
 import * as interact from '../interact/index.js';
 import { mode } from '../interact/index.js';
 import * as pointer from '../interact/pointer.js';
-import { colorName, cardName } from '../core/cards.js';
+import { colorName, cardName, upgradeKinds } from '../core/cards.js';
+import { activeRules, PRESET_COPY, WIN_RULE_NAMES } from './ruleset.js';
 import * as details from './details.js';
 import * as deadline from './deadline.js';
 import * as feed from './feed.js';
@@ -73,12 +74,27 @@ const chip = (key, str, cls, extra = {}) => ({ key, tag: 'span', cls, text: str,
 const button = (key, str, action, cls = 'btn', extra = {}) =>
   ({ key, tag: 'button', cls, text: str, action, ...extra });
 
+/**
+ * The surge on a charge, as the number the engine actually used.
+ *
+ * game.js chargeAmount() (994-1000) multiplies by `2 ** stack` and now ships that
+ * `multiplier` on the pendingAction and on `rent_charged`/`demand`. Before it did,
+ * the only thing on the wire was the boolean `doubled`, so a x4 charge was labelled
+ * "(DOUBLED)" directly under the engine's own log line reading "SURGED x4". The
+ * fallback keeps an older broadcast honest at the one value it can prove.
+ */
+function surgeLabel(pa) {
+  if (!pa?.doubled) return '';
+  const m = Number(pa.multiplier);
+  return Number.isFinite(m) && m > 1 ? ` — SURGED x${m}` : ' — SURGED';
+}
+
 function describePending(pa) {
   const who = seatName(pa.sourceId);
   const title = ACTION_TITLE[pa.action] || pa.action;
   if (pa.type === 'payment') {
     const on = pa.color ? ` on ${colorName(pa.color)}` : '';
-    return `${who} charges ${pa.amount}M — ${title}${on}${pa.doubled ? ' (DOUBLED)' : ''}`;
+    return `${who} charges ${pa.amount}M — ${title}${on}${surgeLabel(pa)}`;
   }
   if (pa.type === 'steal_set') return `${who} is seizing your ${colorName(pa.color)} set — ${title}`;
   if (pa.type === 'steal_property') return `${who} is taking one of your properties — ${title}`;
@@ -97,6 +113,63 @@ function approachWarning() {
   return text('approach',
     'You are on FINAL APPROACH — paying with a card out of a complete set ends it.',
     'prompt-why is-approach');
+}
+
+/**
+ * An unstated rule that silently costs rent, warned about at the only moment it
+ * can still be avoided: the tap before Confirm.
+ *
+ * game.js normalizeUpgrades() (806-830) runs over every colour the payment touched
+ * and BANKS any FOC left without an Upgrade beneath it. So paying with an Upgrade
+ * quietly takes its FOC off the set too. MEASURED against the engine: a complete
+ * Command set carrying Upgrade + FOC charges 15M rent; settle a 2M Roll Call with
+ * the Upgrade alone and the set is still complete, still 2/2 — and charges 8M. Two
+ * cards left the board for a 2M bill, and the only trace was a `payment` line
+ * saying "paid 3M".
+ *
+ * It fires only when the FOC is not ALSO in the selection: hand over both
+ * deliberately and there is nothing to warn about, you already spent them.
+ */
+function focWarning() {
+  const me = selfPlayer();
+  if (!me) return null;
+  // Deliberately NOT gated on isComplete(): normalizeUpgrades() does not ask whether
+  // the set is still a set, only whether the FOC has an Upgrade under it.
+  const losing = [];
+  for (const card of sel.payableCards(me)) {
+    if (card?.upgradeType !== 'house') continue;
+    if (!mode.selected?.has(card.id)) continue;
+    const color = card.placedColor;
+    if (!color || !upgradeKinds(me, color).includes('hotel')) continue;
+    const foc = (me.upgrades?.[color] || []).find(u => u?.upgradeType === 'hotel');
+    if (foc && mode.selected.has(foc.id)) continue;    // spending both on purpose
+    losing.push(colorName(color));
+  }
+  if (!losing.length) return null;
+  return text('focwarn',
+    `An FOC cannot stand without its Upgrade: paying with your ${losing.join(' and ')} `
+    + 'Upgrade sends the FOC to your bank too — the set stays complete and loses 7M of rent.',
+    'prompt-why is-approach');
+}
+
+/**
+ * WHAT ARE WE PLAYING? — item 15. Until now the resolved preset lived only behind
+ * ? → Goal, so a player dropped into a table under MD Faithful (where a full zone of
+ * wilds is not a set) or Blitz (where the third set wins instantly, with no window
+ * to break it) had no way to know from the table itself.
+ *
+ * ui/ruleset.js activeRules() reads game.js getPlayerView's resolved `rules` block
+ * — the server's answer, not the lobby's guess — and falls back to the win rule's
+ * name for a custom mix that matches no preset. It rides the idle states only,
+ * beside the standings, for the reason leaderChip() gives: during a decision the
+ * bar is asking a question.
+ */
+function rulesetChip() {
+  const active = activeRules();
+  if (!active.live) return null;
+  const name = PRESET_COPY[active.preset]?.name || WIN_RULE_NAMES[active.winRule] || null;
+  if (!name) return null;
+  return chip('ruleset', name.toUpperCase(), 'chip prompt-ruleset');
 }
 
 /* ── the response deadline (§5, §P7.7, §P9) ────────────────────────────────
@@ -134,6 +207,31 @@ function deadlineItems(list) {
  * cheapest honest form of that, and it is derived from exactly the predicate
  * the Play button will use one tap later, so the two can never disagree.
  */
+/**
+ * IS THE TABLE ACTUALLY HOLDING WHAT THE SNAPSHOT SAYS?
+ *
+ * MEASURED at t=77ms of a real deal: the header read DEALING, the hand zone held
+ * ZERO card nodes, and this bar already read "YOUR TURN · 3 plays left · 3 playable
+ * · 4 to bank" — because handOptions() below counts `sel.myHand()`, which is the
+ * broadcast, and the broadcast lands ~1.7s before the choreographer finishes flying
+ * the cards in. Same root cause as the ending spoiler above: a surface reading the
+ * store while every other surface follows the choreographer.
+ *
+ * The fix is a DIFF against what the table is actually holding rather than another
+ * timer, because a timer would have to be re-tuned every time the deal changes
+ * length, and because in steady state the two numbers are equal — so this costs one
+ * querySelectorAll over a ≤7-node zone and never flickers during ordinary play.
+ * If the zone cannot be found at all we assume settled: a missing node must never
+ * mute the one bar whose job is to speak.
+ */
+function handSettled() {
+  const want = sel.myHand().length;
+  if (!want) return true;
+  const zone = document.querySelector('#zone-hand, [data-zone="hand"]');
+  if (!zone) return true;
+  return zone.querySelectorAll('[data-card-id]').length >= want;
+}
+
 function handOptions() {
   const hand = sel.myHand();
   let playable = 0;
@@ -188,6 +286,14 @@ function myTurnItems(snap, items) {
   items.push(chip('plays', `${plays} play${plays === 1 ? '' : 's'} left`,
     `chip prompt-plays${plays === 0 ? ' is-spent' : ''}`));
 
+  // Every line below this point is a CLAIM ABOUT CARDS. While the deal is still
+  // flying, the claim is about cards that are not on the table yet, so the bar
+  // says the one thing that IS true and waits (see handSettled()).
+  if (!handSettled()) {
+    items.push(text('why', 'Dealing…'));
+    return;
+  }
+
   // CHIPS, NOT SENTENCES. Measured on a 390×844 phone: a two-clause sentence
   // here wrapped to three lines and made the bar 109px tall, in a state where
   // the bar is only meant to be a nudge. Counts belong in chips — they scan in
@@ -222,15 +328,58 @@ function myTurnItems(snap, items) {
   }
 }
 
-/** Somebody else is deciding. Includes the case where they are deciding about
- *  a card *I* played, which is the one time waiting is genuinely tense. */
+/**
+ * Somebody else is deciding. Includes the case where they are deciding about a
+ * card *I* played, which is the one time waiting is genuinely tense.
+ *
+ * ── THE OPSEC CHAIN, SAID CORRECTLY ────────────────────────────────────────
+ *
+ * game.js respondToAction() (1283-1285) does NOT keep the responder fixed: on an
+ * OPSEC it sets `entry.responderId = (playerId === pa.sourceId ? entry.id : pa.sourceId)`
+ * and increments `entry.depth`. So at ODD depth the responder IS the source, and
+ * `${responder} is answering ${sourceId}'s ${title}` reduces to "Shadow is
+ * answering Shadow's TDY Orders" — captured twice in live play, both times right
+ * after the critic played OPSEC. Verified against the engine: play TDY a→b, b
+ * answers 'opsec', and the broadcast is
+ * `responders:["a"], pendingAction.sourceId:"a", targets:[{id:"b",depth:1,responderId:"a"}]`.
+ *
+ * The DEFENDER is `entry.id` at every depth — the seat the action was aimed at —
+ * and the depth's parity is the whole story:
+ *   depth 0      the defender is deciding whether to block.
+ *   depth odd    the defender's OPSEC is STANDING; the source may counter.
+ *   depth even>0 the source countered; the defender may counter back.
+ * The second of those never appeared anywhere in the client, so a player who had
+ * just spent an OPSEC was never told it had worked.
+ */
 function pendingElsewhereItems(snap, items) {
   const pa = snap.pendingAction;
   const responder = (snap.responders || [])[0];
+  const entry = (pa.targets || []).find(t => t.responderId === responder)
+    || (pa.targets || [])[0] || null;
+  const depth = Number(entry?.depth) || 0;
+  const defender = entry?.id ?? null;
   const title = ACTION_TITLE[pa.action] || pa.action;
-  const mineToWatch = pa.sourceId === store.self.id;
+  const iAmSource = pa.sourceId === store.self.id;
+  const iAmDefender = defender != null && defender === store.self.id;
   items.push(chip('turn', 'HOLD', 'chip prompt-turn is-waiting'));
-  items.push(text('why', mineToWatch
+
+  if (depth % 2 === 1) {
+    // An OPSEC is standing. Name whose it is and who has to answer it.
+    items.push(text('why', iAmDefender
+      ? `Your OPSEC is standing — ${seatName(pa.sourceId)} is deciding whether to counter it.`
+      : `${seatName(defender)} played OPSEC — ${seatName(pa.sourceId)} is deciding whether `
+        + `to counter.`));
+    if (iAmDefender) items.push(chip('opsecstand', 'OPSEC HELD', 'chip prompt-count is-stuck'));
+    return;
+  }
+  if (depth >= 2) {
+    // The source countered; it is back on the defender.
+    items.push(text('why', iAmSource
+      ? `Your counter-OPSEC is standing — ${seatName(defender)} is deciding whether to answer it.`
+      : `${seatName(pa.sourceId)} countered with OPSEC — ${seatName(defender)} is deciding.`));
+    return;
+  }
+  items.push(text('why', iAmSource
     ? `${seatName(responder)} is deciding whether to OPSEC your ${title}.`
     : `${seatName(responder)} is answering ${seatName(pa.sourceId)}'s ${title}.`));
 }
@@ -270,11 +419,64 @@ function waitingItems(snap, items) {
 function finishedItems(snap, items) {
   const winner = snap.winner;
   items.push(chip('turn', 'GAME OVER', 'chip prompt-turn'));
+  // §P7.1, again, on the surface that was still doing it. This branch ran on
+  // STATE_APPLIED, which lands the instant the finished snapshot arrives — ~850ms
+  // before ui/overlays.js and ui/hud.js release their choreographer hold. So the
+  // one line in the game whose job is to say the least was announcing the winner
+  // over a table still flying the last cards, which is the exact spoiler the HUD
+  // was rewritten to prevent. Held on the same signal and the same clock.
+  if (winHeld) {
+    items.push(text('why', 'The table is settling…'));
+    return;
+  }
   items.push(text('why', winner == null
     ? 'The game ended on points.'
     : winner === store.self.id
       ? 'You took it.'
       : `${seatName(winner)} took it.`));
+}
+
+/* ── the choreographer's hold on the ending (§P7.1) ────────────────────────
+ *
+ * A faithful mirror of ui/overlays.js's own hold, deliberately duplicated rather
+ * than imported: overlays.js opens a full-screen scrim and this opens one line of
+ * text, so they must be able to diverge, and a bar that waits on another module's
+ * private `pending` flag is a bar that hangs when that module changes its mind.
+ * The constants are the same because the beat is the same one — fx/index.js
+ * CUE.WIN's shake runs 400ms, the flash 800ms, the fanfare resolves at 270ms.
+ */
+const CELEBRATION_MS = 850;
+const FALLBACK_MS = 2600;
+let winHeld = false;
+let winArmed = false;          // this ending has already been handled — never re-hold it
+let winTimer = 0;
+
+function releaseWin(delay) {
+  if (!winHeld) return;
+  clearTimeout(winTimer);
+  winTimer = setTimeout(() => { winHeld = false; winTimer = 0; render(); }, delay);
+}
+
+/** Called on every applied state. Arms the hold the first time a finished snapshot
+ *  arrives WITH a celebration queued; a snapped state (reconnect, fixture
+ *  injection, catch-up drain) has nothing to wait for and must not be held. A
+ *  released hold is never re-armed, or every later broadcast in a finished game
+ *  would blank the line again. */
+function syncWinHold(payload) {
+  const snap = store.snapshot;
+  if (!snap || snap.phase !== 'finished') {
+    clearTimeout(winTimer);
+    winTimer = 0;
+    winHeld = false;
+    winArmed = false;
+    return;
+  }
+  if (winArmed) return;
+  const celebrating = (payload?.events || []).some(ev => ev?.t === 'win' || ev?.t === 'stalemate');
+  if (!celebrating) { winArmed = true; return; }
+  winArmed = true;
+  winHeld = true;
+  releaseWin(FALLBACK_MS);                               // the screen can never be lost
 }
 
 function render() {
@@ -348,6 +550,7 @@ function render() {
     }
     if (sel.hasOpsec()) items.push(button('opsec', 'OPSEC instead', 'respond-opsec'));
     items.push(approachWarning());
+    items.push(focWarning());
   } else if (mode.kind === 'discard') {
     // §P8: the bar must say the number, show the running count, offer the
     // one-tap default, and make the confirm's state unmistakable WITHOUT
@@ -412,9 +615,10 @@ function render() {
       state = 'waiting';
       waitingItems(snap, items);
     }
-    // The standings ride only the idle states: during a decision the bar is
-    // asking a question and a scoreboard chip beside the answer buttons is
-    // exactly the noise §5 warns about.
+    // The standings and the ruleset ride only the idle states: during a decision
+    // the bar is asking a question and a scoreboard chip beside the answer buttons
+    // is exactly the noise §5 warns about.
+    if (state !== 'hold') items.push(rulesetChip());
     items.push(leaderChip());
   }
 
@@ -456,6 +660,10 @@ const CSS = `
 #prompt .prompt-turn.is-mine{background:var(--accent);color:var(--act-fg);border-color:transparent}
 #prompt .prompt-turn.is-alarm{background:var(--danger);color:var(--act-fg);border-color:transparent}
 #prompt .prompt-plays.is-spent{opacity:.62}
+/* The ruleset name is context, not news: quieter than everything beside it, and it
+   sits before the standings so .prompt-lead's margin-left:auto still parks the
+   scoreboard on the right. */
+#prompt .prompt-ruleset{opacity:.72;letter-spacing:.06em;white-space:nowrap}
 #prompt .prompt-lead{margin-left:auto}
 #prompt .prompt-lead.is-hot{box-shadow:inset 0 0 0 2px var(--danger)}
 #prompt .prompt-text.is-attack{font-weight:800}
@@ -531,10 +739,17 @@ export function mount() {
   });
   bus.on(EVENTS.UI_DETAILS, (cardId) => details.show(sel.findCard(cardId)));
   bus.on(EVENTS.INTERACT_CHANGED, render);
-  bus.on(EVENTS.STATE_APPLIED, render);
+  bus.on(EVENTS.STATE_APPLIED, (payload) => { syncWinHold(payload); render(); });
+  // The choreographer's word, not the store's (§P7.1): `win`/`stalemate` are the
+  // last events it plays, so the ending line waits for them the way the overlay
+  // and the HUD do.
+  bus.on(EVENTS.CHOREO_EVENT, (ev) => {
+    if (ev?.t === 'win' || ev?.t === 'stalemate') releaseWin(CELEBRATION_MS);
+  });
   // The waiting copy names the seat that is playing and counts its plays down,
   // and the choreographer is what makes that true on the felt — repainting on
   // its word keeps the bar with the cards rather than ahead of them, the same
-  // rule ui/hud.js's narration follows.
-  bus.on(EVENTS.CHOREO_IDLE, render);
+  // rule ui/hud.js's narration follows. It is also the belt-and-braces release
+  // for an ending whose cue a catch-up drain swallowed.
+  bus.on(EVENTS.CHOREO_IDLE, () => { releaseWin(CELEBRATION_MS); render(); });
 }

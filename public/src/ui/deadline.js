@@ -118,6 +118,13 @@ export function consequence() {
   if (!d) return '';
   const owed = sel.owedAmount();
   const secs = Math.max(0, Math.ceil(d.left));
+  // ZERO IS NOT A COUNTDOWN. The clock reaching 0 means the server's timeout has
+  // already fired and its broadcast is in flight; ui/hud.js tickTimer() (64-67)
+  // deliberately hides both rings for exactly that gap because "0s" reads as a hung
+  // clock. This sentence kept printing "0s — answer now, or it is answered for you"
+  // underneath the hidden ring — an instruction to act, at the one moment acting is
+  // no longer possible. It says what is actually happening instead.
+  if (d.left <= 0) return 'Time is up — the table is answering for you.';
   // Short on purpose. Measured on a 390×844 phone: the first draft of this
   // sentence ("45s answer clock: run it out and the 5M is accepted for you and
   // paid from your cheapest cards.") wrapped to three lines and took the prompt
@@ -196,6 +203,15 @@ function tick() {
     setClass(box, 'is-critical', false);
     const ring = $('prompt-deadline');
     if (ring) setText(ring.firstElementChild, '');
+    // The ring is blanked here, but the SENTENCE under it is only rewritten on a
+    // second boundary below — so it froze on whatever it last said ("1s — answer
+    // now, or it is answered for you") and sat there under an empty ring for the
+    // whole gap between the timeout firing and its broadcast landing. It is
+    // rewritten on the way out too, so the two never disagree.
+    if (lastSeconds !== -1) {
+      const why = $('prompt-deadline-why');
+      if (why) setText(why, consequence());
+    }
     lastSeconds = -1;
     lastFrac = -1;
     return;

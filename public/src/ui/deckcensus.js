@@ -113,7 +113,18 @@ const ACTION_LABELS = Object.freeze({
   upgrade: 'Upgrade (House)', foc: 'Full Op Capability', opsec: 'OPSEC',
 });
 
-const pairName = (key) => key.split('|').map(colorName).join(' / ');
+/**
+ * pairKey() sorts the colour KEYS so a pair has one identity whichever order it
+ * arrives in — that is a lookup key and it must stay sorted. It is not a reading
+ * order: 'orange|pink' printed "Rent: Test & Eval / Space Force" while core/cards.js
+ * cardName() (which every other surface uses) prints the card's own colour order,
+ * "Rent: Space Force / Test & Eval". COLOR_KEYS is that order — it is the deck's
+ * order in game.js buildDeck() and the column order on every board — so the label
+ * is rendered in it and the key is left alone.
+ */
+const pairName = (key) => key.split('|')
+  .sort((a, b) => COLOR_KEYS.indexOf(a) - COLOR_KEYS.indexOf(b))
+  .map(colorName).join(' / ');
 
 export function kindLabel(key) {
   const [kind, rest] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];

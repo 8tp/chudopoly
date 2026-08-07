@@ -280,9 +280,23 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ══ fields — cut into the apron, not floated on it ═══════════════════════ */
 
+/* ── iOS FOCUS-ZOOM, and why no gate we own can catch it ─────────────────
+   MOBILE REVIEW round 5, measured: every text control in the app inherited
+   `font-size: var(--s)`, which is 14.35px on a 390px phone — name-input,
+   code-input, the three settings selects and chat-input. Mobile Safari zooms
+   the page in on focus of ANY control under 16px and never zooms back out, so
+   the first thing a player ever taps ("Call sign") leaves them stuck at 1.3×
+   for the rest of the session. The other half of the fix — no `maximum-scale`
+   in the viewport meta — is already right and must stay right, because
+   defeating pinch-zoom to dodge this is an accessibility regression.
+   Chromium emulation does not implement the zoom, so this survived three
+   mobile audits and cannot be gated here; it is a rule, not a measurement.
+   `max()` and not a flat 16px: on a desktop where --s is 18 the field should
+   still track the type scale. */
 .field {
   min-height: var(--tap);
   width: 100%;
+  font-size: max(16px, 1em);
   padding: 0 .8em;
   border: 0;
   border-radius: var(--radius);
@@ -305,13 +319,19 @@ select.field { padding-right: .4em; }
 
 /* ── chip: the one small readout. A STAMPED PLATE, not a pill. ─────────── */
 
+/* ROUND-5: the fill was --ground-deep, the DEEPEST tone in the theme, which in
+   dark is #0B0D10 — so four or five readouts per frame (a worth plate per seat,
+   the plays plate, the set tally) rendered as solid near-black slabs beside an
+   End turn that is the one thing entitled to read as a slab. §1 reserves the
+   ink slab for the primary action and nothing else; a readout is a plate
+   STAMPED INTO the furniture it sits on, which is one tone, not two. */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: .3em;
   padding: .24em .55em;
   border-radius: 2px;
-  background: var(--ground-deep);
+  background: var(--ground);
   color: var(--fg);
   font-size: var(--t-micro);
   font-weight: 700;

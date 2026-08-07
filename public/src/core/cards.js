@@ -96,7 +96,12 @@ export function zoneFull(player, color) {
  * Neither Midnight Requisition NOR TDY Orders may touch a complete set — and
  * for TDY that is true on both sides of the trade (§3.1, reversed 2026-08-06;
  * game.js playAction 'midnight_requisition':1101 and 'tdy_orders':1123-1126).
- * CHUD is the only card left that can reach into one.
+ *
+ * CHUD is the only card that can take ONE CARD out of a complete set. It is NOT
+ * "the only card that can touch a complete set at all": playAction
+ * 'inspector_general' (game.js:1082) REQUIRES `isSetComplete(target, color)` and
+ * refuses anything else with "That set is not complete". Measured both ways.
+ * The distinction is card-vs-set, and every surface must say it that way.
  *
  * Mirrors game.js zoneRequisitionable() (590-593): `zoneCount > 0 && NOT a
  * set`. Expressed against isComplete() rather than `n < size` so it stays
@@ -171,8 +176,11 @@ export const ACTION_RULES = Object.freeze({
   roll_call: 'Every other player pays you 2M. Each of them answers on their own.',
   // playAction case 'finance_office' — single target, 5M.
   finance_office: 'One player you name pays you 5M.',
-  // executeEntry case 'steal_set' — moves target.upgrades[col] across too.
-  inspector_general: 'Seize one whole COMPLETE set from a player. Its Upgrade and FOC come with it.',
+  // playAction case 'inspector_general' (game.js:1082) REQUIRES isSetComplete()
+  // and refuses everything else with "That set is not complete" — measured both
+  // ways. executeEntry case 'steal_set' then moves target.upgrades[col] across.
+  inspector_general: 'Seize one whole COMPLETE set from a player — it is the only thing this '
+    + 'card can be aimed at, and it takes the set entire. Its Upgrade and FOC come with it.',
   // playAction case 'midnight_requisition' + zoneRequisitionable().
   midnight_requisition: 'Take one property. Never out of a complete set.',
   // §3.1 REVERSED 2026-08-06 — playAction case 'tdy_orders' (game.js:1123-1126)
@@ -183,21 +191,31 @@ export const ACTION_RULES = Object.freeze({
     + 'complete set — yours or theirs. You always give a card back, which is what separates it '
     + 'from CHUD.',
   // playAction case 'chud' (game.js:1173) — the ONLY steal with no
-  // zoneRequisitionable guard left, and §3.1 removed the tax.
+  // zoneRequisitionable guard left, and §3.1 removed the tax. It is not the only
+  // card that can be pointed at a complete set (Inspector General must be), it is
+  // the only one that can pull a SINGLE card out of one.
   chud: 'Commandeer Hardware Under Directive. TAKE any property, even out of a complete set, and '
-    + 'give nothing back. Since §3.1 it is the only card in the deck that can touch a complete '
-    + 'set at all — Midnight Requisition and TDY Orders are both locked out of one. No tax.',
+    + 'give nothing back. It is the only card that can pull ONE card out of a complete set and '
+    + 'break it — Midnight Requisition and TDY Orders are locked out of a complete set entirely, '
+    + 'and Inspector General can only take one whole. No tax.',
   // §3.1b — playAction case 'upgrade' + calcRent(); payableCards() (game.js:710)
   // includes upgrades; bankUpgradeCard() (game.js:783) BANKS them on a break
   // rather than discarding; moveUpgrade() (game.js:1517) relocates them free.
   upgrade: '+3M rent on one complete set. It is real money: you may hand it over as payment, '
     + 'and if the set under it breaks it drops into your own bank at face value rather than '
-    + 'being lost. Move it to another complete set for free on your turn.',
+    + 'being lost. Move it to another complete set for free on your turn. Pay with it and any '
+    + 'FOC standing on that set goes to your bank too — it cannot stay without the Upgrade.',
   // playAction case 'foc' — requires 'house' first, one per set. moveUpgrade()
-  // refuses to strand an FOC without its Upgrade.
+  // refuses to strand an FOC without its Upgrade, and normalizeUpgrades()
+  // (game.js:806-830) enforces the same thing after a PAYMENT: hand over the
+  // Upgrade and the engine banks the FOC behind it. Measured: a complete Command
+  // set with both charges 15M; pay 3M with the Upgrade and it charges 8M, set
+  // still complete. That is the whole surprise and it belongs on the card.
   foc: '+4M rent on a complete set that already has an Upgrade. Same terms: payable, and it '
     + 'banks itself if the set breaks. It moves free between complete sets too, but only onto '
-    + 'one that already has an Upgrade.',
+    + 'one that already has an Upgrade — and it can never stand alone. Pay with the Upgrade '
+    + 'beneath it and the FOC follows it straight into your bank, so a 3M payment can cost you '
+    + '7M of rent on a set you still hold.',
   // respondToAction case 'opsec' — the card is spliced out and discarded before
   // the depth increments, so it is spent whichever way the chain ends.
   opsec: 'Cancels an action aimed at you. They may counter with their own OPSEC, and so on — '

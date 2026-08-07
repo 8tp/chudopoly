@@ -93,6 +93,18 @@ function ownedByThePrompt(ev) {
 }
 
 /**
+ * The surge on a charge, as the number the engine used. game.js chargeAmount()
+ * (994-1000) returns `2 ** stack`, and `multiplier` now travels on `rent_charged`
+ * and `demand`; an older broadcast carries only `doubled`, and the honest thing to
+ * say about a boolean is that it surged, not by how much.
+ */
+function surgeMark(ev) {
+  if (!ev?.doubled) return '';
+  const m = Number(ev.multiplier);
+  return Number.isFinite(m) && m > 1 ? ` ×${m}` : ' SURGED';
+}
+
+/**
  * One engine event → one glanceable line, or null for "not worth a line".
  * @returns {{text:string, mark:string, weight:'hit'|'big'|'note', color?:string}|null}
  */
@@ -100,7 +112,18 @@ function line(ev) {
   const me = store.self.id;
   const isMe = (id) => id != null && id === me;
   const who = (id) => (isMe(id) ? 'You' : seatName(id));
+  // OBJECT position. "Phantom paid You 6M" and "took a card from You" are the same
+  // defect as the verb one below: `who()` is a SUBJECT, and a feed that names the
+  // reader has to decline it. Measured across a full game, up to 25 lines a game
+  // came out ungrammatical.
+  const whom = (id) => (isMe(id) ? 'you' : seatName(id));
   const whose = (id) => (isMe(id) ? 'your' : `${seatName(id)}'s`);
+  // THIRD-PERSON -s, or not, depending on whether the subject is the reader.
+  // "You charges Phantom 5M" shipped on every demand and every rent charge — 25
+  // chances a game in the measured session — because these two lines are the only
+  // ones in the whole vocabulary written in the PRESENT tense. ui/journal.js has
+  // carried this helper since it was measured saying "You is on FINAL APPROACH".
+  const s3 = (id, verb) => (isMe(id) ? verb : `${verb}s`);
   const hit = (id) => (isMe(id) ? 'hit' : 'note');
 
   switch (ev.t) {
@@ -120,17 +143,21 @@ function line(ev) {
         : { mark: '⏰', weight: 'note', text: `${who(ev.actor)}'s turn ran out` };
 
     /* charges and answers */
+    // `×2` was hard-coded off the boolean `doubled`, one line under the engine's own
+    // "SURGED x4" log line, because chargeAmount() (game.js:994-1000) multiplies by
+    // 2**stack and only the boolean was on the wire. `multiplier` ships on both
+    // events now; surgeMark() reads it and falls back for an older broadcast.
     case 'demand':
       return { mark: '⇢', weight: hit(ev.target),
-        text: `${who(ev.actor)} charges ${who(ev.target)} ${ev.amount}M`
-          + `${ev.doubled ? ' ×2' : ''} — ${title({ action: ev.reason })}` };
+        text: `${who(ev.actor)} ${s3(ev.actor, 'charge')} ${whom(ev.target)} ${ev.amount}M`
+          + surgeMark(ev) + ` — ${title({ action: ev.reason })}` };
     case 'rent_charged':
       return { mark: '⇢', weight: (ev.targets || []).includes(me) ? 'hit' : 'note', color: ev.color,
-        text: `${who(ev.actor)} charges ${ev.amount}M rent on ${colorName(ev.color)}`
-          + `${ev.doubled ? ' ×2' : ''}` };
+        text: `${who(ev.actor)} ${s3(ev.actor, 'charge')} ${ev.amount}M rent on `
+          + `${colorName(ev.color)}` + surgeMark(ev) };
     case 'payment':
       return { mark: '→', weight: isMe(ev.from) ? 'hit' : 'note',
-        text: `${who(ev.from)} paid ${who(ev.to)} ${ev.total}M` };
+        text: `${who(ev.from)} paid ${whom(ev.to)} ${ev.total}M` };
     case 'insolvent':
       return { mark: '∅', weight: hit(ev.from),
         text: `${who(ev.from)} had nothing to pay with — debt written off` };
@@ -144,7 +171,7 @@ function line(ev) {
     /* things taken */
     case 'steal':
       return { mark: '✂', weight: hit(ev.from), color: ev.toColor,
-        text: `${who(ev.actor)} took ${cardName(ev.card)} from ${who(ev.from)}` };
+        text: `${who(ev.actor)} took ${cardName(ev.card)} from ${whom(ev.from)}` };
     case 'set_stolen':
       return { mark: '✂', weight: isMe(ev.from) ? 'hit' : 'big', color: ev.color,
         text: `${who(ev.actor)} SEIZED ${whose(ev.from)} ${colorName(ev.color)} set` };
@@ -165,7 +192,7 @@ function line(ev) {
           : `${who(ev.actor)} on FINAL APPROACH — ${ev.opponentTurnsRemaining ?? '?'} turns to break them` };
     case 'final_approach_broken':
       return { mark: '✖', weight: isMe(ev.actor) ? 'hit' : 'big',
-        text: `${whose(ev.actor)} final approach BROKEN${ev.by ? ` by ${who(ev.by)}` : ''}` };
+        text: `${whose(ev.actor)} final approach BROKEN${ev.by ? ` by ${whom(ev.by)}` : ''}` };
     case 'final_approach_pending':
       return { mark: '⧗', weight: 'big',
         text: `${whose(ev.actor)} approach did not convert this turn` };

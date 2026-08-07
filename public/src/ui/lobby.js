@@ -13,43 +13,17 @@ import {
   matchPreset, presetLabel, normalizeRules, rulesPayload,
   loadHostRules, saveHostRules, winRuleSummary,
 } from './ruleset.js';
+import { BOT_LABEL, BOT_BLURB, botBlurb } from '../core/bots.js';
 
 /* ── who you are actually sitting down with (§P7.19) ───────────────────────
  *
- * The lobby offered five bare labels and no way to know what any of them meant.
- * Every line below is read off bot.js: the OPSEC policy in
- * shouldPlayOpsecDecision(), the break-a-final-approach appetite in
- * BREAK_URGENCY, the payment ordering in the selectPaymentCards() switch, and
- * the think-time in DELAYS.
- *
- * The wire value `chud` is the engine's and cannot move, but its LABEL could:
- * "CHUD" collided head-on with THE CHUD CARD, so a player reading "CHUD bot"
- * reasonably concluded it was the bot that plays the CHUD card. It is the
- * chaos personality, so it is labelled that way.
+ * MOVED to core/bots.js. It used to live here as two module-private consts and
+ * render into a single <p> under the add-bot <select>, which meant the answer to
+ * "what is a WILDCARD?" existed only for the host, only in the lobby, and only
+ * for whichever option the dropdown happened to be showing. The seat rows below
+ * now carry it per seated bot, and ui/help.js carries all five in the in-game
+ * brief, from the same source.
  */
-const BOT_LABEL = {
-  random: 'RANDOM', conservative: 'CAUTIOUS', neutral: 'NEUTRAL',
-  aggressive: 'AGGRESSIVE', chud: 'WILDCARD',
-};
-
-const BOT_BLURB = {
-  // decideRandom + BREAK_URGENCY.random 0.2 + OPSEC case 'random'.
-  random: 'Plays almost anything and blocks almost nothing. Barely reacts to a final '
-    + 'approach. The easiest seat at the table.',
-  // BREAK_URGENCY 0.85, ARMED_BANK_BIAS 0.9, OPSEC case 'conservative'.
-  conservative: 'Banks early, hoards OPSEC for Inspector General and CHUD, and pays with its '
-    + 'cheapest cards first. Slow, and hard to break.',
-  // BREAK_URGENCY 0.9, OPSEC case 'neutral' (blocks IG, CHUD, Finance Office, rent ≥ 4M).
-  neutral: 'The balanced default. Blocks the big hits, waves the small ones through, and '
-    + 'builds steadily.',
-  // BREAK_URGENCY 1, OPSEC case 'aggressive' (guards only near-complete sets).
-  aggressive: 'Attacks first and spends fast. Only guards sets it has nearly finished, so it '
-    + 'is the quickest to shoot down a final approach — and the easiest to rob.',
-  // DELAYS.chud is the fastest bank; OPSEC case 'chud' blocks small, lets big land;
-  // decideChud ends turns early ~20%; discards at random.
-  chud: 'Chaos, at speed. Blocks the small stuff, lets the big stuff land, discards at random '
-    + 'and sometimes just stops mid-turn. (Nothing to do with THE CHUD CARD.)',
-};
 
 /* ── the two match clocks (§P9, owner directive) ───────────────────────────
  *
@@ -450,6 +424,19 @@ function render() {
       }));
     }
     list.appendChild(row);
+    // The personality of the bot IN THIS SEAT, for everyone at the table — not just
+    // the host, and not just the mode the add-bot dropdown is showing. A guest could
+    // previously read "BOT · WILDCARD" beside a name with nothing anywhere on any
+    // screen saying what a WILDCARD does.
+    //
+    // A SIBLING OF THE ROW, not a child of it. Measured with tools/screenshot.mjs:
+    // inside `.lobby-row` (a flex row) a 130-character sentence took the whole line
+    // and crushed every seat NAME to 8-18px of the 28-64px it needed — four clipped
+    // runs on desktop and four on phone. The name is the thing that must never be
+    // clipped, so the explanation goes on its own line beneath.
+    if (player.isBot) {
+      list.appendChild(el('p', { class: 'hint lobby-seat-why', text: botBlurb(player.botMode) }));
+    }
   }
 }
 

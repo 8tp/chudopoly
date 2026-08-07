@@ -111,6 +111,26 @@ const ACTION_TITLE = {
   pcs_orders: 'PCS Orders',
 };
 
+/** The surge multiplier the engine actually used. `doubled` alone cannot say it:
+ *  chargeAmount() (game.js:994-1000) multiplies by 2**stack, and `multiplier` now
+ *  travels on `rent_charged` and `demand`. */
+function surgeNote(ev) {
+  if (!ev?.doubled) return '';
+  const m = Number(ev.multiplier);
+  return Number.isFinite(m) && m > 1 ? ` (SURGED ×${m})` : ' (SURGED)';
+}
+
+/** What an OPSEC depth means, in words. `depth` is respondToAction()'s counter
+ *  (game.js:1283-1285): odd = the defender's block is on top, even = the
+ *  attacker's counter is. Depth 1 is the ordinary case and needs no rider. */
+function opsecChainNote(ev) {
+  const depth = Number(ev?.depth) || 0;
+  if (depth <= 1) return '';
+  return depth % 2 === 0
+    ? ' — countering the block'
+    : ' — countering the counter';
+}
+
 /**
  * One event → a readable line plus the cards it involved.
  * @returns {{text:string, cards:Array, mark:string, color:string|null}|null}
@@ -144,19 +164,26 @@ function describe(ev) {
     case 'play_action':
       return { text: `${nameOf(ev.actor)} played ${ACTION_TITLE[ev.action] || cardName(ev.card)}.`,
         cards: [ev.card], mark: '!' };
+    // "(DOUBLED)" was printed off the boolean `doubled` for every stack depth, so a
+    // ×4 surge was logged as DOUBLED directly under the engine's own "SURGED x4"
+    // line. chargeAmount() (game.js:994-1000) ships `multiplier` on both events now.
     case 'rent_charged': {
       const n = (ev.targets || []).length;
       return { text: `${nameOf(ev.actor)} charged ${ev.amount}M rent on ${colorName(ev.color)}`
-        + `${ev.doubled ? ' (DOUBLED)' : ''} — ${n} player${n === 1 ? '' : 's'} billed.`,
+        + surgeNote(ev) + ` — ${n} player${n === 1 ? '' : 's'} billed.`,
       cards: [], mark: '⇢', color: ev.color };
     }
     case 'demand':
       return { text: `${nameOf(ev.actor)} demanded ${ev.amount}M from ${nameOf(ev.target)}`
-        + `${ev.doubled ? ' (DOUBLED)' : ''} — ${ACTION_TITLE[ev.reason] || ev.reason}.`,
+        + surgeNote(ev) + ` — ${ACTION_TITLE[ev.reason] || ev.reason}.`,
       cards: [], mark: '⇢' };
+    // "(depth 1)" is `entry.depth` — an engine counter, printed raw at a player.
+    // What the number MEANS is whose card is on top of the chain, and that reads as
+    // a sentence: respondToAction() (game.js:1283-1285) makes an odd depth "the
+    // defender's block is standing" and an even one "the attacker's counter is".
     case 'opsec':
       return { text: `${nameOf(ev.actor)} played OPSEC against `
-        + `${ACTION_TITLE[ev.action] || ev.action} (depth ${ev.depth}).`,
+        + `${ACTION_TITLE[ev.action] || ev.action}${opsecChainNote(ev)}.`,
       cards: ev.card ? [ev.card] : [], mark: '⛨' };
     case 'action_blocked':
       return { text: `${Poss(ev.source)} ${ACTION_TITLE[ev.action] || ev.action} was BLOCKED `

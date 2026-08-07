@@ -207,7 +207,13 @@
 .home-slot { display: flex; align-items: center; gap: .7em; }
 .home-slot .field-label { flex: 0 0 auto; margin: 0; }
 .home-slot .field { flex: 1 1 auto; min-width: 0; }
-.home-go { font-size: 1.1em; min-height: calc(var(--tap) * 1.15); }
+/* ROUND-5: the CTA pressed SHALLOWER than the buttons under it. It inherits
+   --btn-drop: 4px like every other control, but its face is the ink slab and
+   --press-ink is a mid tone, so 4px of grey against near-black read as less
+   travel than the same 4px against a transparent secondary. The primary action
+   gets the deepest press in the app, which is also what §4 means by the press
+   being the whole affordance. */
+.home-go { font-size: 1.1em; min-height: calc(var(--tap) * 1.15); --btn-drop: 6px; }
 .home-alt { display: flex; gap: .5em; align-items: stretch; }
 .home-alt .btn { flex: 1 1 auto; }
 .home-join { flex: 1 1 auto; display: flex; gap: .35em; min-width: 0; }
@@ -256,12 +262,32 @@
   .home-table::before { display: none; }
 }
 
+/* ── THE HOST'S CTA IS ALWAYS ON SCREEN ───────────────────────────────────
+   MOBILE REVIEW round 5, measured in the real host flow with two bots added and
+   the hint reading "Ready when you are.": #btn-start sat at y=1121 in an 844
+   viewport (321px below the fold) portrait and y=639 in 390 landscape. The
+   screen was one long column inside a scrolling <section>, so every row added
+   above the button — and this round the seat list grew a per-bot paragraph —
+   pushed the one control the hint had just told the player to press off the
+   bottom. The earlier landscape fix pinned it for the GUEST state only.
+
+   Same three-part frame the win overlay uses: the box is capped at the
+   viewport, the SEAT LIST is the only thing that scrolls, and everything after
+   it (host controls, the hint, Leave room) is pinned in flow below. Nothing
+   below the seat list can be pushed off screen by anything above it. */
+.screen-lobby { align-items: center; justify-content: center; overflow: hidden; }
 .lobby-panel {
   width: min(27em, 100%);
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: none;
   box-shadow: none;
   padding: 1.4em 1.6em 1.6em;
 }
+.lobby-panel > * { flex: 0 0 auto; }
+.lobby-players { flex: 1 1 auto; min-height: 3.5em; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 /* the stencilled marshalling box: hard corner ticks, no rounded rect */
 .lobby-panel::before {
   content: "";
@@ -316,8 +342,28 @@
   box-shadow: var(--deboss);
   min-height: var(--tap);
 }
-.lobby-seat-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lobby-seat-name { flex: 0 1 auto; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lobby-seat-tag { margin-left: auto; white-space: nowrap; }
+/* The per-seat bot blurb is a paragraph, and as a third flex item on the same
+   line its min-content width squeezed the NAME to 9px — measured on
+   lobby@desktop, "Bolt"/"Cobra"/"Jester"/"Shadow" all rendered as one letter
+   and an ellipsis. A sentence gets its own line under the nameplate. */
+.lobby-row { flex-wrap: wrap; }
+/* Four bots × a four-line paragraph is 320px of lobby, which is the whole of
+   the host CTA's measured 321px overflow. Two lines names the behaviour; the
+   full text is one tap away in How to play. A clamp is a decision, and
+   tools/lib/audit.mjs exempts a clamped box from the clipped-text gate for
+   exactly that reason. */
+.lobby-seat-why {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .lobby-host { display: flex; flex-direction: column; gap: .5em; }
 .lobby-host .row .field-label { flex: 0 0 auto; margin-bottom: 0; }
 
@@ -364,6 +410,10 @@
   /* sound and settings — a knurled dial with a knocked-out pointer and four
      index ticks. A gear says "config"; a dial says "the volume is here". */
   --ico-dial: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M24 10.5a13.5 13.5 0 1 0 0 27 13.5 13.5 0 0 0 0-27Z M22.6 15.2h2.8v9.6h-2.8Z M22.7 2h2.6v5.4h-2.6Z M22.7 40.6h2.6V46h-2.6Z M2 22.7h5.4v2.6H2Z M40.6 22.7H46v2.6h-5.4Z'/%3E%3C/svg%3E");
+  /* hazard — the mark that rides ahead of a refusal sentence (content.css).
+     A solid triangle with the bar and dot knocked out by fill-rule, so it is
+     one silhouette at 10px rather than three strokes that vanish. */
+  --ico-hazard: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M24 3 47 43H1Z M21.6 16h4.8l-.7 14h-3.4Z M24 33.4a2.9 2.9 0 1 0 0 5.8 2.9 2.9 0 0 0 0-5.8Z'/%3E%3C/svg%3E");
   /* close — the one mark that has to stay an X, drawn rather than typed */
   --ico-close: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%23000' d='M11.6 7.4 24 19.8 36.4 7.4 40.6 11.6 28.2 24 40.6 36.4 36.4 40.6 24 28.2 11.6 40.6 7.4 36.4 19.8 24 7.4 11.6Z'/%3E%3C/svg%3E");
 }
@@ -648,18 +698,14 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   backdrop-filter: blur(7px) saturate(.85);
   -webkit-backdrop-filter: blur(7px) saturate(.85);
 }
-/* the flood: brass light rays, hard-edged, cast across the whole apron. The
-   only animated ambient in the app and the only foil outside this element. */
-.win-overlay::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: repeating-conic-gradient(from 0deg at 50% 36%,
-    color-mix(in oklab, var(--foil) 28%, transparent) 0deg 4deg, transparent 4deg 20deg);
-  -webkit-mask-image: radial-gradient(62% 48% at 50% 36%, #000, transparent 78%);
-  mask-image: radial-gradient(62% 48% at 50% 36%, #000, transparent 78%);
-  pointer-events: none;
-}
+/* ROUND-5 REVIEW — THE GOLD LIGHT-RAYS ARE DELETED, and the critic's word for
+   them is the reason: "the single most AI-generated-looking element in the
+   build". They were also two rule violations standing on each other. §3.5:
+   there is no glow anywhere, and a conic fan of brass beams radiating from a
+   point behind a modal is a glow with hard edges. §1: foil is the VICTORY
+   MODAL — the modal, not the backdrop, not the apron behind it. The ceremony
+   is carried by the thing that earned it: the foil rim, the struck star and
+   the brass title, on a blurred, dimmed table. Nothing replaces the rays. */
 /* MEASURED (checkContrast, win@desktop-light): #btn-rematch's rect was
    y 701 → 745 in a 720px viewport — the ceremony's primary action was below
    the fold, reachable only by scrolling a box nobody knows scrolls. The recap

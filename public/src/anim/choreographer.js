@@ -564,21 +564,39 @@ function applyEvent(ev, snapshot, expected, animate) {
       break;
     }
 
+    // AN EXCHANGE MUST READ AS AN EXCHANGE. Both halves used to leave at the
+    // same instant on the same bow, so on a 1280×720 table the two cards
+    // travelled the same corridor and overlapped for most of it: one blur
+    // crossing the felt, indistinguishable from a single hero steal. Now they
+    // bow to OPPOSITE sides (arc ±34) and the card the actor TAKES leaves 60ms
+    // first, so the picture is two cards passing each other going opposite ways
+    // — which is what a trade looks like. 100 + 60 + a 462ms flight = 622ms of
+    // motion, but the queue's own step is 460ms and the tail overlaps the next
+    // event, which §10 explicitly allows; the uninterruptible part is one
+    // flight.
     case 'swap':
       claimUpgradesOf(ev.actor, expected);
       claimUpgradesOf(ev.target, expected);
       claimDiscardedUpgrades(snapshot, expected);
       move(ev.took, landing(ev.actor, ev.tookColor), expected, animate, null,
-        { delay: 100, speed: 1.1, big: true, hero: true });
+        { delay: 100, speed: 1.1, big: true, hero: true, arc: 34 });
       move(ev.gave, landing(ev.target, ev.gaveColor), expected, animate, null,
-        { delay: 100, speed: 1.1, big: true, hero: true });
+        { delay: 160, speed: 1.1, big: true, hero: true, arc: -34 });
       if (cued) signal(CUE.STEAL_LANDED, mine || ev.target === selfId, true, crimeEl(ev.took, ev.actor));
       break;
 
+    // A wild moving between two of YOUR OWN columns. It was a 14px miniature
+    // sliding 60px between two 20px slots in 216ms — the owner's word for it
+    // was "teleport", and the capture agrees: at 80ms sampling it appears in
+    // one frame in the old column and the next in the new one, with nothing in
+    // between. `apex` gives it the hero treatment at a self-move scale (54px,
+    // readable, not the 92px a theft gets) and the destination column's cards
+    // now visibly shift to receive it (table/index.js reflowMeasure).
     case 'move_property':
       claimUpgradesOf(ev.actor, expected);
       claimDiscardedUpgrades(snapshot, expected);
-      move(ev.card, Z('properties', ev.actor, ev.to), expected, animate, null, { speed: 0.9 });
+      move(ev.card, Z('properties', ev.actor, ev.to), expected, animate, null,
+        { speed: 0.9, apex: 54, arc: 18, big: true });
       break;
 
     case 'discard': {

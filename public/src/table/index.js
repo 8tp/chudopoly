@@ -62,6 +62,7 @@ export function mount(mySeatId) {
     else if (mq.addListener) mq.addListener(onChange);
   }
   layout.mount(document.getElementById('table'), mySeatId);
+  watchDragClass();
 }
 
 export function setSelf(id) {
@@ -259,7 +260,10 @@ export function moveCard(id, zoneKey, opts = {}) {
   const t0 = currentTilt(node);
 
   flight.cancel(node);
+  const fromZone = node.parentElement;
+  reflowMeasure(fromZone, zone, node);
   zone.appendChild(node);
+  reflowApply();
   setRest(node, 0, 0, 0);
   flight.writeRest(node);
 
@@ -306,8 +310,17 @@ export function moveCard(id, zoneKey, opts = {}) {
   // HERO_APEX_PX is a target width at the apex, not a factor: the same +0.5 that
   // is right for a hand card would do nothing for a 14px mini.
   let bump = opts.bump || 0;
-  if (!bump && opts.hero) bump = clamp(HERO_APEX_PX / Math.max(8, w1) - 1, 0.22, 4);
-  if (bump > 0) unclip(node, dur + (opts.delay || 0) + 60);
+  if (!bump && (opts.hero || opts.apex)) {
+    bump = clamp((opts.apex || HERO_APEX_PX) / Math.max(8, w1) - 1, opts.apex ? 0.1 : 0.22, 4);
+  }
+  // A magnified card must escape its ancestors; so must a card that takes off
+  // from OUTSIDE them, which is every card played by drag (it leaves the finger
+  // somewhere over the felt and flies into a 20px column scrollport) and every
+  // card that crosses the table. Asking `escapes` costs one getComputedStyle
+  // walk per event, never per frame, and answers false for the common case of a
+  // card shuffling one slot inside the zone it already lives in.
+  const cx0 = first.left + first.width / 2, cy0 = first.top + first.height / 2;
+  if (bump > 0 || escapes(node, cx0, cy0)) unclip(node, dur + (opts.delay || 0) + 60);
 
   flight.fly(node, {
     dx, dy, scale, dur, bump,
@@ -318,6 +331,11 @@ export function moveCard(id, zoneKey, opts = {}) {
     flipTo: opts.flip == null ? null : opts.flip,
     flipAt: opts.flipAt,
     mine,
+    // ART §4's hitstop. Armed on the landings a player is meant to FEEL: their
+    // own cards, and anything the choreographer already calls a big moment.
+    // flight.js pays for the freeze out of the flight's own duration, so §10's
+    // 600ms is unchanged (see HITSTOP_MS there).
+    hit: opts.hit == null ? (mine || !!opts.big || !!opts.hero) : !!opts.hit,
     // A card that crossed a third of the viewport is an event you can feel.
     big: opts.big == null ? dist > Math.min(innerWidth, innerHeight) * 0.34 : !!opts.big,
     key: id,
@@ -325,6 +343,18 @@ export function moveCard(id, zoneKey, opts = {}) {
     cx1: last.left + last.width / 2, cy1: last.top + last.height / 2,
     onDone: opts.onDone || null,
   });
+
+  // THE FAN CLOSES NOW, not at the reconcile. A card played out of the hand
+  // used to leave a hole in the fan for the whole event — 240ms for a
+  // play_property, 560ms for a payment — because hand.layout only ran from
+  // reconcile() at the END of the job. Measured on the desktop burst: the gap
+  // was still open 9 frames after the card left. It goes last so the FLIP above
+  // has already measured against the layout tighten() may change.
+  const handZone = layout.zoneEl('hand');
+  if (fromZone === handZone || zone === handZone) {
+    if (fromZone === handZone) hand.forget(node);
+    relayoutHand();
+  }
   return true;
 }
 
@@ -352,6 +382,187 @@ export function riffleDeck() {
   return i > 0;
 }
 
+/* ══ THE HELD CARD ═════════════════════════════════════════════════════════
+ * The public contract with interact/ for the life of a direct-manipulation
+ * drag. Three calls, and only the first and last are required:
+ *
+ *   table.liftCard(id, opts?)   → boolean   at drag start
+ *   table.dragCard(id, x, y)    → void      on every pointer move (optional)
+ *   table.releaseCard(id, opts?)→ boolean   at drop / cancel / abort
+ *
+ * liftCard is what makes a held card render above the entire table. It is the
+ * hero flight's unclip() generalised to an unbounded lifetime: the card's whole
+ * clipping ancestor chain — hand zone, dock, board, scroll boxes, the felt —
+ * is opened and refcounted, and put back with its scroll offsets on release.
+ * z-index is NOT this file's problem (interact.css already gives .is-dragging
+ * 60, and neither #table nor #hand-dock creates a stacking context); `.is-held`
+ * exists as the floor for a lift that is not also a pointer drag.
+ *
+ * It also takes the card out of the fan so hand.js can close the gap behind it,
+ * and retracts the hand 24px + flattens it (ART §5.5) to open the lane to the
+ * board.
+ *
+ * SAFETY. The three failure modes this is built against:
+ *   • drop lands while a broadcast does — releaseCard downgrades the hold to a
+ *     timed one (HOLD_TAIL_MS) instead of closing it, so the clip cannot shut
+ *     on a card the choreographer has just put in the air; and it never writes
+ *     --fx/--fy, so interact's drop offset survives for moveCard's FLIP.
+ *   • reparented mid-drag — the chain opened at lift is released by identity,
+ *     and dragCard re-opens whatever new chain the card has landed in.
+ *   • nested clipping ancestors — the walk opens every one of them, not the
+ *     first, and refcounts so two overlapping lifts cannot close each other's.
+ *   • never released at all — sweepLifts() runs from reconcile() and drops any
+ *     lift whose node is gone, has left the DOM, or has outlived LIFT_MAX_MS.
+ */
+const lifts = new Map();          // cardId -> {node, chain:[], t0, vx, vy, tms}
+const LIFT_MAX_MS = 20000;        // a drag nobody ended; longer than any real one
+const HOLD_TAIL_MS = 1100;        // > interact's COMMIT_HOLD_MS (900) + one flight
+
+// ART-DIRECTION §4: drag tilt `rotate(v * 6deg)`, `scaleX(1 + |v| * 0.08)`.
+// v is normalised against V_REF. 1.6px/ms measured: a deliberate hand→column
+// drag on a 1280×720 table covers ~300px in ~310ms (0.97px/ms) and reads as
+// v≈0.6 — a 3.6° lean, present but not a flourish; a flick off the fan peaks
+// at 2.4px/ms and saturates, which is where the full 6° belongs.
+const V_REF = 1.6;
+const V_SMOOTH = 0.35;            // exponential smoothing; raw pointer deltas jitter ±40%
+
+export function liftCard(id, opts = {}) {
+  const node = getNode(id);
+  if (!node) return false;
+  let rec = lifts.get(id);
+  if (rec) { rec.t0 = performance.now(); return true; }     // idempotent
+  rec = { node, chain: [], t0: performance.now(), vx: 0, tms: 0, px: 0, py: 0, parent: node.parentElement };
+  lifts.set(id, rec);
+  openChain(node, 0, rec.chain);
+  node.classList.add('is-held');
+  node.__wdt = undefined; node.__wds = undefined;           // a fresh drag pose
+  if (opts.fan !== false && node.parentElement === layout.zoneEl('hand')) {
+    hand.setHeld(node);
+    hand.setOpenness(0);
+    hand.setRetracted(true, handRoom());
+    relayoutHand();
+  }
+  return true;
+}
+
+/**
+ * How far the fan may retract before it leaves the viewport. Measured here,
+ * once per lift, and not inside hand.layout(): it is a rect per card and
+ * layout() runs on every reconcile.
+ *
+ * Measured on the current build: desktop 1280×720 = 18px, phone 390×844 = 18px
+ * — so §5.5's ratified 24 clamps to 18 on both until the §5 three-column table
+ * lands and gives the fan the 150px it is specified to have. The flatten is
+ * unclamped and does the larger half of the job anyway (12° → 0° removes 9.6px
+ * of tilt overhang off the top of every outer card).
+ */
+function handRoom() {
+  const zone = layout.zoneEl('hand');
+  if (!zone) return 0;
+  let bottom = 0;
+  for (let c = zone.firstElementChild; c; c = c.nextElementSibling) {
+    const r = c.getBoundingClientRect();
+    if (r.bottom > bottom) bottom = r.bottom;
+  }
+  return bottom ? Math.max(0, innerHeight - bottom) : 0;
+}
+
+/**
+ * Pointer moved. Optional — a caller that never invokes it still gets the
+ * unclip and the closed gap, just no velocity lean and no hand-reopen.
+ *
+ * @param {number} id    the held card
+ * @param {number} x     viewport px
+ * @param {number} y     viewport px
+ */
+export function dragCard(id, x, y) {
+  const rec = lifts.get(id);
+  if (!rec) return;
+  const node = rec.node;
+  const now = performance.now();
+  const dt = rec.tms ? now - rec.tms : 0;
+  rec.tms = now;
+
+  if (dt > 0 && dt < 120 && !reduceMotion) {
+    const vx = (x - rec.px) / dt;
+    rec.vx += (vx - rec.vx) * V_SMOOTH;
+    const v = clamp(rec.vx / V_REF, -1, 1);
+    flight.setDragPose(node, v * 6, 1 + Math.abs(v) * 0.08);
+  }
+  rec.px = x; rec.py = y;
+
+  // Re-open whatever the card is inside NOW: a broadcast can reparent a held
+  // card, and the chain opened at lift no longer covers where it lives.
+  if (node.parentElement !== rec.parent) {
+    rec.parent = node.parentElement;
+    openChain(node, 0, rec.chain);
+  }
+
+  // "when it hovers back they should open to receive it" — the fan reopens as
+  // the card comes back over the hand and closes again as it leaves. Linear in
+  // the distance from the hand zone's own box so it tracks the finger instead
+  // of snapping at a boundary; 90px of run-in is one card width plus a thumb.
+  if (hand.heldNode() === node) {
+    const zone = layout.zoneEl('hand');
+    if (zone) {
+      const r = zone.getBoundingClientRect();
+      const d = r.height ? Math.max(0, Math.max(r.top - y, y - r.bottom), Math.max(r.left - x, x - r.right)) : 1e9;
+      const opened = hand.setOpenness(1 - clamp(d / 90, 0, 1));
+      const pulled = hand.setRetracted(d > 24, undefined);
+      if (opened || pulled) relayoutHand();
+    }
+  }
+}
+
+/**
+ * The finger let go (or the drag was cancelled, or the card was yanked). Never
+ * writes --fx/--fy: interact/drag.js deliberately leaves the card at the drop
+ * point so moveCard's FLIP measures its `first` rect there and the motion
+ * continues instead of restarting.
+ */
+export function releaseCard(id, opts = {}) {
+  const rec = lifts.get(id);
+  if (!rec) return false;
+  lifts.delete(id);
+  const node = rec.node;
+  node.classList.remove('is-held');
+  // Downgrade, do not close: the card is usually about to fly somewhere, and
+  // the flight it is about to take starts INSIDE the chain we opened.
+  const tail = opts.tail == null ? HOLD_TAIL_MS : opts.tail;
+  if (tail > 0) openChain(node, tail, null);
+  closeChain(rec.chain);
+  if (!reduceMotion && opts.settle !== false) flight.relaxDrag(node);
+  else { node.__wds = undefined; node.style.removeProperty('--fsx'); }
+
+  // A REFUSED drop springs the card home, so the fan has to be ready to take it
+  // back: reset now and the gap reopens while the card is still travelling.
+  // An ACCEPTED one is about to leave the hand for good, so the gap stays shut
+  // — reopening it and closing it again 120ms later when the broadcast lands is
+  // two reflows for one departure, and it reads as a flinch. Only the retract
+  // is undone. hand.forget() (moveCard, reconcile) clears `held` the moment the
+  // card actually leaves, and the watchdog covers a server that never answers.
+  clearTimeout(handTimer);
+  if (opts.accepted && hand.heldNode() === node) {
+    if (hand.setRetracted(false)) relayoutHand();
+    handTimer = setTimeout(() => { if (hand.reset()) relayoutHand(); }, tail || HOLD_TAIL_MS);
+  } else if (hand.reset()) relayoutHand();
+  return true;
+}
+let handTimer = 0;
+
+/** Is this card (or any card) currently lifted above the table? */
+export function isLifted(id) { return id == null ? lifts.size > 0 : lifts.has(id); }
+
+/** A lift nobody ended must not hold the felt open for the rest of the game. */
+function sweepLifts() {
+  if (!lifts.size) return;
+  const now = performance.now();
+  for (const [id, rec] of lifts) {
+    if (rec.node.isConnected && now - rec.t0 < LIFT_MAX_MS) continue;
+    releaseCard(id, { tail: 0 });
+  }
+}
+
 /** Re-fan the hand after the interaction agent lifts/picks a card. */
 export function relayoutHand() {
   const zone = layout.zoneEl('hand');
@@ -363,54 +574,215 @@ export function relayoutHand() {
   hand.layout(nodes, !reduceMotion);
 }
 
-/* ── hero flights escape their clipping ancestors ──────────────────────────
+/* ── the safety net ───────────────────────────────────────────────────────
+ * interact/drag.js calls liftCard/dragCard/releaseCard directly (P8). This
+ * watches the class it ALSO sets — `is-dragging-card` on <body> — so that a
+ * gesture which ends by a path that never reaches releaseCard cannot leave the
+ * felt's whole clipping chain open for the rest of the game. It fires as a
+ * microtask, i.e. always after interact/'s own synchronous call, so in the
+ * normal case both directions are already no-ops.
+ *
+ * ONE element, ONE attribute, no subtree — this is not a general DOM watcher
+ * and it never sees a pointer event. The velocity lean and the hover-to-reopen
+ * are deliberately NOT driven from here: they need the pointer stream, which
+ * belongs to interact/, and faking it would cost a rect read per frame (§0.8).
+ *
+ * Idempotent both ways, so an interact/ that starts calling the API directly
+ * simply makes this a no-op instead of double-firing.
+ */
+function watchDragClass() {
+  if (typeof MutationObserver !== 'function' || !document.body) return;
+  const obs = new MutationObserver(() => {
+    const on = document.body.classList.contains('is-dragging-card');
+    const node = on ? document.querySelector('.card.is-dragging') : null;
+    const id = node ? Number(node.getAttribute('data-card-id')) : NaN;
+    if (on && Number.isInteger(id)) { liftCard(id); return; }
+    if (on) return;
+    for (const [heldId, rec] of lifts) {
+      releaseCard(heldId, { accepted: rec.node.classList.contains('is-dropping') });
+    }
+  });
+  obs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+}
+
+/* ── cards escape their clipping ancestors ─────────────────────────────────
    Every container a card lands in clips: `.opponents .board` and
    `.board-bank` are overflow:hidden, `.opponents .board-props`, `.zone-hand`,
-   `.opponents` and `.self-board` are scroll boxes. A card magnified to 92px
-   inside a 14px slot is therefore invisible — which is the whole reason the
-   magnification exists.
+   `.opponents` and `.self-board` are scroll boxes, and `.table` itself is
+   overflow:hidden. A card magnified to 92px inside a 14px slot is therefore
+   invisible — which is the whole reason the magnification exists — and a card
+   held 290px above the hand dock is invisible for the ENTIRE drag.
 
-   So the ancestor chain is opened for exactly the length of the flight and put
-   back byte-for-byte, scroll offsets included. Precisely the chain, not a CSS
-   class on #table: a blanket `overflow:visible` on the felt spills the
-   opponents strip over the centre pile on a phone. Scrollbars are already
-   `scrollbar-width:none` on every one of these, so opening them reflows
-   nothing. */
-const unclipped = new Map();                // element -> {overflow, sl, st, until}
+   Measured before this generalised (desktop 1280×720, a pink property dragged
+   from the fan to the SPACE column, 80ms burst): frame 2 shows a 14px sliver of
+   the card at the dock's top edge and frames 3–11 show NO CARD ANYWHERE. The
+   same capture on a 390×844 phone with real CDP touch: identical, 6 frames of
+   a drag with nothing under the finger. z-index was never the problem —
+   interact.css already gives `.is-dragging` z-index 60, and `#hand-dock` and
+   `#table` are both `position:relative; z-index:auto`, so neither traps a card
+   in a stacking context. `overflow:hidden` was the whole of it.
+
+   So the ancestor chain is opened and put back byte-for-byte, scroll offsets
+   included. Precisely the chain, not a CSS class on #table: a blanket
+   `overflow:visible` on the felt spills the opponents strip over the centre
+   pile on a phone. Scrollbars are already `scrollbar-width:none` on every one
+   of these, so opening them reflows nothing.
+
+   Two lifetimes share one registry:
+     • TIMED   (a flight) — an `until` deadline, swept by a timer.
+     • HELD    (a drag)   — a refcount, released by table.releaseCard.
+   An element closes only when it has no holds AND its deadline has passed, so
+   a drag that ends while a broadcast is landing cannot re-clip a card the
+   choreographer has just put in the air. */
+const unclipped = new Map();      // element -> {overflow, sl, st, until, holds}
 let unclipTimer = 0;
 
-function unclip(node, ms) {
-  const until = performance.now() + ms;
+// A held chain is released by identity, never by re-walking: a card can be
+// REPARENTED mid-drag (a broadcast lands, reconcile moves it), and re-walking
+// at release time would then restore a chain that was never opened and leak
+// the one that was.
+function openChain(node, ms, chain) {
+  const until = ms > 0 ? performance.now() + ms : 0;
   for (let e = node.parentElement; e && e !== document.body; e = e.parentElement) {
-    const prev = unclipped.get(e);
-    if (prev) { if (until > prev.until) prev.until = until; continue; }
-    const cs = getComputedStyle(e);
-    if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
-    unclipped.set(e, { overflow: e.style.overflow, sl: e.scrollLeft, st: e.scrollTop, until });
-    e.style.overflow = 'visible';
-    if (e.id === 'table') break;
+    let rec = unclipped.get(e);
+    if (!rec) {
+      const cs = getComputedStyle(e);
+      if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
+        rec = { overflow: e.style.overflow, sl: e.scrollLeft, st: e.scrollTop, until: 0, holds: 0 };
+        unclipped.set(e, rec);
+        e.style.overflow = 'visible';
+      }
+    }
+    if (rec) {
+      if (until > rec.until) rec.until = until;
+      if (chain) { rec.holds++; chain.push(e); }
+    }
+    // A flight stops at the felt (the measured scoping above). A HELD card does
+    // not: the hand dock is a SIBLING of #table, so a dragged hand card's chain
+    // is #zone-hand → #hand-dock and stopping at #table would never reach it.
+    if (!chain && e.id === 'table') break;
   }
-  if (!unclipTimer && unclipped.size) unclipTimer = setTimeout(reclip, ms + 20);
+  if (unclipped.size && !unclipTimer) unclipTimer = setTimeout(reclip, Math.max(40, ms) + 20);
 }
+
+function closeChain(chain) {
+  if (!chain) return;
+  for (let i = 0; i < chain.length; i++) {
+    const rec = unclipped.get(chain[i]);
+    if (rec && rec.holds > 0) rec.holds--;
+  }
+  chain.length = 0;
+  if (!unclipTimer) unclipTimer = setTimeout(reclip, 40);
+}
+
+function unclip(node, ms) { openChain(node, ms, null); }
 
 function reclip() {
   unclipTimer = 0;
   const now = performance.now();
   let soonest = 0;
   for (const [e, saved] of [...unclipped]) {
-    if (saved.until > now) { if (!soonest || saved.until < soonest) soonest = saved.until; continue; }
+    if (saved.holds > 0 || saved.until > now) {
+      if (saved.holds === 0 && (!soonest || saved.until < soonest)) soonest = saved.until;
+      continue;
+    }
     unclipped.delete(e);
     if (saved.overflow) e.style.overflow = saved.overflow;
     else e.style.removeProperty('overflow');
     if (e.scrollLeft !== saved.sl) e.scrollLeft = saved.sl;
     if (e.scrollTop !== saved.st) e.scrollTop = saved.st;
   }
+  // Anything still held keeps the sweeper alive: a hold that is never released
+  // (the interaction layer threw, the node was torn out from under it) must
+  // still be reclaimed, and lifts.sweep() below is what does it.
+  let holds = 0;
+  for (const rec of unclipped.values()) if (rec.holds > 0) holds++;
   if (soonest) unclipTimer = setTimeout(reclip, Math.max(20, soonest - now) + 20);
+  else if (holds) unclipTimer = setTimeout(reclip, 500);
+}
+
+/**
+ * Would this flight spend most of its travel inside something that clips it?
+ * Only the FIRST clipping ancestor is asked, and only about the take-off point:
+ * a card leaving the hand for a property column starts ~290px outside the
+ * column's scrollport and is invisible until it arrives, while a card shuffling
+ * one slot along inside a column never leaves it and must not pay for a
+ * getComputedStyle walk on every event.
+ */
+function escapes(node, cx0, cy0) {
+  for (let e = node.parentElement; e && e !== document.body; e = e.parentElement) {
+    const cs = getComputedStyle(e);
+    if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+    const r = e.getBoundingClientRect();
+    if (!r.width) return false;
+    return cx0 < r.left - 4 || cx0 > r.right + 4 || cy0 < r.top - 4 || cy0 > r.bottom + 4;
+  }
+  return false;
 }
 
 function currentTilt(node) {
   const v = parseFloat(node.style.getPropertyValue('--tilt'));
   return Number.isFinite(v) ? v : 0;
+}
+
+/* ── zone reflow: the cards a move DISPLACES ───────────────────────────────
+   An exchange has to read as an exchange. Before this, moving a wild between
+   two of your own columns was a teleport at both ends: the card it displaced
+   in the destination and the cards that should have closed up behind it in the
+   source both jumped to their new layout box in the same frame the reparent
+   happened, with no motion at all — the reconcile at the END of the job wrote
+   their rest poses, ~240–460ms later, by which time the jump was long over.
+
+   So the displacement is measured AT THE REPARENT, which is the only frame the
+   before and after both exist, and flown as a plain FLIP. Siblings already in
+   the air are skipped: a layout change moves their landing box, and their own
+   flight lands on the new one for free (flights land on the rest pose, §
+   cardnode.js), whereas re-flying them would supersede the record and fire an
+   unanswered FLIGHT_ABORT.
+
+   The hand is excluded — hand.layout() owns the fan, and it is a pose reflow
+   rather than a layout one. */
+const rfNodes = [];
+let rfX = new Float64Array(24);
+let rfY = new Float64Array(24);
+const REFLOW_MIN_PX = 2;
+const REFLOW_MS = 200;
+
+function reflowCollect(zone, skip) {
+  if (!zone || zone === layout.zoneEl('hand')) return;
+  for (let c = zone.firstElementChild; c; c = c.nextElementSibling) {
+    if (c === skip || !c.hasAttribute('data-card-id')) continue;
+    if (flight.isFlying(c) || flight.isDragging(c)) continue;
+    rfNodes.push(c);
+  }
+}
+
+function reflowMeasure(zoneA, zoneB, skip) {
+  rfNodes.length = 0;
+  if (reduceMotion) return;
+  reflowCollect(zoneA, skip);
+  if (zoneB !== zoneA) reflowCollect(zoneB, skip);
+  const n = rfNodes.length;
+  if (n > rfX.length) {
+    let size = rfX.length;
+    while (size < n) size *= 2;
+    rfX = new Float64Array(size);
+    rfY = new Float64Array(size);
+  }
+  for (let i = 0; i < n; i++) { rfX[i] = rfNodes[i].offsetLeft; rfY[i] = rfNodes[i].offsetTop; }
+}
+
+function reflowApply() {
+  for (let i = 0; i < rfNodes.length; i++) {
+    const node = rfNodes[i];
+    const dx = rfX[i] - node.offsetLeft;
+    const dy = rfY[i] - node.offsetTop;
+    if (Math.abs(dx) < REFLOW_MIN_PX && Math.abs(dy) < REFLOW_MIN_PX) continue;
+    // quiet: a card being shoved along by its neighbour did not land, and an
+    // unanswered swish per displaced card would triple the game's sfx count.
+    flight.fly(node, { dx, dy, dur: REFLOW_MS, arc: 0, quiet: true, key: i });
+  }
+  rfNodes.length = 0;
 }
 
 /* ── reconcile ─────────────────────────────────────────────────────────── */
@@ -422,6 +794,7 @@ function currentTilt(node) {
  */
 export function reconcile(snapshot, opts = {}) {
   if (!snapshot) return 0;
+  sweepLifts();
   const expected = opts.expected || EMPTY;
   // prepare() may already have done the seating for this job; a rebuild is a
   // rebuild whoever ran it, and counting drift across one is meaningless.

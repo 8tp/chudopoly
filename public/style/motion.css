@@ -16,10 +16,16 @@
 
 .card { perspective: 800px; }
 
+/* --fsx is the ONE thing the .card transform contract cannot express:
+   ART-DIRECTION §4's `scaleX(1 + |v| * 0.08)` on a card being thrown. .card's
+   transform is a single uniform `scale(var(--fs))` and widening it would break
+   the contract for every other writer, so the non-uniform part rides here — on
+   the wrapper that already exists for the flip, for the same reason it exists.
+   anim/flight.js (setDragPose / relaxDrag) is its only writer. */
 .card-inner {
   position: absolute;
   inset: 0;
-  transform: rotateY(var(--flip, 0deg));
+  transform: rotateY(var(--flip, 0deg)) scaleX(var(--fsx, 1));
   transform-style: preserve-3d;
 }
 
@@ -55,7 +61,28 @@
    interact/ owns .is-dragging). Re-measure on device before widening it. */
 .card.is-flying,
 .card.is-riffling,
+.card.is-held,
 .card.is-dragging { will-change: transform; }
+
+/* ── the held card (table.liftCard) ──────────────────────────────────────
+   A card a human is holding renders above the entire table. The occlusion half
+   of that is already solved by interact.css (`.is-dragging { z-index: 60 }`),
+   and it works because neither `#table` nor `#hand-dock` creates a stacking
+   context — both are `position:relative; z-index:auto`, so a card's z-index
+   competes directly in `#app`'s context against `.self-board`'s 1.
+
+   The CLIPPING half cannot be done in CSS at all: `#zone-hand` is
+   `overflow-x:auto`, `.table` is `overflow:hidden`, `.board-props` is a scroll
+   box. Measured on the shipped build, a card dragged out of the fan was cut off
+   at the dock's top edge and then INVISIBLE for the whole gesture — 9 of 11
+   burst frames with no card under the cursor, on desktop and on a real-touch
+   390×844 phone alike. table/index.js opens exactly the ancestor chain and
+   refcounts it for the life of the lift (openChain/closeChain).
+
+   So this rule is only the floor for a lift that is NOT also a pointer drag
+   (a programmatic lift, a keyboard grab): 60 matches interact.css so the two
+   cannot disagree about which is higher. */
+.card.is-held { z-index: 60; }
 
 /* ── hero flights ────────────────────────────────────────────────────────
    A stolen card swells to a readable ~92px at mid-flight (table/index.js
@@ -87,6 +114,8 @@
    left here is the flip, which becomes an instant face swap. */
 @media (prefers-reduced-motion: reduce) {
   .card-inner { transform: none; }
+  /* the drag stretch is motion; the lift's clip escape is not, and stays */
+  .card { --fsx: 1; }
   .card[data-facing="down"] .card-inner > .card-face { visibility: hidden; }
   .card[data-facing="down"] .card-inner > .card-back { transform: none; }
   .card[data-facing="up"] .card-inner > .card-back { visibility: hidden; }

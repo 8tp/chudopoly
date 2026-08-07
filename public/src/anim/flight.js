@@ -14,6 +14,12 @@
 // by exactly dx whatever its tilt or scale — which is what makes the measured
 // FLIP in table/moveCard exact rather than approximately exact.
 //
+// The one thing the contract cannot express is a NON-UNIFORM scale, and
+// ART-DIRECTION §4 asks for one: `scaleX(1 + |v| * 0.08)` on a card being
+// thrown. Widening .card's transform would break the contract, so the stretch
+// rides on .card-inner (`rotateY(var(--flip)) scaleX(var(--fsx))`, motion.css)
+// — the same wrapper the flip already uses, for the same reason.
+//
 // REST. Each card node carries its resting pose as three numbers written by
 // table/cardnode.js: __rx, __ry (px offsets from its layout box) and __rt
 // (degrees). A discard card rests tilted; a hand card rests fanned. Flights
@@ -31,7 +37,7 @@ import { clamp01, easeOutCubic, easeOutBack, hash1 } from '../core/math.js';
 import { setStyle } from '../core/dom.js';
 import { cue, CUE } from './cues.js';
 
-const K_FLY = 0, K_FLIP = 1, K_FADE = 2;
+const K_FLY = 0, K_FLIP = 1, K_FADE = 2, K_SETTLE = 3;
 
 // §10's ceiling, enforced here rather than trusted at 20 call sites: a
 // staggered event's LAST card must still be settled 600ms after the event.
@@ -46,6 +52,43 @@ const MAX_EVENT_MS = 600;
 const BACK = 0.9;
 const SCALE_BACK = 0.55;  // see step(): the landing squash, measured in the comment there
 
+/* ── HITSTOP (ART-DIRECTION §4) ───────────────────────────────────────────
+   "freeze the table 40–60ms on a card landing before the settle … the largest
+   perceived-weight gain available."
+
+   CONTACT is where it fires: easeOutBack(p, BACK) crosses 1 at
+       p = 1 − BACK/(1+BACK) = 1 − 0.9/1.9 = 0.5263
+   — the exact frame the card's centroid reaches its destination. After it, the
+   card is doing its 4.5% overshoot-and-return, which IS "the settle". Freezing
+   at p=1 instead was tried and is worthless: at p=1 a solo landing has nothing
+   left in the air to freeze, so the table is already still and the beat costs
+   45ms of nothing.
+
+   The freeze stops the WHOLE live list, not just the landing card — that is the
+   difference between a card pausing and the table taking a hit.
+
+   §10's 600ms is not spent on it: an armed flight has HITSTOP_MS subtracted
+   from its duration at launch (see fly()), so contact arrives 45ms early, the
+   table holds for 45ms, and the total wall time is exactly what it was before.
+   Measured on a play_property from a drop point (desktop 1280×720): flight
+   340ms → 295ms travel + 45ms freeze = 340ms, busyUntil() unchanged.
+
+   MIN_GAP exists because a caravan is not five impacts. A 5-card payment at
+   70ms stagger would otherwise freeze the table five times for 225ms total and
+   read as jank; one hit per 200ms lets the FIRST card of a procession land
+   heavy and the rest ride in behind it. */
+const HITSTOP_MS = 45;
+const HITSTOP_MIN_GAP_MS = 200;
+const CONTACT = 1 - BACK / (1 + BACK);
+
+let freeze = 0;                 // seconds of table-freeze left
+let clockSec = 0;               // accumulated dt — the only time source here (§0.6)
+let lastHit = -1e9;
+let hitCount = 0;
+
+/** How many hitstops have fired since load. Read by the harness/driver. */
+export function hitstopCount() { return hitCount; }
+
 const pool = [];
 const live = [];
 let running = false;
@@ -59,7 +102,7 @@ function take() {
     kind: K_FLY, node: null, t: 0, delay: 0, dur: 0.3, started: false,
     x0: 0, y0: 0, x1: 0, y1: 0, s0: 1, s1: 1, r0: 0, r1: 0,
     ax: 0, ay: 0, env: 1, spin: 0, bump: 0,
-    flipAt: -1, flipUp: true,
+    flipAt: -1, flipUp: true, hit: false, hitDone: false,
     cx0: 0, cy0: 0, cx1: 0, cy1: 0,
     mine: false, big: false, quiet: false,
     from: 0, to: 0,
@@ -75,7 +118,12 @@ function budgetDelay(ms, durSec) {
   return (d < room ? d : Math.max(0, room)) / 1000;
 }
 
-function slotOf(kind) { return kind === K_FLIP ? '__moF' : '__moT'; }
+// Three independent slots so a flip, a flight and a drag-settle can all own a
+// card at once without evicting each other. K_SETTLE writes only --fsx, which
+// nothing else touches, so it never fights the other two.
+function slotOf(kind) {
+  return kind === K_FLIP ? '__moF' : kind === K_SETTLE ? '__moS' : '__moT';
+}
 
 function attach(r) {
   const node = r.node;
@@ -127,6 +175,7 @@ function recycle(r) {
   r.onDone = null;
   r.started = false;
   r.bump = 0;                              // pooled: a hero must not haunt the next flight
+  r.hit = false; r.hitDone = false;
   r.wx = r.wy = r.ws = r.wr = NaN;
   if (pool.length < 96) pool.push(r);
 }
@@ -134,13 +183,22 @@ function recycle(r) {
 /* ── the tick ──────────────────────────────────────────────────────────── */
 
 function tick(dt) {
+  clockSec += dt;
+  // THE FREEZE. Nothing advances — not r.t, not a delay countdown, not a flip.
+  // core/clock.js's wait() is a separate subscriber and is deliberately NOT
+  // frozen: the choreographer's pacing is game time, the hitstop is presentation.
+  if (freeze > 0) {
+    freeze -= dt;
+    if (freeze > 0) return;
+    freeze = 0;
+  }
   for (let i = live.length - 1; i >= 0; i--) {
     const r = live[i];
     const node = r.node;
 
     // The interaction agent owns a card under a finger: it writes --fx/--fy
     // directly. Anything we write there is a tug-of-war the player feels.
-    if (!node || !node.isConnected || node.classList.contains('is-dragging')) {
+    if (!node || !node.isConnected || isGrabbed(node)) {
       live[i] = live[live.length - 1]; live.pop();
       abort(r);
       if (node && node[slotOf(r.kind)] === r) node[slotOf(r.kind)] = null;
@@ -197,6 +255,22 @@ function step(r, p) {
       const at = r.flipAt; r.flipAt = -1;
       flip(node, r.flipUp, { mine: r.mine, big: r.big, dur: Math.max(120, r.dur * 1000 * (1 - at)) });
     }
+    // CONTACT — the card's centroid is on its mark. Take the hit.
+    if (r.hit && !r.hitDone && p >= CONTACT) {
+      r.hitDone = true;
+      if (clockSec - lastHit >= HITSTOP_MIN_GAP_MS / 1000) {
+        lastHit = clockSec;
+        freeze = HITSTOP_MS / 1000;
+        hitCount++;
+      }
+    }
+    return;
+  }
+  if (r.kind === K_SETTLE) {
+    // ART §4's ratified settle: 250ms cubic-bezier(.22,1,.36,1).
+    const s = r.from + (r.to - r.from) * settleEase(p);
+    const q = Math.round(s * 1000) / 1000;
+    if (q !== r.wr) { r.wr = q; node.style.setProperty('--fsx', q === 1 ? '1' : String(q)); }
     return;
   }
   if (r.kind === K_FLIP) {
@@ -231,6 +305,9 @@ function finish(r) {
   } else if (r.kind === K_FLIP) {
     node.style.removeProperty('--flip');
     node.setAttribute('data-facing', r.flipUp ? 'up' : 'down');
+  } else if (r.kind === K_SETTLE) {
+    if (r.to === 1) node.style.removeProperty('--fsx');
+    else node.style.setProperty('--fsx', String(r.to));
   } else {
     node.style.opacity = '';
   }
@@ -251,6 +328,91 @@ function write(r, node, x, y, s, rot) {
   if (qr !== r.wr) { r.wr = qr; node.style.setProperty('--tilt', qr + 'deg'); }
 }
 
+/* ── the ratified settle curve ─────────────────────────────────────────────
+   ART §4 names `cubic-bezier(.22, 1, .36, 1)` by its coefficients, so it is
+   solved rather than approximated — easeOutQuint (the nearest thing already in
+   core/math.js) is 3.1% off at p=0.15 and 1.8% off at p=0.35, which on a 26px
+   drop settle is half a pixel and on the drag stretch is visible as a slightly
+   later release of the squash. Newton on the x-polynomial, 4 iterations,
+   allocation-free; 4 iterations because the 5th moved the result by <1e-6 for
+   every p sampled at 1/240s over the curve. */
+const BZ_X1 = 0.22, BZ_Y1 = 1, BZ_X2 = 0.36, BZ_Y2 = 1;
+
+function bezAxis(t, a1, a2) {
+  const u = 1 - t;
+  return 3 * u * u * t * a1 + 3 * u * t * t * a2 + t * t * t;
+}
+
+function bezSlope(t, a1, a2) {
+  const u = 1 - t;
+  return 3 * u * u * a1 + 6 * u * t * (a2 - a1) + 3 * t * t * (1 - a2);
+}
+
+export function settleEase(p) {
+  if (p <= 0) return 0;
+  if (p >= 1) return 1;
+  let t = p;
+  for (let i = 0; i < 4; i++) {
+    const d = bezSlope(t, BZ_X1, BZ_X2);
+    if (d < 1e-5) break;
+    t -= (bezAxis(t, BZ_X1, BZ_X2) - p) / d;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+  }
+  return bezAxis(t, BZ_Y1, BZ_Y2);
+}
+
+/* ── drag pose: the two vars a finger owns ─────────────────────────────────
+   ART §4: drag tilt `rotate(v * 6deg)` and `scaleX(1 + |v| * 0.08)`. --tilt is
+   inside the .card contract; --fsx is on .card-inner (see the header). Both are
+   written straight through with no record — a drag is driven by the pointer,
+   not by a timeline, and interposing a tween between the finger and the card is
+   exactly the lag the whole direct-manipulation idea exists to avoid.
+
+   The .card contract's `scale(var(--fs))` stays the interaction agent's (it
+   writes 1.06 on pickup); --fsx multiplies it on the inner wrapper, so the two
+   compose without either one having to know about the other. */
+export function setDragPose(node, tiltDeg, stretchX) {
+  if (!node) return;
+  if (node.__moS) drop(node.__moS, false);
+  const t = Math.round(tiltDeg * 10) / 10;
+  if (node.__wdt !== t) { node.__wdt = t; node.style.setProperty('--tilt', t + 'deg'); }
+  const s = Math.round(stretchX * 1000) / 1000;
+  if (node.__wds !== s) {
+    node.__wds = s;
+    if (s === 1) node.style.removeProperty('--fsx');
+    else node.style.setProperty('--fsx', String(s));
+  }
+}
+
+/**
+ * Release the stretch back to 1 over the ratified 250ms settle. --tilt is NOT
+ * settled here: whatever happens next to the card — a flight to the zone it was
+ * dropped on, a springHome, or nothing — already animates rotation from
+ * wherever it is (fly()'s `tiltFrom`), and a second writer of --tilt is the
+ * tug-of-war this engine's whole comment header is about.
+ */
+export function relaxDrag(node, o = {}) {
+  if (!node) return null;
+  node.__wdt = undefined;
+  node.__wds = undefined;
+  const from = readVar(node, '--fsx') || 1;
+  if (Math.abs(from - 1) < 0.002) { node.style.removeProperty('--fsx'); return null; }
+  const r = take();
+  r.kind = K_SETTLE;
+  r.node = node;
+  r.t = 0;
+  r.dur = Math.max(0.06, (o.dur || 250) / 1000);
+  r.delay = 0;
+  r.started = false;
+  r.from = from;
+  r.to = 1;
+  r.quiet = true;
+  r.onDone = null;
+  r.wr = NaN;
+  attach(r);
+  return r;
+}
+
 /* ── rest pose ─────────────────────────────────────────────────────────── */
 
 export function restX(node) { return node.__rx || 0; }
@@ -259,7 +421,14 @@ export function restTilt(node) { return node.__rt || 0; }
 
 /** Write the resting pose now. No-op while the card is under a finger. */
 export function writeRest(node) {
-  if (!node || node.classList.contains('is-dragging')) return;
+  if (!node || isGrabbed(node)) return;
+  // A card that was thrown carries the drag stretch on .card-inner. Nothing
+  // else in this file writes --fsx, so a card placed instantly (reduced motion,
+  // a reconcile snap) would keep a 1.08 squash forever.
+  if (node.__wds !== undefined && !node.__moS) {
+    node.__wds = undefined;
+    node.style.removeProperty('--fsx');
+  }
   const x = node.__rx || 0, y = node.__ry || 0, t = node.__rt || 0;
   setStyle(node, '--fx', x === 0 ? '0px' : Math.round(x * 10) / 10 + 'px');
   setStyle(node, '--fy', y === 0 ? '0px' : Math.round(y * 10) / 10 + 'px');
@@ -288,6 +457,16 @@ export function retarget(node) {
 export function isFlying(node) { return !!(node && node.__moT && node.__moT.kind === K_FLY); }
 export function isFlipping(node) { return !!(node && node.__moF); }
 export function isDragging(node) { return !!node && node.classList.contains('is-dragging'); }
+/**
+ * A card a HUMAN owns right now — under a finger (`is-dragging`, written by
+ * interact/) or lifted above the table by table.liftCard (`is-held`). Every
+ * writer in this file defers to it: whatever we put on --fx/--fy is a
+ * tug-of-war the player can feel, and a flight launched out from under a
+ * pointer is a card that teleports mid-gesture.
+ */
+export function isGrabbed(node) {
+  return !!node && (node.classList.contains('is-dragging') || node.classList.contains('is-held'));
+}
 export function liveCount() { return live.length; }
 
 /**
@@ -300,21 +479,28 @@ export function busyUntil() {
   let ms = 0;
   for (let i = 0; i < live.length; i++) {
     const r = live[i];
-    const left = (r.delay + r.dur - r.t) * 1000;
+    // An armed flight has already had HITSTOP_MS taken out of r.dur, so the
+    // freeze it is going to spend has to be added back or this number reports
+    // the table settling before it does.
+    const hold = r.hit && !r.hitDone ? HITSTOP_MS : 0;
+    const left = (r.delay + r.dur - r.t) * 1000 + hold;
     if (left > ms) ms = left;
   }
-  return ms;
+  return ms + freeze * 1000;
 }
 
 export function cancel(node) {
   if (!node) return;
   if (node.__moT) drop(node.__moT, false);
   if (node.__moF) drop(node.__moF, false);
+  if (node.__moS) drop(node.__moS, false);
   node.classList.remove('is-flying');
 }
 
 /** Snap every live record to its end state. Reconnect, fixture load, win (§5). */
 export function finishAll() {
+  // A snap must not be held up by an impact that is no longer happening.
+  freeze = 0;
   while (live.length) {
     const r = live[live.length - 1];
     live.pop();
@@ -340,7 +526,7 @@ export function finishAll() {
  *          key?:number, onDone?:Function}} o
  */
 export function fly(node, o) {
-  if (!node || isDragging(node)) return null;
+  if (!node || isGrabbed(node)) return null;
   const rx = node.__rx || 0, ry = node.__ry || 0, rt = node.__rt || 0;
   const dx = o.dx || 0, dy = o.dy || 0;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -349,7 +535,13 @@ export function fly(node, o) {
   r.kind = K_FLY;
   r.node = node;
   r.t = 0;
-  r.dur = Math.max(0.06, (o.dur || 260) / 1000);
+  // An armed flight pays for its own hitstop: contact lands HITSTOP_MS early,
+  // the table then holds for HITSTOP_MS, and §10's budget is untouched. Floored
+  // at 90ms so a very short hop does not become a stutter with no travel.
+  r.hit = !!o.hit;
+  r.hitDone = false;
+  const ms = o.dur || 260;
+  r.dur = Math.max(0.06, (r.hit ? Math.max(90, ms - HITSTOP_MS) : ms) / 1000);
   r.delay = budgetDelay(o.delay, r.dur);
   r.started = false;
   r.x0 = rx + dx; r.y0 = ry + dy;
@@ -405,7 +597,7 @@ export function fly(node, o) {
  * and reconcile removes it a beat later.
  */
 export function flyOut(node, dx, dy, o = {}) {
-  if (!node || isDragging(node)) return null;
+  if (!node || isGrabbed(node)) return null;
   const rx = node.__rx || 0, ry = node.__ry || 0, rt = node.__rt || 0;
   const r = take();
   r.kind = K_FLY;
@@ -437,7 +629,7 @@ export function flyOut(node, dx, dy, o = {}) {
  * recovers slowly — a symmetric sine read as a wobble, not a hit.
  */
 export function punch(node, dx, dy, o = {}) {
-  if (!node || isDragging(node)) return null;
+  if (!node || isGrabbed(node)) return null;
   const rx = node.__rx || 0, ry = node.__ry || 0, rt = node.__rt || 0;
   const r = take();
   r.kind = K_FLY;

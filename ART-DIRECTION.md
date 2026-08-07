@@ -190,9 +190,27 @@ figures → value coin: filled ink disc with bone numerals, ≥22% of card width
 Stock carries `--grain` at ~3.5% and a 1px `--card-edge` inset stroke 2px in from the trim.
 Corner radius **6px** (not 0 — that's a spreadsheet cell; not 12 — that's an app card).
 Watermark: the glyph at ~130%, set colour 7%, bled off the bottom-left.
-**Wilds:** band splits on a hard 45° diagonal showing both set colours, both glyphs at half
-size — never a rainbow ring. **Actions/rents:** no colour band; an achromatic ink slab band
-plus a large action-specific glyph; rent cards get the two eligible set colours as thin left rails.
+**A card must announce WHICH COLOURS it concerns, before it announces what it is.**
+(Owner defect, 2026-08-06: "there is like an orange rent card but it's actually the wild — it
+was quite confusing what the actual card was and what it did." Every rent card wore the same
+amber band, so the band said "rent" and nothing said "which rent". Monopoly Deal solves this by
+making the rent card *be* its colours. Copy that.)
+
+- **Colour-pair rent** — the face is **dominated by its two set colours**, split hard down the
+  middle (or 45°), each half carrying that set's glyph. A small achromatic RENT mark identifies
+  the type. No amber band. At mini tier the card is simply the two colours split, which is
+  identifiable at 28px.
+- **Wild rent ("any")** — **all ten set colours**, as a hard-edged fan/wheel of segments, never
+  a soft rainbow gradient (a gradient reads as decoration; hard segments read as "all of them").
+  It must be unmistakable at a glance against every colour-pair rent.
+- **Two-colour property wild** — the two colours split with both glyphs at half size.
+- **Any-colour property wild** — the same ten-colour device as the wild rent but in the
+  *property* chassis, so the two wild kinds differ by chassis, not by colour. Both are 0M, and
+  the value coin reading `0M` is a third distinguishing channel.
+- **Actions** — achromatic ink slab band plus a large action-specific glyph; actions concern no
+  colour, and that absence is itself the signal.
+
+The test: at mini tier, with no text rendered, a player must be able to say *which* rent this is.
 
 **Tier degradation via container queries** — at ≤60px: band + glyph at 60% + value coin, and
 nothing else (three marks). At ≤28px: band + glyph at 70% only. Nothing that can truncate.

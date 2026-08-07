@@ -25,6 +25,8 @@ export const EVENTS = Object.freeze({
 
   INTERACT_CHANGED: 'interact:changed',
   UI_DETAILS: 'ui:details',           // card id — open the details sheet
+  UI_PEEK: 'ui:peek',                 // card id — hover/hold peek opened
+  UI_PEEK_END: 'ui:peek_end',
   TOAST: 'ui:toast',
   ACTION: 'ui:action',                // delegated data-action dispatch
 });

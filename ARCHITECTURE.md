@@ -87,9 +87,13 @@ numbers and **must validate with `simulate.js` winrate matrices** (≥500 games 
 the 5 bot personalities; no personality > 60% or < 8% winrate in a 4-player mixed game, and
 first-player advantage measured and reported).
 
-1. **CHUD** keeps its identity (steal any property, even from a complete set — the only card
-   that can) but **loses the 2M tax rider**. It is OPSEC-able. If sims show it still dominates,
-   raise its face value (dead-weight as payment) rather than adding riders.
+1. **CHUD** keeps its identity (steal any property, even from a complete set) but **loses the
+   2M tax rider**. It is OPSEC-able. If sims show it still dominates, raise its face value
+   (dead-weight as payment) rather than adding riders. *Ruling (P7 round 1):* CHUD is the only
+   card that **takes** from a complete set without giving anything back; **TDY Orders may
+   swap into one** (trade, not theft) — this is intentional and balance-critical (the bots'
+   final-approach break chain and the measured 43% conversion depend on it). Copy must state
+   the distinction rather than claim blanket exclusivity.
 2. **Wild rent ("any")** targets **one chosen player**, like the color rents. (The old
    hit-everyone behavior was an undocumented buff.)
 3. **Surge Ops** doubles the **next charge you make this turn** — rent, Finance Office,
@@ -193,7 +197,16 @@ Vocabulary (engine agent may append rows in its report; may not repurpose existi
 - **Timers**: served `{timeout, startedAt}` → client renders ring/bar; urgency at ≤10s and
   ≤5s (sound + haptic once each, not per tick).
 
-## §6 Design system (P3 design agent; binding on everyone after)
+## §6 Design system — SUPERSEDED
+
+**`ART-DIRECTION.md` ("APRON", ratified 2026-08-06) replaces this section in full.** Read it
+instead: printed cream cards on an airfield apron, light and dark themes that change the table
+and not the cards, colour-and-material as two independent channels (sets own colour, signals
+own material), measured tokens, ten set glyphs, the desktop three-column table, menu music, and
+the peek spec. §0 still outranks it. The text below is retained only as the record of what the
+P3–P7 build was made against.
+
+### §6-legacy (historical — do not build against)
 
 - **Identity: "night flight line."** A felt-and-tarmac card table under hangar light. Navy
   felt surface (radial gradient + SVG feTurbulence grain, authored inline), gold as *foil* —

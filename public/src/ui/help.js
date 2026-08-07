@@ -15,7 +15,7 @@ import {
   COLORS, COLOR_KEYS, HAND_LIMIT, ACTION_RULES, ACTION_COUNTS,
   RENT_COUNTS, colorName, opsecFlag, DECK_CYCLE_LIMIT, deckCycleNotice,
 } from '../core/cards.js';
-import { activeRules, winRuleSummary, countWord, WIN_RULE_NAMES } from './ruleset.js';
+import { activeRules, winRuleSummary, WIN_RULE_NAMES } from './ruleset.js';
 
 /* ── small builders ──────────────────────────────────────────────────────── */
 
@@ -39,6 +39,17 @@ function rules(rows) {
 
 function note(text) { return el('p', { class: 'brief-note', text }); }
 
+/** "third", not "threeth". countWord() gives the cardinal; this page needs the
+ *  ordinal, and `countWord(3) + 'th'` shipped on the flagship Goal page. */
+const ORDINALS = ['zeroth', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh'];
+function ordinalWord(n) {
+  if (ORDINALS[n]) return ORDINALS[n];
+  const rem100 = n % 100;
+  const suffix = (rem100 >= 11 && rem100 <= 13) ? 'th'
+    : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${suffix}`;
+}
+
 function swatch(color) {
   return el('span', { class: 'brief-swatch', dataset: { color } });
 }
@@ -58,7 +69,10 @@ function swatch(color) {
  */
 function ruleBadge(active) {
   const bits = [WIN_RULE_NAMES[active.winRule], `${active.setsToWin} sets to win`];
-  if (active.pureSetRequired) bits.push('no wilds in a winning set');
+  // game.js zoneIsSet() (351-356): `cards.some(c => c.type === 'property')` —
+  // ONE real property, not "no wilds". Verified: under mdFaithful two "any"
+  // wilds in a 2-card zone is NOT a set, but one wild + one property IS.
+  if (active.pureSetRequired) bits.push('every set needs at least one real property');
   if (active.passGoRestartsTurn) bits.push('PCS Orders restarts your plays');
   return el('p', { class: 'brief-note' }, [
     el('b', { text: active.live ? 'THIS GAME: ' : 'DEFAULT RULES: ' }),
@@ -73,21 +87,19 @@ function ruleBadge(active) {
  *  the only defence there is, under the grace rules they are the counter-play. */
 function breakBullets() {
   return bullets([
-    // playAction 'chud' has no zoneRequisitionable guard, and nothing goes
-    // back the other way — that, not "can reach a complete set", is what is
-    // unique about it (§3.1 P7 ruling).
+    // playAction 'chud' (game.js:1173) is the ONLY steal left with no
+    // zoneRequisitionable guard, and nothing goes back the other way.
     'THE CHUD CARD — takes a property straight out of a complete set and gives nothing '
-    + 'back. The only card that robs one.',
+    + 'back. Since §3.1 it is the only card in the deck that can reach into one at all.',
     // executeEntry 'steal_set'.
     'Inspector General — seizes the whole set, Upgrade and FOC included.',
-    // playAction 'tdy_orders' has no complete-set guard either, and
-    // executeEntry 'swap' splices out of whatever colour holds the card.
-    'TDY Orders — trades INTO a complete set: their set card for one of yours. Both '
-    + 'boards resync, so it can break a set on either side.',
     // processPayment: propCards come out of properties, then syncSets(payer).
+    // Upgrades are payable now, so a big enough charge can also strip those.
     'Charge them more than their bank covers, so they must pay with a set card.',
-    // playAction 'midnight_requisition' → zoneRequisitionable(): n > 0 && n < size.
-    'Midnight Requisition cannot — it refuses any zone that is already a complete set.',
+    // playAction 'tdy_orders' (game.js:1123-1126) now runs zoneRequisitionable()
+    // over BOTH sides; playAction 'midnight_requisition' (1101) over the target's.
+    'TDY Orders and Midnight Requisition cannot — both refuse any zone that is already a '
+    + 'complete set. TDY refuses it on YOUR side of the trade too.',
   ]);
 }
 
@@ -128,7 +140,7 @@ function approachDiagram(rules) {
   return el('div', { class: 'fa-diagram' }, [
     armedBoard(n),
     el('ol', { class: 'fa-steps' }, [
-      faStep('arm', 'ARMED', `Your ${countWord(n)}th set completes. You do NOT win yet.`),
+      faStep('arm', 'ARMED', `Your ${ordinalWord(n)} set completes. You do NOT win yet.`),
       // checkpointReached(): turnCounter − armedAtTurn >= checkpointThreshold().
       md
         ? faStep('wait', 'ONE TURN', 'The table gets the rest of the round. You may not '
@@ -152,7 +164,7 @@ function instantDiagram(n) {
   return el('div', { class: 'fa-diagram' }, [
     armedBoard(n),
     el('ol', { class: 'fa-steps' }, [
-      faStep('arm', 'COMPLETE', `Your ${countWord(n)}th set completes — anywhere, `
+      faStep('arm', 'COMPLETE', `Your ${ordinalWord(n)} set completes — anywhere, `
         + 'on anyone\'s turn.'),
       faStep('win', 'WIN', 'The game ends immediately. No grace window, no banner, '
         + 'no chance to break it.'),
@@ -235,6 +247,8 @@ function pageGoal() {
 /* ── page: your turn ─────────────────────────────────────────────────────── */
 
 function pageTurn() {
+  const active = activeRules();
+  const instant = active.winRule === 'instant';
   return [
     // beginTurn() draws automatically; drawCards(): count = hand.length === 0 ? 5 : 2.
     p('Your cards are dealt for you, then up to three plays, then get down to the hand limit.',
@@ -246,23 +260,35 @@ function pageTurn() {
       // playsRemaining = 3; playAsMoney / playProperty / playAction each decrement it.
       ['2 · Up to 3 plays', 'A play is: bank a card for its value, place a property, play an '
         + 'action or rent card, or add an Upgrade / FOC to a complete set.'],
-      // moveProperty() never touches playsRemaining.
+      // moveProperty() never touches playsRemaining — and §3.1b routes
+      // moveUpgrade() (game.js:1517-1541) through the same command, so an
+      // Upgrade/FOC relocates on the same free terms. Verified with
+      // playsRemaining at 0: the move still returns ok.
       ['Free, unlimited', 'Moving a wild that is already on your board from one set to another '
-        + 'costs no play, and you may do it as often as you like on your turn.'],
+        + 'costs no play, and you may do it as often as you like on your turn. So does moving '
+        + 'an Upgrade or FOC from one of your complete sets to another — the target set has to '
+        + 'be complete, and an FOC needs an Upgrade already standing there.'],
       // endTurn(): hand.length > HAND_LIMIT → needDiscard with the excess.
       [`3 · Hand limit ${HAND_LIMIT}`, `End your turn holding at most ${HAND_LIMIT} cards. `
         + 'Over the limit, you choose what goes to the discard.'],
     ]),
     note('Money cards are only ever banked — there is nothing else to do with them.'),
     bullets([
-      // delete state._surgeOps in endTurn().
-      'Surge Operations expires when your turn ends, spent or not.',
+      // §3.1c — endTurn() deletes the COUNTER, so a x4 stack expires whole.
+      'Surge Operations expires when your turn ends, spent or not — and it only ever doubles '
+      + 'RENT. Two copies make one rent x4.',
       // respondToAction runs whenever pendingAction lists you, regardless of turn.
       'You can be charged and you can play OPSEC on anyone\'s turn. Demands are answered '
       + 'the moment they land.',
-      // drawCards() calls checkWin() before drawing.
-      'A set you complete on someone else\'s turn — from a payment, a steal, a swap — arms '
-      + 'your final approach right then.',
+      // syncSets() is reached from playProperty, moveProperty, processPayment,
+      // both steals and swap — so an off-turn completion counts either way. What
+      // it DOES there depends on the ruleset: 'instant' finishes the game inline;
+      // the grace rules arm instead.
+      instant
+        ? 'A set you complete on someone else\'s turn — from a payment, a steal, a swap — wins '
+          + 'the game on the spot under this ruleset. Nothing is ever armed.'
+        : 'A set you complete on someone else\'s turn — from a payment, a steal, a swap — arms '
+          + 'your final approach right then.',
     ]),
   ];
 }
@@ -321,11 +347,20 @@ function pageSets() {
       // playAction 'upgrade'/'foc' require isSetComplete; foc requires 'house'.
       ['Upgrade +3M, FOC +4M',
         'Complete sets only, one of each per set, and FOC needs the Upgrade in place first.'],
-      // playerNetWorth() = payable + upgrades; payableCards() excludes upgrades;
-      // discardUpgrades() fires whenever the set stops being complete.
-      ['Upgrades are not money',
-        'They can never be handed over as payment, they do count in your net worth, and they '
-        + 'go to the discard the moment the set under them breaks.'],
+      // §3.1b, three rules reversed at once. payableCards() (game.js:710-717)
+      // includes upgrades; playerNetWorth() === playerTotalValue() (706-708);
+      // bankUpgradeCard() (783) BANKS them on a break, stripping upgradeType so
+      // what lands is an ordinary card; moveUpgrade() (1517-1541) relocates one
+      // between complete sets for no play.
+      ['Upgrades ARE money',
+        'An Upgrade is worth 3M and an FOC 4M, and you may hand either over as payment like '
+        + 'any other card — net worth and paying power are the same number. If the set under '
+        + 'them breaks they are not lost: they drop into your own bank at face value.'],
+      ['And they move',
+        'On your turn you may shift an Upgrade or FOC from one of your complete sets to '
+        + 'another for free — it costs no play. The destination must already be a complete '
+        + 'set, an FOC needs an Upgrade waiting there, and an Upgrade cannot leave its own '
+        + 'FOC stranded behind it.'],
       ['Wilds', 'A two-colour wild counts as either of its colours. The "any" wild counts as '
         + 'every colour but is worth 0M — that is what you pay for it.'],
       // receiveProperty(): `ordered` puts preferredColor first — every caller
@@ -346,30 +381,40 @@ function pageSets() {
 
 function pagePaying() {
   return [
-    // payableCards() = bank + properties. Hand is never touched.
-    p('You choose what to hand over — out of your bank and your properties. Never out of '
-      + 'your hand.', 'brief-lede'),
+    // payableCards() (game.js:710-717) = bank + properties + UPGRADES. Hand is
+    // never touched. §3.1b added the third source, and a client that offered
+    // only the first two could not surrender everything, which is the only
+    // legal short payment — it wedged.
+    p('You choose what to hand over — out of your bank, your properties and the Upgrades '
+      + 'standing on your sets. Never out of your hand.', 'brief-lede'),
     rules([
       // playAsMoney() refuses property and wild_property; everything else banks.
       ['Anything but a property banks',
         'Action cards, rent cards and money cards can all be banked for their face value. '
         + 'That is one of your three plays.'],
-      // processPayment(): short payments only legal when selected === payable.
+      // processPayment() (game.js:1449): a short payment is only legal when
+      // `selected.length === payable.length` — every card, upgrades included.
       ['Cover it, or hand over everything',
-        'Pay at least what is owed, or surrender every card you own — zero-value wilds '
-        + 'included. There is no middle.'],
+        'Pay at least what is owed, or surrender every card you own — zero-value wilds and '
+        + 'the Upgrades on your sets included. There is no middle.'],
       // payable.length === 0 → emit 'insolvent', nothing changes hands.
       ['You never owe more than you have',
         'With an empty bank and no properties you pay nothing at all, and no debt is carried.'],
       ['No change is given',
         'Overpaying is legal and the surplus is gone. Pick your cards with that in mind.'],
-      // propCards path in processPayment → syncSets(payer) → can disarm.
+      // propCards path in processPayment → bankUpgrades(payer, color) →
+      // syncSets(payer) → can disarm. The upgrades are BANKED, not discarded.
       ['Paying with a property can break your set',
-        'It also discards any Upgrade or FOC standing on that set — and it can end a final '
-        + 'approach, yours or theirs.'],
+        'Any Upgrade or FOC standing on that set then falls into your bank at face value — '
+        + 'you keep the money, you lose the rent. And the break can end a final approach, '
+        + 'yours or theirs.'],
+      // upgradeCards path in processPayment (game.js:1467-1479): upgradeType and
+      // placedColor are stripped, so it arrives as an ordinary card.
+      ['An Upgrade you pay with stops being an Upgrade',
+        'It lands in their bank as a plain 3M or 4M card, not on one of their sets.'],
     ]),
-    note('Tap your bank and property cards to select them; the bar keeps the running total '
-      + 'and turns green when it covers the demand.'),
+    note('Tap your bank, property and Upgrade cards to select them; the bar keeps the running '
+      + 'total and turns green when it covers the demand.'),
   ];
 }
 
@@ -590,12 +635,13 @@ function pageControls() {
       ['Drop on your bank', 'Banks the card for its face value.'],
       ['Drop in the middle of the table', 'Means "play it" — you then aim on the table.'],
       ['Drag a wild that is already on your board',
-        'Move it to another set column. Free, and as often as you like on your turn.'],
+        'Move it to another set column. Free, and as often as you like on your turn. An '
+        + 'Upgrade or FOC moves the same way, between complete sets.'],
       ['Long-press any card', 'Opens its full rules card, wherever it is on the table.'],
       ['Targeting happens on the table',
         'Eligible boards, columns and cards glow. Tap the one you want.'],
-      ['Paying', 'Your bank and properties become selectable. The bar totals what you have '
-        + 'picked; confirm when it is enough.'],
+      ['Paying', 'Your bank, your properties and the Upgrades on your sets all become '
+        + 'selectable. The bar totals what you have picked; confirm when it is enough.'],
       ['Escape', 'Cancels a drag, then a selection, and closes any open sheet.'],
       ['Keyboard', 'Tab moves between controls, Enter or Space activates, Escape backs out.'],
     ]),

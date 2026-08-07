@@ -58,14 +58,31 @@ export const ACTION_NEEDS = Object.freeze({
 export function colorName(color) { return COLORS[color]?.name || color || '—'; }
 export function setSize(color) { return COLORS[color]?.size || 0; }
 
-export function isComplete(player, color) {
+/**
+ * Mirror of game.js zoneIsSet()/isSetComplete() (game.js:351-356, 576-578).
+ *
+ * `rules` carries the resolved ruleset's flags; core/ is dependency-free by
+ * design, so the caller supplies them (state/selectors.js activeRuleFlags()
+ * reads them off the snapshot's `rules`). Under `pureSetRequired` — ON in the
+ * MD Faithful preset — a FULL zone is only a SET if at least one card in it is
+ * a real property. Our 2-card zones make an all-wild set otherwise trivial.
+ * Note it takes ONE real property, not "no wilds": 2 wilds + 1 property is a
+ * legal set under every ruleset.
+ *
+ * Without this, a client counting only `length >= size` disagreed with the
+ * `completedSets` number the engine prints right beside its own swatches.
+ */
+export function isComplete(player, color, rules) {
   const size = setSize(color);
-  return size > 0 && (player?.properties?.[color]?.length || 0) >= size;
+  const cards = player?.properties?.[color] || [];
+  if (size === 0 || cards.length < size) return false;
+  if (rules?.pureSetRequired && !cards.some(c => c?.type === 'property')) return false;
+  return true;
 }
 
-export function completeColors(player) {
+export function completeColors(player, rules) {
   const out = [];
-  for (const color of COLOR_KEYS) if (isComplete(player, color)) out.push(color);
+  for (const color of COLOR_KEYS) if (isComplete(player, color, rules)) out.push(color);
   return out;
 }
 
@@ -75,15 +92,31 @@ export function zoneFull(player, color) {
   return size === 0 || (player?.properties?.[color]?.length || 0) >= size;
 }
 
-/** Midnight Requisition may not touch a complete set.
- *  Mirrors game.js zoneRequisitionable(): `n > 0 && n < info.size`. It was
- *  `n !== size` while a zone could be forced past its size; §3.5 overflow is
- *  gone (receiveProperty banks a homeless property instead), so a zone at or
- *  over its size is simply off limits. */
-export function requisitionable(player, color) {
-  const size = setSize(color);
+/**
+ * Neither Midnight Requisition NOR TDY Orders may touch a complete set — and
+ * for TDY that is true on both sides of the trade (§3.1, reversed 2026-08-06;
+ * game.js playAction 'midnight_requisition':1101 and 'tdy_orders':1123-1126).
+ * CHUD is the only card left that can reach into one.
+ *
+ * Mirrors game.js zoneRequisitionable() (590-593): `zoneCount > 0 && NOT a
+ * set`. Expressed against isComplete() rather than `n < size` so it stays
+ * right under pureSetRequired, where a full zone of nothing but wilds is not a
+ * set and IS fair game.
+ */
+export function requisitionable(player, color, rules) {
   const n = player?.properties?.[color]?.length || 0;
-  return n > 0 && n < size;
+  return n > 0 && !isComplete(player, color, rules);
+}
+
+/** Every Upgrade/FOC object on a player's board, in colour order. They are
+ *  payable (game.js payableCards():710-717), so the payment selector needs
+ *  them; `upgrades[color]` may hold bare strings in old fixtures. */
+export function upgradeCards(player) {
+  const out = [];
+  for (const color of COLOR_KEYS) {
+    for (const u of player?.upgrades?.[color] || []) if (u && typeof u === 'object') out.push(u);
+  }
+  return out;
 }
 
 export function legalColorsFor(card) {
@@ -126,10 +159,14 @@ export function isPropertyCard(card) {
 export const ACTION_RULES = Object.freeze({
   // playAction case 'pcs_orders' — draws 2, no pendingAction, so nothing to counter.
   pcs_orders: 'Draw 2 more cards. It aims at nobody, so OPSEC cannot touch it.',
-  // playAction case 'surge_ops' + chargeAmount(): one flag, consumed by the next
-  // charge of ANY kind; endTurn deletes it.
-  surge_ops: 'Doubles the NEXT charge you make this turn — rent, Finance Office, '
-    + 'Roll Call, any demand. Costs a play. One at a time, and it expires when your turn ends.',
+  // §3.1c — playAction case 'surge_ops' (game.js:1165) increments a COUNTER and
+  // never refuses a second copy; chargeAmount() (game.js:994-1000) passes
+  // surgeable:true from the RENT branch only, and multiplies by 2**stack.
+  // Verified: 3 Fighters charge 6M → 12M with one, 24M with two; Finance Office
+  // stays 5M and Roll Call stays 2M at every stack depth.
+  surge_ops: 'Doubles the NEXT RENT you charge this turn — and only rent. Finance Office and '
+    + 'Roll Call are untouched. It STACKS: play two and that rent is x4, for two of your three '
+    + 'plays. Expires when your turn ends, spent or not.',
   // playAction case 'roll_call' — startPending over every other active player.
   roll_call: 'Every other player pays you 2M. Each of them answers on their own.',
   // playAction case 'finance_office' — single target, 5M.
@@ -138,22 +175,29 @@ export const ACTION_RULES = Object.freeze({
   inspector_general: 'Seize one whole COMPLETE set from a player. Its Upgrade and FOC come with it.',
   // playAction case 'midnight_requisition' + zoneRequisitionable().
   midnight_requisition: 'Take one property. Never out of a complete set.',
-  // playAction case 'tdy_orders' has NO zoneRequisitionable guard and
-  // executeEntry case 'swap' splices out of whatever colour holds the card, so
-  // a complete set is fair game on BOTH sides. §3.1 (P7 ruling) keeps that
-  // power deliberately; the copy states it instead of pretending otherwise.
-  tdy_orders: 'Trade one of your properties for one of theirs — a complete set is not safe from '
-    + 'it, on either side. You always give a card back, which is what separates it from CHUD.',
-  // playAction case 'chud' — no zoneRequisitionable guard, and §3.1 removed the tax.
+  // §3.1 REVERSED 2026-08-06 — playAction case 'tdy_orders' (game.js:1123-1126)
+  // now runs zoneRequisitionable() over BOTH sides: "You cannot trade a card out
+  // of one of your complete sets" and "TDY Orders cannot touch a complete set".
+  // Both errors reproduced against the engine.
+  tdy_orders: 'Trade one of your properties for one of theirs. Neither card may come out of a '
+    + 'complete set — yours or theirs. You always give a card back, which is what separates it '
+    + 'from CHUD.',
+  // playAction case 'chud' (game.js:1173) — the ONLY steal with no
+  // zoneRequisitionable guard left, and §3.1 removed the tax.
   chud: 'Commandeer Hardware Under Directive. TAKE any property, even out of a complete set, and '
-    + 'give nothing back — the only card that does that. (TDY Orders can trade into a complete '
-    + 'set; it cannot rob one.) No tax.',
-  // playAction case 'upgrade' + calcRent() + discardUpgrades().
-  upgrade: '+3M rent on one complete set. Can never be handed over as payment, '
-    + 'but counts in your net worth — and is discarded if the set breaks.',
-  // playAction case 'foc' — requires 'house' first, one per set.
-  foc: '+4M rent on a complete set that already has an Upgrade. Same terms: never payable, '
-    + 'counts in net worth, discarded if the set breaks.',
+    + 'give nothing back. Since §3.1 it is the only card in the deck that can touch a complete '
+    + 'set at all — Midnight Requisition and TDY Orders are both locked out of one. No tax.',
+  // §3.1b — playAction case 'upgrade' + calcRent(); payableCards() (game.js:710)
+  // includes upgrades; bankUpgradeCard() (game.js:783) BANKS them on a break
+  // rather than discarding; moveUpgrade() (game.js:1517) relocates them free.
+  upgrade: '+3M rent on one complete set. It is real money: you may hand it over as payment, '
+    + 'and if the set under it breaks it drops into your own bank at face value rather than '
+    + 'being lost. Move it to another complete set for free on your turn.',
+  // playAction case 'foc' — requires 'house' first, one per set. moveUpgrade()
+  // refuses to strand an FOC without its Upgrade.
+  foc: '+4M rent on a complete set that already has an Upgrade. Same terms: payable, and it '
+    + 'banks itself if the set breaks. It moves free between complete sets too, but only onto '
+    + 'one that already has an Upgrade.',
   // respondToAction case 'opsec' — the card is spliced out and discarded before
   // the depth increments, so it is spent whichever way the chain ends.
   opsec: 'Cancels an action aimed at you. They may counter with their own OPSEC, and so on — '

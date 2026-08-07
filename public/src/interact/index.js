@@ -156,20 +156,31 @@ export function bankSelected() {
   reset();
 }
 
-/** Free wild rearrange (§3.8) — begins from a wild already on my board. */
+/**
+ * Free rearrange — begins from a card already on my board.
+ * §3.8 for a wild; §3.1b for an Upgrade/FOC, which game.js moveProperty()
+ * (1543-1548) routes to moveUpgrade() off the same `move_property` command and
+ * which likewise costs no play.
+ */
 export function beginMove(cardId) {
-  const found = sel.myPropertyCard(cardId);
-  if (!found || found.card.type !== 'wild_property') return;
+  const found = sel.boardMoveTarget(cardId);
+  if (!found) return;
   if (!sel.canPlay()) { refuse(sel.cannotPlayReason(), getNode(cardId)); return; }
-  const colors = sel.moveColors(found.card, found.color);
-  if (!colors.length) { refuse('Nowhere legal to move it — every other set is full', getNode(cardId)); return; }
+  if (!found.colors.length) {
+    refuse(found.isUpgrade
+      ? 'Nowhere legal to move it — you need a second complete set that has room for it'
+      : 'Nowhere legal to move it — every other set is full', getNode(cardId));
+    return;
+  }
   mode.kind = 'target';
   mode.intent = 'move';
   mode.cardId = cardId;
   mode.card = found.card;
   mode.needs = ['myColor'];
   mode.picks = {};
-  mode.hint = 'Tap the set column to move it to';
+  mode.hint = found.isUpgrade
+    ? 'Tap the complete set to move it onto'
+    : 'Tap the set column to move it to';
   changed();
 }
 
@@ -276,7 +287,7 @@ export function confirmPayment() {
   const payable = sel.payableCards();
   const bar = document.getElementById('prompt');
   if (!ids.length && payable.length) {
-    refuse('Tap your bank and property cards to choose what to hand over', bar);
+    refuse('Tap your bank, property and Upgrade cards to choose what to hand over', bar);
     return;
   }
   if (selectedTotal() < mode.amount && ids.length < payable.length) {
@@ -385,10 +396,11 @@ export function dragCandidate(cardId) {
   if (mode.kind === 'payment' || mode.kind === 'discard') return null;   // tap-to-toggle owns these
   const inHand = sel.handCard(cardId);
   if (inHand) return sel.canPlay() ? { source: 'hand', card: inHand } : null;
-  const mine = sel.myPropertyCard(cardId);
-  if (mine && mine.card.type === 'wild_property' && sel.canPlay()
-      && sel.moveColors(mine.card, mine.color).length) {
-    return { source: 'board', card: mine.card, from: mine.color };
+  // A wild (§3.8) or an Upgrade/FOC (§3.1b) already on my board — both are
+  // free rearranges over the same command.
+  const mine = sel.boardMoveTarget(cardId);
+  if (mine && sel.canPlay() && mine.colors.length) {
+    return { source: 'board', card: mine.card, from: mine.from };
   }
   return null;
 }
@@ -425,7 +437,9 @@ export function dragPlan(cardId) {
   const card = cand.card;
 
   if (cand.source === 'board') {
-    for (const color of sel.moveColors(card, cand.from)) push(col(color), { kind: 'move', value: color });
+    for (const color of sel.boardMoveTarget(cardId)?.colors || []) {
+      push(col(color), { kind: 'move', value: color });
+    }
     return { source: 'board', card, targets, reason: '', myBoard };
   }
 
@@ -456,9 +470,12 @@ export function dragPlan(cardId) {
         push(col(color), { kind: 'need', step, value: color });
       }
     } else if (step === 'myCard') {
-      const me = selfPlayer();
-      for (const color of COLOR_KEYS) {
-        for (const c of me?.properties?.[color] || []) push(getNode(c.id), { kind: 'need', step, value: c.id });
+      // 'myCard' is TDY Orders only, and §3.1 now guards MY side of the trade
+      // too (game.js playAction 'tdy_orders': zoneRequisitionable(p, mine.color)
+      // → "You cannot trade a card out of one of your complete sets"). Glowing
+      // a complete-set card here promised a move the engine refuses.
+      for (const { card: c } of sel.tradeableProps()) {
+        push(getNode(c.id), { kind: 'need', step, value: c.id });
       }
     }
     push(document.getElementById('table-center'), { kind: 'play' }, 1);
@@ -582,13 +599,15 @@ export function applyMarks() {
     } else if (step === 'theirSet') {
       markPropColumns(mode.picks.targetId, sel.completeSetsOf(mode.picks.targetId));
     } else if (step === 'myCard') {
-      for (const color of COLOR_KEYS) for (const card of me?.properties?.[color] || []) mark(getNode(card.id));
+      // Same §3.1 guard as dragPlan(): my side of a TDY trade cannot come out
+      // of one of my own complete sets.
+      for (const { card } of sel.tradeableProps()) mark(getNode(card.id));
     } else if (step === 'mySet') {
       const needsHouse = mode.card?.action === 'foc';
       markPropColumns(store.self.id, sel.myCompleteSets({ needsHouse, needsNoHouse: !needsHouse }));
     } else if (step === 'myColor') {
       const colors = mode.intent === 'move'
-        ? sel.moveColors(mode.card, sel.myPropertyCard(mode.cardId)?.color)
+        ? (sel.boardMoveTarget(mode.cardId)?.colors || [])
         : (mode.card?.type === 'rent' ? sel.rentColors(mode.card) : sel.placementColors(mode.card));
       markPropColumns(store.self.id, colors);
     }
@@ -650,8 +669,16 @@ export function mount() {
       return;
     }
     if (sel.handCard(id)) { selectHandCard(id); return; }
-    const mine = sel.myPropertyCard(id);
-    if (mine && mine.card.type === 'wild_property' && sel.canPlay()) { beginMove(id); return; }
+    // A wild or an Upgrade/FOC on my own board: tapping it begins the free
+    // rearrange rather than opening the details sheet. A wild always claims the
+    // tap so beginMove() can SAY why it cannot move (§P7.3); an Upgrade only
+    // claims it when it has somewhere to go — most of the time it does not, and
+    // a refusal there would just be a wall in front of the rules card.
+    const movable = sel.boardMoveTarget(id);
+    if (movable && sel.canPlay() && (!movable.isUpgrade || movable.colors.length)) {
+      beginMove(id);
+      return;
+    }
     bus.emit(EVENTS.UI_DETAILS, id);
   });
 

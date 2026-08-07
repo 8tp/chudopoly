@@ -28,13 +28,32 @@ function kindText(card) {
 
 /* ── live context per card kind ──────────────────────────────────────────── */
 
+/**
+ * The live Surge Operations multiplier, straight off the snapshot.
+ *
+ * §3.1c — `state._surgeOps` is a COUNTER, not a boolean, and getPlayerView
+ * ships both `surgeOps` (the count) and `surgeMultiplier` (2**count,
+ * game.js:1809-1810). Two stacked copies are x4, not x2. Reading `surgeOps` as
+ * a boolean and writing "DOUBLED" printed the wrong number for every stack
+ * above one — and `surgeMultiplier` was shipped and never read.
+ */
+function surgeMultiplier() {
+  const snap = store.snapshot;
+  const m = Number(snap?.surgeMultiplier);
+  if (Number.isFinite(m) && m >= 1) return Math.round(m);
+  return 2 ** (Number(snap?.surgeOps) || 0);       // older broadcast shape
+}
+
 /** calcRent() in game.js: rent[min(count,len)-1], +3 house, +4 hotel. cards.js
- *  rentFor() mirrors it, so these numbers are the ones the engine will charge. */
+ *  rentFor() mirrors it. chargeAmount() (game.js:994-1000) then multiplies the
+ *  RENT branch — and only the rent branch — by the Surge stack, so these are
+ *  the numbers the engine will actually charge. */
 function rentContext(card) {
   const me = selfPlayer();
   const colors = sel.rentColors(card);
   const out = [];
   const wild = card.colors?.[0] === 'any';
+  const mult = surgeMultiplier();
   out.push(row('Bills', wild ? 'one player you name' : 'every other player'));
   if (!colors.length) {
     out.push(row('Right now', 'you own none of these colours — unplayable', 'bad'));
@@ -45,10 +64,16 @@ function rentContext(card) {
     const kinds = upgradeKinds(me, color);
     const extra = kinds.includes('hotel') ? ' incl. FOC'
       : kinds.includes('house') ? ' incl. Upgrade' : '';
+    const base = rentFor(me, color);
     out.push(row(`${colorName(color)} (${held}/${setSize(color)})`,
-      `${rentFor(me, color)}M${extra}`, 'good'));
+      mult > 1 ? `${base * mult}M — ${base}M x${mult}${extra}` : `${base}M${extra}`,
+      mult > 1 ? 'hot' : 'good'));
   }
-  if (store.snapshot?.surgeOps) out.push(row('Surge Operations', 'this charge is DOUBLED', 'hot'));
+  if (mult > 1) {
+    const n = Number(store.snapshot?.surgeOps) || 0;
+    out.push(row('Surge Operations',
+      `${n} stacked — this rent is x${mult}`, 'hot'));
+  }
   return out;
 }
 
@@ -112,26 +137,44 @@ function actionContext(card) {
       break;
     }
     case 'tdy_orders': {
-      const mine = COLOR_KEYS.reduce((n, c) => n + (me?.properties?.[c]?.length || 0), 0);
-      out.push(row('You can offer', `${mine} propert${mine === 1 ? 'y' : 'ies'}`,
+      // Both sides are guarded (game.js:1123-1126) — a card sitting in one of
+      // my complete sets is not something I can offer.
+      const mine = sel.tradeableProps(me).length;
+      out.push(row('You can offer', `${mine} propert${mine === 1 ? 'y' : 'ies'} outside a set`,
         mine ? '' : 'bad'));
+      const reach = sel.opponents()
+        .map(p => ({ p, n: sel.stealableCards(p.id, 'tdy_orders').length })).filter(x => x.n);
+      out.push(reach.length
+        ? row('You can take', reach.map(x => `${x.p.name} ${x.n}`).join(' · '), 'good')
+        : row('Right now', 'no opponent has a property outside a complete set', 'bad'));
       break;
     }
     case 'finance_office':
     case 'roll_call': {
+      // chargeAmount() (game.js:994-1000) passes surgeable:true from the RENT
+      // branch ONLY. These two are flat at every Surge stack depth — verified
+      // against the engine at 0, 1 and 2 stacked copies.
       const n = sel.opponents().length;
       const each = card.action === 'roll_call' ? 2 : 5;
-      const doubled = store.snapshot?.surgeOps;
       out.push(row('Collects', card.action === 'roll_call'
-        ? `${doubled ? each * 2 : each}M from each of ${n}`
-        : `${doubled ? each * 2 : each}M from one player`, doubled ? 'hot' : 'good'));
+        ? `${each}M from each of ${n}`
+        : `${each}M from one player`, 'good'));
+      if (surgeMultiplier() > 1) {
+        out.push(row('Surge Operations', 'does not apply — rent only', ''));
+      }
       break;
     }
-    case 'surge_ops':
-      out.push(store.snapshot?.surgeOps
-        ? row('Right now', 'already active — the next charge is doubled', 'hot')
-        : row('Effect', 'the next charge you make this turn is doubled'));
+    case 'surge_ops': {
+      // §3.1c: it stacks, and playAction never refuses a second copy.
+      const n = Number(store.snapshot?.surgeOps) || 0;
+      out.push(row('Effect', 'your next RENT this turn is x2 — rent only, not Finance Office '
+        + 'or Roll Call'));
+      if (n) {
+        out.push(row('Already running', `${n} stacked (x${surgeMultiplier()}) — `
+          + `playing this one makes it x${2 ** (n + 1)}`, 'hot'));
+      }
       break;
+    }
     case 'opsec': {
       const n = sel.myHand().filter(c => c.action === 'opsec').length;
       out.push(row('In your hand', `${n} OPSEC`, n ? 'good' : ''));
@@ -190,9 +233,20 @@ export function detailBody(card) {
   if (card.placedColor && COLORS[card.placedColor]) {
     tags.appendChild(el('span', { class: 'dt-tag', text: `On ${colorName(card.placedColor)}` }));
   }
-  // playerTotalValue()/payableCards() exclude upgrades — say so where it matters.
+  // §3.1b — payableCards() (game.js:710-717) INCLUDES upgrades and
+  // playerNetWorth() === playerTotalValue() (game.js:706-708), so there is no
+  // net-worth-but-not-payable split left to warn about. What is worth saying is
+  // the two rules that did change: it banks on a break (bankUpgradeCard(),
+  // game.js:783) and it relocates free (moveUpgrade(), game.js:1517-1541).
   if (card.upgradeType) {
-    tags.appendChild(el('span', { class: 'dt-tag', text: 'Never payable · counts in net worth' }));
+    tags.appendChild(el('span', { class: 'dt-tag', text: 'Payable · banks if the set breaks' }));
+    const moves = sel.upgradeMoveColors(card.id);
+    if (moves.length) {
+      tags.appendChild(el('span', {
+        class: 'dt-tag',
+        text: `Moves free to ${moves.map(colorName).join(', ')}`,
+      }));
+    }
   }
   if (tags.children.length) body.appendChild(tags);
 

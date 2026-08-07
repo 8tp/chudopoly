@@ -7,10 +7,25 @@
 import { store, selfPlayer, playerById } from './store.js';
 import {
   COLOR_KEYS, isComplete, zoneFull, requisitionable, legalColorsFor,
-  upgradeKinds, ACTION_NEEDS,
+  upgradeKinds, upgradeCards, ACTION_NEEDS,
 } from '../core/cards.js';
 
 export function snapshot() { return store.snapshot; }
+
+/**
+ * The resolved ruleset for THIS game, for the core/cards.js predicates that
+ * need it. core/ is dependency-free by design, so the flags are passed in
+ * rather than read from the store down there.
+ *
+ * game.js getPlayerView ships the whole resolved ruleset as `rules`; the flat
+ * `setsToWin`/`winRule` aliases are the older shape. With no game on screen
+ * there is no ruleset, and the engine's own defaults (RULE_PRESETS.chudopoly)
+ * are what a new table gets.
+ */
+export function activeRuleFlags() {
+  const r = store.snapshot?.rules;
+  return { pureSetRequired: !!(r && r.pureSetRequired) };
+}
 
 export function myHand() {
   const me = selfPlayer();
@@ -29,11 +44,27 @@ export function hasOpsec() {
   return myHand().some(c => c.action === 'opsec');
 }
 
-/** Bank + properties: what the engine will accept as payment (upgrades never). */
+/**
+ * Everything the engine will accept as payment: bank, properties AND upgrades.
+ *
+ * MUST equal game.js payableCards() (game.js:710-717) card for card. It drives
+ * every payment path in interact/index.js, and processPayment() (game.js:1449)
+ * only allows a SHORT payment when `selected.length === payable.length` — so a
+ * client set that is smaller than the engine's is not a cosmetic difference,
+ * it is a softlock: "surrender everything" hands over fewer cards than the
+ * engine counts, the short-payment branch refuses, and the pendingAction never
+ * clears. Reproduced on a complete zero-value-wild set carrying Upgrade + FOC:
+ * netWorth 7, owed 5, every accept refused forever.
+ *
+ * §3.1b reversed the old rule: upgrades ARE payable, they leave as ordinary
+ * cards with `upgradeType`/`placedColor` stripped (game.js:1467-1479), and
+ * playerNetWorth() === playerTotalValue() (game.js:706-708) as a result.
+ */
 export function payableCards(player = selfPlayer()) {
   const out = [];
   for (const card of player?.bank || []) out.push(card);
   for (const color of COLOR_KEYS) for (const card of player?.properties?.[color] || []) out.push(card);
+  for (const card of upgradeCards(player)) out.push(card);
   return out;
 }
 
@@ -130,8 +161,9 @@ export function rentColors(card) {
 
 export function myCompleteSets({ needsHouse = false, needsNoHouse = false } = {}) {
   const me = selfPlayer();
+  const rules = activeRuleFlags();
   return COLOR_KEYS.filter(color => {
-    if (!isComplete(me, color)) return false;
+    if (!isComplete(me, color, rules)) return false;
     const kinds = upgradeKinds(me, color);
     if (needsHouse && !kinds.includes('house')) return false;
     if (needsNoHouse && kinds.includes('house')) return false;
@@ -142,15 +174,93 @@ export function myCompleteSets({ needsHouse = false, needsNoHouse = false } = {}
 
 export function completeSetsOf(playerId) {
   const player = playerById(playerId);
-  return COLOR_KEYS.filter(color => isComplete(player, color));
+  const rules = activeRuleFlags();
+  return COLOR_KEYS.filter(color => isComplete(player, color, rules));
 }
 
-/** Cards on `playerId`'s board that `action` may take. */
+/**
+ * Colours on my board an Upgrade/FOC currently sitting on `fromColor` may be
+ * moved to. §3.1b, game.js moveUpgrade() (1517-1541), reached through
+ * moveProperty() — it costs NO play, exactly like the wild rearrange, and the
+ * engine refuses anything that would leave an FOC without its Upgrade.
+ */
+export function upgradeMoveColors(cardId) {
+  const me = selfPlayer();
+  const hit = myUpgradeCard(cardId);
+  if (!hit) return [];
+  const rules = activeRuleFlags();
+  return COLOR_KEYS.filter((color) => {
+    if (color === hit.color) return false;                     // 'Already on that set'
+    if (!isComplete(me, color, rules)) return false;            // 'is not a complete set'
+    const there = upgradeKinds(me, color);
+    if (there.includes(hit.kind)) return false;                 // 'already has an Upgrade/FOC'
+    // An FOC needs an Upgrade waiting for it; an Upgrade cannot leave its FOC stranded.
+    if (hit.kind === 'hotel' && !there.includes('house')) return false;
+    if (hit.kind === 'house' && upgradeKinds(me, hit.color).includes('hotel')) return false;
+    return true;
+  });
+}
+
+/**
+ * The one question the free-rearrange path asks: "this card is already on my
+ * board — where may it go, for no play?" Both answers route through the same
+ * `move_property` command (game.js moveProperty():1543-1548 checks findUpgrade()
+ * first), so the client has one route too.
+ * @returns {{card:object, from:string, colors:string[], isUpgrade:boolean}|null}
+ */
+export function boardMoveTarget(cardId) {
+  const up = myUpgradeCard(cardId);
+  if (up) {
+    return { card: up.card, from: up.color, colors: upgradeMoveColors(cardId), isUpgrade: true };
+  }
+  const mine = myPropertyCard(cardId);
+  if (mine && mine.card.type === 'wild_property') {
+    return { card: mine.card, from: mine.color, colors: moveColors(mine.card, mine.color), isUpgrade: false };
+  }
+  return null;
+}
+
+/** An Upgrade/FOC of mine, by card id — game.js findUpgrade(). */
+export function myUpgradeCard(cardId) {
+  const me = selfPlayer();
+  for (const color of COLOR_KEYS) {
+    for (const card of me?.upgrades?.[color] || []) {
+      if (card && card.id === cardId) return { card, color, kind: card.upgradeType };
+    }
+  }
+  return null;
+}
+
+/**
+ * Cards on `playerId`'s board that `action` may take.
+ *
+ * §3.1 reversed 2026-08-06: TDY Orders is now guarded on BOTH sides, exactly
+ * like Midnight Requisition — playAction case 'tdy_orders' (game.js:1123-1126)
+ * runs zoneRequisitionable() over the target's zone AND over mine. Only CHUD
+ * (game.js:1173-1190) can still reach into a complete set. Leaving TDY out of
+ * this guard made complete-set cards glow as legal targets and then fail with
+ * "TDY Orders cannot touch a complete set".
+ */
+const SET_SAFE = new Set(['midnight_requisition', 'tdy_orders']);
+
 export function stealableCards(playerId, action) {
   const player = playerById(playerId);
+  const rules = activeRuleFlags();
   const out = [];
   for (const color of COLOR_KEYS) {
-    if (action === 'midnight_requisition' && !requisitionable(player, color)) continue;
+    if (SET_SAFE.has(action) && !requisitionable(player, color, rules)) continue;
+    for (const card of player?.properties?.[color] || []) out.push({ card, color });
+  }
+  return out;
+}
+
+/** My own properties TDY Orders may offer: the same zoneRequisitionable() guard,
+ *  applied to my side of the trade (game.js:1123). */
+export function tradeableProps(player = selfPlayer()) {
+  const rules = activeRuleFlags();
+  const out = [];
+  for (const color of COLOR_KEYS) {
+    if (!requisitionable(player, color, rules)) continue;
     for (const card of player?.properties?.[color] || []) out.push({ card, color });
   }
   return out;
@@ -212,7 +322,11 @@ export function blockedReason(card) {
         case 'opsec': return 'OPSEC is played in response, not on your turn';
         case 'upgrade': return myCompleteSets({ needsNoHouse: true }).length ? '' : 'Needs a complete set without an Upgrade';
         case 'foc': return myCompleteSets({ needsHouse: true }).length ? '' : 'Needs a complete set that already has an Upgrade';
-        case 'surge_ops': return store.snapshot?.surgeOps ? 'Surge Operations is already active' : '';
+        // §3.1c — Surge Operations STACKS. playAction case 'surge_ops'
+        // (game.js:1165-1171) increments a counter unconditionally and never
+        // refuses; chargeAmount() (game.js:994-1000) multiplies by 2**stack.
+        // The old guard blocked a legal, deliberate ×4 play.
+        case 'surge_ops': return '';
         case 'inspector_general':
           return opponents().some(p => completeSetsOf(p.id).length) ? '' : 'Nobody has a complete set to seize';
         case 'midnight_requisition':
@@ -220,8 +334,12 @@ export function blockedReason(card) {
         case 'chud':
           return opponents().some(p => stealableCards(p.id, 'chud').length) ? '' : 'Nobody has a property to commandeer';
         case 'tdy_orders':
-          return payableProps(me).length && opponents().some(p => stealableCards(p.id, 'chud').length)
-            ? '' : 'You and a target both need a property';
+          // Both sides are guarded now (game.js:1123-1126), so "a property"
+          // is not enough on either board — it has to be one that is not in a
+          // complete set.
+          return tradeableProps(me).length
+            && opponents().some(p => stealableCards(p.id, 'tdy_orders').length)
+            ? '' : 'You and a target each need a property outside a complete set';
         case 'roll_call':
         case 'finance_office':
           return opponents().length ? '' : 'No one to charge';
@@ -229,10 +347,4 @@ export function blockedReason(card) {
       }
     default: return '';
   }
-}
-
-function payableProps(player) {
-  const out = [];
-  for (const color of COLOR_KEYS) for (const card of player?.properties?.[color] || []) out.push(card);
-  return out;
 }

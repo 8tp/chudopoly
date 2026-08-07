@@ -10,7 +10,8 @@ import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import * as send from '../net/send.js';
 import { store, seatName } from '../state/store.js';
-import { COLORS, COLOR_KEYS } from '../core/cards.js';
+import { COLORS, COLOR_KEYS, isComplete } from '../core/cards.js';
+import * as sel from '../state/selectors.js';
 import { activeRules } from './ruleset.js';
 import * as pointer from '../interact/pointer.js';
 import * as screens from './screens.js';
@@ -130,10 +131,18 @@ function endingCopy(snap) {
   };
 }
 
-/** A player's complete colours, straight off the board in the snapshot. */
+/**
+ * A player's complete colours, straight off the board in the snapshot.
+ *
+ * These swatches are printed on the same row as the engine's own
+ * `completedSets` count, so they have to be counted the engine's way.
+ * `length >= size` is only zoneIsSet() (game.js:351-356) with pureSetRequired
+ * OFF: under MD Faithful a full zone of nothing but wilds is NOT a set, and the
+ * row would have shown three swatches beside the number 2.
+ */
 function completeColorsOf(player) {
-  return COLOR_KEYS.filter(color =>
-    (player?.properties?.[color]?.length || 0) >= (COLORS[color]?.size || 99));
+  const rules = sel.activeRuleFlags();
+  return COLOR_KEYS.filter(color => isComplete(player, color, rules));
 }
 
 function boardRow(player, { points, winner }) {

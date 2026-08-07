@@ -81,11 +81,18 @@ export function gapCount() { return gaps; }
 // TURNING POINTS: the beats that change who is winning. These are what the
 // owner could not find. Everything else is texture.
 const TURNING = new Set([
-  'final_approach', 'final_approach_broken', 'set_completed', 'set_stolen',
+  'final_approach', 'final_approach_broken', 'final_approach_pending',
+  'set_completed', 'set_stolen',
   'steal', 'swap', 'scoop', 'win', 'stalemate', 'insolvent', 'action_blocked',
 ]);
 const ATTACK = new Set(['rent_charged', 'demand', 'payment', 'opsec', 'play_action']);
-const SKIP = new Set(['deal', 'turn_start', 'turn_end', 'final_approach_pending', 'draw']);
+// `final_approach_pending` is NOT texture. game.js resolveFinalApproach()
+// (495-521) emits it at the exact moment a real player reported as "I had 3
+// sets, I finished my turn, and someone else won" — an armed own-turn that
+// falls INSIDE the grace window and does not convert. It is the engine's own
+// answer to the most confusing moment in the game, and it was being dropped on
+// the floor by the one screen built to explain that moment.
+const SKIP = new Set(['deal', 'turn_start', 'turn_end', 'draw']);
 
 function weight(t) {
   if (TURNING.has(t)) return 'turn';
@@ -193,6 +200,19 @@ function describe(ev) {
       return { text: `${nameOf(ev.actor)} ${be(ev.actor)} on FINAL APPROACH with ${ev.sets} sets — `
         + `${ev.opponentTurnsRemaining ?? '?'} opponent turn`
         + `${ev.opponentTurnsRemaining === 1 ? '' : 's'} to break it.`, cards: [], mark: '⚑' };
+    // resolveFinalApproach() (game.js:495-521) — the armed player's own turn
+    // started INSIDE the grace window, so it does not convert. `checkpointTurn`
+    // is the absolute turn number of the one that will.
+    case 'final_approach_pending': {
+      const n = ev.opponentTurnsRemaining;
+      return { text: `${Poss(ev.actor)} final approach did NOT convert this turn — `
+        + `${nameOf(ev.actor)} still ${s3(ev.actor, 'hold')} ${ev.sets} sets, `
+        + `and the win locks in at the start of ${mine(ev.actor) ? 'your' : 'their'} turn on `
+        + `turn ${ev.checkpointTurn ?? '?'}`
+        + (typeof n === 'number' ? `, after ${n} more opponent turn${n === 1 ? '' : 's'}` : '')
+        + '. Own turns inside the window do not count as answers.',
+      cards: [], mark: '⧗' };
+    }
     case 'final_approach_broken':
       return { text: `${Poss(ev.actor)} final approach was BROKEN`
         + `${ev.by ? ` by ${nameOf(ev.by)}` : ''}.`, cards: [], mark: '✖' };
@@ -207,11 +227,24 @@ function describe(ev) {
     case 'win':
       return { text: `${nameOf(ev.actor)} ${s3(ev.actor, 'WIN')} with ${ev.sets} complete sets.`,
         cards: [], mark: '★' };
-    case 'stalemate':
+    // endInStalemate() (game.js:1694-1712) ranks by sets, then net worth, then
+    // seat order — and reports 'unopposed' when there was no runner-up to rank
+    // against at all. That fourth basis had no wording here and came out as
+    // "took it on completed sets", which is a different claim.
+    case 'stalemate': {
+      const BASIS = {
+        sets: 'completed sets', net_worth: 'net worth', turn_order: 'seat order',
+        unopposed: 'being the only player left to rank',
+      };
+      if (!ev.winner) {
+        return { text: `Game ended on points (${ev.reason === 'deck_cycles' ? 'deck cycled out'
+          : 'deck and discard dry'}) — a draw, with nobody left to take it.`,
+        cards: [], mark: '★' };
+      }
       return { text: `Game ended on points (${ev.reason === 'deck_cycles' ? 'deck cycled out'
         : 'deck and discard dry'}) — ${nameOf(ev.winner)} took it on `
-        + `${ev.basis === 'net_worth' ? 'net worth' : ev.basis === 'turn_order' ? 'seat order'
-          : 'completed sets'}.`, cards: [], mark: '★' };
+        + `${BASIS[ev.basis] || 'completed sets'}.`, cards: [], mark: '★' };
+    }
     case 'turn_restart':
       return { text: `${Poss(ev.actor)} turn restarted — ${ev.plays} plays.`, cards: [], mark: '↻' };
     default:

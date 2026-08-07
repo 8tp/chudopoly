@@ -43,10 +43,23 @@ function seedFromEnv(env = process.env) {
   return String(raw);
 }
 
+// A clock of 0 means "no clock". That is fine when exactly one human is at the table
+// (Quick Play, solo-vs-bots) — only that player can stall, and only their own game suffers;
+// if their socket dies the heartbeat reaps it and a bot takes the seat over.
+// With two or more humans a 0 clock is a griefing tool: one player can freeze the table for
+// everyone with no recovery path at all. Those rooms get a floor instead.
+const MIN_HUMAN_TURN_TIMEOUT = 30;
+const MIN_HUMAN_RESPONSE_TIMEOUT = 15;
+
 function startRoomGame(room, turnTimeout = 60, responseTimeout = 30) {
   room.phase = 'playing';
   room.turnTimeout = Math.max(0, Math.min(300, Number(turnTimeout) || 0));
   room.responseTimeout = Math.max(0, Math.min(120, Number(responseTimeout) || 0));
+  const humans = room.players.filter(p => !p.isBot).length;
+  if (humans > 1) {
+    if (room.turnTimeout < MIN_HUMAN_TURN_TIMEOUT) room.turnTimeout = MIN_HUMAN_TURN_TIMEOUT;
+    if (room.responseTimeout < MIN_HUMAN_RESPONSE_TIMEOUT) room.responseTimeout = MIN_HUMAN_RESPONSE_TIMEOUT;
+  }
   room.gameCount = (room.gameCount || 0) + 1;
   const seedBase = seedFromEnv();
   const options = seedBase === null ? {} : { seed: `${seedBase}#${room.gameCount}` };
@@ -227,6 +240,9 @@ function handleMessage(ws, msg, state) {
         room.players = room.players.filter(x => x.id !== playerId);
         console.log(`[ROOM] ${roomCode} -${lp.name} left`);
         if (room.players.length === 0 || room.players.every(x => x.isBot)) {
+          // Without this the re-arming turn timer kept driving the deleted room forever:
+          // measured 3 further turns in 4s on a 1s clock, and the state object never freed.
+          timers.clearTurnTimer(room);
           rooms.delete(roomCode);
           console.log(`[ROOM] ${roomCode} deleted (empty)`);
         } else {
@@ -261,10 +277,13 @@ function handleMessage(ws, msg, state) {
     case 'draw': {
       const room = rooms.get(roomCode);
       if (!room?.state) break;
-      const cp = G.currentPlayer(room.state);
-      if (cp.id !== playerId) { broadcast.send(ws, { type: 'error', message: 'Not your turn' }); break; }
-      if (room.state.turnPhase !== 'draw') { broadcast.send(ws, { type: 'error', message: 'Not draw phase' }); break; }
-      const drawRes = G.drawCards(room.state);
+      // The draw is automatic at turn start (game.js beginTurn), so this command only ever
+      // arrives from an old client or a reconnect race. It is accepted and treated as a
+      // silent no-op — never an error, never a second draw. Turn/phase/pending guards live
+      // inside G.drawCards so no caller can orphan a pendingAction by forcing 'play'.
+      const drawRes = G.drawCards(room.state, playerId);
+      if (drawRes.alreadyDrawn) break;
+      if (drawRes.error) { broadcast.send(ws, { type: 'error', message: drawRes.error }); break; }
       if (drawRes.autoWin) timers.clearTurnTimer(room);
       broadcast.broadcastAndScheduleBot(room);
       break;
@@ -320,7 +339,15 @@ function handleMessage(ws, msg, state) {
       const room = rooms.get(roomCode);
       if (!room?.state) break;
       const res = G.respondToAction(room.state, playerId, msg.response, msg.paymentCards);
-      if (res.error) { broadcast.send(ws, { type: 'error', message: res.error }); }
+      // The missing `break` here fell through to startResponseTimer below: any bystander
+      // spamming `respond` pushed the only deadline protecting a stalled table back
+      // indefinitely (measured +14.3s over 70 messages) and fanned a 22.3KB state to every
+      // seat per junk message (~0.87MB/s from one socket, inside the rate limit).
+      if (res.error) {
+        broadcast.send(ws, { type: 'error', message: res.error });
+        if (res.needPayment) broadcast.send(ws, { type: 'need_payment', amount: res.amount });
+        break;
+      }
       if (res.needPayment) { broadcast.send(ws, { type: 'need_payment', amount: res.amount }); break; }
       if (!room.state.pendingAction) {
         timers.clearResponseTimer(room);
@@ -409,12 +436,16 @@ function handleMessage(ws, msg, state) {
   }
 }
 
-function handleClose(state) {
+function handleClose(state, ws) {
   const { playerId, roomCode } = state;
   if (!roomCode) return;
   const room = rooms.get(roomCode);
   if (!room) return;
   const p = room.players.find(x => x.id === playerId);
+  // A stale socket's late close event used to null out the seat's CURRENT socket and hand
+  // the seat to a bot, undoing a reconnect that had already succeeded. Only the socket that
+  // still owns the seat may tear it down.
+  if (p && ws !== undefined && p.ws !== ws) return;
   if (p) {
     p.ws = null;
     if (room.phase === 'playing' && !p.isBot) {
@@ -431,6 +462,7 @@ function handleClose(state) {
   setTimeout(() => {
     const r = rooms.get(closedRoomCode);
     if (r && r.players.every(x => x.isBot || !x.ws || x.ws.readyState !== 1)) {
+      timers.clearTurnTimer(r);          // otherwise the deleted room keeps playing forever
       rooms.delete(closedRoomCode);
       console.log(`[ROOM] ${closedRoomCode} deleted (empty)`);
     } else if (r) {

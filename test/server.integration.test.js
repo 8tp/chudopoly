@@ -118,7 +118,11 @@ test('quick play creates a live three-player game', async () => {
   assert.equal(state.game.phase, 'playing');
 
   const me = state.game.players.find(player => player.id === joined.playerId);
-  assert.equal(me.hand.length, 5);
+  // 5 dealt + the automatic turn draw of 2. The seat that opens the game is never asked
+  // for a `draw` command, and the very first broadcast already shows the play phase.
+  assert.equal(me.hand.length, 7);
+  assert.equal(state.game.turnPhase, 'play');
+  assert.ok(state.game.events.some(event => event.t === 'draw' && event.to === joined.playerId));
   assert.equal(state.game.players.filter(player => player.hand !== undefined).length, 1);
   assert.ok(state.game.events.some(event => event.t === 'game_start'));
   const foreignDeal = state.game.events.find(event => event.t === 'deal' && event.to !== joined.playerId);

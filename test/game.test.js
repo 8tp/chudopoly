@@ -18,8 +18,15 @@ function game(playerCount = 2) {
 
 function take(state, predicate) {
   const index = state.deck.findIndex(predicate);
-  assert.notEqual(index, -1, 'expected card in deck');
-  return state.deck.splice(index, 1)[0];
+  if (index >= 0) return state.deck.splice(index, 1)[0];
+  // The turn draw is automatic now, so a card a test wants may already have been auto-drawn
+  // into a hand (buildDeck's last two cards are the CHUDs, and pop() takes from the end).
+  // Reclaim it from there so the fixtures stay deterministic and cards stay conserved.
+  for (const player of state.players) {
+    const handIndex = player.hand.findIndex(predicate);
+    if (handIndex >= 0) return player.hand.splice(handIndex, 1)[0];
+  }
+  assert.fail('expected card in deck or in a hand');
 }
 
 function give(state, player, predicate) {
@@ -71,17 +78,23 @@ test('a seed makes the shuffle reproducible and stays out of the view', () => {
   a.deck = []; b.deck = [];
   a.discardPile = G.buildDeck(); b.discardPile = G.buildDeck();
   a.cardTotal = null; b.cardTotal = null;
+  a.turnPhase = 'draw'; b.turnPhase = 'draw';   // turn 1 already auto-drew (game.js beginTurn)
   G.drawCards(a); G.drawCards(b);
   assert.deepEqual(a.players[0].hand.map(x => x.id), b.players[0].hand.map(x => x.id));
 });
 
-test('game_start, deal, turn_start events are emitted with monotonic seq', () => {
+test('game_start, deal, turn_start, auto-draw events are emitted with monotonic seq', () => {
   const state = G.createGame([{ id:'p1', name:'One' }, { id:'p2', name:'Two' }], { seed: 'ev' });
-  assert.deepEqual(state.events.map(e => e.t), ['game_start', 'deal', 'deal', 'turn_start']);
-  assert.deepEqual(state.events.map(e => e.seq), [1, 2, 3, 4]);
+  // The turn draw is automatic, so turn 1's `draw` lands inside createGame, immediately
+  // after `turn_start` — the same position it occupied when the client asked for it.
+  assert.deepEqual(state.events.map(e => e.t), ['game_start', 'deal', 'deal', 'turn_start', 'draw']);
+  assert.deepEqual(state.events.map(e => e.seq), [1, 2, 3, 4, 5]);
   assert.deepEqual(state.events[0].order, ['p1', 'p2']);
   assert.equal(state.events[1].cards.length, 5);
   assert.equal(state.events[3].actor, 'p1');
+  assert.equal(state.events[4].to, 'p1');
+  assert.equal(state.events[4].count, 2);
+  assert.equal(state.turnPhase, 'play');
 });
 
 test('PCS, Upgrade, FOC, and Surge actions preserve cards', () => {

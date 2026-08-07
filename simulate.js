@@ -70,6 +70,7 @@ function runGame(playerConfigs, maxTurns = 500, seed) {
   }
 
   let turnNum = 0;
+  let lastTurnCounter = null;
   let currentTurnPlays = [];
   let currentTurnPlayer = null;
   let lastAction = null;
@@ -111,14 +112,17 @@ function runGame(playerConfigs, maxTurns = 500, seed) {
 
     const cp = G.currentPlayer(state);
     if (cp.eliminated) {
-      state.currentPlayerIndex = (state.currentPlayerIndex + 1) % state.players.length;
+      G.advanceToNextActive(state);
       continue;
     }
 
     const mode = getBotMode(room, cp.id);
 
-    // DRAW PHASE
-    if (state.turnPhase === 'draw') {
+    // TURN START. The draw is automatic in the engine now (game.js beginTurn), so this
+    // bookkeeping hangs off the turn counter changing rather than off turnPhase==='draw',
+    // which is no longer externally observable.
+    if (state.turnCounter !== lastTurnCounter) {
+      lastTurnCounter = state.turnCounter;
       // Save previous turn's play order
       if (currentTurnPlayer && currentTurnPlays.length > 0) {
         tracker[currentTurnPlayer].turnPlayOrder.push([...currentTurnPlays]);
@@ -138,12 +142,11 @@ function runGame(playerConfigs, maxTurns = 500, seed) {
       const opsecInHand = cp.hand.filter(c => c.action === 'opsec').length;
       if (opsecInHand > 0) tracker[cp.id].opsec.held++;
 
-      const result = G.drawCards(state);
       turnNum++;
       if (state.phase === 'finished') break;
       if (turnNum > maxTurns) break;
       lastAction = null;
-      continue;
+      // fall through: the cards are already in hand, this is the play phase
     }
 
     // PLAY PHASE
@@ -250,11 +253,7 @@ function runGame(playerConfigs, maxTurns = 500, seed) {
       let discardIds;
       if (bot.hand.length > 7) discardIds = chooseDiscards(bot, bot.hand.length - 7, mode);
       const endResult = G.endTurn(state, cp.id, discardIds);
-      if (endResult.error) {
-        state.currentPlayerIndex = (state.currentPlayerIndex + 1) % state.players.length;
-        state.turnPhase = 'draw';
-        state.playsRemaining = 3;
-      }
+      if (endResult.error) G.forceEndTurn(state);
       continue;
     }
     break;

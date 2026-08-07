@@ -16,7 +16,7 @@ function broadcastRoom(room) {
       room.state.phase = 'finished';
       room.state.pendingAction = null;
       room.state.turnPhase = 'finished';
-      room.state.log.push('Game stopped because its state failed an integrity check.');
+      G.logLine(room.state, 'Game stopped because its state failed an integrity check.');
     }
   }
   const timerInfo = room.turnTimeout > 0 && room.turnStartedAt
@@ -46,11 +46,16 @@ function broadcastRoom(room) {
 }
 
 function broadcastAndScheduleBot(room) {
+  const timers = require('./timers');
   broadcastRoom(room);
+  // Bots create pending actions without going through a message handler, so timer state is
+  // reconciled after every broadcast rather than only in the handlers. Without this a bot's
+  // charge in a turnTimeout=0 room armed no response deadline at all.
+  timers.syncTimers(room);
   Bot.scheduleBotAction(room, {
-    broadcast: broadcastRoom,
-    startTimer: require('./timers').startTurnTimer,
-    clearTimer: require('./timers').clearTurnTimer,
+    broadcast: (r) => { broadcastRoom(r); timers.syncTimers(r); },
+    startTimer: timers.startTurnTimer,
+    clearTimer: timers.clearTurnTimer,
   });
 }
 

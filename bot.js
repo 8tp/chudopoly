@@ -1185,11 +1185,9 @@ function botEndTurn(state, room, botId, mode, callbacks) {
   }
 
   const result = G.endTurn(state, botId, discardIds);
-  if (result.error) {
-    state.currentPlayerIndex = (state.currentPlayerIndex + 1) % state.players.length;
-    state.turnPhase = 'draw';
-    state.playsRemaining = 3;
-  }
+  // Blind `(idx+1) % len` skipped beginTurn() and could hand the turn to an eliminated
+  // seat; forceEndTurn() advances to the next ACTIVE seat and runs the turn-start hooks.
+  if (result.error) G.forceEndTurn(state);
   callbacks.startTimer(room);
   callbacks.broadcast(room);
   scheduleBotAction(room, callbacks);

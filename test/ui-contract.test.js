@@ -177,8 +177,8 @@ test('the help brief states the rules §3 introduced', () => {
   const claims = [
     [/final approach/i, '§3.10 final approach'],
     [/full turn cycle|full cycle/i, '§3.10 grace is a whole cycle'],
-    [new RegExp(`reshuffled back into the deck ${DECK_CYCLE_LIMIT} times`, 'i'),
-      '§3.11 deck-cycle attrition'],
+    [/reshuffled back into the deck \$\{DECK_CYCLE_LIMIT\} times/i,
+      '§3.11 deck-cycle attrition (from the shared constant, not a literal)'],
     [/net worth/i, '§3.6 points tiebreak'],
     [/OPSEC/, 'OPSEC chains'],
     [/one player you name/i, '§3.2 wild rent hits one player'],
@@ -198,6 +198,141 @@ test('the help brief states the rules §3 introduced', () => {
   assert.match(brief, /HAND_LIMIT/, 'hand limit must be read from the shared constant');
   assert.equal(HAND_LIMIT, 7);
   assert.equal(SETS_TO_WIN, 3);
+
+  // core/cards.js mirrors DECK_CYCLE_LIMIT for the pages the help renders with
+  // no game on screen. game.js wins; this catches the mirror drifting.
+  const mirrored = /DECK_CYCLE_LIMIT = (\d+)/.exec(read('public/src/core/cards.js'));
+  assert.ok(mirrored, 'core/cards.js must publish DECK_CYCLE_LIMIT');
+  assert.equal(Number(mirrored[1]), DECK_CYCLE_LIMIT,
+    'core/cards.js DECK_CYCLE_LIMIT must equal game.js');
+});
+
+/* ── P7 round 1: the defects fresh critics proved, kept fixed ────────────── */
+
+test('§P7.14 the CHUD/TDY distinction is stated, not the false exclusivity', () => {
+  const brief = read('public/src/ui/help.js') + read('public/src/core/cards.js');
+  // game.js playAction case 'tdy_orders' has no zoneRequisitionable guard and
+  // executeEntry case 'swap' splices out of whatever colour holds the card, so
+  // "the only card that takes from a complete set" was false.
+  assert.doesNotMatch(brief, /only card that takes a property out of a complete set/i,
+    'the disproved claim must not come back');
+  assert.match(brief, /gives nothing back|give nothing back/i,
+    'CHUD must be described by what makes it unique: it gives nothing back');
+  assert.match(brief, /trade|trades/i, 'TDY must be described as a trade into a set');
+});
+
+test('§P7.15 OPSEC is never flagged "OPSEC cannot touch it"', () => {
+  const cards = read('public/src/core/cards.js');
+  assert.match(cards, /export function opsecFlag/,
+    'one source for the OPSEC flag sentence');
+  assert.match(cards, /Answered only by another OPSEC/);
+  // The two renderers must both go through it rather than through a boolean.
+  for (const file of ['public/src/ui/help.js', 'public/src/ui/details.js']) {
+    assert.match(read(file), /opsecFlag\(/, `${file} must use opsecFlag()`);
+    assert.doesNotMatch(read(file), /blockable\s*\?\s*'OPSEC can cancel it'/,
+      `${file} must not re-derive the flag from a boolean`);
+  }
+});
+
+test('§P7.17 the final-approach countdown never prints an unguaranteed number', () => {
+  const hud = read('public/src/ui/hud.js');
+  // finalApproachIn counts turns of ANY seat until the checkpoint CONDITION —
+  // off by one when armed on your own turn, and clamped to 0 for up to three
+  // turns when armed off-turn. It may gate the guaranteed sentence and nothing
+  // more; the printable count must come from an engine field.
+  assert.match(hud, /HONEST_FIELDS/, 'hud must read an engine-supplied honest count');
+  assert.match(hud, /convertsNext/, 'the only guaranteed state is finalApproachIn === 0');
+  // finalApproachIn may gate a sentence and may key a re-render; it may never
+  // BE a sentence. Every remaining use must be one of those two.
+  const uses = hud.split('\n')
+    .filter(line => /finalApproachIn/.test(line) && !/^\s*(\*|\/\/)/.test(line))
+    .filter(line => !/const stamp =/.test(line) && !/finalApproachIn === 0/.test(line));
+  assert.deepEqual(uses, [],
+    `finalApproachIn must not reach a printed string: ${uses.join(' | ')}`);
+});
+
+test('§P7.3 a refusal is never a disabled button', () => {
+  const prompt = read('public/src/ui/prompt.js');
+  assert.doesNotMatch(prompt, /play\.disabled = true/,
+    'the Play control must stay live so the refusal can speak');
+  assert.match(prompt, /is-refusing/);
+  const machine = read('public/src/interact/index.js');
+  assert.match(machine, /export function refuse/);
+  assert.match(machine, /CUE\.DENIED/, 'every refusal must fire the denied cue');
+  assert.match(machine, /shakeHead/, '§5: invalid targets shake their head');
+});
+
+test('§P7.2 a press on a card is acknowledged in the same task as the pointerdown', () => {
+  const pointer = read('public/src/interact/pointer.js');
+  // The hook must be called from onDown itself — not from a timer, not from
+  // the drag threshold, which is where the only feedback used to live.
+  const onDown = /function onDown\(e\)\{[\s\S]*?\n\}/.exec(pointer.replace(/\s*\{\s*/, '{'))
+    || /function onDown[\s\S]*?\n\}/.exec(pointer);
+  assert.ok(onDown, 'pointer.js must have onDown');
+  assert.match(onDown[0], /hooks\.press\?\.\(/, 'onDown must fire the press hook synchronously');
+  const drag = read('public/src/interact/drag.js');
+  assert.match(drag, /function press\([\s\S]*?is-pressed[\s\S]*?CUE_PICKUP/,
+    'the press must both lift and cue');
+});
+
+test('§P7.5 the hand claims every touch direction', () => {
+  const css = read('public/style/interact.css');
+  // table/hand.js tighten() guarantees the hand never overflows, so pan-x was
+  // protecting a scroll that does not exist while killing horizontal drags.
+  assert.match(css, /#hand-dock \.card \{ touch-action: none; \}/);
+  assert.doesNotMatch(css, /#hand-dock \.card \{ touch-action: pan-x/);
+});
+
+test('§P7.8 the prompt bar is reconciled, never rebuilt', () => {
+  const prompt = read('public/src/ui/prompt.js');
+  assert.match(prompt, /function paint\(bar, items\)/);
+  assert.match(prompt, /dataset\.key/, 'items must be keyed so nodes survive a re-render');
+  assert.doesNotMatch(prompt, /clear\(bar\)/,
+    'clearing the bar detaches a button mid-tap (tools/touchtest.mjs documents the trap)');
+});
+
+test('§P7.9 exactly one draw affordance exists', () => {
+  const prompt = read('public/src/ui/prompt.js');
+  const hud = read('public/src/ui/hud.js');
+  assert.match(prompt, /setHidden\(\$\('btn-draw'\), true\)/,
+    'the hand-bar duplicate is suppressed by the module that owns the decision');
+  assert.doesNotMatch(hud, /setHidden\(\$\('btn-draw'\)/,
+    'only one module may decide whether a draw control is on screen');
+});
+
+test('§P7.6 the software keyboard is handled through visualViewport (§2)', () => {
+  const comms = read('public/src/ui/comms.js');
+  assert.match(comms, /visualViewport/);
+  assert.match(comms, /--kb-inset/);
+  assert.match(read('public/style/content.css'), /\.side \{ bottom: var\(--kb-inset/);
+});
+
+test('§P7.22 exactly one reconnect hook is armed at a time', () => {
+  const socket = read('public/src/net/socket.js');
+  assert.match(socket, /pendingResume/,
+    'bus.once() cannot self-clean while the server is down — the hook must be tracked');
+  assert.match(socket, /if \(pendingResume\) \{ pendingResume\(\); pendingResume = null; \}/);
+});
+
+test('§P7.21 a dead session is fatal, not a toast', () => {
+  const main = read('public/src/main.js');
+  assert.match(main, /Room not found/);
+  assert.match(main, /Invalid resume credentials/);
+  assert.match(main, /clearCreds\(\)/);
+  assert.match(main, /function endSession/);
+});
+
+test('the peek layer never intercepts input and reuses the card renderer', () => {
+  const css = read('public/style/content.css');
+  assert.match(css, /\.peek \{[^}]*pointer-events:\s*none/s,
+    'the peek must never take a click, a drag or a hit-test');
+  const peek = read('public/src/ui/peek.js');
+  assert.match(peek, /cloneNode\(true\)|faceRenderer/,
+    'the peek must reuse the shipped card face, not draw a second one');
+  assert.match(peek, /export function setFaceRenderer/,
+    'the SVG card-art system needs a seam to swap the face in');
+  assert.match(peek, /removeAttribute\('data-card-id'\)/,
+    'a cloned face must not duplicate a card id in the document (§0.4)');
 });
 
 test('the help sheet is a keyboard-operable tablist (§0.9)', () => {

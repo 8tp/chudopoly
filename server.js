@@ -6,6 +6,7 @@ const { WebSocketServer } = require('ws');
 const path = require('path');
 const crypto = require('crypto');
 
+const pkg = require('./package.json');
 const G = require('./game');
 const Bot = require('./bot');
 const broadcast = require('./server/broadcast');
@@ -85,14 +86,54 @@ handlers.init({ G, Bot, broadcast, timers, absent, rooms, globalChat, CHAT_MAX, 
 app.get('/api/config', (req, res) => {
   res.json({ giphyKey: process.env.GIPHY_KEY || '' });
 });
-app.get('/health', (req, res) => res.json({ ok: true, rooms: rooms.size }));
+const STARTED_AT = Date.now();
+app.get('/health', (req, res) => res.json({
+  ok: true,
+  rooms: rooms.size,
+  version: pkg.version,
+  // A deploy could not tell which build was live from {ok, rooms} alone.
+  commit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || null,
+  node: process.version,
+  uptime: Math.round(process.uptime()),
+  startedAt: STARTED_AT,
+  sockets: wss.clients.size,
+}));
 
 /* ── WebSocket ─────────────────────────────────────────────────────── */
+
+/* Liveness. Without this a half-open socket (phone loses signal, no FIN) keeps
+   readyState === 1 until the OS TCP keepalive gives up (~2h on Linux): no close event, so
+   no bot takeover, absent.js never engages, and reconnect is refused forever with
+   "That player is already connected". Measured: 3/3 reconnect attempts refused.
+   PING_INTERVAL 15s → a dead socket is reaped within 30s. */
+const PING_INTERVAL = Math.max(50, Number(process.env.CHUD_PING_MS) || 15000);
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { try { ws.terminate(); } catch {} continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { try { ws.terminate(); } catch {} }
+  }
+}, PING_INTERVAL);
+heartbeat.unref?.();
+wss.on('close', () => clearInterval(heartbeat));
+
+// A WebSocket with no 'error' listener re-throws as an uncaught exception and takes the
+// whole process down. Four unauthenticated single-frame vectors did exactly that
+// (>16KB payload, invalid UTF-8, RSV1 set, opcode 0x3) — the Origin check is no
+// mitigation because a non-browser client sets Origin freely.
+wss.on('error', (err) => console.error('[WSS] server error:', err?.message || err));
 
 wss.on('connection', (ws) => {
   const state = { playerId: null, roomCode: null };
   let windowStartedAt = Date.now();
   let messageCount = 0;
+
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('error', (err) => {
+    console.warn('[WS] socket error:', err?.message || err);
+    try { ws.terminate(); } catch {}
+  });
 
   ws.on('message', (raw) => {
     const now = Date.now();
@@ -113,8 +154,18 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    handlers.handleClose(state);
+    handlers.handleClose(state, ws);
   });
+});
+
+/* Last-resort backstop: one bad frame, one bug in a timer callback, must never end the
+   process for every other room on the instance. Anything that reaches here is a defect —
+   it is logged loudly — but the server keeps serving. */
+process.on('uncaughtException', (err, origin) => {
+  console.error(`[FATAL] uncaught exception (${origin}) — server continues:`, err?.stack || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandled rejection — server continues:', reason?.stack || reason);
 });
 
 /* ── Start ─────────────────────────────────────────────────────────── */

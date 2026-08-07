@@ -10,36 +10,60 @@ function init(deps) {
 
 /* ── Turn timer ─────────────────────────────────────────────────────── */
 
-function startTurnTimer(room) {
-  clearTurnTimer(room);
+// Arms (or disarms) only the turn deadline. Never touches the response timer or the bot
+// timeout, so it is safe to call from syncTimers().
+function armTurnTimer(room) {
+  if (room.turnTimerId) { clearTimeout(room.turnTimerId); room.turnTimerId = null; }
+  room.turnStartedAt = null;
   if (!room.turnTimeout || room.turnTimeout <= 0) return;
   if (!room.state || room.state.phase !== 'playing') return;
+  if (room.state.pendingAction) return;
+  room.turnStartedAt = Date.now();
+  room.turnTimerId = setTimeout(() => onTurnTimeout(room), room.turnTimeout * 1000);
+}
+
+function onTurnTimeout(room) {
+  room.turnTimerId = null;
+  room.turnStartedAt = null;
+  if (!room.state || room.state.phase !== 'playing') return;
+  const cp = G.currentPlayer(room.state);
+  if (room.state.pendingAction) { startResponseTimer(room); return; }
+  G.logLine(room.state, cp.name + '\'s turn timed out!');
+  room.state.turnPhase = 'play';
+  const excess = cp.hand.length > 7 ? cp.hand.slice(-(cp.hand.length - 7)).map(c => c.id) : undefined;
+  const res = G.endTurn(room.state, cp.id, excess);
+  // Blind `(idx+1) % len` here could hand the turn to an eliminated seat and skipped
+  // beginTurn(), so an armed final approach parked at its checkpoint never resolved.
+  if (res.error) G.forceEndTurn(room.state);
+  startTurnTimer(room);
+  broadcast.broadcastAndScheduleBot(room);
+}
+
+// The pendingAction branch is deliberately BEFORE the turnTimeout<=0 return: response
+// deadlines must not depend on the turn clock. With turnTimeout 0 (Quick Play) the old
+// order meant a bot's charge armed no response timer at all — nothing ever auto-resolved
+// and the client correctly showed no countdown.
+function startTurnTimer(room) {
+  clearTurnTimer(room);
+  if (!room.state || room.state.phase !== 'playing') return;
+  if (room.state.pendingAction) { startResponseTimer(room); return; }
+  armTurnTimer(room);
+}
+
+// Idempotent reconciliation of room timers against room.state. Called after every
+// broadcast (including the bots' own) so a pending action created outside a handler —
+// a bot playing rent — still gets a response deadline.
+function syncTimers(room) {
+  if (!room?.state) return;
+  // A finished game must not leave a re-arming turn timer behind.
+  if (room.state.phase !== 'playing') { clearTurnTimer(room); return; }
   if (room.state.pendingAction) {
-    startResponseTimer(room);
+    if (room.turnTimerId) { clearTimeout(room.turnTimerId); room.turnTimerId = null; room.turnStartedAt = null; }
+    if (!room.responseTimerId) startResponseTimer(room);
     return;
   }
-  room.turnStartedAt = Date.now();
-  room.turnTimerId = setTimeout(() => {
-    if (!room.state || room.state.phase !== 'playing') return;
-    const cp = G.currentPlayer(room.state);
-    if (room.state.pendingAction) {
-      room.turnTimerId = null;
-      room.turnStartedAt = null;
-      startResponseTimer(room);
-      return;
-    }
-    room.state.log.push(cp.name + '\'s turn timed out!');
-    room.state.turnPhase = 'play';
-    const excess = cp.hand.length > 7 ? cp.hand.slice(-(cp.hand.length - 7)).map(c => c.id) : undefined;
-    const res = G.endTurn(room.state, cp.id, excess);
-    if (res.error) {
-      room.state.currentPlayerIndex = (room.state.currentPlayerIndex + 1) % room.state.players.length;
-      room.state.turnPhase = 'draw';
-      room.state.playsRemaining = 3;
-    }
-    startTurnTimer(room);
-    broadcast.broadcastAndScheduleBot(room);
-  }, room.turnTimeout * 1000);
+  if (room.responseTimerId) clearResponseTimer(room);
+  if (!room.turnTimerId) armTurnTimer(room);
 }
 
 function clearTurnTimer(room) {
@@ -77,7 +101,7 @@ function autoResolveResponse(room) {
   const responder = G.getPlayer(room.state, responderId);
   if (!responder) return;
 
-  room.state.log.push(responder.name + '\'s response timed out — auto-accepting');
+  G.logLine(room.state, responder.name + '\'s response timed out — auto-accepting');
 
   const owed = pa.type === 'payment' && responderId !== pa.sourceId ? (pa.amount || 0) : 0;
   const res = G.respondToAction(room.state, responderId, 'accept', autoPickPayment(responder, owed));
@@ -123,5 +147,5 @@ function autoPickPayment(player, amount) {
 
 module.exports = {
   init, startTurnTimer, clearTurnTimer, startResponseTimer, clearResponseTimer,
-  autoPickPayment, autoResolveResponse,
+  autoPickPayment, autoResolveResponse, syncTimers, armTurnTimer,
 };

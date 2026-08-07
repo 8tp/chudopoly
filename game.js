@@ -22,6 +22,11 @@ const EVENT_TAIL = 120;          // broadcast tail size (ARCHITECTURE §4)
 // N=16 → max 152 turns and only 7%. Normal games spend 1.9 cycles (p90 5).
 const DECK_CYCLE_LIMIT = 16;
 const EVENT_LOG_MAX = 400;       // retained in state; never grows unbounded
+// state.log used to be uncapped. moveProperty costs no play, so 5,000 calls inside one
+// turn grew it to 217KB (~44 B/line) and it was never freed while the room lived.
+// 400 lines ≈ 18KB and still covers ~55 turns of a 5-player table (measured 7 lines/turn).
+const LOG_MAX = 400;
+const LOG_TAIL = 40;             // sent in getPlayerView; 20 lost a 5-player Roll Call turn in <3 turns
 
 /* ── Card definitions ────────────────────────────────────────────────── */
 
@@ -168,6 +173,14 @@ function publicCard(card) {
   return out;
 }
 
+// The single append point for the prose Mission Log. Bounded (see LOG_MAX).
+function logLine(state, text) {
+  if (!state.log) state.log = [];
+  state.log.push(text);
+  if (state.log.length > LOG_MAX) state.log.splice(0, state.log.length - LOG_MAX);
+  return text;
+}
+
 function emit(state, t, payload) {
   if (!state.events) { state.events = []; state.eventSeq = state.eventSeq || 0; }
   const ev = { seq: ++state.eventSeq, t, ...payload };
@@ -241,6 +254,7 @@ function createGame(players, opts = {}) {
   state._handSnapshot = totalHandCards(state);
   state._idleTurns = 0;
   emit(state, 'turn_start', { actor: currentPlayer(state).id, plays: state.playsRemaining, finalApproach: false });
+  drawCards(state);   // turn 1 auto-draws like every other turn (see beginTurn)
 
   return state;
 }
@@ -276,7 +290,14 @@ function completedColors(player) {
 // `byId` is whoever caused the change; null when the player did it to themselves.
 function syncSets(state, player, before, byId = null) {
   const after = completedColors(player);
-  for (const color of after) if (!before.has(color)) emit(state, 'set_completed', { actor: player.id, color });
+  // set_completed used to emit an event with no prose line, so the Mission Log could never
+  // tell you an opponent had finished a set — you only found out when they hit 3.
+  for (const color of after) {
+    if (before.has(color)) continue;
+    logLine(state, player.name + ' completed the ' + COLORS[color].name + ' set — '
+      + after.size + ' of ' + SETS_TO_WIN + '.');
+    emit(state, 'set_completed', { actor: player.id, color, total: after.size });
+  }
 
   if (state.phase !== 'playing') return;
   const sets = after.size;
@@ -284,16 +305,22 @@ function syncSets(state, player, before, byId = null) {
     player.finalApproach = true;
     player.armedAtTurn = state.turnCounter || 0;
     const onOwnTurn = currentPlayer(state).id === player.id;
-    state.log.push(player.name + ' is on FINAL APPROACH with ' + sets +
-      ' sets — every other player gets a turn to break it!');
+    const forecast = checkpointForecast(state, player);
+    const opponents = forecast ? forecast.opponents : activeCount(state) - 1;
+    logLine(state, player.name + ' is on FINAL APPROACH with ' + sets + ' sets — '
+      + opponents + ' opponent turn' + (opponents === 1 ? '' : 's')
+      + ' left to break it before ' + player.name + ' wins!');
     emit(state, 'final_approach', {
-      actor: player.id, sets, onOwnTurn, turnsToCheckpoint: activeCount(state),
+      actor: player.id, sets, onOwnTurn,
+      turnsToCheckpoint: activeCount(state),                 // deprecated, see checkpointForecast
+      opponentTurnsRemaining: opponents,
+      checkpointTurn: forecast ? forecast.turn : null,
     });
   } else if (sets < SETS_TO_WIN && player.finalApproach) {
     player.finalApproach = false;
     delete player.armedAtTurn;
     const by = byId && byId !== player.id ? byId : null;
-    state.log.push(player.name + '\'s final approach is broken' +
+    logLine(state, player.name + '\'s final approach is broken' +
       (by ? ' by ' + (getPlayer(state, by)?.name || '?') : '') + '!');
     emit(state, 'final_approach_broken', { actor: player.id, by });
   }
@@ -315,9 +342,48 @@ function checkpointReached(state, player) {
   return turnsSinceArming(state, player) >= activeCount(state);
 }
 
+// DEPRECATED — kept only so nothing that already reads `finalApproachIn` breaks. It counts
+// raw turn ticks including the armed player's own turns and clamps at 0, so it over-reports
+// by one right after an own-turn arming (says 4 when 3 opponent turns actually follow) and
+// reads 0 for a whole cycle after an off-turn arming while the win is still 2 own-turns away.
+// Use opponentTurnsRemaining()/checkpointTurn() instead.
 function turnsUntilCheckpoint(state, player) {
   if (!player || !player.finalApproach) return null;
   return Math.max(0, activeCount(state) - turnsSinceArming(state, player));
+}
+
+// Honest countdown. Walks the real seat rotation forward from the current turn to the first
+// own-turn start at which checkpointReached() will be true, and reports:
+//   turn      — the absolute state.turnNumber of that converting turn
+//   opponents — how many turns by OTHER players happen before it
+// Returns null when the player is not armed. `opponents === 0` means the next turn to start
+// is the armed player's own converting turn.
+function checkpointForecast(state, player) {
+  if (!player || !player.finalApproach || player.eliminated) return null;
+  const active = state.players.filter(p => !p.eliminated);
+  const n = active.length;
+  if (n === 0) return null;
+  const seat = active.findIndex(p => p.id === player.id);
+  if (seat < 0) return null;
+  const cur = Math.max(0, active.findIndex(p => p.id === currentPlayer(state).id));
+  const armedAt = player.armedAtTurn || 0;
+  const now = state.turnCounter || 0;
+
+  // Steps ahead (in turns) at which this player's own turns start. 0 would be the turn that
+  // is already running and has already been evaluated, so start the search after it.
+  let step = (seat - cur + n) % n;
+  if (step === 0) step = n;
+  for (let own = 0; own < n + 2; own++, step += n) {
+    if (now + step - armedAt >= n) {
+      return { turn: now + step, opponents: step - (own + 1) };
+    }
+  }
+  return null;
+}
+
+function opponentTurnsRemaining(state, player) {
+  const f = checkpointForecast(state, player);
+  return f ? f.opponents : null;
 }
 
 function armedPlayers(state) {
@@ -335,27 +401,42 @@ function resolveFinalApproach(state, player) {
     player.name + ' held the final approach and wins with ' + sets + ' complete sets!');
 }
 
+// Owner directive 2026-08-06: the turn draw is AUTOMATIC. The engine performs it here, at
+// turn start, for every seat — human, bot or absent — so no client command is needed and no
+// client can desync on it. drawCards() is unchanged (2 cards, or 5 on an empty hand) and
+// still emits the `draw` event in the same position, right after `turn_start`.
+//
+// turnPhase 'draw' is NOT removed: it is the guard that makes drawCards() idempotent, and
+// every draw-phase check in the engine/server still reads it. It now exists only for the
+// instant between `turn_start` and the automatic draw *inside this same synchronous call*,
+// so it is never observable in a broadcast (a turn is always broadcast as 'play').
 function beginTurn(state) {
   state.turnCounter = (state.turnCounter || 0) + 1;
   state.turnPhase = 'draw';
   state.playsRemaining = 3;
   const p = currentPlayer(state);
   emit(state, 'turn_start', { actor: p.id, plays: state.playsRemaining, finalApproach: !!p.finalApproach });
-  return resolveFinalApproach(state, p);
+  if (resolveFinalApproach(state, p)) return true;   // won at the checkpoint; no draw
+  drawCards(state);
+  return false;
 }
 
-function finishGame(state, winnerId, reason, logLine) {
+function finishGame(state, winnerId, reason, endLine) {
   if (state.phase !== 'playing') return false;
   state.phase = 'finished';
   state.winner = winnerId;
   state.endReason = reason;
   state.turnPhase = 'finished';
   state.pendingAction = null;
-  state.log.push(logLine);
+  logLine(state, endLine);
   const winner = winnerId ? getPlayer(state, winnerId) : null;
   const sets = winner ? completedSets(winner) : 0;
   if (reason === 'stalemate') {
-    emit(state, 'stalemate', { winner: winnerId, sets, reason: state._stalemateReason || 'deck_dry' });
+    emit(state, 'stalemate', {
+      winner: winnerId, sets,
+      reason: state._stalemateReason || 'deck_dry',
+      basis: state._stalemateBasis || null,   // 'sets' | 'net_worth' | 'turn_order' | 'unopposed'
+    });
   }
   else emit(state, 'win', { actor: winnerId, sets, reason });
   return true;
@@ -381,13 +462,14 @@ function zoneFull(player, color) {
   return !info || zoneCount(player, color) >= info.size;
 }
 
-// Midnight Requisition may not touch a zone that is exactly a complete set.
-// A zone that overflowed through a forced transfer (see receiveProperty) is fair game again.
+// Midnight Requisition may not touch a complete set (its own card text). Written `n < size`
+// rather than `n !== size` so that even if a zone were ever overfull it would still read as
+// complete — the old `!==` turned a 3/2 darkblue zone into a legal Requisition target.
 function zoneRequisitionable(player, color) {
   const info = COLORS[color];
   if (!info) return false;
   const n = zoneCount(player, color);
-  return n > 0 && n !== info.size;
+  return n > 0 && n < info.size;
 }
 
 function legalColorsFor(card) {
@@ -396,9 +478,46 @@ function legalColorsFor(card) {
   return card.colors[0] === 'any' ? Object.keys(COLORS) : card.colors;
 }
 
-// Involuntary transfer (payment / steal / swap). Honors the zone cap where it can;
-// a plain property whose only zone is full has nowhere else to go and overflows, which
-// zoneRequisitionable() then re-exposes to Midnight Requisition.
+// Involuntary transfer (payment / steal / swap). §3.5 says a colour zone never holds more
+// than `set size` cards, so this is the ONLY door into player.properties for a card the
+// player did not choose to play, and it must never overflow a zone.
+//
+// It used to fall back to `ordered[0]` when every legal zone was full, which overflowed a
+// zone in 549 of 400 measured bot games (1.4/game). That made zoneRequisitionable()'s
+// `n !== size` test true for an overfull *complete* set, so Midnight Requisition could
+// steal out of a complete set — contradicting its own card text — and it gave overfull
+// zones free armour. When no legal zone has room the card is banked instead: its value is
+// preserved and payable, but it stops being a property. Returns the destination zone, or
+// the string 'bank'.
+const BANK_ZONE = 'bank';
+
+// Frees one slot in the first of `ordered` that holds a relocatable wild. Returns the
+// colour that now has room, or null. Never changes any zone's completeness: the wild
+// leaves the zone the incoming card is about to fill.
+function shiftWildToMakeRoom(state, player, ordered) {
+  for (const color of ordered) {
+    if (!COLORS[color]) continue;
+    const zone = player.properties[color] || [];
+    for (let i = 0; i < zone.length; i++) {
+      const occupant = zone[i];
+      if (occupant.type !== 'wild_property') continue;
+      const alt = legalColorsFor(occupant)
+        .find(c => c !== color && COLORS[c] && !zoneFull(player, c));
+      if (!alt) continue;
+      zone.splice(i, 1);
+      if (!player.properties[alt]) player.properties[alt] = [];
+      occupant.placedColor = alt;
+      player.properties[alt].push(occupant);
+      logLine(state, player.name + ' shifts ' + occupant.name + ' to ' + COLORS[alt].name + ' to make room.');
+      emit(state, 'move_property', {
+        actor: player.id, card: publicCard(occupant), from: color, to: alt, forced: true,
+      });
+      return color;
+    }
+  }
+  return null;
+}
+
 function receiveProperty(state, player, card, preferredColor) {
   const legal = legalColorsFor(card);
   const ordered = [];
@@ -406,9 +525,20 @@ function receiveProperty(state, player, card, preferredColor) {
   for (const color of legal.slice().sort((a, b) => zoneCount(player, b) - zoneCount(player, a))) {
     if (!ordered.includes(color)) ordered.push(color);
   }
-  let dest = ordered.find(color => !zoneFull(player, color));
-  if (!dest) dest = ordered[0] || card.color;
-  if (!COLORS[dest]) dest = card.color || Object.keys(COLORS)[0];
+  let dest = ordered.find(color => COLORS[color] && !zoneFull(player, color));
+  // Before giving up on a zone, try the rearrange the owner could legally make themselves
+  // (§3.8): a wild parked in a full zone often has another colour it can sit in. Sliding it
+  // over leaves the zone count unchanged, so it breaks nothing, and it keeps the incoming
+  // card a property. Without this step the bank fallback fired 0.9x/game and pushed the
+  // stalemate rate from 0.54% to 1.79% over 2,400 games.
+  if (!dest) dest = shiftWildToMakeRoom(state, player, ordered);
+  if (!dest) {
+    delete card.placedColor;
+    player.bank.push(card);
+    logLine(state, player.name + ' has no room for ' + card.name + ' — it is banked as ' + card.value + 'M.');
+    emit(state, 'banked_property', { actor: player.id, card: publicCard(card) });
+    return BANK_ZONE;
+  }
   if (!player.properties[dest]) player.properties[dest] = [];
   card.placedColor = dest;
   player.properties[dest].push(card);
@@ -475,10 +605,45 @@ function findProperty(player, cardId) {
   return null;
 }
 
+// The OPSEC-block line used to read "Action blocked by OPSEC — X is safe.", naming neither
+// the attacker nor what was blocked; in a Roll Call chain a player could not tell which of
+// three demands died.
+const ACTION_LABELS = {
+  inspector_general: 'Inspector General',
+  midnight_requisition: 'Midnight Requisition',
+  tdy_orders: 'TDY Orders',
+  finance_office: 'Finance Office',
+  roll_call: 'Roll Call',
+  chud: 'THE CHUD CARD',
+  rent: 'rent charge',
+  upgrade: 'Upgrade',
+  foc: 'Full Operational Capability',
+  surge_ops: 'Surge Operations',
+  pcs_orders: 'PCS Orders',
+};
+function actionLabel(action) { return ACTION_LABELS[action] || action || 'action'; }
+
 function upgradeKinds(player, color) {
   return (player.upgrades[color] || []).map(upgrade =>
     typeof upgrade === 'string' ? upgrade : upgrade.upgradeType
   );
+}
+
+// A set carries at most one Upgrade and one FOC. Seizing an upgraded set used to concatenate
+// blindly, producing ["house","house","hotel"] in 0.5% of 6,000 games — calcRent counts each
+// kind once, so the surplus was dead value AND a second "house" permanently blocked FOC.
+// Surplus goes to the discard pile (card conservation is preserved).
+function mergeUpgrades(state, player, color, incoming) {
+  const list = player.upgrades[color] || (player.upgrades[color] = []);
+  for (const upgrade of incoming || []) {
+    const kind = typeof upgrade === 'string' ? upgrade : upgrade?.upgradeType;
+    if (upgradeKinds(player, color).includes(kind)) {
+      if (upgrade && typeof upgrade === 'object') state.discardPile.push(upgrade);
+      continue;
+    }
+    list.push(upgrade);
+  }
+  if (list.length === 0) delete player.upgrades[color];
 }
 
 function discardUpgrades(state, player, color) {
@@ -519,6 +684,24 @@ function validateState(state) {
   if (state.pendingAction && state.turnPhase !== 'action_response') {
     return { error: 'Pending action requires action_response phase' };
   }
+  // §3.5 zone cap as a hard invariant. steal_set used to bypass receiveProperty() and
+  // 59.8% of 600 bot games ended up with an over-cap zone (worst: base 7/4), which in turn
+  // made a complete set requisitionable. Asserting it here means it cannot regress silently.
+  for (const player of state.players || []) {
+    for (const [color, cards] of Object.entries(player.properties || {})) {
+      const info = COLORS[color];
+      if (!info) return { error: `Unknown property zone "${color}"` };
+      if ((cards || []).length > info.size) {
+        return { error: `Zone cap exceeded: ${player.name}'s ${color} holds ${cards.length}/${info.size}` };
+      }
+    }
+    for (const [color, upgrades] of Object.entries(player.upgrades || {})) {
+      const kinds = (upgrades || []).map(u => (typeof u === 'string' ? u : u?.upgradeType));
+      if (new Set(kinds).size !== kinds.length) {
+        return { error: `Duplicate upgrades on ${player.name}'s ${color}: ${kinds.join(',')}` };
+      }
+    }
+  }
   return { ok: true };
 }
 
@@ -529,15 +712,26 @@ function reshuffleDiscard(state) {
   state.deck = shuffle([...state.deck, ...state.discardPile], rngOf(state));
   state.discardPile = [];
   state.shuffleCount = (state.shuffleCount || 0) + 1;
-  state.log.push('Deck reshuffled from discard pile.');
+  logLine(state, 'Deck reshuffled from discard pile.');
   emit(state, 'shuffle', { deckCount: state.deck.length, cycle: state.shuffleCount });
   return true;
 }
 
-function drawCards(state) {
+// `playerId` is optional so the bot/sim callers keep working, but when it is supplied the
+// turn is checked here. These guards used to live only in server/handlers.js ('draw' case);
+// any other caller could set turnPhase='play' on top of a live pendingAction, which is the
+// exact orphan state server/broadcast.js treats as fatal and stops the game for.
+function drawCards(state, playerId) {
   const phaseError = ensurePlaying(state);
   if (phaseError) return phaseError;
   const p = currentPlayer(state);
+  if (playerId !== undefined && p.id !== playerId) return { error: 'Not your turn' };
+  if (p.eliminated) return { error: 'Eliminated players cannot draw' };
+  if (state.pendingAction) return { error: 'Resolve pending action first' };
+  // The turn draw is automatic (see beginTurn), so a `draw` command from an old client or a
+  // reconnect race always lands here. `alreadyDrawn` lets the handler treat it as a silent
+  // no-op instead of an error, and makes a second draw impossible.
+  if (state.turnPhase !== 'draw') return { error: 'Not draw phase', alreadyDrawn: true };
 
   // Auto-win check at turn start: if player already has 3+ complete sets
   // (e.g. gained from opponent's payment/swap on a previous turn), they win now
@@ -556,7 +750,7 @@ function drawCards(state) {
   state.turnPhase = 'play';
   state.playsRemaining = 3;
   state._handSnapshot = totalHandCards(state);
-  state.log.push(p.name + ' drew ' + drawn.length + ' cards.');
+  logLine(state, p.name + ' drew ' + drawn.length + ' cards.');
   emit(state, 'draw', { to: p.id, count: drawn.length, cards: drawn.map(publicCard) });
   return drawn;
 }
@@ -578,7 +772,7 @@ function playAsMoney(state, playerId, cardIndex) {
   p.bank.push(card);
   state.playsRemaining--;
   recordCardPlay(state, playerId);
-  state.log.push(p.name + ' banked ' + card.name + ' (' + card.value + 'M)');
+  logLine(state, p.name + ' banked ' + card.name + ' (' + card.value + 'M)');
   emit(state, 'play_money', { actor: playerId, card: publicCard(card) });
   return { ok: true, card };
 }
@@ -615,7 +809,7 @@ function playProperty(state, playerId, cardIndex, targetColor) {
   p.properties[color].push(placed);
   state.playsRemaining--;
   recordCardPlay(state, playerId);
-  state.log.push(p.name + ' played ' + card.name + ' on ' + COLORS[color].name);
+  logLine(state, p.name + ' played ' + card.name + ' on ' + COLORS[color].name);
   emit(state, 'play_property', { actor: playerId, card: publicCard(placed), color });
   syncSets(state, p, before);
   return { ok: true, card: placed };
@@ -671,7 +865,7 @@ function playAction(state, playerId, cardIndex, opts) {
         const d = state.deck.pop(); p.hand.push(d); drawn.push(d);
       }
       state._handSnapshot = totalHandCards(state);
-      state.log.push(p.name + ' played PCS Orders — drew ' + drawn.length + ' cards');
+      logLine(state, p.name + ' played PCS Orders — drew ' + drawn.length + ' cards');
       emit(state, 'draw', { to: playerId, count: drawn.length, cards: drawn.map(publicCard) });
       return { ok: true, card, drawn };
     }
@@ -686,7 +880,7 @@ function playAction(state, playerId, cardIndex, opts) {
         type: 'payment', action: 'finance_office',
         sourceId: p.id, amount, doubled,
       }, [target.id]);
-      state.log.push(p.name + ' demands ' + amount + 'M from ' + target.name + ' (Finance Office)'
+      logLine(state, p.name + ' demands ' + amount + 'M from ' + target.name + ' (Finance Office)'
         + (doubled ? ' — DOUBLED' : ''));
       emit(state, 'demand', { actor: p.id, target: target.id, amount, reason: 'finance_office', doubled });
       return { ok: true, card, pending: true };
@@ -700,7 +894,7 @@ function playAction(state, playerId, cardIndex, opts) {
         type: 'payment', action: 'roll_call',
         sourceId: p.id, amount, doubled,
       }, targets.map(t => t.id));
-      state.log.push(p.name + ' calls Roll Call — everyone pays ' + amount + 'M!');
+      logLine(state, p.name + ' calls Roll Call — everyone pays ' + amount + 'M!');
       for (const t of targets) {
         emit(state, 'demand', { actor: p.id, target: t.id, amount, reason: 'roll_call', doubled });
       }
@@ -717,7 +911,7 @@ function playAction(state, playerId, cardIndex, opts) {
         type: 'steal_set', action: 'inspector_general',
         sourceId: p.id, color: targetColor,
       }, [target.id]);
-      state.log.push(p.name + ' plays Inspector General on ' + target.name + '\'s ' + COLORS[targetColor].name + ' set!');
+      logLine(state, p.name + ' plays Inspector General on ' + target.name + '\'s ' + COLORS[targetColor].name + ' set!');
       return { ok: true, card, pending: true };
     }
 
@@ -737,7 +931,7 @@ function playAction(state, playerId, cardIndex, opts) {
         type: 'steal_property', action: 'midnight_requisition',
         sourceId: p.id, targetCardId, targetColor: foundColor,
       }, [target.id]);
-      state.log.push(p.name + ' plays Midnight Requisition on ' + target.name + '\'s ' + stolenCard.name);
+      logLine(state, p.name + ' plays Midnight Requisition on ' + target.name + '\'s ' + stolenCard.name);
       return { ok: true, card, pending: true };
     }
 
@@ -754,7 +948,7 @@ function playAction(state, playerId, cardIndex, opts) {
         type: 'swap', action: 'tdy_orders',
         sourceId: p.id, myCardId: opts.myCardId, targetCardId,
       }, [target.id]);
-      state.log.push(p.name + ' plays TDY Orders on ' + target.name + ' — property swap!');
+      logLine(state, p.name + ' plays TDY Orders on ' + target.name + ' — property swap!');
       return { ok: true, card, pending: true };
     }
 
@@ -767,7 +961,7 @@ function playAction(state, playerId, cardIndex, opts) {
       if (!p.upgrades[targetColor]) p.upgrades[targetColor] = [];
       const placed = { ...card, upgradeType: 'house' };
       p.upgrades[targetColor].push(placed);
-      state.log.push(p.name + ' upgraded ' + COLORS[targetColor].name + ' (+3M rent)');
+      logLine(state, p.name + ' upgraded ' + COLORS[targetColor].name + ' (+3M rent)');
       emit(state, 'upgrade', { actor: playerId, color: targetColor, card: publicCard(placed) });
       return { ok: true, card };
     }
@@ -782,7 +976,7 @@ function playAction(state, playerId, cardIndex, opts) {
       spend();
       const placed = { ...card, upgradeType: 'hotel' };
       p.upgrades[targetColor].push(placed);
-      state.log.push(p.name + ' achieves FOC on ' + COLORS[targetColor].name + ' (+4M rent)');
+      logLine(state, p.name + ' achieves FOC on ' + COLORS[targetColor].name + ' (+4M rent)');
       emit(state, 'upgrade', { actor: playerId, color: targetColor, card: publicCard(placed) });
       return { ok: true, card };
     }
@@ -791,7 +985,7 @@ function playAction(state, playerId, cardIndex, opts) {
       if (state._surgeOps) return { error: 'Surge Operations is already active' };
       discardAndSpend();
       state._surgeOps = true;
-      state.log.push(p.name + ' activates Surge Operations — the next charge this turn is doubled!');
+      logLine(state, p.name + ' activates Surge Operations — the next charge this turn is doubled!');
       return { ok: true, card };
     }
 
@@ -810,7 +1004,7 @@ function playAction(state, playerId, cardIndex, opts) {
         type: 'steal_property', action: 'chud',
         sourceId: p.id, targetCardId, targetColor: chudColor,
       }, [target.id]);
-      state.log.push(p.name + ' plays THE CHUD CARD on ' + target.name + '\'s ' + stolenCard.name + '!');
+      logLine(state, p.name + ' plays THE CHUD CARD on ' + target.name + '\'s ' + stolenCard.name + '!');
       return { ok: true, card, pending: true };
     }
 
@@ -848,7 +1042,7 @@ function playAction(state, playerId, cardIndex, opts) {
       type: 'payment', action: 'rent',
       sourceId: p.id, amount, color: targetColor, doubled, wild: isWildRent,
     }, targets.map(t => t.id));
-    state.log.push(p.name + ' charges ' + amount + 'M rent on ' + COLORS[targetColor].name
+    logLine(state, p.name + ' charges ' + amount + 'M rent on ' + COLORS[targetColor].name
       + (isWildRent ? ' from ' + targets[0].name : '') + (doubled ? ' — DOUBLED' : ''));
     emit(state, 'rent_charged', {
       actor: p.id, color: targetColor, amount,
@@ -907,7 +1101,7 @@ function respondToAction(state, playerId, response, paymentCards) {
     entry.depth++;
     const against = playerId === pa.sourceId ? entry.id : pa.sourceId;
     entry.responderId = against;
-    state.log.push(responder.name + ' plays OPSEC! ' + (getPlayer(state, against)?.name || '?') + ' can counter...');
+    logLine(state, responder.name + ' plays OPSEC! ' + (getPlayer(state, against)?.name || '?') + ' can counter...');
     emit(state, 'opsec', {
       actor: playerId, against, depth: entry.depth,
       target: entry.id, action: pa.action, card: publicCard(opsecCard),
@@ -920,7 +1114,9 @@ function respondToAction(state, playerId, response, paymentCards) {
   if (entry.depth % 2 === 1) {
     // The source conceded: the defender's OPSEC stands.
     const targetName = getPlayer(state, entry.id)?.name || '?';
-    state.log.push('Action blocked by OPSEC — ' + targetName + ' is safe.');
+    const sourceName = getPlayer(state, pa.sourceId)?.name || '?';
+    logLine(state, targetName + '\'s OPSEC stands — ' + sourceName + '\'s '
+      + actionLabel(pa.action) + ' is blocked.');
     emit(state, 'action_blocked', {
       source: pa.sourceId, target: entry.id, action: pa.action, depth: entry.depth,
     });
@@ -948,13 +1144,15 @@ function executeEntry(state, pa, entry, paymentCards) {
       const beforeTarget = completedColors(target);
       const stolen = (target.properties[col] || []).slice();
       target.properties[col] = [];
-      if (!source.properties[col]) source.properties[col] = [];
-      for (const card of stolen) { card.placedColor = col; source.properties[col].push(card); }
+      // Route every card through receiveProperty so the §3.5 zone cap holds. Pushing
+      // straight into source.properties[col] produced an over-cap zone in 36% of the
+      // 549 overflow events measured across 400 bot games (worst seen: base 7/4).
+      for (const card of stolen) receiveProperty(state, source, card, col);
       if (target.upgrades[col]) {
-        source.upgrades[col] = [...(source.upgrades[col] || []), ...target.upgrades[col]];
+        mergeUpgrades(state, source, col, target.upgrades[col]);
         delete target.upgrades[col];
       }
-      state.log.push(source.name + ' seized ' + target.name + '\'s ' + COLORS[col].name + ' set!');
+      logLine(state, source.name + ' seized ' + target.name + '\'s ' + COLORS[col].name + ' set!');
       emit(state, 'set_stolen', {
         actor: source.id, from: target.id, color: col, cards: stolen.map(publicCard),
       });
@@ -972,7 +1170,7 @@ function executeEntry(state, pa, entry, paymentCards) {
       if (idx >= 0) {
         const card = target.properties[col].splice(idx, 1)[0];
         const destColor = receiveProperty(state, source, card, card.placedColor || card.color || col);
-        state.log.push(source.name + (pa.action === 'chud' ? ' commandeered ' : ' requisitioned ')
+        logLine(state, source.name + (pa.action === 'chud' ? ' commandeered ' : ' requisitioned ')
           + card.name + ' from ' + target.name + (pa.action === 'chud' ? '!' : ''));
         emit(state, 'steal', {
           actor: source.id, from: target.id, card: publicCard(card),
@@ -1001,7 +1199,7 @@ function executeEntry(state, pa, entry, paymentCards) {
       if (myCard && theirCard) {
         const gotColor = receiveProperty(state, source, theirCard, theirCard.placedColor || theirColor);
         const gaveColor = receiveProperty(state, target, myCard, myCard.placedColor || myColor);
-        state.log.push(source.name + ' swapped properties with ' + target.name);
+        logLine(state, source.name + ' swapped properties with ' + target.name);
         emit(state, 'swap', {
           actor: source.id, target: target.id,
           gave: publicCard(myCard), took: publicCard(theirCard),
@@ -1028,7 +1226,7 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
   if (!selectedCardIds || !Array.isArray(selectedCardIds) || selectedCardIds.length === 0) {
     // §3.4 — "nothing to pay with" means no cards at all, not merely no *value*.
     if (payable.length === 0) {
-      state.log.push(payer.name + ' has nothing to pay!');
+      logLine(state, payer.name + ' has nothing to pay!');
       emit(state, 'insolvent', { from: payer.id, to: payee.id, amount: pa.amount });
       return { ok: true };
     }
@@ -1087,7 +1285,7 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
     if (!isSetComplete(payer, color)) discardUpgrades(state, payer, color);
   });
 
-  state.log.push(payer.name + ' paid ' + totalValue + 'M to ' + payee.name);
+  logLine(state, payer.name + ' paid ' + totalValue + 'M to ' + payee.name);
   emit(state, 'payment', {
     from: payer.id, to: payee.id, total: totalValue,
     cards: paid.map(publicCard), reason: pa.action,
@@ -1137,7 +1335,7 @@ function moveProperty(state, playerId, cardId, toColor) {
   // Clean up upgrades if the source set is no longer complete
   if (!isSetComplete(p, fromColor)) discardUpgrades(state, p, fromColor);
 
-  state.log.push(p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
+  logLine(state, p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
   emit(state, 'move_property', { actor: playerId, card: publicCard(card), from: fromColor, to: toColor });
   syncSets(state, p, before);
   return { ok: true };
@@ -1164,7 +1362,7 @@ function scoop(state, playerId) {
   syncSets(state, p, beforeScoop);
   p.eliminated = true;
 
-  state.log.push(p.name + ' scooped! All cards discarded.');
+  logLine(state, p.name + ' scooped! All cards discarded.');
   emit(state, 'scoop', { actor: playerId });
   state._handSnapshot = totalHandCards(state);
 
@@ -1203,7 +1401,7 @@ function scoop(state, playerId) {
   if (wasMyTurn) {
     advanceToNextActive(state);
     emit(state, 'turn_end', { actor: playerId });
-    state.log.push(currentPlayer(state).name + '\'s turn');
+    logLine(state, currentPlayer(state).name + '\'s turn');
     beginTurn(state);
   }
 
@@ -1222,20 +1420,68 @@ function advanceToNextActive(state) {
 
 // §3.6 — the table is dead when deck and discard are empty and a full round passes
 // with no card leaving any hand. Most sets wins; net worth breaks the tie.
+// Tiebreak order, stated so the log can never credit a criterion that did not decide it:
+//   1. most completed sets   2. highest net worth   3. earliest seat in the turn order.
+// The old line always said "wins on completed sets and net worth", which was a lie for the
+// 3-way 0-sets/0M ties that seat order actually settled.
 function endInStalemate(state, why = 'deck_dry') {
   const active = state.players.filter(p => !p.eliminated);
+  const seatOf = new Map(state.players.map((p, i) => [p.id, i]));
   const ranked = active.slice().sort((a, b) => {
     const sets = completedSets(b) - completedSets(a);
     if (sets !== 0) return sets;
-    return playerNetWorth(b) - playerNetWorth(a);
+    const worth = playerNetWorth(b) - playerNetWorth(a);
+    if (worth !== 0) return worth;
+    return seatOf.get(a.id) - seatOf.get(b.id);
   });
   const winner = ranked[0] || null;
+  const runnerUp = ranked[1] || null;
   const cause = why === 'deck_cycles'
     ? 'The deck has been through ' + DECK_CYCLE_LIMIT + ' cycles with no one closing — '
     : 'Deck and discard are empty and nobody can move — ';
+
+  let basis = 'unopposed';
+  if (winner && runnerUp) {
+    const ws = completedSets(winner), rs = completedSets(runnerUp);
+    const wn = playerNetWorth(winner), rn = playerNetWorth(runnerUp);
+    if (ws !== rs) basis = 'sets';
+    else if (wn !== rn) basis = 'net_worth';
+    else basis = 'turn_order';
+  }
+  const phrase = {
+    sets: winner ? ' wins on completed sets (' + completedSets(winner) + ').' : '',
+    net_worth: winner ? ' wins on net worth (' + playerNetWorth(winner) + 'M) after tying on '
+      + completedSets(winner) + ' set' + (completedSets(winner) === 1 ? '' : 's') + '.' : '',
+    turn_order: winner ? ' wins on turn order — the table tied on sets AND net worth, so the'
+      + ' earliest seat takes it.' : '',
+    unopposed: winner ? ' wins unopposed.' : '',
+  }[basis];
+
   state._stalemateReason = why;
+  state._stalemateBasis = basis;
   finishGame(state, winner ? winner.id : null, 'stalemate',
-    cause + (winner ? winner.name + ' wins on completed sets and net worth.' : 'the game is a draw.'));
+    cause + (winner ? winner.name + phrase : 'the game is a draw.'));
+}
+
+// Recovery path for server/timers.js, server/absent.js and bot.js when endTurn() refuses
+// (impossible discard, wedged phase). Those three each did their own
+// `currentPlayerIndex = (i+1) % len`, which can hand the turn to an ELIMINATED seat and
+// skips beginTurn(), so a final approach parked at its checkpoint would never resolve.
+function forceEndTurn(state) {
+  if (state.phase !== 'playing') return { error: 'Game is already finished' };
+  const from = currentPlayer(state).id;
+  // An orphaned pendingAction with turnPhase 'draw' is the state broadcast treats as fatal.
+  if (state.pendingAction) {
+    state.pendingAction = null;
+    logLine(state, 'Unresolved action discarded so the table can move on.');
+  }
+  delete state._surgeOps;
+  advanceToNextActive(state);
+  state.stats.turns++;
+  emit(state, 'turn_end', { actor: from });
+  logLine(state, currentPlayer(state).name + '\'s turn');
+  const won = beginTurn(state);
+  return won ? { ok: true, win: true } : { ok: true };
 }
 
 function endTurn(state, playerId, discardIds) {
@@ -1286,7 +1532,7 @@ function endTurn(state, playerId, discardIds) {
 
   advanceToNextActive(state);
   state.stats.turns++;
-  state.log.push(currentPlayer(state).name + '\'s turn');
+  logLine(state, currentPlayer(state).name + '\'s turn');
   const won = beginTurn(state);
   return won ? { ok: true, win: true } : { ok: true };
 }
@@ -1315,7 +1561,8 @@ function getPlayerView(state, playerId) {
     deckCycleLimit: DECK_CYCLE_LIMIT,
     turnNumber: state.turnCounter || 0,
     stats: state.stats,
-    log: state.log.slice(-20),
+    log: state.log.slice(-LOG_TAIL),
+    stalemateBasis: state._stalemateBasis || null,
     events: tail,
     eventSeq: state.eventSeq || 0,
     players: state.players.map(p => ({
@@ -1328,7 +1575,13 @@ function getPlayerView(state, playerId) {
       completedSets: completedSets(p),
       eliminated: !!p.eliminated,
       finalApproach: !!p.finalApproach,
-      finalApproachIn: turnsUntilCheckpoint(state, p),
+      finalApproachIn: turnsUntilCheckpoint(state, p),        // DEPRECATED, over/under-counts
+      // Honest §3.10 countdown for the HUD. null unless this player is armed.
+      // opponentTurnsRemaining: turns by OTHER players before this player's converting turn.
+      //   0 => the very next turn to start is theirs and they win at its start.
+      // checkpointTurn: the absolute `turnNumber` of that converting turn.
+      opponentTurnsRemaining: opponentTurnsRemaining(state, p),
+      checkpointTurn: (checkpointForecast(state, p) || {}).turn ?? null,
       bankValue: p.bank.reduce((s, c) => s + c.value, 0),
       propertyValue: Object.values(p.properties).reduce(
         (s, cards) => s + cards.reduce((t, c) => t + c.value, 0), 0),
@@ -1348,4 +1601,6 @@ module.exports = {
   moveProperty, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
   pendingResponders, pendingEntryFor, publicCard, armedPlayers,
   turnsUntilCheckpoint, checkpointReached,
+  logLine, LOG_MAX, LOG_TAIL, advanceToNextActive, forceEndTurn,
+  checkpointForecast, opponentTurnsRemaining, actionLabel, receiveProperty,
 };

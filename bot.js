@@ -132,35 +132,179 @@ function bankValue(player) {
   return player.bank.reduce((sum, c) => sum + c.value, 0);
 }
 
-// How hard each personality tries to shoot down a final approach.
+// What an armed player can hand over WITHOUT losing a set: the bank, properties sitting in
+// zones that are not complete sets, and upgrades. Upgrades are payable (§3.1b) and a House
+// leaving a set costs its owner rent, not the set — so they are spent before a set property
+// (that is exactly the order selectPaymentCards() uses below).
+//
+// This, not the bank alone, is the number a charge has to beat. A demand the victim can
+// settle out of loose change moves money and disarms nobody, and during a grace cycle there
+// is no later turn in which that money would have mattered. Measured on the pre-fix bot:
+// 51.9% of every charge aimed at an armed player was payable without touching a set.
+function disposableValue(player) {
+  let total = bankValue(player);
+  for (const [color, cards] of Object.entries(player.properties)) {
+    if (G.isSetComplete(player, color)) continue;
+    for (const c of cards) total += c.value;
+  }
+  for (const ups of Object.values(player.upgrades || {})) {
+    for (const u of ups) if (u && typeof u === 'object') total += u.value || 0;
+  }
+  return total;
+}
+
+// The four cards in a 106-card deck that can actually pull a card out of a complete set.
+// Banking one of these while somebody is armed is never a trade worth making.
+function isHardBreaker(card) {
+  return card && (card.action === 'inspector_general' || card.action === 'chud');
+}
+
+// How hard each personality tries to shoot down a final approach — the gate on firing a
+// counter that we know will land if it is not OPSEC'd.
 const BREAK_URGENCY = { aggressive: 1, chud: 1, neutral: 0.9, conservative: 0.85, random: 0.2 };
 
+// How far each personality will OVERPAY for the attempt: burning a play on a speculative
+// draw to dig for a counter, or on attrition that cannot disarm by itself. This is the axis
+// the personalities are allowed to differ on — none of them may ignore an armed player, but
+// an aggressive bot will spend its whole turn hunting and a conservative one will not.
+const BREAK_OVERPAY = { aggressive: 0.95, chud: 0.85, neutral: 0.75, conservative: 0.55, random: 0.15 };
+
+// The absolute turn number at which a player converts. checkpointForecast() is the engine's
+// own forecast, so this cannot drift from resolveFinalApproach() the way a reimplementation
+// would. Use `.turn`, NOT `.opponents`: two players armed on the same tick have the same
+// number of opponent turns left but still convert in seat order, and `.opponents` reports
+// them as tied while `.turn` orders them correctly.
+function checkpointTurn(state, player) {
+  const f = G.checkpointForecast(state, player);
+  return f ? f.turn : null;
+}
+
+// Which armed opponent do we shoot at? Not the one with the most sets — the one whose
+// checkpoint arrives FIRST, because that is the one who actually wins. Sets break the tie
+// only in the degenerate case where the engine cannot forecast either.
+function pickArmedVictim(state, armed) {
+  return armed.reduce((best, p) => {
+    const a = checkpointTurn(state, p);
+    const b = checkpointTurn(state, best);
+    if (a == null) return best;
+    if (b == null) return p;
+    if (a !== b) return a < b ? p : best;
+    return G.completedSets(p) > G.completedSets(best) ? p : best;
+  });
+}
+
 function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
-  const victim = armed.reduce((best, p) =>
-    G.completedSets(p) > G.completedSets(best) ? p : best);
+  // If we are armed too, the only question is who converts first. When our own checkpoint
+  // arrives before theirs we have already won the race and spending our counter on them is
+  // pure loss — hold it and defend. When theirs arrives first, they win before we do and the
+  // counter has to be spent now, armed or not.
+  if (bot.finalApproach) {
+    const mine = checkpointTurn(state, bot);
+    if (mine != null) {
+      armed = armed.filter(p => {
+        const theirs = checkpointTurn(state, p);
+        return theirs == null || theirs < mine;
+      });
+    }
+  }
+  if (armed.length === 0) return null;
+
+  const victim = pickArmedVictim(state, armed);
   const theirSets = completeSetCards(victim);
   if (theirSets.length === 0) return null;
+  const overpay = BREAK_OVERPAY[mode] ?? 0.75;
 
-  // 1. Inspector General — takes the whole set, and it lands on our board.
+  // 1. Inspector General — takes the WHOLE set, permanently, and it lands on our board, so
+  //    it swings two sets at once. Strictly the best counter whenever it is in hand.
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action !== 'inspector_general') continue;
     const color = theirSets[0].color;
     return { type:'play_action', cardIndex:i, targetId:victim.id, targetColor:color };
   }
 
-  // 2. CHUD — the only card that reaches into a complete set for a single property.
+  // 2. THE CHUD CARD — the only card in the deck that reaches into a complete set for a
+  //    single property. Permanent, and one card is all it takes to disarm.
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action !== 'chud') continue;
     const best = theirSets.reduce((a, b) => (b.card.value > a.card.value ? b : a));
     return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:best.card.id };
   }
 
-  // 3. TDY Orders is NOT a break tool any more. §3.1 was reversed on 2026-08-06: Hasbro
-  //    FAQ 926 bars Forced Deal from complete sets on both sides, so a swap can no longer
-  //    reach into the set that arms a final approach. Proposing one here would just burn
-  //    the turn on a move the engine refuses.
+  // 3. TDY Orders is NOT a break tool. §3.1 was reversed on 2026-08-06: Hasbro FAQ 926 bars
+  //    Forced Deal from complete sets on BOTH sides of the swap, and game.js enforces it
+  //    (playAction case 'tdy_orders'). Proposing one here would burn a play on a move the
+  //    engine refuses. Midnight Requisition is barred the same way and appears far below,
+  //    as attrition only — `zoneRequisitionable` confines it to zones that are NOT complete
+  //    sets, so it can never reduce anybody's completedSets() count.
 
-  // 4. Midnight Requisition still cannot touch an exact set — only an overflowed zone.
+  // 4. Charge them past what they can pay from loose change, and a set card has to come out.
+  //    §3.1c: Surge Ops doubles RENT ONLY — never Finance Office, never Roll Call — so it is
+  //    only ever worth a play ahead of a rent, and only when doubling is what pushes the
+  //    charge over the line. (The old code surged before Finance Office and threw the play
+  //    away, at the one moment in the game when plays are worth the most.)
+  const spare = disposableValue(victim);
+  const surges = state._surgeOps || 0;
+  const rentMult = 2 ** surges;
+  const financeIdx = hand.findIndex(c => c.action === 'finance_office');
+  const rollCallIdx = hand.findIndex(c => c.action === 'roll_call');
+  const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
+
+  let bestRent = null;
+  for (let i = 0; i < hand.length; i++) {
+    const card = hand[i];
+    if (card.type !== 'rent') continue;
+    const color = chooseBestRentColor(bot, card);
+    if (!color) continue;
+    const base = G.calcRent(bot, color);
+    if (bestRent === null || base > bestRent.base) bestRent = { i, color, base, card };
+  }
+
+  // Surge first only if the doubled rent clears the bar and the bare rent does not, and only
+  // if we will still have the play to fire the rent afterwards.
+  if (bestRent && surgeIdx >= 0 && state.playsRemaining >= 2
+    && bestRent.base * rentMult <= spare && bestRent.base * rentMult * 2 > spare) {
+    return { type:'play_action', cardIndex:surgeIdx };
+  }
+  if (bestRent && bestRent.base * rentMult > spare) {
+    if (bestRent.card.colors[0] === 'any') {
+      return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color, targetId:victim.id };
+    }
+    return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color };
+  }
+  if (financeIdx >= 0 && spare < 5) {
+    return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
+  }
+  // Roll Call is only 2M and hits the whole table, but 2M is all it takes against a player
+  // who has already spent down to nothing. Cheap, and previously never considered at all.
+  if (rollCallIdx >= 0 && spare < 2) {
+    return { type:'play_action', cardIndex:rollCallIdx };
+  }
+
+  // 5. Nothing in hand can disarm them. There is no next turn to draw into — so a
+  //    speculative dig beats every ordinary play we could make instead. PCS Orders is the
+  //    only card that turns an empty hand into a chance, and both drawn cards are live
+  //    immediately because this branch runs again on the next play.
+  if (rnd() < overpay) {
+    for (let i = 0; i < hand.length; i++) {
+      if (hand[i].action !== 'pcs_orders') continue;
+      if (state.playsRemaining < 2) break;   // no play left to fire what we draw
+      return { type:'play_action', cardIndex:i };
+    }
+  }
+
+  // 6. Denial, and only denial. Midnight Requisition cannot touch a complete set (§3.1), so
+  //    it never disarms by itself — but it takes a card off the victim permanently, and the
+  //    zone it comes out of is the one they would rebuild from if we do break a set later in
+  //    the cycle. Only the personalities willing to overpay spend a play on it.
+  //
+  //    Deliberately NOT here: a blanket "charge them anyway" fallback. A demand they can
+  //    afford cannot disarm anybody, the personality planner below already makes exactly
+  //    that play when it is the right one, and forcing it through this branch would override
+  //    the holdback that stops bots attacking on every single play. Measured over 1,500
+  //    games per table size: including it moved conversion by 0.4–1.5 points (inside run
+  //    noise) while pushing 5-player games decided on points from 8.3% to 8.9%. It bought
+  //    nothing and cost variety.
+  if (rnd() >= overpay) return null;
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action !== 'midnight_requisition') continue;
     for (const [color, cards] of Object.entries(victim.properties)) {
@@ -168,32 +312,6 @@ function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
       return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:cards[0].id };
     }
   }
-
-  // 5. Charge them more than their bank holds and the payment has to come out of a set.
-  const cash = bankValue(victim);
-  const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const financeIdx = hand.findIndex(c => c.action === 'finance_office');
-  if (financeIdx >= 0) {
-    if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2 && cash >= 5) {
-      return { type:'play_action', cardIndex:surgeIdx };
-    }
-    if (cash < (state._surgeOps ? 10 : 5)) {
-      return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
-    }
-  }
-  for (let i = 0; i < hand.length; i++) {
-    const card = hand[i];
-    if (card.type !== 'rent') continue;
-    const color = chooseBestRentColor(bot, card);
-    if (!color) continue;
-    const amount = G.calcRent(bot, color) * (state._surgeOps ? 2 : 1);
-    if (amount <= cash) continue;
-    if (card.colors[0] === 'any') {
-      return { type:'play_action', cardIndex:i, targetColor:color, targetId:victim.id };
-    }
-    return { type:'play_action', cardIndex:i, targetColor:color };
-  }
-  if (financeIdx >= 0) return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
   return null;
 }
 
@@ -220,13 +338,17 @@ function chudTargetOn(player) {
 // so an incoming charge does not have to be paid out of a completed set.
 const ARMED_BANK_BIAS = { conservative: 0.9, neutral: 0.85, aggressive: 0.7, chud: 0.4, random: 0.2 };
 
-function tryDefendFinalApproach(bot, hand, mode) {
+function tryDefendFinalApproach(bot, hand, mode, othersArmed) {
   if (rnd() > (ARMED_BANK_BIAS[mode] ?? 0.8)) return null;
   let best = -1, bestIdx = -1;
   for (let i = 0; i < hand.length; i++) {
     const card = hand[i];
     if (card.type === 'property' || card.type === 'wild_property') continue;
     if (card.action === 'opsec') continue;              // the shield is worth more than the cash
+    // Inspector General is the highest-value card in the deck (5M), so "bank the biggest
+    // thing" used to reach for it first and quietly bury the best counter in the game under
+    // a pile of cash. While anyone else is armed it is a weapon, not currency.
+    if (othersArmed && isHardBreaker(card)) continue;
     if (card.value > best) { best = card.value; bestIdx = i; }
   }
   return bestIdx >= 0 ? { type:'play_money', cardIndex:bestIdx } : null;
@@ -443,7 +565,7 @@ function decideBotPlay(state, botId, mode) {
     if (shot) return shot;
   }
   if (bot.finalApproach) {
-    const shield = tryDefendFinalApproach(bot, bot.hand, mode);
+    const shield = tryDefendFinalApproach(bot, bot.hand, mode, armed.length > 0);
     if (shield) return shield;
   }
 
@@ -469,14 +591,31 @@ function decideBotPlay(state, botId, mode) {
     if (nonOpsec.length === 0) return null; // only OPSEC in hand — hold it
   }
 
-  switch (mode) {
-    case 'random':       return decideRandom(state, bot, botId);
-    case 'conservative': return decideConservative(state, bot, botId);
-    case 'neutral':      return decideNeutral(state, bot, botId);
-    case 'aggressive':   return decideAggressive(state, bot, botId);
-    case 'chud':         return decideChud(state, bot, botId);
-    default:             return decideNeutral(state, bot, botId);
+  const plan = (() => {
+    switch (mode) {
+      case 'random':       return decideRandom(state, bot, botId);
+      case 'conservative': return decideConservative(state, bot, botId);
+      case 'neutral':      return decideNeutral(state, bot, botId);
+      case 'aggressive':   return decideAggressive(state, bot, botId);
+      case 'chud':         return decideChud(state, bot, botId);
+      default:             return decideNeutral(state, bot, botId);
+    }
+  })();
+
+  // §3.10 last line of defence. Every personality has its own banking rules and every one of
+  // them values a card by its face value, so five separate code paths could each decide to
+  // bank a 5M Inspector General for cash while the player across the table is one turn from
+  // winning. Vetoing it once, here, covers all five (and anything added later) instead of
+  // patching the same mistake in five places. We only reach this line when the break branch
+  // above already declined to fire — either the urgency roll failed or the card had no legal
+  // target this instant — and in both cases holding the card is strictly better than
+  // converting the only counter in the deck into money we will never get to spend.
+  if (armed.length > 0 && plan && plan.type === 'play_money' && isHardBreaker(bot.hand[plan.cardIndex])) {
+    const alt = bot.hand.findIndex((c, i) => i !== plan.cardIndex && !isHardBreaker(c)
+      && c.type !== 'property' && c.type !== 'wild_property' && c.action !== 'opsec');
+    return alt >= 0 ? { type:'play_money', cardIndex:alt } : null;
   }
+  return plan;
 }
 
 /* ── RANDOM MODE — unpredictable but slightly smarter ──────────────── */
@@ -1736,6 +1875,7 @@ module.exports = {
   // Exported for simulation harness
   _internal: {
     decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards, setRng, rnd,
+    BREAK_URGENCY, BREAK_OVERPAY, disposableValue, tryBreakFinalApproach,
     getAllPayableCardIds, chooseDiscards, findResponder: function(state) {
       return G.pendingResponders(state)[0] || null;
     },

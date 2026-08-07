@@ -571,3 +571,168 @@ resolution §3.6 already used) once the deck has been cycled `DECK_CYCLE_LIMIT` 
 
 16 was chosen: it bounds the tail at ~30 turns per player and never fires at all in 2/3/4-player
 games (0 of 450 sampled). Max turns across the 4000-game matrix: 167.
+
+## Final Approach, round 2 — the §3.1 reversal had quietly gutted the counters
+
+Owner report, 2026-08-07: *"when playing against bots, if someone is on final approach I want
+to make sure that the bots will always do everything they can to try to stop them."*
+
+The section above claims **56.8% of approaches shot down**. Re-measured at HEAD before
+touching anything: **40.1%**. The regression was not in the bots — it was §3.1's reversal on
+2026-08-06. TDY Orders was counter #3 in `tryBreakFinalApproach()`, and Hasbro FAQ 926 took it
+away. The break list still *contained* the move; the engine just refused it. The numbers in
+the previous section predate that reversal and were never re-measured.
+
+That leaves exactly **four** cards in 106 that can pull a card out of a complete set — 2×
+Inspector General, 2× THE CHUD CARD — against 3× OPSEC. Everything else has to come from
+forcing a payment the victim cannot cover.
+
+### Baseline: where the shots were actually going
+
+Instrumented over 400 mixed games, on every decision taken while an opponent was armed:
+
+| | before | after |
+|---|---|---|
+| hard breaker (IG/CHUD) in hand | 7.6% | **10.4%** |
+| fired it | 7.5% | **10.4%** |
+| fired a charge at the armed player | 10.5% | 6.8% |
+| …of those, charges the victim could pay **without touching a set** | **51.9%** | 42.5% |
+| banked a hard breaker while someone was armed | 2 | **0** |
+| had nothing usable, but held PCS Orders | 12.6% | **5.9%** |
+
+So the bots were *already* firing a counter 99.4% of the times they held one. The failure was
+never nerve — it was that half the charges were theatre, the bot gave up instead of digging,
+and it would occasionally bank the counter as cash.
+
+### The shape of the change: a pre-emptive branch, not a weight
+
+`tryBreakFinalApproach()` stays a branch that short-circuits ahead of every personality plan
+and ahead of the holdback. A weight would be wrong: scoring compares plays by marginal value,
+and a live final approach is not a bigger number, it is a **terminal condition** — every other
+play on the board is worth zero if the armed player converts. Only a short-circuit expresses
+that. What changed is what the branch knows.
+
+**`disposableValue()` replaces "their bank".** What an armed player can hand over without
+losing a set is bank + properties in zones that are *not* complete sets + upgrades (payable
+per §3.1b; a House leaving a set costs rent, not the set — the same order `selectPaymentCards`
+uses). A charge disarms only if it beats *that*. Charging less moves money, and during a grace
+cycle there is no later turn in which that money mattered.
+
+**Ranked by what actually disarms, verified against `game.js` rather than card text:**
+
+| | why here |
+|---|---|
+| 1. Inspector General | takes the whole set, permanently, and it lands on *our* board — a two-set swing |
+| 2. THE CHUD CARD | the only card that reaches into a complete set for a single property |
+| 3. a charge sized above `disposableValue` | forces a set card out; Surge Ops first **only ahead of a rent** |
+| 4. PCS Orders as a dig | holds no counter → a speculative draw beats any ordinary play, because there is no next turn |
+| 5. Midnight Requisition | denial only — `zoneRequisitionable` bars it from complete sets, so it can never disarm |
+| — | **TDY Orders: not a counter.** §3.1/FAQ 926 bars it from complete sets on *both* sides |
+
+**Surge Ops was being burned on Finance Office.** §3.1c makes Surge rent-only, and
+`finance_office` calls `chargeAmount()` with no `surgeable` flag — the multiplier is always 1.
+The old break code spent a play surging it anyway, at the one moment in the game when plays
+are worth the most. Surge now fires only when doubling a *rent* is what pushes it over
+`disposableValue` and a play remains to fire the rent with.
+
+**Roll Call joined the list.** 2M and it hits the table, but 2M is enough against a player who
+has spent down to nothing. It was never considered before.
+
+**Spend now, not later — in code, not in the report.** Two additions. The dig (a bot with no
+counter plays PCS Orders rather than building, because the counter can only come from the
+deck). And a veto in `decideBotPlay()`: while anyone is armed, no plan may bank an Inspector
+General or CHUD as money. IG is the highest-value card in the deck at 5M, so *every*
+personality's "bank the biggest thing" rule reached for it first — including
+`tryDefendFinalApproach`, which is how an armed bot could bury the best counter in the game
+under a pile of cash. Vetoing once at the chokepoint covers all five personalities instead of
+patching the same mistake in five planners.
+
+**Multiple armed opponents, and being armed yourself.** The victim is whoever converts
+**first**, not whoever has the most sets, read off the engine's own `checkpointForecast().turn`
+so it cannot drift from `resolveFinalApproach()`. (Use `.turn`, not `.opponents`: two players
+armed on the same tick have the same opponent count left but still convert in seat order.) An
+armed bot filters the list to rivals whose checkpoint lands **before** its own — if we convert
+first we have already won the race and spending the counter is pure loss, so it defends
+instead. If theirs lands first, it fires regardless of being armed.
+
+### Personalities survived — that was checked, not assumed
+
+`BREAK_URGENCY` (fire a counter you hold) is unchanged. A second table, `BREAK_OVERPAY`
+(aggressive .95, chud .85, neutral .75, conservative .55, random .15), gates only the
+*speculative* spending — the PCS dig and the denial play. That is the axis the personalities
+are allowed to differ on: how much you overpay for the attempt. None of them may ignore an
+armed player.
+
+Shot-taken rate — opponent armed, breaker in hand, first play of the turn (2,000 games):
+
+| | before | after |
+|---|---|---|
+| conservative / neutral / aggressive / chud | 100% | **100%** |
+| random | 36.8% | **35.7%** |
+
+Random stays the easy seat. Everyone else was already perfect and stayed perfect; what rose is
+how often they *have* a card — 543/443/303/360 chances after vs 529/351/266/298 before, bought
+by the dig and by no longer banking the thing.
+
+Seats filled after a disconnect (`server/handlers.js` picks
+conservative/neutral/aggressive) all sit in the 100% group, and an unknown mode falls through
+to neutral. Pinned in `test/bot-finalapproach.test.js`.
+
+### OPSEC: measured, and already at its ceiling
+
+Of 426 IG/CHUD shots blocked by an armed player, the attacker held a spare OPSEC in only
+**17.4%** — and already fought back through the chain in **82.4%** of those. Total headroom
+from a smarter chain response is ~0.3 points, so nothing was changed. The existing
+`isChainResponse` handling is sufficient; the binding constraint is card availability, which
+is a property of the deck, not of the bots.
+
+### Balance after (10,000-game matrix, 500 per lineup, every seat × every 4-subset)
+
+| Personality | before | after |
+|---|---|---|
+| random | 13.6% | **13.3%** |
+| conservative | 27.2% | **26.1%** |
+| neutral | 33.6% | **33.6%** |
+| aggressive | 36.5% | **38.2%** |
+| chud | 14.1% | **13.8%** |
+
+§3 bounds hold (8–60%). First-player advantage 22.7% → **23.1%** against a 25.0% fair share.
+**Approaches shot down 40.1% → 45.6%; converted 59.9% → 54.4%.** Average game **34.6 → 35.6
+turns** (+2.9%), 10,000/10,000 decided.
+
+Aggressive gained 1.7 points and conservative lost 1.1. That is the expected direction — the
+change rewards holding and spending a counter at the right moment, which is aggressive's game
+— and both stay comfortably inside the bounds.
+
+### Conversion by table size, and the honest cost
+
+1,500 games per table size:
+
+| | 2p | 3p | 4p | 5p |
+|---|---|---|---|---|
+| converted before | 88.8% | 75.2% | 59.5% | 44.3% |
+| converted **after** | 88.5% | 74.8% | **54.3%** | **36.9%** |
+| p90 turns before → after | 30 → 30 | 37 → 38 | 49 → 51 | **74 → 93** |
+| decided on points (§3.6) before → after | 0% | 0% | 0.0% → 0.2% | **2.8% → 8.3%** |
+
+The change bites where there are more guns pointed at the armed player, which is the right
+shape. **The cost is real and it lands at 5 players**: p90 grows 74 → 93 turns and 8.3% of
+5-player games now end on the deck-cycle points rule instead of a declared Final Approach, up
+from 2.8%. That is inside the envelope `DECK_CYCLE_LIMIT = 16` was chosen for (7% of 5p games
+on points), and max turns did not move (146 → 149, and 1500/1500 still decided — this is the
+bounded points ending, never a livelock), but it is a one-in-twelve chance that a five-handed
+game ends on a technicality rather than a landing. Worth watching if 5-player becomes common.
+
+An attrition fallback — "charge them anyway even though it cannot disarm" — was built, measured
+and **removed**: across 1,500 games per table size it moved conversion 0.4–1.5 points (inside
+run noise) while pushing 5p points-endings from 8.3% to 8.9%, and it overrode the holdback that
+keeps bots from attacking on every single play. It bought nothing and cost variety.
+
+### Verdict
+
+Roughly a coin flip: **45.6% of final approaches are now shot down, 54.4% land.** At a 4-player
+table the armed player is favoured but not safe, and at 5 players they are underdogs. Not
+hollow — the table demonstrably fights, and it fires a counter 100% of the times it holds one.
+Not futile — the majority of approaches still convert. The remaining ceiling is the deck: four
+set-breaking cards in 106, against three OPSEC. Raising the break rate further would take a
+rules change, not a bot change.

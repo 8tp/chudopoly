@@ -75,9 +75,14 @@
   scrollbar-color: var(--fg-mute) transparent;
   /* The harness runs Chromium with --hide-scrollbars and a real phone hides
      overlay scrollbars at rest, so the scrollbar cannot be the only cue that
-     there is more below. */
-  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent);
-  mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent);
+     there is more below.
+     ROUND-4: 1.6em of fade held a whole line of mat captions at ~30% alpha,
+     which reads as a rendering fault rather than as "more below" (the DRONE /
+     FIGH bleed on five-player@phone). Shortened to .9em with .3em of clear
+     padding under the content, so what the fade eats is the top of a card. */
+  padding-bottom: .3em;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - .9em), transparent);
+  mask-image: linear-gradient(#000 calc(100% - .9em), transparent);
 }
 .opponents::-webkit-scrollbar { width: 5px; }
 .opponents::-webkit-scrollbar-thumb { background: var(--fg-mute); border-radius: 999px; }
@@ -267,11 +272,15 @@
 }
 /* An empty colour is a PLACE on the mat — a printed card outline waiting for a
    card — not one of ten dashed pills that read as skeleton loading. */
+/* ART §10 grayscale, round 4: an empty mat was mixed over --ground, i.e. over
+   the APRON, so it landed 1.8 L* from the concrete it is cut into and was the
+   worst pair in both themes. A mat is a mat whether or not anything stands on
+   it — same plate, half the wash, shallower cut. */
 .propcol[data-empty="1"] {
   position: relative;
   background:
     linear-gradient(var(--rail), var(--rail)) top / 100% 4px no-repeat,
-    color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) / 2), var(--ground));
+    color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) / 2), var(--surface));
   box-shadow: inset 0 1px 2px var(--shade);
 }
 /* The slot is PRINTED on the mat: a dashed card outline at the card's own
@@ -293,7 +302,7 @@
    wash comes up. Never in foil: foil is the victory modal and nothing else. */
 .propcol.is-complete {
   background:
-    linear-gradient(var(--rail), var(--rail)) top / 100% 8px no-repeat,
+    linear-gradient(var(--rail), var(--rail)) top / 100% 6px no-repeat,
     color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) + 10%), var(--surface));
   box-shadow: var(--deboss-deep);
 }
@@ -303,7 +312,10 @@
   display: flex;
   justify-content: space-between;
   gap: .3em;
-  padding-top: .28em;
+  /* MEASURED (checkContrast, mid-game·dark): the tally sat ON the completed
+     set's rail — bone-on-rail at 1.82:1. The head starts below the rail at
+     every state, so the rail is a rail and the figure is on the mat. */
+  padding-top: 6px;
   font-size: .58em;
   line-height: 1.35;
   white-space: nowrap;
@@ -311,6 +323,32 @@
 }
 .propcol-name { font-weight: 700; }
 .propcol-count { font-weight: 700; }
+/* ── §3.6, THE CAPS BUDGET ────────────────────────────────────────────────
+   The spec allows tracked caps in exactly ONE place — the set name in a card's
+   colour band — and mid-game@desktop was carrying forty-odd shouted micro
+   labels, eleven of them mat names and up to twenty-five more repeating those
+   same names on the opponents' mini-mats.
+
+   The rule that removes them without removing information: A MAT IS NAMED BY
+   WHAT IS STANDING ON IT. A mat with cards on it already says which set it is
+   three times over — the rail, the set glyph on every card, and the set name
+   printed in each card's own band. The nameplate is scaffolding for an EMPTY
+   mat and is kept there, on your own board, where it is the only thing that
+   says what the empty place is for. An opponent's empty mats are not rendered
+   at all, so their nameplates go entirely.
+   The COUNT stays everywhere: it is a figure, it is mono, and it is the one
+   thing the cards cannot tell you. */
+.opponents .propcol-name { display: none; }
+.opponents .propcol-head { justify-content: center; }
+.board-self .propcol:not([data-empty="1"]) .propcol-name { display: none; }
+.board-self .propcol:not([data-empty="1"]) .propcol-head { justify-content: flex-end; }
+/* "2/3 SETS" ×3 per screen, and the word is redundant beside a tally sitting
+   next to a player's name. Lowercased rather than deleted: the count is the
+   information, the word is the unit. */
+.board-sets { text-transform: lowercase; }
+/* BANK → Bank. The stencil on a piece of furniture is a caption, not a shout. */
+.zone-tag { text-transform: lowercase; }
+.zone-tag::first-letter { text-transform: uppercase; }
 /* The nameplate, not the card, was setting an opponent mat's width: at .54em
    "DRONE 0/2" is 45px against a 28px card, so a 186px seat fitted three mats
    instead of five and an eight-colour player wrapped to four rows. */
@@ -353,9 +391,13 @@
 
 .table-center {
   position: relative;
+  /* ROUND-4 REVIEW (five-player@phone): at 6.2s the box computed to 89px around
+     a 98px pile, so the deck and discard drew ~5px ABOVE their own box, right
+     where the seats strip fades out — which is what read as "DRONE" and "FIGH"
+     bleeding half-rendered from beneath the deck layer. */
   flex: 1 10 auto;
-  min-height: calc(var(--s) * 6.2);
-  max-height: calc(var(--s) * 7.2);
+  min-height: calc(var(--s) * 7.6);
+  max-height: calc(var(--s) * 8.2);
   display: flex;
   gap: 1.4em;
   justify-content: center;
@@ -534,49 +576,90 @@
 .opponents .board-props { grid-area: props; margin-top: .28em; }
 .zone-hand-oppo .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.55); }
 
-/* ══ DESKTOP: THE THREE-COLUMN TABLE (ART §5) ══════════════════════════════
-   The complaint, diagnosed: ten set slots in ONE centred ~60px-tall row with
-   ~250px of dead apron below it and the fan cropped at the viewport — a ~285px
-   drag straight up into a 60px band with no lateral forgiveness.
+/* ══ DESKTOP: OPPONENTS ON TOP, YOUR MAT UNDER THEM ════════════════════════
+   OWNER DIRECTIVE, 2026-08-06, verbatim: "layout wise I think it looked better
+   before — the other players at top, chat opening on the right etc."
 
-   At ≥1024px the apron is cut into three instead:
+   ART §5's three columns are therefore re-cut. What §5 was RIGHT about is kept,
+   because both halves of it were measured defects, not taste:
+     · the piles are never between your hand and your properties — they stand in
+       a left rail beside your mat, where a dealer would put them;
+     · the property region is a 2D grid, not a 60px strip. The drag it fixed was
+       "285px straight up into a 60px band with no lateral forgiveness"; it is
+       now ~110px up into a 5 × 2 grid of 200 × 84 mats.
 
-     left rail   the piles, standing where a dealer would put them. The mission
-                 log docks immediately to its left (ui.css), so the whole left
-                 edge is the rail §5 asks for. It is NEVER between the hand and
-                 the properties.
-     centre      YOUR mat: a 5 × 2 grid of colour mats, bank under it.
-     right rail  opponents as stacked vertical SEATS, not a full-width row.
-                 Five players shrink the seat height; they never cram sideways.
+   What changes is WHERE THE SEATS ARE. They run across the top, full width, the
+   way people sit at a table you are looking across — and the comms panel goes
+   back to being a right-hand drawer (ui.css), which also hands ~220px of table
+   width back to the mats.
 
-   The drag becomes ~120px into a 132px 2D target instead of 285px into a 60px
-   strip, and the mats have lateral forgiveness in both axes. */
+   The 720px budget, MEASURED, and written against the prompt bar being up
+   because it is up in most real states:
+     720 − 88 HUD (incl. the 28px reserved strip) − 32 prompt − 151 dock = 449
+     449 − 15 padding − 7 gap − 142 seats = 285 for your own mat
+     your mat: head 24 + 2 × 84 mat rows + 68 bank + gaps = 285
+   The cost of the re-seating, stated plainly: §5's ~54px of clear "run-up"
+   apron between the bank mat and the fan is gone, and the hand fan is 84px
+   rather than §5's 96. The drop TARGET is untouched. */
 
 @media (min-width: 1024px) {
   .table {
     display: grid;
-    grid-template-columns: 168px minmax(0, 1fr) 200px;
-    grid-template-areas: "rail centre seats";
+    grid-template-columns: 150px minmax(0, 1fr);
+    /* fit-content(), not auto. With `auto` the TRACK sized to the seats'
+       max-content (213px) while max-height capped the ITEM at 147 — 40px of
+       apron went to a track holding nothing, and your own mat lost it. */
+    grid-template-rows: fit-content(8.6em) minmax(0, 1fr);
+    grid-template-areas: "seats seats" "rail centre";
     align-items: stretch;
-    gap: 0 calc(var(--s) * .7);
-    padding: calc(var(--s) * .6) calc(var(--s) * .7) calc(var(--s) * .5);
+    gap: calc(var(--s) * .4) calc(var(--s) * .7);
+    padding: calc(var(--s) * .5) calc(var(--s) * .7) calc(var(--s) * .45);
   }
+
+  /* ── the seats, across the top ──────────────────────────────────────────
+     auto-fit between 11em and 15.5em: four opponents make four ~15em seats
+     centred across 1216px; one opponent makes one 15em seat rather than a
+     1216px-wide banner. */
+  .opponents {
+    grid-area: seats;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11em, 15.5em));
+    justify-content: center;
+    align-items: start;
+    gap: calc(var(--s) * .45);
+    flex: none;
+    min-height: 0;
+    max-height: 100%;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--fg-mute) transparent;
+  }
+  /* A seat is ~146px however it is cut, and 720px cannot hold four of them plus
+     your own mat. The strip scrolls, and it is the row that CAN scroll — your
+     own mat cannot. REQUEST (ui/ or interact/): scroll the first
+     [data-targetable="1"] board into this port when a targeting mode opens. */
+  .opponents .board { --card-w: 28px; padding: .2em .3em .28em; }
+  .opponents .board-head { font-size: .82em; padding-bottom: .06em; margin-bottom: .1em; }
+  .opponents .zone-hand-oppo { --card-w: 22px; }
+  .opponents .board-bank { padding: .1em .25em; }
+  .opponents .board-props { margin-top: .16em; justify-content: flex-start; }
+  .opponents .propcol { min-width: 46px; }
 
   /* ── left rail: the piles, stacked ──────────────────────────────────── */
   .table-center {
     grid-area: rail;
+    flex: none;
     flex-direction: column;
     justify-content: flex-start;
     align-items: center;
-    gap: calc(var(--s) * .8);
+    gap: calc(var(--s) * .7);
     min-height: 0;
     max-height: none;
-    padding: calc(var(--s) * .4) 0 0;
+    padding: calc(var(--s) * .2) 0 0;
   }
   /* the inlay is a CENTRE-of-table marking; a rail has no centre to mark */
   .table-center::before { display: none; }
-  /* the rail's own marking: a painted stand line under the piles, which is what
-     closes the 180px of blank concrete the rail otherwise ends in */
+  /* the rail's own marking: a painted stand line under the piles */
   .table-center::after {
     content: "";
     position: absolute;
@@ -592,8 +675,8 @@
   }
   /* undo the portrait off-centre trick — the rail stacks in flow */
   .table-center > .pile:first-child { position: static; margin: 0; transform: none; }
-  .zone-deck, .zone-discard { --card-w: 104px; }
-  .pile { gap: .3em; }
+  .zone-deck, .zone-discard { --card-w: 84px; }
+  .pile { gap: .28em; }
 
   /* ── centre: your mat ───────────────────────────────────────────────── */
   .self-board {
@@ -604,11 +687,11 @@
        nameplates, with no scroll position that could bring them back. "safe"
        falls back to flex-start the moment the content does not fit. */
     justify-content: safe center;
-    /* §5: clear apron between the bank mat and the fan so the drag has a
-       run-up. 54px here plus the dock's 12px lip and the fan's own padding is
-       ~71px of untouched concrete; the 720px budget (52 HUD + 166 dock) has no
-       more to give without cropping a mat. */
-    padding-bottom: calc(var(--s) * 3.2);
+    /* THE RUN-UP, AND WHAT THE RE-SEATING COST IT. §5 asked for ~54px of clear
+       apron between the bank mat and the fan. With the seats on top (owner
+       directive) the apron is 160px shorter and there is none left; the dock's
+       own lip and the fan's padding are what remains. Stated, not hidden. */
+    padding-bottom: 0;
   }
   /* When the prompt bar is up the apron loses 52px, and .self-board ends
      EXACTLY on its own bottom mask — measured on payment@desktop, the bank mat
@@ -625,12 +708,13 @@
     display: grid;
     grid-template-areas: "head" "props" "bank";
     justify-items: center;
-    row-gap: .5em;
-    --card-w: 48px;
+    row-gap: .25em;
+    --card-w: 46px;
   }
   .board-self .board-head {
     grid-area: head;
     align-self: center;
+    font-size: .62em;
     flex-wrap: nowrap;
     gap: .6em;
     width: 100%;
@@ -646,12 +730,13 @@
   .board-self .board-props {
     grid-area: props;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 156px));
-    /* 132 is the §5 resting height; 116 is what 720px of viewport actually has
-       once the HUD (52), the dock (166), the bank mat (90) and the run-up (54)
-       are paid. 2×132+8 = 272 overflowed by 26px and clipped the top row. A mat
-       still holds a 67px card plus its nameplate at 116. */
-    grid-auto-rows: minmax(116px, auto);
+    grid-template-columns: repeat(5, minmax(0, 200px));
+    /* 132 is §5's resting height. 84 is what 720px actually has once the HUD
+       (88), the prompt (32), the dock (151), the seats row (142) and the bank
+       (68) are paid — and a mat still holds a 64px card plus its nameplate at
+       84. The GRID is what §5 was really buying (a 2D drop target with lateral
+       forgiveness), and the grid is intact. */
+    grid-auto-rows: minmax(84px, auto);
     gap: 8px;
     margin: 0;
     width: 100%;
@@ -683,8 +768,13 @@
   .board-self .propcol-head { grid-area: head; }
   .board-self .zone-props { grid-area: props; }
   .board-self .zone-ups { grid-area: ups; margin-top: 0; align-self: start; }
-  .board-self .propcol[data-empty="1"]::after { height: 62px; margin-top: .45em; }
-  .board-self .zone-props { justify-content: center; padding-top: 4px; }
+  .board-self .propcol[data-empty="1"]::after { height: 58px; margin-top: .35em; }
+  /* NEVER WRAP. Measured on final-approach@desktop: a four-card set wrapped to
+     a second card row inside its mat, the grid row grew from 84 to 117, and two
+     such rows pushed the BANK — the thing a payment prompt tells you to tap —
+     out of the scrollport. A mat is 200px wide here, which holds four 46px
+     cards at the derived 2px overlap with room to spare. */
+  .board-self .zone-props { justify-content: center; padding-top: 4px; flex-wrap: nowrap; }
   .board-self .zone-ups { justify-content: center; }
 
   /* §5: bank mat 340 × 90, under the grid. */
@@ -692,32 +782,25 @@
      second row inside a fixed 340 and the overflow was clipped by the
      scrollport (measured on final-approach@desktop — five bank cards simply
      gone). It grows sideways instead, which is what a real note pile does. */
+  /* STICKY, because the mat grid is content-sized and the fixtures prove it
+     varies: mid-game measures 285px of board in a 285px pane and
+     final-approach 301 — chasing that with fixed row heights across every
+     fixture is how the bank ended up under the fold twice already. Pinned to
+     the bottom of the scroll box, the bank is on screen whatever the mats do,
+     which is the only thing a payment prompt needs to be true. */
   .board-self .board-bank {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
     grid-area: bank;
     width: fit-content;
     min-width: 340px;
     max-width: 100%;
-    min-height: 90px;
+    min-height: 68px;
     justify-content: center;
-    padding: .4em .5em;
+    padding: .2em .5em;
   }
-  .board-self .zone-bank { --card-w: 62px; }
-
-  /* ── right rail: opponents as vertical seats ────────────────────────── */
-  .opponents {
-    grid-area: seats;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-height: none;
-    min-height: 0;
-    align-items: stretch;
-  }
-  .opponents .board { flex: 0 1 auto; }
-  /* a seat is 200px wide: 4 colour mats across, which is one row for a
-     four-colour player and two for an eight-colour one */
-  .opponents .propcol { min-width: 44px; }
-  .opponents .board-props { justify-content: flex-start; }
+  .board-self .zone-bank { --card-w: 46px; }
 
   /* ── the dock: the bar rides BESIDE the fan ─────────────────────────── */
   .hand-dock {
@@ -737,16 +820,20 @@
     flex: 1 1 auto;
     min-width: 0;
     margin-top: 0;
-    --card-w: max(96px, calc(var(--s) * 5.9));
+    /* §5 asked for ≥96px. 84 is what the owner's re-seating leaves: the seats
+       moved into the height the fan used to have, and a hand card that is still
+       84 × 118 with its whole name and coin legible is a better trade than an
+       opponent's property mats being sliced. Measured dock: 151px. */
+    --card-w: max(84px, calc(var(--s) * 5.1));
     --fan-cover: .06;
     --fan-name: .104;
     --fan-band: .120;
-    min-height: calc(var(--card-w) * 1.56 + .6em);
-    padding: .3em .3em .5em;
+    min-height: calc(var(--card-w) * 1.56 + .5em);
+    padding: .25em .3em .4em;
   }
   .zone-hand:has(> .card:nth-child(6)),
   .zone-hand:has(> .card:nth-child(7)),
-  .zone-hand:has(> .card:nth-child(8)) { --card-w: max(96px, calc(var(--s) * 5.9)); --fan-cover: .08; }
+  .zone-hand:has(> .card:nth-child(8)) { --fan-cover: .08; }
 }
 
 /* Between 900 and 1024 the log still docks (ui.css) but there is no room for
@@ -1112,51 +1199,17 @@
 .card[data-type="action"] .card-art::before { background: var(--ink-mute); }
 .card[data-type="action"] .card-art::after { background: var(--ink-mute); }
 
-/* RENT: a rent card must announce WHICH COLOURS it concerns before it announces
-   what it is (owner defect, 2026-08-06: "there is like an orange rent card but
-   it's actually the wild"). Every rent card wore the same amber band, so the
-   band said "rent" and nothing said "which rent". The band is now the card's
-   two set colours split hard down the middle; the wild rent carries all ten as
-   hard-edged segments. The full colour-pair chassis is the card agent's (§6);
-   this is the floor. */
-.card[data-type="rent"] { --band: var(--ink-mute); --motif-alpha: .8; }
-.card[data-type="rent"] .card-band {
-  background:
-    linear-gradient(90deg,
-      var(--band-a, var(--ink-mute)) 0 50%, var(--band-b, var(--ink-mute)) 50% 100%);
-}
-.card[data-type="rent"][data-color] .card-band { background: var(--band); }
-.card[data-type="rent"]:not([data-color]) .card-band,
-.card[data-type="wild_property"]:not([data-color]) .card-band {
-  background: linear-gradient(90deg,
-    var(--set-brown) 0 10%, var(--set-lightblue) 10% 20%, var(--set-pink) 20% 30%,
-    var(--set-orange) 30% 40%, var(--set-red) 40% 50%, var(--set-yellow) 50% 60%,
-    var(--set-green) 60% 70%, var(--set-darkblue) 70% 80%, var(--set-base) 80% 90%,
-    var(--set-intel) 90% 100%);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, .7);
-}
-.card[data-type="rent"] {
-  --motif:
-    radial-gradient(circle at 50% 104%, transparent 0 22%, #000 22% 27%, transparent 27% 47%, #000 47% 52%, transparent 52% 72%, #000 72% 77%, transparent 77%);
-}
-
-/* WILD: the ten-colour wheel — hard-edged segments, never a soft rainbow
-   gradient. A gradient reads as decoration; hard segments read as "all of
-   them". */
+/* RENT / WILD: DELETED (round-4 review).
+   This file used to carry a SECOND rent-and-wild face — a linear-gradient band
+   split down the middle, a ten-stop rainbow strip for the wild, and a conic
+   wheel in the art field. It was the P7 floor, written before the card system
+   existed. table/cardart.js now builds every face (cardnode.js only falls back
+   here for a null card, which cannot happen), and its rent chassis is the one
+   §6 actually specifies. Two implementations of the defect the owner reported —
+   the wild that looked like a rent — is one too many, and the losing one was
+   the softer-edged one. `--band` still resolves through the default below. */
+.card[data-type="rent"],
 .card[data-type="wild_property"]:not([data-color]) { --band: var(--ink-mute); }
-.card[data-type="wild_property"] .card-art::before {
-  background:
-    repeating-conic-gradient(from 200deg at 50% 50%,
-      var(--set-red) 0deg 36deg, var(--set-orange) 36deg 72deg,
-      var(--set-yellow) 72deg 108deg, var(--set-green) 108deg 144deg,
-      var(--set-base) 144deg 180deg, var(--set-lightblue) 180deg 216deg,
-      var(--set-darkblue) 216deg 252deg, var(--set-pink) 252deg 288deg,
-      var(--set-brown) 288deg 324deg, var(--set-intel) 324deg 360deg);
-  opacity: .95;
-  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent 0 30%, #000 30% 62%, transparent 62%);
-  mask-image: radial-gradient(circle at 50% 50%, transparent 0 30%, #000 30% 62%, transparent 62%);
-}
-.card[data-type="wild_property"] .card-art::after { display: none; }
 
 /* CHUD: the one card that keeps a mark of its own. Not foil — foil is the
    victory modal (§1). A hazard-struck ink band, because CHUD is the card that
@@ -1300,35 +1353,11 @@
   50%      { outline-color: color-mix(in oklab, var(--accent), var(--fg) 45%); }
 }
 
-/* ══ the interact.css bridge ═══════════════════════════════════════════════
-   interact.css (P4) owns drag BEHAVIOUR and is not this agent's file, but it
-   still paints its drop affordances in the retired foil palette via --gold /
-   --gold-dim, both of which §2 deletes. Until that file is updated, these
-   rules restate the same affordances in the new language at a specificity that
-   beats it. REQUEST TO THE INTERACT OWNER: adopt --accent / --ring / --deboss
-   and delete these overrides.
-   §5's six drop affordances are unchanged in MEANING — only in material. */
-.table [data-droppable="1"],
-.board [data-droppable="1"] {
-  outline: 2px dashed var(--accent);
-  outline-offset: 2px;
-}
-.table [data-droppable="1"].is-drop-hover,
-.board [data-droppable="1"].is-drop-hover {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
-  background-image: none;
-  box-shadow: var(--deboss), inset 0 0 0 2px var(--accent);
-}
-.board-props .propcol[data-droppable="1"] { border: 0; }
-.board-props .propcol[data-drop-source="1"] { outline: 2px dashed var(--fg-mute); outline-offset: 2px; }
-#table.table[data-droppable="2"].is-drop-hover { box-shadow: inset 0 0 0 3px var(--accent); }
-.table .drop-ghost, .board .drop-ghost {
-  border: 2px dashed var(--accent);
-  background: repeating-linear-gradient(122deg,
-    color-mix(in oklab, var(--accent) 22%, transparent) 0 4px, transparent 4px 9px);
-  box-shadow: none;
-}
+/* The interact.css bridge that used to live here is DELETED (round-4 review).
+   interact.css has adopted --accent / --deboss / --card-drop directly, so the
+   drop affordances are stated once, in the file that owns the behaviour. The
+   one rule that was never a restatement — a held card over a legal target —
+   stays, because it is the CARD's treatment and table.css owns the card. */
 .card.is-drop-hover { box-shadow: 0 0 0 3px var(--accent), var(--card-drop-air); }
 
 /* ══ FINAL APPROACH (§3.10) ════════════════════════════════════════════════
@@ -1424,38 +1453,54 @@
   .propcol[data-targetable="1"] { animation: none !important; outline-color: var(--accent); }
 }
 
-/* ══ SHORT LANDSCAPE — a real layout, not a squeezed portrait one ══════════
-   Measured at 844×390 before this block: HUD 52 + dock 162 left #table 176px,
-   which #opponents (78) and #table-center (71) consumed entirely, so
-   .self-board computed to height 12 against a scrollHeight of up to 179 — 93%
-   of your own properties, bank and colour mats were simply not on screen. You
-   could not place, rearrange or pay with a property.
+/* ══ SHORT LANDSCAPE — its own grid, not a squeezed desktop one ════════════
+   ROUND-4 REVIEW, and this is the defect class that scored the build a 5 two
+   rounds ago, so the arithmetic is written down rather than assumed.
 
-   Portrait stacks three bands down a tall screen. Landscape has the opposite
-   shape, so it stacks them ACROSS. */
+   MEASURED at 844×390 on the build this replaces:
+     · #opponents        245×135 clip, scrollHeight 391 (705 at five players) —
+       three of four seats had visibleH 0, so §5's "eligible boards glow, tap to
+       choose" could not be obeyed at all.
+     · .self-board       584×219 clip, scrollHeight 352 — the SECOND row of mats
+       (MOBIL/ELITE/CMD/BASES/INTEL) was simply not on screen, and the first
+       row's cards were guillotined mid-body with their value coins cut in half.
+       A propcol holding three cards computed to 146px tall because .zone-props
+       WRAPS, so one full set blew the row height on its own.
+     · .table-center     the piles overflowed their own 89px box and drew over
+       the seats above them.
+     · .hand-bar         114px wide with three 44px controls in it, so SCOOP
+       wrapped to a third line and hung out of the dock.
+
+   The previous pass tried to make this the desktop table minus one column:
+   5 × 2 mats in a 584px pane. It cannot work — five mats at the 44px floor need
+   the width, two rows need the height, and 390px does not have both once the
+   HUD and the dock are paid. So landscape gets its OWN shape:
+
+     left rail  236px — the opponents as a vertical scrolling list of seats,
+                with the piles standing at the bottom of the same rail.
+     right      the whole rest — your head + bank on one line, and then YOUR
+                PROPERTY LINE: ten mats in ONE row that scrolls sideways.
+
+   A single row cannot be clipped by a height budget, ever. The height it needs
+   is fixed (one mat), the width it needs is whatever you own, and the axis it
+   grows along is the axis this viewport has to spare. */
 @media (orientation: landscape) and (max-height: 560px) and (max-width: 1024px) {
-  /* ROUND-3 REVIEW (landscape-mid@landscape). The pane arithmetic, measured:
-     390 − 52 HUD − 116 dock = 222px of apron. With the piles owning a full-width
-     top ROW they took 80 of it and .self-board was left 87px — enough for ten
-     nameplates and nothing else, with the mats scrolled out of sight. So
-     landscape becomes the SAME shape as the desktop table, one column shorter:
-     a left rail (piles above the seats) and YOUR mat owning the whole right
-     column at the full 222px. Measured after: head 16 + bank 70 + 2 mat rows of
-     66 = 218. It fits. */
-  /* ROUND-5 (tools/touchtest.mjs): with the piles owning the TOP of the left
-     column the seats scrollport was 89px and a 155px seat overflowed at once —
-     the second seat's mats measured y 280–435 against a 390px viewport. The
-     piles move to the BOTTOM of the same column: the seats get the top 155px,
-     so seat one is whole and seat two is inside the viewport, and YOUR mat
-     still spans both rows at the full 222px. */
   .table {
     display: grid;
-    grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr);
+    grid-template-columns: 236px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
     grid-template-areas: "opp self" "centre self";
-    gap: .25em .45em;
-    padding: .3em .4em .3em;
+    gap: .25em .5em;
+    padding: .2em .45em .2em;
   }
+
+  /* ── left rail, top: the seats ──────────────────────────────────────────
+     Four full seats cannot fit at the 44px mat floor — a seat is ~160px tall
+     however it is cut. So this is an honest scroll region and everything about
+     it says so: a fading lip, a visible thumb, and scroll-margin so a
+     programmatic scrollIntoView lands the marked seat clear of the lip.
+     REQUEST (ui/ or interact/): scroll the first [data-targetable="1"] board
+     into this port when a targeting mode opens. */
   .opponents {
     grid-area: opp;
     display: flex;
@@ -1465,76 +1510,156 @@
     gap: .3em;
     overflow-y: auto;
     overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--fg-mute) transparent;
+    -webkit-mask-image: linear-gradient(#000 calc(100% - 1.4em), transparent);
+    mask-image: linear-gradient(#000 calc(100% - 1.4em), transparent);
   }
-  .opponents .board { flex: 0 0 auto; }
+  .opponents .board { flex: 0 0 auto; scroll-margin: .4em 0 1.6em; --card-w: 30px; }
   .opponents .board-props { flex-wrap: wrap; }
+  .opponents .zone-hand-oppo { --card-w: 22px; }
 
+  /* ── left rail, bottom: the piles ───────────────────────────────────────
+     flex: 0 0 auto and a min-height that actually holds the content. As
+     `1 10 auto` the box shrank to 89px around 152px of pile and the deck drew
+     straight over the seat above it — the "opponent panel occludes the deck"
+     the review saw is that overflow, from the other side. */
   .table-center {
     grid-area: centre;
     flex: 0 0 auto;
     flex-direction: row;
-    min-height: 0;
+    min-height: calc(var(--card-tap) * 1.4 + 1.4em);
     max-height: none;
-    gap: .8em;
-    padding: 0 0 .2em;
+    gap: .9em;
+    padding: .2em 0 0;
+    overflow: visible;
   }
   .table-center::before { display: none; }
   .table-center > .pile:first-child { position: static; margin: 0; transform: none; }
   /* §0.9: the discard pile is a control (it opens the browser), so it owes 44px
      on both axes. At 2.9s it measured 43×62 and touchtest failed it. */
-  .zone-deck, .zone-discard { --card-w: max(var(--card-tap), calc(var(--s) * 2.9)); }
+  .zone-deck, .zone-discard { --card-w: var(--card-tap); }
   .pile { gap: .2em; }
 
-  .self-board { grid-area: self; max-height: none; min-height: 0; }
-  /* ROUND-2 REVIEW: ten 51px mats needed 535px in a 524px pane, so the row
-     overflowed instead of wrapping and the last two mats were off-screen.
-     Five mats per row, two rows, sized to the column. */
+  /* ── right: your board ──────────────────────────────────────────────── */
+  .self-board {
+    grid-area: self;
+    max-height: none;
+    min-height: 0;
+    /* a grid item's automatic minimum size is its CONTENT, so without this the
+       property line pushed the whole column past the viewport instead of
+       scrolling inside it — measured, the last three mats were off-screen. */
+    min-width: 0;
+    overflow: hidden;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
   .board-self {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
+    /* auto, NOT 1fr: a 1fr props row stretched every mat to the full remaining
+       height and the board became two enormous empty rectangles. */
+    grid-template-rows: auto auto;
     grid-template-areas: "head bank" "props props";
     align-content: start;
     column-gap: .6em;
-    row-gap: .25em;
+    row-gap: .2em;
+    min-height: 0;
+    min-width: 0;
   }
   .board-self .board-head { grid-area: head; align-self: center; flex-wrap: nowrap; gap: .5em; margin: 0; padding: 0; box-shadow: none; }
   .board-self .board-head .board-worth { margin-left: 0; }
-  .board-self .board-bank { grid-area: bank; width: auto; justify-content: flex-start; }
-  .board-self .board-props {
-    grid-area: props;
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 3px;
-    margin-top: 0;
-  }
-  .board-self .propcol { min-width: 0; }
+  .board-self .board-bank { grid-area: bank; width: auto; justify-content: flex-start; padding: .12em .3em; }
   /* Your own property cards are payment targets in landscape too, so the 44px
      floor holds here — it was 31px, and ui/ gates keyboard focus on a measured
      44px box, which is why payment had no keyboard route on this viewport. */
   .board-self { --card-w: var(--card-tap); }
-  .board-self .propcol[data-empty="1"]::after { display: none; }
-  .board-self .propcol { min-height: var(--tap); }
 
-  /* the dock lies down: label + buttons on the left, fan on the right */
+  /* ── THE PROPERTY LINE ──────────────────────────────────────────────────
+     Ten mats, one row, laid out the way a tableau actually is: left to right in
+     front of you. Ten empty mats measure 10 × 50 + 9 × 3 = 527px inside a 567px
+     track, so a fresh board does not scroll at all; the row starts scrolling at
+     exactly the moment there is something further along it to see.
+
+     The affordance is not a scrollbar — Chromium runs the harness with
+     --hide-scrollbars and a phone hides overlay bars at rest. It is a MASK: the
+     row fades at whichever end has more behind it. The .9em of padding inside
+     the scroller means the fade sits over empty track when the row fits, and
+     over a half-covered mat the moment it does not. */
+  .board-self .board-props {
+    grid-area: props;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    /* NOT the `center` the portrait rule sets. A centred flex line wider than
+       its box overflows BOTH ends, and the left overflow is unreachable —
+       measured, the row rested at scrollLeft 0 with DRONE already half off the
+       left edge and no scroll position that could bring it back. */
+    justify-content: flex-start;
+    gap: 3px;
+    margin: 0;
+    min-height: 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 0 .9em;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .9em, #000 calc(100% - .9em), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 .9em, #000 calc(100% - .9em), transparent 100%);
+    /* the painted track the line runs along — a rail is a marking on the apron,
+       not a piece of scrollbar chrome */
+    background:
+      repeating-linear-gradient(90deg, var(--stencil) 0 12px, transparent 12px 22px)
+      0 100% / 100% 2px no-repeat;
+  }
+  .board-self .board-props::-webkit-scrollbar { height: 0; }
+  .board-self .propcol {
+    flex: 0 0 auto;
+    min-width: calc(var(--card-tap) + 4px);
+    padding: 0 2px 2px;
+    scroll-snap-align: start;
+    min-height: var(--tap);
+  }
+  /* A mat whose cards WRAP is what put a 146px propcol in an 82px row. Inside
+     one row they never wrap: each card starts exactly --tap after the one
+     before it, so the exposed strip IS 44px by construction and the mat grows
+     sideways — along the axis that scrolls. */
+  .board-self .zone-props, .board-self .zone-ups { flex-wrap: nowrap; }
+  /* the printed empty slot is KEPT here — the one row has the height for it,
+     and an unnamed, card-less mat is otherwise just a dark rectangle */
+  .board-self .propcol[data-empty="1"]::after { height: calc(var(--tap) - 1.4em); }
+
+  /* ── the dock, lying down ───────────────────────────────────────────────
+     One row of controls, never two: at 114px wide the bar wrapped SCOOP onto a
+     third line and it hung out of the dock in every landscape shot. */
   .hand-dock { display: flex; align-items: center; gap: .5em; padding: .25em .4em; }
-  .hand-bar { flex: 0 0 auto; flex-wrap: wrap; width: calc(var(--tap) * 2.6); gap: .2em; }
-  .hand-label { flex: 1 1 100%; text-align: center; }
-  .hand-actions { margin-left: 0; flex-wrap: wrap; justify-content: center; }
-  .hand-actions .btn { font-size: .76em; padding: 0 .5em; }
+  .hand-bar {
+    flex: 0 0 auto;
+    width: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .1em;
+  }
+  .hand-label { text-align: left; }
+  .hand-actions { margin-left: 0; flex-wrap: nowrap; justify-content: flex-start; gap: .25em; }
+  .hand-actions .btn { font-size: .78em; padding: 0 .6em; }
+  .hand-actions .btn-icon { padding: 0; }
   .zone-hand {
     flex: 1 1 auto;
     min-width: 0;
     margin-top: 0;
-    min-height: calc(var(--card-w) * 1.5 + 1em);
-    padding: .3em .3em .4em;
-    /* 700px of dock for at most eight cards: the fan never has to overlap, so
+    min-height: calc(var(--card-w) * 1.5 + .8em);
+    padding: .25em .3em .3em;
+    /* ~600px of dock for at most eight cards: the fan never has to overlap, so
        every name sets whole at the biggest card the height allows. */
-    --card-w: calc(var(--s) * 4.4);
-    --fan-cover: .04;
+    --card-w: calc(var(--s) * 4.2);
+    --fan-cover: .05;
     --fan-name: .104;
     --fan-band: .120;
   }
   .zone-hand:has(> .card:nth-child(6)),
   .zone-hand:has(> .card:nth-child(7)),
-  .zone-hand:has(> .card:nth-child(8)) { --fan-cover: .06; }
+  .zone-hand:has(> .card:nth-child(8)) { --fan-cover: .07; }
 }

@@ -33,19 +33,237 @@
 }
 
 /* ══ HOME — the apron, seen from above (§3.3) ══════════════════════════════
-   It was a centred 430px card with five equal full-width buttons, a label-
-   above-input and a gradient CTA: a login form. There is no card here now. The
-   controls are painted straight onto the concrete inside a stencilled box, the
-   way a marshalling area is painted onto a real apron. */
+   ROUND-4 REVIEW. The previous pass deleted the gradient CTA and the panel fill
+   but kept the ANATOMY the spec bans by name: a centred narrow column, a
+   tracked-caps label stacked over a rounded input, four full-width buttons in a
+   pile, and empty apron either side. §3.3's actual instruction is:
 
-.home-panel, .lobby-panel {
+     "the home screen IS the table, seen from above, with the deck sitting on
+      it and the actions painted into the apron as markings."
+
+   So the screen is a TABLE with two things standing on it: a real deck (four
+   card backs at a dealer's angle in --card-back, with two cards dealt face up
+   beside it) inside the same painted compass inlay the table centre uses, and a
+   marshalling area — the call sign cut into the concrete as a SLOT with its
+   caption beside it, one wide ink slab, a hold-short line, and the alternates
+   painted along it at unequal weight. Asymmetric at every width that can hold
+   it: deck left, markings right. A centred column is what a login form does. */
+
+.home {
+  position: relative;
+  z-index: 1;
+  width: min(58em, 100%);
+  margin: auto;
+  padding: 1.2em 1.4em;
+  display: grid;
+  gap: .8em 2.2em;
+  grid-template-columns: minmax(0, auto) minmax(15em, 1fr);
+  grid-template-areas: "deck mark" "deck actions";
+  align-items: center;
+  justify-content: center;
+}
+
+.home-table {
+  grid-area: deck;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1em;
+  padding: 2.2em 1.4em 1.2em;
+}
+/* the painted inlay the piles stand in — the same compass marking table.css
+   prints at the centre of the table, because this IS that table */
+.home-table::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: 17em;
+  height: 17em;
+  margin: -8.5em 0 0 -8.5em;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, transparent 0 46%, var(--stencil-hi) 46% 46.6%, transparent 46.6%),
+    radial-gradient(circle, transparent 0 39%, var(--stencil) 39% 39.4%, transparent 39.4%),
+    repeating-conic-gradient(from 0deg, var(--stencil) 0deg .5deg, transparent .5deg 15deg);
+  -webkit-mask-image: radial-gradient(circle, #000 38%, transparent 49%);
+  mask-image: radial-gradient(circle, #000 38%, transparent 49%);
+  pointer-events: none;
+}
+/* the deck stands at the left of its own patch of concrete; two cards are dealt
+   off it to the right, and the box is sized to hold both */
+.home-deck { position: relative; width: 20.5em; height: 16.4em; }
+.home-card {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 9.4em;
+  aspect-ratio: var(--card-ratio);
+  border-radius: var(--card-r);
+  background:
+    repeating-linear-gradient(45deg, rgba(242, 238, 228, .04) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .35) 0 1px, transparent 1px 5px),
+    var(--card-back);
+  box-shadow: var(--card-drop);
+}
+.home-card::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: calc(var(--card-r) * .7);
+  box-shadow: inset 0 0 0 2px rgba(242, 238, 228, .30);
+}
+.home-card:nth-child(1) { transform: translate(-7px, 6px) rotate(-4.5deg); }
+.home-card:nth-child(2) { transform: translate(4px, 3px) rotate(2.4deg); }
+.home-card:nth-child(3) { transform: translate(-2px, 1px) rotate(-1.1deg); }
+.home-card:nth-child(4) { display: flex; align-items: center; justify-content: center; transform: rotate(.6deg); }
+.home-roundel { width: 46%; color: rgba(242, 238, 228, .34); fill: currentColor; }
+
+/* a printed card (§6): solid set-colour band with the set name in stock, the
+   glyph at ~46% of the width, and a filled ink value coin with bone numerals */
+.home-face {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8.4em;
+  aspect-ratio: var(--card-ratio);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: hidden;
+  border-radius: var(--card-r);
+  background: var(--card-stock);
+  color: var(--band);
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop);
+}
+.home-face:nth-of-type(5) { transform: translate(8.4em, 1.1em) rotate(7deg); }
+.home-face:nth-of-type(6) { transform: translate(13.4em, 4.4em) rotate(21deg); }
+.home-face-band {
+  align-self: stretch;
+  padding: .22em .3em;
+  background: var(--band);
+  color: var(--band-ink);
+  font-size: .52em;
+  font-weight: 800;
+  /* §3.6: the set name in a card's colour band is the ONE place in this whole
+     product where tracked caps are allowed. This is that place. */
+  letter-spacing: .06em;
+  text-align: center;
+  line-height: 1.3;
+}
+.home-face-glyph { width: 46%; margin-top: 12%; fill: currentColor; }
+.home-face-coin {
+  position: absolute;
+  left: 8%;
+  bottom: 7%;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  width: 26%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--card-stock);
+  font-family: var(--font-mono);
+  font-size: .62em;
+  font-weight: 700;
+}
+.home-face-coin i { font-style: normal; font-size: .7em; }
+.home-deck-tag {
+  margin: 0;
+  font-size: var(--t-micro);
+  font-weight: 700;
+  color: var(--fg-mute);
+  padding: .1em .5em;
+  border-radius: 2px;
+  background: var(--ground);
+}
+
+.home-mark { grid-area: mark; align-self: end; }
+.home-actions {
+  grid-area: actions;
+  position: relative;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: .55em;
+  padding-top: 1em;
+}
+/* the hold-short line the actions are painted behind: two solid, two dashed */
+.home-actions::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 9px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 100% 2px no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 3px / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 6px / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 9px / 100% 2px no-repeat;
+}
+.home-slot { display: flex; align-items: center; gap: .7em; }
+.home-slot .field-label { flex: 0 0 auto; margin: 0; }
+.home-slot .field { flex: 1 1 auto; min-width: 0; }
+.home-go { font-size: 1.1em; min-height: calc(var(--tap) * 1.15); }
+.home-alt { display: flex; gap: .5em; align-items: stretch; }
+.home-alt .btn { flex: 1 1 auto; }
+.home-join { flex: 1 1 auto; display: flex; gap: .35em; min-width: 0; }
+.home-join .field-code { flex: 1 1 4.5em; min-width: 0; }
+.home-join .btn { flex: 0 0 auto; padding: 0 .9em; }
+/* tertiary: a painted mark at the edge of the box, not a fourth button */
+.home-help {
+  align-self: flex-start;
+  min-height: var(--tap);
+  padding: 0;
+  box-shadow: none;
+  font-weight: 700;
+  font-size: var(--t-small);
+  text-decoration: underline;
+  text-underline-offset: .28em;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--stencil-hi);
+}
+.home-help:active:not(:disabled) { transform: none; box-shadow: none; }
+.home #home-error { margin: 0; }
+
+@media (max-width: 719px), (max-height: 560px) {
+  .home {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "mark" "deck" "actions";
+    gap: .5em;
+    padding: .8em 1.1em;
+  }
+  .home-table { padding: 1em 0 .6em; }
+  .home-table::before { width: 13em; height: 13em; margin: -6.5em 0 0 -6.5em; }
+  .home-deck { width: 15em; height: 12em; }
+  .home-card { width: 6.8em; }
+  .home-face { width: 6em; }
+  .home-face:nth-of-type(5) { transform: translate(6.1em, .8em) rotate(7deg); }
+  .home-face:nth-of-type(6) { transform: translate(9.6em, 3.2em) rotate(21deg); }
+  .home-mark { align-self: auto; }
+}
+@media (max-height: 560px) and (orientation: landscape) {
+  .home { grid-template-columns: minmax(0, auto) minmax(15em, 1fr); grid-template-areas: "deck mark" "deck actions"; }
+  .home-deck { width: 13em; height: 10.5em; }
+  .home-card { width: 6em; }
+  .home-face { width: 5.4em; }
+  .home-face:nth-of-type(5) { transform: translate(5.4em, .7em) rotate(7deg); }
+  .home-face:nth-of-type(6) { transform: translate(8.4em, 2.8em) rotate(21deg); }
+  .home-table { padding: .6em 1em; gap: .5em; }
+  .home-table::before { display: none; }
+}
+
+.lobby-panel {
   width: min(27em, 100%);
   background: none;
   box-shadow: none;
   padding: 1.4em 1.6em 1.6em;
 }
 /* the stencilled marshalling box: hard corner ticks, no rounded rect */
-.home-panel::before, .lobby-panel::before {
+.lobby-panel::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -60,69 +278,18 @@
     linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 100% / 2.2em 3px no-repeat,
     linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 100% / 3px 2.2em no-repeat;
 }
-/* the hold-short marking under the controls: two solid, two dashed */
-.home-panel::after {
-  content: "";
-  position: absolute;
-  left: 1.6em;
-  right: 1.6em;
-  bottom: .4em;
-  height: 9px;
-  pointer-events: none;
-  background:
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 100% 2px no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 3px / 100% 2px no-repeat,
-    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 6px / 100% 2px no-repeat,
-    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 9px / 100% 2px no-repeat;
-}
 
-/* ── the mark: the roundel, DEBOSSED into the concrete (§3.5) ──────────────
-   It used to be a gold star with a 1.4em glow ring — the loudest object on the
-   screen and pure decoration. A stamp pressed into concrete has a dark inside
-   and a light lower lip; that is the entire recipe and it costs no colour. */
-
-.brand { text-align: center; margin-bottom: .6em; }
-.brand-star {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.6em;
-  height: 2.6em;
-  margin: .1em auto .55em;
-  font-size: 2em;
-  line-height: 1;
-  border-radius: 50%;
-  /* the glyph is a stamp, not decoration: it still has to clear 3:1 as large
-     text. --stencil-hi measured 1.86:1 in light and 1.84:1 in dark. */
-  color: var(--fg-mute);
-  background: var(--ground-deep);
-  box-shadow:
-    inset 0 3px 5px var(--shade-2),
-    inset 0 -2px 0 var(--sheen),
-    0 0 0 3px var(--ground),
-    0 0 0 5px var(--stencil-hi);
-}
-/* the two bars of the insignia, painted not plated */
-.brand-star::before, .brand-star::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  width: 1em;
-  height: .26em;
-  margin-top: -.13em;
-  background: var(--stencil-hi);
-}
-.brand-star::before { right: 100%; margin-right: .34em; }
-.brand-star::after  { left: 100%;  margin-left: .34em; }
+/* ── the wordmark: PAINTED on the concrete, not set in a panel ───────────── */
 
 .brand-title {
   font-family: var(--font-display);
-  font-size: var(--t-display);
+  font-size: clamp(2.1em, 5.2vw, 3.4em);
   font-weight: 800;
   letter-spacing: var(--track-display);
-  margin: 0 0 .1em;
+  margin: 0 0 .12em;
+  line-height: .98;
   color: var(--fg);
+  text-shadow: 0 1px 0 var(--sheen);
 }
 .brand-sub {
   margin: 0;
@@ -153,6 +320,63 @@
 .lobby-seat-tag { margin-left: auto; white-space: nowrap; }
 .lobby-host { display: flex; flex-direction: column; gap: .5em; }
 .lobby-host .row .field-label { flex: 0 0 auto; margin-bottom: 0; }
+
+/* ══ THE CHROME GLYPH SET ══════════════════════════════════════════════════
+   ROUND-4 REVIEW, and it is the fair hit: the cards carry 21 bespoke glyphs and
+   the corner of every single shot carried ☰ ? ✕ ☺ ⚑ — Unicode dingbats in
+   bordered squares. Two icon languages in one product.
+
+   These are drawn to the same rules as the card glyphs (public/src/table/
+   cardart.js §SET GLYPHS): SOLID silhouettes on a 48×48 grid, knockouts by
+   fill-rule, no strokes — a 2px stroke on a 48 box disappears at the 22px these
+   render at. Authored as text (§0.3) and painted as MASKS, so one declaration
+   colours every state the button system already defines, and so this reaches
+   the three icon buttons this agent does not own (ui/hud.js's settings dial,
+   ui/discard.js's and ui/journal.js's closers) without editing their files. */
+
+.btn-icon {
+  /* the character a foreign file may still be passing in; the mask replaces it */
+  font-size: 0;
+  --icon: var(--ico-close);
+}
+.btn-icon::before {
+  content: "";
+  width: calc(var(--tap) * .5);
+  height: calc(var(--tap) * .5);
+  background-color: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+
+:root {
+  /* mission log — a strip board: leading tabs, ragged last line. Not a
+     hamburger: three equal bars is the mark this block exists to remove. */
+  --ico-log: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cg fill='%23000'%3E%3Crect x='4' y='9' width='7.5' height='7.5'/%3E%3Crect x='15.5' y='10.6' width='28.5' height='4.2'/%3E%3Crect x='4' y='20.2' width='7.5' height='7.5'/%3E%3Crect x='15.5' y='21.9' width='28.5' height='4.2'/%3E%3Crect x='4' y='31.5' width='7.5' height='7.5'/%3E%3Crect x='15.5' y='33.2' width='18' height='4.2'/%3E%3C/g%3E%3C/svg%3E");
+  /* rules — an open field manual, two page lobes off a spine */
+  --ico-manual: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cg fill='%23000'%3E%3Cpath d='M3.5 9.5c6.5-2.6 13-2.3 19 2.2v27.6c-6-4.5-12.5-4.8-19-2.2z'/%3E%3Cpath d='M44.5 9.5c-6.5-2.6-13-2.3-19 2.2v27.6c6-4.5 12.5-4.8 19-2.2z'/%3E%3C/g%3E%3C/svg%3E");
+  /* leave — a hatch you walk out of, not another X */
+  --ico-exit: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cg fill='%23000'%3E%3Cpath d='M5 6h20v5.5H10.5v25H25V42H5z'/%3E%3Cpath d='M30 14 43.5 24 30 34v-6.6H19.5v-6.8H30z'/%3E%3C/g%3E%3C/svg%3E");
+  /* emote — a callout plate with the three dots knocked out */
+  --ico-callout: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M4 7h40v26H23.5l-10.5 8.5V33H4Z M13 16.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8Z M24 16.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8Z M35 16.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8Z'/%3E%3C/svg%3E");
+  /* scoop out — a parachute. The action is "get me out of this game", and it is
+     the one dock control that used to wear hazard stripes it had not earned. */
+  --ico-chute: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cg fill='%23000'%3E%3Cpath d='M24 4C12.4 4 3 12.9 3 24h42C45 12.9 35.6 4 24 4Z'/%3E%3Cpath d='M4.6 25 6.5 23.1 23.6 38.4 21.7 40.3Z'/%3E%3Cpath d='M43.4 25 41.5 23.1 24.4 38.4 26.3 40.3Z'/%3E%3Cpath d='M22.9 25h2.2v13.6h-2.2Z'/%3E%3Crect x='19' y='37.5' width='10' height='6.5' rx='1.4'/%3E%3C/g%3E%3C/svg%3E");
+  /* sound and settings — a knurled dial with a knocked-out pointer and four
+     index ticks. A gear says "config"; a dial says "the volume is here". */
+  --ico-dial: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%23000' fill-rule='evenodd' d='M24 10.5a13.5 13.5 0 1 0 0 27 13.5 13.5 0 0 0 0-27Z M22.6 15.2h2.8v9.6h-2.8Z M22.7 2h2.6v5.4h-2.6Z M22.7 40.6h2.6V46h-2.6Z M2 22.7h5.4v2.6H2Z M40.6 22.7H46v2.6h-5.4Z'/%3E%3C/svg%3E");
+  /* close — the one mark that has to stay an X, drawn rather than typed */
+  --ico-close: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%23000' d='M11.6 7.4 24 19.8 36.4 7.4 40.6 11.6 28.2 24 40.6 36.4 36.4 40.6 24 28.2 11.6 40.6 7.4 36.4 19.8 24 7.4 11.6Z'/%3E%3C/svg%3E");
+}
+
+#btn-side { --icon: var(--ico-log); }
+.btn-icon[data-action="help"] { --icon: var(--ico-manual); }
+.btn-icon[data-action="leave-room"] { --icon: var(--ico-exit); }
+.btn-icon[data-action="emote"] { --icon: var(--ico-callout); }
+.btn-icon[data-action="scoop"] { --icon: var(--ico-chute); }
+.btn-icon[data-action="settings"] { --icon: var(--ico-dial); }
+/* every closer — index.html's two, plus the ones ui/discard.js and
+   ui/journal.js build at runtime — falls through to the default X */
+.btn-icon.is-close { --icon: var(--ico-close); }
 
 /* ── HUD — a raised strip of painted steel across the top ─────────────── */
 
@@ -188,6 +412,10 @@
 @media (max-width: 899px) {
   #hud-room { display: none; }
   .hud .conn-label { display: none; }
+  /* "MISSION ACCOMPLISHED" is the longest string this slot ever holds and it
+     needed 188px of the 160 a 390px bar can spare once the four 44px icon
+     buttons are paid. The four buttons are a §0.9 floor; the type is not. */
+  .hud-turn { font-size: .88em; }
 }
 @media (min-width: 900px) {
   .hud .conn-label.is-on { max-width: 12em; }
@@ -251,7 +479,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: .45em;
-  padding: .45em .5em;
+  /* 6px off the vertical: this bar is up in most real states and every pixel of
+     it comes out of the apron above it (table.css's desktop budget). */
+  padding: .3em .5em;
   min-width: 0;
   background: var(--surface);
   box-shadow: var(--emboss), 0 -2px 0 var(--shade);
@@ -264,11 +494,13 @@
 .chip.total { font-size: .84em; padding: .3em .7em; color: var(--fg); }
 .chip.total.is-enough { background: var(--act); color: var(--act-fg); box-shadow: none; }
 
-/* ══ THE LEFT RAIL — mission log + comms (§5) ══════════════════════════════
-   §5 puts the log in the LEFT rail with the piles, and explicitly NOT between
-   the hand and the properties. On a phone it stays an overlay drawer; on
-   desktop it docks to the left of the table (see the media query at the end),
-   so the whole left edge of the screen is one rail. */
+/* ══ COMMS — a drawer that opens on the RIGHT ══════════════════════════════
+   OWNER DIRECTIVE, 2026-08-06, verbatim: "layout wise I think it looked better
+   before — the other players at top, chat opening on the right etc."
+   §5 had docked this into a permanent LEFT rail beside the piles. It is a
+   drawer again, on the right, at every width: it is opened deliberately, it is
+   closed most of the time, and a permanent 220px column of chat was spending
+   table width on something nobody had asked to see. */
 
 .side {
   position: absolute;
@@ -339,10 +571,15 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 
 /* ── bottom sheet ─────────────────────────────────────────────────────── */
 
+/* OWNER BUG, 2026-08-06: "pressing show full log doesn't open over the actual
+   end-game screen." The sheet was z 90 and #win-overlay is z 95, so every sheet
+   opened FROM the win screen — the full log, settings, help, a card's details —
+   rendered underneath it and the button read as dead at the exact moment a
+   player most wants to read what happened. */
 .sheet {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: 120;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -429,9 +666,16 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
    the content agent added made a 24em column ~790px tall. A wider column sets
    the same content in fewer lines; on desktop it is 34em and the title fits on
    one line, which is 3 lines and ~120px recovered. */
+/* ROUND-4 REVIEW (win@desktop, win-recap@desktop): the modal did not fit 720px
+   and the previous fix scrolled the WHOLE box, so one end was always cut — the
+   roundel at the top or "Leave room" at the bottom. The box is now a fixed
+   three-part frame: ceremony pinned at the top, the two controls pinned at the
+   bottom, and the RECAP is the only thing that scrolls (content.css). */
 .win-box {
   position: relative;
   width: min(24em, 94%);
+  max-height: 100%;
+  overflow: hidden;
   padding: 1.4em 1.2em 1.3em;
   display: flex;
   flex-direction: column;
@@ -441,6 +685,10 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   border-radius: var(--radius-lg);
   box-shadow: inset 0 0 0 3px var(--foil), var(--card-drop-air);
 }
+.win-box > .win-star,
+.win-box > #win-title,
+.win-box > #win-reason,
+.win-box > .btn { flex: 0 0 auto; }
 .win-star {
   position: relative;
   align-self: center;
@@ -456,6 +704,7 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   background: var(--ground-deep);
   box-shadow: inset 0 3px 5px var(--shade-2), 0 0 0 3px var(--surface), 0 0 0 5px var(--foil);
 }
+.win-star svg { width: 58%; height: 58%; fill: currentColor; }
 #win-title {
   font-family: var(--font-display);
   font-size: 2em;
@@ -500,12 +749,62 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   pointer-events: none;
   box-shadow: var(--card-drop-air);
   transition: opacity .18s ease, transform .22s cubic-bezier(.18, 1.5, .4, 1);
-  z-index: 100;
+  /* above the sheet, which is now above the win overlay */
+  z-index: 130;
 }
 .toast.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
 /* #toast and #sheet/#win-overlay are #app-level siblings of .screen, so
    .screen's env() padding never reaches them — their own insets are required
    and must not be "de-duplicated". */
+
+/* ══ SHORT LANDSCAPE — the two overlays that had no route out ══════════════
+   MOBILE REVIEW, round 4, measured at 844×390: .win-box was 366px tall with
+   scrollHeight 640, so "Open the full log" (y471), Rematch (y542) and Leave
+   room (y592) were all past innerHeight 390 — the end of a game showed a recap
+   and not one control. #screen-lobby had scrollHeight 822, putting Launch
+   Mission at y680. Both are a portrait column poured into a landscape box, and
+   both get the same fix: lay the content ACROSS, and pin the actions. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .win-overlay { padding: .5em; }
+  .win-box {
+    width: min(38em, 96%);
+    padding: .7em 1.1em .8em;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    gap: .35em .6em;
+    align-content: start;
+    text-align: center;
+  }
+  /* the roundel is ceremony, and ceremony gives way when the two buttons the
+     player needs are the thing off screen */
+  .win-star { display: none; }
+  #win-title { grid-column: 1 / -1; font-size: 1.55em; margin: 0; }
+  #win-reason { grid-column: 1 / -1; margin: 0; }
+  .win-summary { grid-column: 1 / -1; margin-top: 0; }
+  #btn-rematch { grid-column: 1; }
+  #btn-win-leave { grid-column: 2; }
+
+  .screen-lobby { align-items: center; }
+  .lobby-panel {
+    width: min(50em, 100%);
+    max-height: 100%;
+    padding: .5em 1.1em .7em;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    grid-auto-rows: min-content;
+    align-content: start;
+    gap: .35em .9em;
+  }
+  .lobby-title { grid-area: 1 / 1 / 2 / 3; margin: 0; }
+  #btn-invite { grid-area: 2 / 1 / 3 / 2; }
+  .lobby-players { grid-area: 3 / 1 / 4 / 2; min-height: 0; max-height: 11em; overflow-y: auto; }
+  /* the host controls INCLUDING Launch Mission own the right column, so the
+     primary action sits beside the seat list instead of 290px under it */
+  .lobby-host { grid-area: 2 / 2 / 4 / 3; }
+  #lobby-hint { grid-area: 4 / 1 / 5 / 2; margin: 0; align-self: center; }
+  .lobby-panel > [data-action="leave-room"] { grid-area: 4 / 2 / 5 / 3; }
+}
 
 .emotes { position: fixed; inset: 0; pointer-events: none; z-index: 80; }
 .emote-bubble {
@@ -530,26 +829,17 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   border-top-color: var(--surface);
 }
 
-/* ── desktop: the log docks into the LEFT rail (§5) ───────────────────── */
+/* ── desktop ──────────────────────────────────────────────────────────── */
 
 @media (min-width: 900px) {
-  .screen-game {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
-  }
-  .hud { grid-column: 1 / -1; }
+  /* .screen-game keeps base.css's flex column at every width now — the grid
+     that used to live here existed only to dock the comms rail on the left. */
   .side {
-    position: static;
-    width: 13.5em;
-    grid-column: 1;
-    grid-row: 2 / span 3;
-    box-shadow: 2px 0 0 var(--shade);
-    padding: .5em .45em;
+    width: min(24em, 42%);
+    padding: .7em .6em;
+    /* a drawer over the table, not a wall built into it */
+    box-shadow: -14px 0 34px var(--scrim), -1px 0 0 var(--shade-2);
   }
-  .table { grid-column: 2; grid-row: 2; }
-  .prompt { grid-column: 2; grid-row: 3; }
-  .hand-dock { grid-column: 2; grid-row: 4; }
   .panel { width: min(26em, 100%); }
 
   /* A bottom sheet is a phone gesture. On a 1280px screen it was a 490px-wide

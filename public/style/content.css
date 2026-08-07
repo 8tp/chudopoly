@@ -411,15 +411,22 @@
   border-radius: var(--radius);
   overflow: hidden;
 }
+/* ROUND-4 REVIEW (peek-hover@desktop): "Effect" and its value ran together with
+   no gutter. MEASURED in the page: the row was a flex box and
+   `.dt-label { min-width: 0 }` let the label's BOX shrink to 24px against 35px
+   of text, so the word overflowed its own box and crossed the 9px gap. A grid
+   track cannot do that — `auto` never goes below min-content, so the gutter is
+   structural rather than a gap a shrunk box can eat. */
 .dt-row {
-  display: flex;
-  justify-content: space-between;
-  gap: .7em;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: .9em;
   padding: .32em .6em;
   font-size: .8em;
   background: var(--ground);
 }
-.dt-label { color: var(--fg-mute); min-width: 0; }
+.dt-label { color: var(--fg-mute); }
 .dt-value { font-weight: 800; color: var(--fg); text-align: right; }
 .dt-row.is-good .dt-value { color: var(--accent); }
 .dt-row.is-bad .dt-value { color: var(--fg-mute); font-weight: 700; }
@@ -563,10 +570,20 @@
 
 /* Never modal, never blocking: the whole stack is inert to the pointer, so a
    hint sitting over the table cannot eat a tap meant for a card. */
-/* The prompt bar is 52px tall and appears exactly when the hint is least
-   welcome; --hint-lift (ui/hints.js) only clears the dock, so the band landed
-   on the bank mat during payment. */
-body:has(#prompt:not([hidden])) .hints { bottom: calc(var(--hint-lift, 4.6em) + 3.6em); }
+/* ROUND-4 REVIEW (refusal@desktop): the previous rule lifted the stencil by a
+   flat 3.6em when the prompt bar appeared, which walked it up onto the CMD mat
+   and hid the card standing in it. Lifting it further only moves which mat it
+   covers. So the rule is a PRIORITY rule, not a geometry one: a coaching hint
+   never competes with a live decision. The same principle already governs the
+   drag (interact.css hides the layer while a card is in the air).
+   REQUEST TO ui/hints.js: publish --hint-lift from the TOP of whatever occupies
+   the bottom (dock OR dock+prompt), and DEFER a hint while #prompt is up rather
+   than showing it and having CSS hide it. */
+body:has(#prompt:not([hidden])) .hints {
+  opacity: 0;
+  visibility: hidden;
+  transition: none;
+}
 .hints {
   position: fixed;
   left: 50%;
@@ -607,15 +624,32 @@ body:has(#prompt:not([hidden])) .hints { bottom: calc(var(--hint-lift, 4.6em) + 
    (measured on landscape-mid@landscape), so it moves over the seats column —
    the one region nothing is ever dropped onto. Declared here because this file
    loads after table.css and owns .hints. */
-@media (orientation: landscape) and (max-height: 560px) and (max-width: 1024px) {
-  /* clear of the dock: bottom .35em put the band over the SCOOP button and
-     touchtest measured it 97% occluded. --hint-lift is published by
-     ui/hints.js and already clears the dock. */
+/* ROUND-4 REVIEW: above the dock there is no free apron left at desktop width —
+   the seats are on top (owner directive) and your mat fills the rest. But there
+   IS free concrete INSIDE the dock, between the hand bar on the left and the fan
+   in the middle: ~300px that nothing is ever placed on. The stencil goes there:
+   on the apron, beside the cards it is talking about, covering nothing. */
+@media (min-width: 1024px) {
   .hints {
-    left: .35em;
+    left: calc(13.2em + 1em);
     right: auto;
+    bottom: calc(env(safe-area-inset-bottom) + .6em);
+    width: min(20em, 24vw);
+    transform: none;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 560px) and (max-width: 1024px) {
+  /* ROUND-4: parked bottom-LEFT, the band sat squarely on the DECK and DISCARD
+     captions — the two numbers a landscape player has no other way to read.
+     table.css's landscape grid leaves ~90px of bare concrete under the property
+     line on the right, which is the only region of this viewport holding
+     nothing. The stencil goes there. */
+  .hints {
+    left: auto;
+    right: .5em;
     bottom: calc(var(--hint-lift, 4.6em) + .3em);
-    width: min(19em, 40vw);
+    width: min(30em, 54vw);
     transform: none;
   }
 }
@@ -658,8 +692,20 @@ body:has(#prompt:not([hidden])) .hints { bottom: calc(var(--hint-lift, 4.6em) + 
   color: var(--fg);
 }
 
-/* a real checkbox wearing a switch */
-.switch { position: relative; display: inline-flex; flex: 0 0 auto; }
+/* a real checkbox wearing a switch.
+   MOBILE REVIEW, round 4: the input is `position:absolute; inset:0` inside
+   .switch, so the HIT AREA is whatever .switch measures — and .switch was
+   hugging the 1.6em face, giving 44×23 in portrait and 37×19 in landscape. The
+   FACE is a drawing and stays that size; the SWITCH is the control. */
+.switch {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
 .switch-input {
   position: absolute;
   inset: 0;
@@ -1012,10 +1058,13 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 .brief-tab.is-on .dv-tab-n { color: inherit; }
 
 .dv-filters { display: flex; flex-wrap: wrap; gap: .3em; }
+/* MOBILE REVIEW, round 4: measured 50×31 / 72×31 / 47×31 across the five
+   filters in both themes and orientations. This file names --tap "the §0.9
+   floor" three times and then multiplied it down by .7. */
 .chip.dv-chip {
   cursor: pointer;
-  min-height: calc(var(--tap) * .7);
-  padding: .3em .6em;
+  min-height: var(--tap);
+  padding: .3em .7em;
   border-radius: 2px;
   font-size: .66em;
 }
@@ -1192,7 +1241,9 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   font-size: .82em;
   font-weight: 700;
   cursor: pointer;
-  min-height: calc(var(--tap) * .62);
+  /* MOBILE REVIEW, round 4: measured 78×27 … 136×27 across ten of these in the
+     mission log. Every one opens a card reader, so every one is a control. */
+  min-height: var(--tap);
 }
 .jr-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (hover: hover) {
@@ -1298,19 +1349,36 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   .announce.is-in { transform: translateX(-50%); }
 }
 
-/* OVERRIDE 5 — the win box must be able to scroll.
-   ui.css gives `.win-box` no max-height. MEASURED after the P8 recap was added
-   to it: 787px tall in a 720px desktop viewport and 713px in an 844px phone —
-   i.e. on desktop the Rematch and Leave room buttons were below the fold with
-   no way to reach them. `.jr-list.is-recap` is already capped at 10em; this is
-   the outer promise that the ceremony can never push its own controls off
-   screen, at five players with stats and a long recap. */
-.win-box {
-  max-height: calc(100vh - 2em);
-  max-height: calc(100dvh - 2em);
+/* OVERRIDE 5 — the RECAP is the scroll region, not the modal.
+   MEASURED after the P8 recap landed: the box was 787px tall in a 720px desktop
+   viewport. The first fix scrolled the whole box, which is why win@desktop cut
+   "Leave room" at the viewport edge and win-recap@desktop showed the roundel
+   sliced off the top — one end was always missing. ui.css now caps .win-box at
+   the overlay height and pins the ceremony and the two controls; everything
+   variable-length lives in #win-summary, and that is what scrolls. */
+.win-summary {
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 1.1em), transparent);
+  padding-bottom: 1.1em;
+}
+.win-summary::-webkit-scrollbar { width: 5px; }
+.win-summary::-webkit-scrollbar-thumb { background: var(--fg-mute); border-radius: 999px; }
+/* The recap list is INSIDE that scroller now, so its own 10em cap would make
+   two nested scroll regions with one thumb between them. */
+.jr-list.is-recap { max-height: none; overflow: visible; }
+/* MEASURED (touchtest, `finished`): "Open the full log" is the last thing in the
+   recap, so once the recap became the scroll region the button measured 186×0
+   reachable — the owner's own bug report twice over. It rides the bottom. */
+.win-summary .jr-more {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--surface);
 }
 
 /* The card's NAME, under its mini face. At the mini tier table.css degrades the

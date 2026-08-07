@@ -89,38 +89,42 @@
  * It is necessary, not sufficient: it catches "every surface is one grey" for
  * one cheap number, and it is explicitly NOT the hierarchy test.
  *
- * ─── WHERE THE BUILD LANDS (measured 2026-08-06, seed 1337, 1280×720) ─────
- * BOTH THEMES FAIL, and they fail on the same thing: the furniture layer does
- * not separate from the apron. Every card, every card back, the ink slab and
- * every text run clears 12 L\* comfortably in both themes; the mats and the
- * chrome panels do not.
+ * ─── WHERE THE BUILD LANDS (re-measured 2026-08-07, seed 1337, 1280x720) ──
+ * BOTH THEMES PASS: all 16 adjacent pairs clear 12 L\* in dark and in light.
  *
- *                                             field  edge   sep
- *   DARK   property mat on #table               1.9   8.1   8.1  FAIL
- *          .board-opponent on #table            2.6   8.5   8.5  FAIL
- *          #hud on what is next to it           0.1  10.7  10.7  FAIL
- *   LIGHT  property mat on #table               1.0   5.3   5.3  FAIL
- *          .board-opponent on #table            5.3   8.1   8.1  FAIL
- *          .board-bank on .board                0.0  11.2  11.2  FAIL
+ * They did NOT when this file was rewritten a day earlier, and the failing
+ * numbers are kept here because they are the evidence that the gate
+ * discriminates on a real build rather than only on the synthetic rows:
  *
- * The measured tokens behind those rows:
- *   light  stock 97.3 · surface/panels 94.2 · apron 87.8 · mats 86.9 · dock 82.6
- *   dark   stock 97.3 · panels 14.1 · apron 13.8 · mats 11.9 · dock 3.6
+ *                                     field  edge   sep
+ *   DARK   property mat on #table       1.9   8.1   8.1  FAIL   -> now 15.1
+ *          .board-opponent on #table    2.6   8.5   8.5  FAIL   -> now 18.2
+ *          #hud vs what is next to it   0.1  10.7  10.7  FAIL   -> now 24.5
+ *   LIGHT  property mat on #table       1.0   5.3   5.3  FAIL   -> now 20.1
+ *          .board-opponent on #table    5.3   8.1   8.1  FAIL   -> now 20.8
+ *          .board-bank on .board        0.0  11.2  11.2  FAIL   -> now 25.5
  *
- * The dark apron is the surprise: `--ground` is #15171C (L\* 7.7) but `#table`
- * PAINTS at 13.8, within 0.3 L\* of `--surface`. Panels and apron are the same
- * tone in the dark build, whatever the tokens say.
+ * WHAT ACTUALLY CHANGED IS WORTH READING. The apron moved, not the mats: dark
+ * `#table` went 13.8 -> 14.1 while the panels went 14.1 -> 30.0, and light
+ * `#table` went 87.8 -> 84.4 while the panels went 94.2 -> 70.1. The furniture
+ * layer stepped DOWN and away from the ground in both themes, which is exactly
+ * the direction `--prove`'s stepped rows said was the only one available in
+ * light (`--ground` leaves ten L\* of headroom before white, so nothing above
+ * the apron can reach a 12 L\* step).
  *
- * In light the constraint is structural: `--ground` at 90.0 leaves ten L\* of
- * headroom before white, so nothing above the apron can ever reach a 12 L\*
- * step. Light hierarchy has to step DOWN (or the apron has to come down to make
- * room). `--prove`'s "light + a 12 L\* furniture step" row is a build that
- * clears the gate — apron 90, panels 76, mats 60 — measured, not proposed.
+ * BUT THE PASS IS CARRIED BY EDGES, NOT BY TONE, and the gate says so on every
+ * run: 12/12 (dark) and 10/12 (light) structural pairs are carried by the edge
+ * channel, and the weakest FIELD step in both themes is 0.0 L\* — `#hud`
+ * against what is painted next to it, and `.board-bank` inside `.board`, are
+ * the same tone as their surroundings and are separated purely by a stroke and
+ * a shadow. That is a legitimate design position (ART SS4: "paper casts a soft
+ * shadow") and it is why the edge channel is measured rather than assumed. It
+ * is also fragile in a nameable way: `--prove`'s "light, edge+shadow removed"
+ * row is that same palette with the strokes taken away, and it fails at 4.4.
  *
- * 9/12 (light) and 11/12 (dark) structural pairs are carried by edge treatment
- * rather than by tone. The gate accepts that; it prints it because "the design
- * rests on a hairline and a shadow" is a thing the designer should decide on
- * purpose rather than discover from a critic.
+ * Measured token tones behind those rows:
+ *   light  stock 97.3 . panels 70.1 . apron 84.4 . mats ~64.5 . bulk 31.1->95.9
+ *   dark   stock 97.3 . panels 30.0 . apron 14.1 . mats ~25.2 . bulk  3.6->94.2
  *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */

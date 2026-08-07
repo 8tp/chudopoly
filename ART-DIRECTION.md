@@ -152,6 +152,16 @@ as: **two world-stopping moments, one physical system underneath.**
 
 ## 5. Desktop table layout
 
+> **OWNER OVERRIDE 2026-08-06 — the seating below is REJECTED.** After playing it:
+> *"layout wise I think it looked better before — the other players at top, chat opening on
+> the right etc."* So: **opponents sit across the TOP**, and **comms opens as a RIGHT-hand
+> drawer**, as they did before. Everything else in this section still holds — the deck and
+> discard must stay out of the path between hand and properties, the property region must
+> remain a generous 2D drop target (the drag must never go back to "285px straight up into a
+> 60px strip"), and the hand must stay fully on-screen. The measured geometry below is kept
+> as the record of what the three-column cut was solving; re-solve those problems within a
+> top-opponents layout.
+
 The complaint diagnosed: ten set slots in one centred ~60px-tall row with ~250px of dead apron
 below, hand fan cropped at the viewport — a ~285px drag straight up into a 60px band with no
 lateral forgiveness. At `min-width: 1024px`, three columns instead:

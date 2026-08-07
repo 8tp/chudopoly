@@ -26,7 +26,9 @@ const HINTS = {
   peek: 'Hold any card to read it — yours, theirs, anywhere on the table. On a mouse, just '
     + 'hover.',
   drag: 'Drag cards straight onto the table to play them — anywhere on the felt works.',
-  pay: 'Tap your bank and property cards to pay, then confirm. Overpaying gives no change.',
+  // §3.1b — payableCards() (game.js:710-717) is bank + properties + UPGRADES.
+  pay: 'Tap your bank, property and Upgrade cards to pay, then confirm. Overpaying gives no '
+    + 'change.',
   armed: 'Someone is on FINAL APPROACH. Break one of their sets before their turn comes '
     + 'around, or they win.',
 };

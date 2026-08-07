@@ -639,7 +639,8 @@ export const BANK = Object.freeze({
     perc(og.gain, t0 + 0.05, 0.085, 0.005, 0.13);
   },
 
-  /** Surge Ops: the next charge is about to double. A rise with a flutter on it. */
+  /** Surge Ops: the next RENT is about to multiply (§3.1c — it stacks, and it
+   *  never touches Finance Office or Roll Call). A rise with a flutter on it. */
   act_surge(g, t0, o) {
     const h = head(g, o, 0.24);
     const env = gain(g, 0);

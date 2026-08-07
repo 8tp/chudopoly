@@ -65,7 +65,8 @@
 .is-refused { animation: refuse-shake .32s cubic-bezier(.36, .07, .19, .97) both; }
 .card.is-refused {
   animation: refuse-flash .32s ease both;
-  box-shadow: 0 0 0 2px var(--danger), 0 0 18px rgba(208, 52, 44, .45);
+  /* §3.5: no glow anywhere. The rim plus the card's own drop is the whole mark. */
+  box-shadow: 0 0 0 2px var(--danger), var(--card-drop);
 }
 @media (prefers-reduced-motion: reduce) {
   /* §0.9: motion collapses, the refusal does not go silent — the cue still
@@ -95,9 +96,17 @@ body.is-dragging-card {
   -webkit-user-select: none;
 }
 
-/* ── drop targets ──────────────────────────────────────────────────────── */
+/* ── drop targets ────────────────────────────────────────────────────────
+   ROUND-4 REVIEW. Every rule below used to name --gold / --gold-dim, which
+   ART §2 DELETED. A custom property that does not resolve makes the whole
+   declaration invalid-at-computed-value, so these did nothing at all and the
+   affordance was being drawn by a specificity bridge in table.css instead —
+   two files claiming the same feedback, one of them silently dead. The tokens
+   are adopted here and the bridge is gone.
+   §1: selection and valid-drop are a COBALT RING — 2px stroke outside the
+   object, never a fill, never a glow (§3.5), never a gradient (§3.4). */
 [data-droppable="1"] {
-  outline: 2px dashed var(--gold-dim);
+  outline: 2px dashed var(--accent);
   outline-offset: 2px;
 }
 /* The committed target. Owner feedback P7: "which one am I about to hit" was
@@ -105,19 +114,17 @@ body.is-dragging-card {
    merely outlined — it is the single loudest thing on the felt while a card is
    in the air, because it is the only question being asked. */
 [data-droppable="1"].is-drop-hover {
-  outline: 3px solid var(--gold);
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
-  background-image: linear-gradient(180deg, rgba(232, 185, 85, .28), rgba(232, 185, 85, .1));
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 0 22px rgba(232, 185, 85, .45);
+  background-image: none;
+  box-shadow: var(--deboss), inset 0 0 0 2px var(--accent);
 }
-.propcol[data-droppable="1"] { border-style: solid; border-color: var(--gold-dim); }
-.propcol[data-droppable="1"].is-drop-hover { border-color: var(--gold); }
 
 /* rank 2 — the whole felt as the last-resort "just play it" target. It must
    NOT draw a dashed box round the entire table; it only reads once it is the
    thing being hit. */
 #table[data-droppable="2"].is-drop-hover {
-  box-shadow: inset 0 0 0 3px var(--gold-dim), inset 0 0 60px rgba(232, 185, 85, .12);
+  box-shadow: inset 0 0 0 3px var(--accent);
 }
 
 /* ── cursors (hover-capable pointers only, §2) ─────────────────────────── */
@@ -153,8 +160,11 @@ body.is-dragging-card {
   inset: 0;
   z-index: 4;
   border-radius: inherit;
+  /* hazard MATERIAL, in the palette's own vermillion rather than the retired
+     literal — a discard is the one routine action that is irreversible */
   background: repeating-linear-gradient(45deg,
-    rgba(208, 52, 44, .3) 0 6px, rgba(0, 0, 0, .34) 6px 12px);
+    color-mix(in oklab, var(--danger) 34%, transparent) 0 6px,
+    rgba(0, 0, 0, .34) 6px 12px);
   pointer-events: none;
 }
 .card.is-discarding::before {
@@ -196,7 +206,9 @@ body.is-dragging-card {
 /* the column a wild is LEAVING — a rearrange reads as an exchange, not as a
    card vanishing from one place and appearing in another */
 .propcol[data-drop-source="1"] {
-  outline: 2px dashed var(--steel-300);
+  /* --steel-300 was deleted by ART §2; this declaration resolved to nothing,
+     so a rearranging wild left no mark on the column it came from. */
+  outline: 2px dashed var(--fg-mute);
   outline-offset: 2px;
   filter: saturate(.5);
 }
@@ -215,11 +227,11 @@ body.is-dragging-card {
   aspect-ratio: var(--card-ratio);
   margin: 0;
   transform: translate(-50%, -50%) scale(.94);
-  border: 2px dashed var(--gold);
+  border: 2px dashed var(--accent);
   border-radius: var(--card-r);
   background: repeating-linear-gradient(122deg,
-    rgba(232, 185, 85, .16) 0 4px, transparent 4px 9px);
-  box-shadow: inset 0 0 12px rgba(232, 185, 85, .25);
+    color-mix(in oklab, var(--accent) 22%, transparent) 0 4px, transparent 4px 9px);
+  box-shadow: none;
   opacity: 0;
   pointer-events: none;
   z-index: 5;

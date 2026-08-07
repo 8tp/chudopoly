@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#080d16">
-<meta name="color-scheme" content="dark">
+<!-- ART §2: the apron at night is a NEUTRAL near-black, not the retired navy. -->
+<meta name="theme-color" content="#15171C" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#DFD7C5" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="light dark">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -24,26 +26,78 @@
 <body>
 <div id="app">
 
-  <!-- ── HOME ───────────────────────────────────────────────────────── -->
+  <!-- ── HOME ───────────────────────────────────────────────────────────
+       ART §3.3: "the home screen IS the table, seen from above, with the deck
+       sitting on it and the actions painted into the apron as markings."
+       So: no panel, no card, no centred column of equal buttons. A real deck
+       stands on the concrete inside its painted inlay; the controls are a
+       marshalling area stencilled onto the apron beside it. -->
   <section id="screen-home" class="screen screen-home">
-    <div class="panel home-panel">
-      <div class="brand">
-        <div class="brand-star">&#9733;</div>
+    <div class="home">
+
+      <div class="home-table">
+        <div class="home-deck" aria-hidden="true">
+          <span class="home-card"></span>
+          <span class="home-card"></span>
+          <span class="home-card"></span>
+          <span class="home-card">
+            <svg class="home-roundel" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+              <circle cx="50" cy="50" r="47" fill="none" stroke="currentColor" stroke-width="1.2"
+                      stroke-dasharray="1.6 3.6" opacity=".55"/>
+              <rect x="1" y="43" width="98" height="14" fill="none" stroke="currentColor" stroke-width="2.2"/>
+              <circle cx="50" cy="50" r="27" fill="none" stroke="currentColor" stroke-width="2.4"/>
+              <path d="M50 33 55 45.5 68.5 46.6 58.2 55.4 61.4 68.5 50 61.4 38.6 68.5 41.8 55.4 31.5 46.6 45 45.5Z"/>
+            </svg>
+          </span>
+          <!-- two cards dealt off the top and lying face up on the concrete;
+               the glyphs are the Fighters and Space Force silhouettes from
+               table/cardart.js, authored as text (§0.3). -->
+          <span class="home-face" style="--band: var(--set-red);">
+            <span class="home-face-band">FIGHTERS</span>
+            <svg class="home-face-glyph" viewBox="0 0 48 48" fill="currentColor" aria-hidden="true" focusable="false">
+              <path d="M24 2.5 L28.4 15 L40.5 27.5 L40.5 31 L28.8 30 L30 38 L34.5 43.5
+                       L13.5 43.5 L18 38 L19.2 30 L7.5 31 L7.5 27.5 L19.6 15 Z"/>
+            </svg>
+            <span class="home-face-coin">3<i>M</i></span>
+          </span>
+          <span class="home-face" style="--band: var(--set-pink);">
+            <span class="home-face-band">SPACE FORCE</span>
+            <svg class="home-face-glyph" viewBox="0 0 48 48" fill="currentColor" fill-rule="evenodd" aria-hidden="true" focusable="false">
+              <path d="M24 3 L40 31 L8 31 Z"/>
+              <path d="M24 26 A21 6.6 0 1 0 24 39.2 A21 6.6 0 1 0 24 26 Z
+                       M24 29.4 A17.4 3.2 0 1 1 24 35.8 A17.4 3.2 0 1 1 24 29.4 Z"
+                    transform="rotate(-9 24 32.6)"/>
+            </svg>
+            <span class="home-face-coin">2<i>M</i></span>
+          </span>
+        </div>
+        <p class="home-deck-tag">104 cards &middot; 2&ndash;5 seats</p>
+      </div>
+
+      <div class="home-mark">
         <h1 class="brand-title">CHUDOPOLY GO</h1>
-        <p class="brand-sub">NIGHT FLIGHT LINE</p>
+        <p class="brand-sub">Monopoly Deal, flight-line edition. Three complete sets and you are wheels up.</p>
       </div>
-      <label class="field-label" for="name-input">CALL SIGN</label>
-      <input id="name-input" class="field" type="text" maxlength="16" autocomplete="off"
-             autocapitalize="characters" placeholder="Your call sign">
-      <button id="btn-quick-play" class="btn btn-primary" data-action="quick-play">Quick Play vs Bots</button>
-      <button id="btn-create-room" class="btn" data-action="create-room">Create Room</button>
-      <div class="row">
-        <input id="code-input" class="field field-code" type="text" maxlength="4" autocomplete="off"
-               placeholder="CODE" aria-label="Room code">
-        <button id="btn-join-room" class="btn" data-action="join-room">Join</button>
+
+      <div class="home-actions">
+        <div class="home-slot">
+          <label class="field-label" for="name-input">Call sign</label>
+          <input id="name-input" class="field" type="text" maxlength="16" autocomplete="off"
+                 autocapitalize="characters" placeholder="Who is flying?">
+        </div>
+        <button id="btn-quick-play" class="btn btn-primary home-go" data-action="quick-play">Quick play vs bots</button>
+        <div class="home-alt">
+          <button id="btn-create-room" class="btn" data-action="create-room">Create room</button>
+          <div class="home-join">
+            <input id="code-input" class="field field-code" type="text" maxlength="4" autocomplete="off"
+                   placeholder="CODE" aria-label="Room code">
+            <button id="btn-join-room" class="btn" data-action="join-room">Join</button>
+          </div>
+        </div>
+        <p id="home-error" class="error" role="alert" aria-live="polite"></p>
+        <button class="btn btn-ghost home-help" data-action="help">How to play</button>
       </div>
-      <button class="btn btn-ghost" data-action="help">How to play</button>
-      <p id="home-error" class="error" role="alert" aria-live="polite"></p>
+
     </div>
   </section>
 
@@ -103,9 +157,12 @@
         <span id="hud-timer" class="timer" hidden><span id="hud-timer-text" class="timer-text"></span></span>
       </div>
       <div class="hud-right">
-        <button id="btn-side" class="btn btn-icon" data-action="toggle-side" aria-label="Mission log and comms">&#9776;</button>
-        <button class="btn btn-icon" data-action="help" aria-label="Rules">?</button>
-        <button class="btn btn-icon" data-action="leave-room" aria-label="Leave game">&#10005;</button>
+        <!-- The glyphs are drawn in ui.css as masks (one per data-action), in the
+             same solid-silhouette family as the card glyphs. The buttons ship
+             empty: a Unicode dingbat here was the last generic mark in the app. -->
+        <button id="btn-side" class="btn btn-icon" data-action="toggle-side" aria-label="Mission log and comms"></button>
+        <button class="btn btn-icon" data-action="help" aria-label="Rules"></button>
+        <button class="btn btn-icon" data-action="leave-room" aria-label="Leave game"></button>
       </div>
     </header>
 
@@ -115,11 +172,11 @@
       <div id="table-center" class="table-center">
         <div class="pile">
           <div class="cardzone zone-deck" data-zone="deck"></div>
-          <span class="pile-label">DECK <span id="deck-count">0</span></span>
+          <span class="pile-label">Deck <span id="deck-count">0</span></span>
         </div>
         <div class="pile">
           <div class="cardzone zone-discard" data-zone="discard"></div>
-          <span class="pile-label">DISCARD <span id="discard-count">0</span></span>
+          <span class="pile-label">Discard <span id="discard-count">0</span></span>
         </div>
       </div>
 
@@ -130,12 +187,15 @@
 
     <footer id="hand-dock" class="hand-dock">
       <div class="hand-bar">
-        <span class="hand-label">HAND <span id="hand-count">0</span></span>
+        <span class="hand-label">Hand <span id="hand-count">0</span></span>
         <div class="hand-actions">
           <button id="btn-draw" class="btn" data-action="draw">Draw</button>
           <button id="btn-end-turn" class="btn" data-action="end-turn">End turn</button>
-          <button id="btn-emote" class="btn btn-icon" data-action="emote" aria-label="Emote">&#9786;</button>
-          <button id="btn-scoop" class="btn btn-icon btn-danger" data-action="scoop" aria-label="Scoop out">&#9873;</button>
+          <button id="btn-emote" class="btn btn-icon" data-action="emote" aria-label="Emote"></button>
+          <!-- NOT .btn-danger: ART §1 reserves hazard material for danger, and a
+               permanently-striped button in the dock of every table shot spends
+               the material before the final-approach rails ever rise. -->
+          <button id="btn-scoop" class="btn btn-icon" data-action="scoop" aria-label="Scoop out"></button>
         </div>
       </div>
       <div id="zone-hand" class="cardzone zone-hand" data-zone="hand"></div>
@@ -143,8 +203,8 @@
 
     <aside id="side" class="side" hidden>
       <div class="side-head">
-        <span>MISSION LOG</span>
-        <button class="btn btn-icon" data-action="toggle-side" aria-label="Close panel">&#10005;</button>
+        <span>Mission log</span>
+        <button class="btn btn-icon is-close" data-action="toggle-side" aria-label="Close panel"></button>
       </div>
       <div id="log" class="log" aria-live="polite"></div>
       <div class="chat-tabs">
@@ -165,7 +225,7 @@
     <div class="sheet-panel">
       <div class="sheet-head">
         <h3 id="sheet-title"></h3>
-        <button class="btn btn-icon" data-action="close-sheet" aria-label="Close">&#10005;</button>
+        <button class="btn btn-icon is-close" data-action="close-sheet" aria-label="Close"></button>
       </div>
       <div id="sheet-body" class="sheet-body"></div>
     </div>
@@ -173,7 +233,11 @@
 
   <div id="win-overlay" class="win-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="win-title">
     <div class="win-box">
-      <div class="win-star">&#9733;</div>
+      <div class="win-star" aria-hidden="true">
+        <svg viewBox="0 0 100 100" focusable="false">
+          <path d="M50 12 61.4 41.3 92.5 43.2 68.4 62.9 76.3 93 50 76.3 23.7 93 31.6 62.9 7.5 43.2 38.6 41.3Z"/>
+        </svg>
+      </div>
       <h1 id="win-title"></h1>
       <p id="win-reason" class="hint"></p>
       <div id="win-summary" class="win-summary"></div>

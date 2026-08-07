@@ -27,6 +27,116 @@ import { touchDriver } from './touch.mjs';
 /** Set by a host driver that leaves a finger down; lifted by releaseInput. */
 let heldTouch = null;
 
+/**
+ * Pick a card the pointer can ACTUALLY REACH, and say so when none can be.
+ *
+ * P8 round 2, found by the feel agent chasing a red `screenshot` run:
+ * `HOST.peek` chose `cards[len/2]` — the middle board card in document order —
+ * and on `peek-opponent@desktop` that landed on a card which is not hit-testable
+ * at the driver's own sample point. `elementFromPoint` there returns
+ * `div.propcol`; the card appears nowhere in `elementsFromPoint`. So no
+ * `pointerover` ever fired, no peek code ran, and the shot failed `peek:absent`
+ * — blaming the peek for a LAYOUT defect. The agent proved it pre-existing by
+ * reverting its own `peek.js`/`motion.css` to HEAD and getting the identical
+ * failure; the same gesture on a reachable card returns `peek:open 497×402`.
+ *
+ * A driver that aims at a point without checking what is at that point is not
+ * driving the client, it is guessing. This checks: for each candidate, the
+ * sample point must hit-test back to the card or something inside it. The
+ * middle-of-the-list preference is kept (it is a better picture than the first
+ * card), then it walks outward to the nearest reachable one.
+ *
+ * When NOTHING is reachable the return string names the real defect and its
+ * size — `no-reachable-card 8/32 unreachable, first blocked by div.propcol` —
+ * because "the peek is broken" and "a third of the board is clipped out of its
+ * own scroller" need different people to read them. `touchtest` reports the same
+ * root cause from the other side as controls clipped by a scrolling ancestor.
+ *
+ * Runs inside `page.evaluate`, so it takes the hit-test helper by reference from
+ * the page (`audit.installPageHelpers`) rather than importing it — but works
+ * without it too, falling back to a plain `elementFromPoint`, because the peek
+ * cares about paint order and not about `pointer-events` policy.
+ */
+export function pickReachableCard(sel, yFrac = 0.3) {
+  const cards = [...document.querySelectorAll(sel)].filter((c) => {
+    const r = c.getBoundingClientRect();
+    return r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight
+      && r.right > 0 && r.left < innerWidth;
+  });
+  if (!cards.length) return { at: null, reason: 'no-card', total: 0, unreachable: 0 };
+
+  const point = (c) => {
+    const r = c.getBoundingClientRect();
+    // Upper portion: a fanned card's lower half is covered by its neighbour.
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height * yFrac) };
+  };
+  const reaches = (c, p) => {
+    if (p.x < 0 || p.y < 0 || p.x >= innerWidth || p.y >= innerHeight) return null;
+    const hit = document.elementFromPoint(p.x, p.y);
+    if (!hit) return null;
+    return (hit === c || c.contains(hit)) ? true : hit;
+  };
+
+  // Middle first, then alternate outwards: same picture as before when the
+  // layout is healthy, nearest usable card when it is not.
+  const mid = Math.floor(cards.length / 2);
+  const order = [mid];
+  for (let d = 1; d <= cards.length; d++) {
+    if (mid - d >= 0) order.push(mid - d);
+    if (mid + d < cards.length) order.push(mid + d);
+  }
+
+  let unreachable = 0;
+  let firstBlocker = null;
+  let chosen = null;
+  for (const i of order) {
+    const c = cards[i];
+    const p = point(c);
+    const hit = reaches(c, p);
+    if (hit === true) { if (!chosen) chosen = { card: c, at: p }; continue; }
+    unreachable++;
+    if (!firstBlocker) {
+      firstBlocker = hit
+        ? `${hit.tagName.toLowerCase()}${hit.id ? '#' + hit.id : ''}`
+          + `${(hit.getAttribute?.('class') || '').trim() ? '.' + (hit.getAttribute('class') || '').trim().split(/\s+/)[0] : ''}`
+        : 'nothing (off-frame)';
+    }
+  }
+  return {
+    at: chosen ? chosen.at : null,
+    id: chosen ? chosen.card.dataset.cardId : null,
+    total: cards.length,
+    unreachable,
+    firstBlocker,
+    reason: chosen ? 'ok' : 'no-reachable-card',
+  };
+}
+
+/**
+ * NODE SIDE. Run `pickReachableCard` in the page.
+ *
+ * `page.evaluate` serialises a function without its module scope, so the picker
+ * is shipped as source and rebuilt once per document. Doing it here rather than
+ * through an installer keeps every tool that imports these drivers — screenshot,
+ * checkContrast, anything later — working without having to remember a setup
+ * call, which is the failure mode this whole file exists to prevent.
+ */
+const pickCard = (page, sel, yFrac = 0.3) => page.evaluate(
+  ([s, yf, src]) => {
+    const pick = window.__chudPickCard
+      || (window.__chudPickCard = new Function(`return (${src})`)());
+    return pick(s, yf);
+  },
+  [sel, yFrac, pickReachableCard.toString()],
+);
+
+/** The one-line explanation a failed pick owes its reader. */
+const unreachableMsg = (p, where) => (p.reason === 'no-card'
+  ? `peek:no-card (${where})`
+  : `peek:no-reachable-card (${where}) — ${p.unreachable}/${p.total} card(s) are not `
+    + `hit-testable at their own centre, first blocked by ${p.firstBlocker}; `
+    + 'this is a layout/clipping defect, not a peek defect');
+
 export const DRIVERS = {
   /** Tap hand cards until one enters target mode, then stop and hold it. */
   targeting: async () => {
@@ -243,15 +353,12 @@ export const HOST = {
     const sel = where === 'board'
       ? '#opponents [data-card-id], #self-board [data-card-id]'
       : '#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]';
-    const at = await page.evaluate((s) => {
-      const cards = [...document.querySelectorAll(s)];
-      const c = cards[Math.floor(cards.length / 2)] || cards[0];
-      if (!c) return null;
-      const r = c.getBoundingClientRect();
-      // Upper half: a fanned card's lower half is covered by its neighbour.
-      return { x: r.left + r.width / 2, y: r.top + r.height * 0.3 };
-    }, sel);
-    if (!at) return `peek:no-card (${where})`;
+    // Verified target: see pickReachableCard. Aiming at the middle card in
+    // document order sent `peek-opponent@desktop` at a card behind `.propcol`
+    // and reported `peek:absent` — the peek was fine, the layout was not.
+    const pick = await pickCard(page, sel, 0.3);
+    if (!pick.at) return unreachableMsg(pick, where);
+    const at = pick.at;
     await page.mouse.move(at.x - 30, at.y + 40);
     await page.mouse.move(at.x, at.y);
     await page.mouse.move(at.x + 1, at.y);
@@ -282,14 +389,11 @@ export const HOST = {
    * lifts it after the shutter.
    */
   'peek-hold': async (page) => {
-    const at = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll('#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]')];
-      const c = cards[Math.floor(cards.length / 2)] || cards[0];
-      if (!c) return null;
-      const r = c.getBoundingClientRect();
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height * 0.3) };
-    });
-    if (!at) return 'peek:no-card';
+    const pick = await pickCard(
+      page, '#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]', 0.3,
+    );
+    if (!pick.at) return unreachableMsg(pick, 'hand');
+    const at = pick.at;
     const cdp = await page.context().newCDPSession(page);
     const { rawTouch, touchPoint } = touchDriver(cdp);
     await rawTouch('touchStart', [touchPoint(at.x, at.y)]);
@@ -306,14 +410,17 @@ export const HOST = {
   },
 
   'drag-mid': async (page) => {
-    const from = await page.evaluate(() => {
-      const cards = [...document.querySelectorAll('#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]')];
-      const c = cards[Math.floor(cards.length / 2)] || cards[0];
-      if (!c) return null;
-      const r = c.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2, id: c.dataset.cardId };
-    });
-    if (!from) return 'drag:no-hand-card';
+    // Same verified pick as the peek: a drag that starts on a point the pointer
+    // cannot reach produces no `pointerdown` and blames the drag engine.
+    const pick = await pickCard(
+      page, '#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]', 0.5,
+    );
+    if (!pick.at) {
+      return pick.reason === 'no-card' ? 'drag:no-hand-card'
+        : `drag:no-reachable-card — ${pick.unreachable}/${pick.total} hand card(s) are not `
+          + `hit-testable at their own centre, first blocked by ${pick.firstBlocker}`;
+    }
+    const from = { ...pick.at, id: pick.id };
 
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();

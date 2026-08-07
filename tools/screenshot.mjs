@@ -258,18 +258,6 @@ async function take(h, screen, shot, theme) {
 
     await h.page.waitForTimeout(180);
 
-    /* ---- text fit, measured in the page at capture time ------------------ */
-    const clips = await h.page.evaluate(audit.auditClippedText);
-    if (clips.length) clipped.push({ shot: label, items: clips });
-
-    /* ---- text z-order, measured in the same frame -----------------------
-     * A string can be lost two ways and this is the other one. Same hit test as
-     * checkContrast.mjs, so "covered" means the same thing in both gates.     */
-    const occl = await h.page.evaluate(audit.auditOccludedText);
-    const layout = occl.filter((o) => !o.veil);
-    if (layout.length) buried.push({ shot: label, items: layout });
-    if (occl.length - layout.length) veiled.push({ shot: label, n: occl.length - layout.length });
-
     /* ---- shoot a SETTLED frame ------------------------------------------
      * Not a timeout. `--prove-theme` found `mid-game@desktop` producing two
      * DIFFERENT images from the same state and the same theme, because the
@@ -282,8 +270,34 @@ async function take(h, screen, shot, theme) {
     const frame = await stableScreenshot(h.page);
     fs.writeFileSync(file, frame.buffer);
     if (!frame.settled) unsettled.push(label);
+
+    /* ---- measure THE FRAME THAT SHIPPED ----------------------------------
+     * Both audits used to run BEFORE the shutter, off a `waitForTimeout(180)`.
+     * They therefore described a frame that no longer existed by the time the
+     * PNG was written, and their counts moved without the build moving: buried
+     * text came in at 317, then 219, then 219 across three runs of identical
+     * code. Cards were still flying, the prompt was still sliding and the coach
+     * layer was still fading in when they looked, and every one of those is a
+     * z-order answer that changes frame to frame.
+     *
+     * The settle IS the fix — `stableScreenshot` already knows when the frame
+     * stopped changing, so both audits now run against that same settled
+     * document. An audit of the review set has to be an audit of the review
+     * set, not of the 180ms before it. Still ahead of `releaseInput`, so the
+     * held-input shots (`drag-mid`, the peeks) are measured mid-gesture exactly
+     * as they are photographed.                                              */
+    const clips = await h.page.evaluate(audit.auditClippedText);
+    if (clips.length) clipped.push({ shot: label, items: clips });
+
+    /* A string can be lost two ways and this is the other one. Same hit test as
+     * checkContrast.mjs, so "covered" means the same thing in both gates.     */
+    const occl = await h.page.evaluate(audit.auditOccludedText);
+    const layout = occl.filter((o) => !o.veil);
+    if (layout.length) buried.push({ shot: label, items: layout });
+    if (occl.length - layout.length) veiled.push({ shot: label, n: occl.length - layout.length });
+
     // A host driver may still be holding the pointer down (`drag-mid`).
-    // Released only AFTER the shutter, and before the next navigation.
+    // Released only AFTER the shutter and the audits, before the next nav.
     await releaseInput(h.page);
 
     const hash = crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex');

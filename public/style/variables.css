@@ -71,37 +71,62 @@
   --set-intel:     #465767;          /* Intelligence   7.02 */
 
   /* ══ LIGHT — "apron, daylight" ════════════════════════════════════════
-     A white UI is a flashlight in the face. Warm concrete instead. */
-  --ground:      #E8E2D4;
-  --ground-deep: #D5CDBB;
-  --surface:     #F3EEE3;
-  --fg:          #14161A;            /* 14.02 on ground · 15.65 on surface */
-  /* MEASURED CORRECTION to §2. The brief publishes #5C6470 at "5.1:1", which
-     is its ratio against --surface; against --ground-deep it is 3.78 and the
-     stencil labels that live on recessed furniture (BANK, HAND, the roundel,
-     the hint marks) all sit there. tools/checkContrast.mjs failed exactly those
-     runs in light and passed them in dark. #4B525D holds every light surface:
-     ground 6.10 · surface 6.81 · ground-deep 4.98 · stock 7.43.
-     --ink-mute keeps §2 verbatim because it is a CARD token and the card only
+     A white UI is a flashlight in the face. Warm concrete instead.
+
+     ROUND-4, and this supersedes §2's published light values with measurement,
+     from two gates that failed for the same reason:
+
+     1. FIGURE-GROUND. Cream stock #FBF8F1 on §2's concrete #E8E2D4 is 1.218:1,
+        and on the §2 mat surface #F3EEE3 — which is what a card stands on for
+        most of the game — 1.091:1. At 1.09 the card and the mat are the same
+        value and the whole read was resting on a 1px edge.
+     2. ART §10's grayscale gate, rebuilt to measure ADJACENT PAIRS: "property
+        mat on #table" separated by 1.8 L* of field, "chrome panel on #table" by
+        6.8. It needs 12.
+
+     The cards cannot move (§0: a printed card is the same object in both
+     themes), so the TABLE moves — which is the thesis, not a compromise. The
+     apron stays daylight concrete and the FURNITURE steps down off it, the way
+     a rubber-matted steel tray sits on a concrete apron:
+
+         apron   --ground       #DFD7C5   L* 86  (paints 84.6 through the grain)
+         plates  --surface      #B1AB9B   L* 70  (-16: seats, HUD, sheets, bank)
+         wells   --ground-deep  #A19B8C   L* 64  (-22: the dock, chips, the log)
+         mats    derived        ~L* 65    (-21, set hue at 14% over the plate)
+         stock   --card-stock   L* 98     (+28 over a mat, +34 over the dock)
+
+     Every ink then has to hold 4.5:1 against a plate at L*70 rather than a
+     near-white one, so the ink family goes down with it — measured below. */
+  --ground:      #DFD7C5;
+  --ground-deep: #A19B8C;
+  --surface:     #B1AB9B;
+  --fg:          #14161A;            /* 12.65 on ground ·  7.91 on surface */
+  /* MEASURED CORRECTION to §2, twice over. The brief publishes #5C6470, whose
+     "5.1:1" is its ratio against the OLD near-white surface; the stencil labels
+     that carry it (Bank, Hand, the pile captions, the hint marks) live on the
+     recessed furniture, which is now L*64-70. #2E333B holds all of it:
+     ground 8.87 · surface 5.55 · ground-deep 4.59 · stock 11.98.
+     --ink-mute keeps §2 verbatim because it is a CARD token and a card only
      ever sits on stock, where 5.64 is correct. */
-  --fg-mute:     #4B525D;
+  --fg-mute:     #2E333B;
   --act:         #14161A;            /* the achromatic ink slab */
   --act-fg:      #FBF8F1;            /* 17.08 on --act */
-  --accent:      #0B4FD8;            /* AF cobalt. 5.20 on ground, 6.34 on
-                                        stock. RING ONLY — never a fill. */
-  --danger:      #C9300B;            /* 4.16 on ground: hazard MATERIAL only,
-                                        always with stripes; never bare text */
-  --danger-ink:  #A82708;            /* 5.50 on ground, 6.13 on surface — the
+  --accent:      #073FAF;            /* AF cobalt, one step deeper than §2's
+                                        #0B4FD8 because the furniture it rings
+                                        now sits at L*70: 6.27 on ground, 3.92
+                                        on surface, 8.46 on stock. RING ONLY. */
+  --danger:      #AB2707;            /* hazard MATERIAL only, always with
+                                        stripes; never bare text. 4.71 on
+                                        ground, 3.00 on the new surface — a
+                                        graphical mark at the 3:1 floor. */
+  --danger-ink:  #791904;            /* 7.51 on ground · 4.69 on surface — the
                                         text weight of danger */
-  --foil:        #8A6320;            /* 4.67 on surface. VICTORY MODAL ONLY. */
-  /* §2's foil is a MATERIAL value (rules, rims, the flood). As lettering it is
-     4.18:1 on --ground, which tools/checkContrast.mjs failed on the win tag and
-     the recap. Brass text gets its own ink: 5.71 on ground, 6.37 on surface. */
-  --foil-ink:    #705018;
-  /* §2's foil is a MATERIAL value (rules, rims, the flood). As lettering it is
-     4.18:1 on --ground, which tools/checkContrast.mjs failed on the win tag and
-     the recap. Brass text gets its own ink: 5.71 on ground, 6.37 on surface. */
-  --foil-ink:    #705018;
+  --foil:        #6E4E19;            /* 3.38 on the new surface, 5.28 on
+                                        ground. VICTORY MODAL ONLY. */
+  /* --foil is a MATERIAL value (rims, the flood). As lettering it failed the
+     win tag and the recap, so brass text gets its own ink:
+     7.55 on ground · 4.72 on surface · 10.20 on stock. */
+  --foil-ink:    #51390F;
 
   /* material: how a surface is cut into or raised off the apron */
   --shade:   rgba(74, 62, 44, .22);
@@ -117,15 +142,20 @@
      dark ink on a darkened light ground. Measured through this scrim: --fg
      15.27, --accent 5.67, --danger-ink 5.98. At night the veil is dark, which
      is the same physics with the light source removed. */
-  --scrim:   rgba(243, 238, 227, .78);
+  --scrim:   rgba(237, 231, 218, .78);
   --grain-alpha: .30;
   --rail-lift: 0%;                   /* set rails need no lift in daylight */
+  /* The first stop is a CONTACT term: a 1px hairline of the concrete's own
+     shadow, hard against the trim. Paper lying on a surface has one; it is what
+     separates the sheet from the surface before any value difference does. */
   --card-drop:
-    0 1px 1px rgba(60, 50, 32, .22),
-    0 3px 6px rgba(60, 50, 32, .17),
+    0 0 0 1px rgba(60, 50, 32, .16),
+    0 1px 2px rgba(60, 50, 32, .30),
+    0 3px 6px rgba(60, 50, 32, .18),
     0 10px 24px rgba(60, 50, 32, .13);
   --card-drop-air:
-    0 3px 3px rgba(60, 50, 32, .20),
+    0 0 0 1px rgba(60, 50, 32, .18),
+    0 3px 3px rgba(60, 50, 32, .22),
     0 8px 15px rgba(60, 50, 32, .18),
     0 25px 60px rgba(60, 50, 32, .16);
 
@@ -183,16 +213,19 @@
   :root {
     --ground:      #15171C;
     --ground-deep: #0B0D10;
-    --surface:     #20242B;
-    --fg:          #F2EEE4;          /* 15.48 on ground · 13.44 on surface */
-    --fg-mute:     #8E97A3;          /*  6.07 on ground ·  5.27 on surface */
+    /* ROUND-4, ART §10 grayscale: the night furniture sat at L*14.1 against an
+       apron that paints at L*14.1 — a 0.1 L* field step, and every seat, mat
+       and the HUD were being told apart by a hairline alone. L*30 is +16. */
+    --surface:     #404753;
+    --fg:          #F2EEE4;          /* 15.48 on ground ·  8.08 on surface */
+    --fg-mute:     #ACB7C5;          /*  8.82 on ground ·  4.60 on surface */
     --act:         #F2EEE4;
     --act-fg:      #14161A;          /* 15.63 on --act */
-    --accent:      #6E9BFF;          /*  6.66 on ground ·  5.78 on surface */
-    --danger:      #FF6A3D;          /*  6.30 on ground ·  5.47 on surface */
-    --danger-ink:  #FF6A3D;
-    --foil:        #C9A253;          /*  6.51 on surface */
-    --foil-ink:    #C9A253;          /*  7.49 on ground · 6.51 on surface */
+    --accent:      #84B9FF;          /*  8.85 on ground ·  4.62 on surface */
+    --danger:      #FF8C53;          /*  7.79 on ground ·  4.07 on surface */
+    --danger-ink:  #FF9F5E;          /*  8.86 on ground ·  4.62 on surface */
+    --foil:        #C9A253;          /*  7.49 on ground ·  3.91 on surface */
+    --foil-ink:    #DAB05B;          /*  8.83 on ground ·  4.61 on surface */
 
     --shade:   rgba(0, 0, 0, .45);
     --shade-2: rgba(0, 0, 0, .68);
@@ -223,31 +256,33 @@
    neither one can be "the fallback": each is a full statement of its theme. */
 :root[data-theme="light"] {
   color-scheme: light;
-  --ground: #E8E2D4; --ground-deep: #D5CDBB; --surface: #F3EEE3;
-  --fg: #14161A; --fg-mute: #4B525D;
+  --ground: #DFD7C5; --ground-deep: #A19B8C; --surface: #B1AB9B;
+  --fg: #14161A; --fg-mute: #2E333B;
   --act: #14161A; --act-fg: #FBF8F1;
-  --accent: #0B4FD8; --danger: #C9300B; --danger-ink: #A82708;
-  --foil: #8A6320; --foil-ink: #705018;
+  --accent: #073FAF; --danger: #AB2707; --danger-ink: #791904;
+  --foil: #6E4E19; --foil-ink: #51390F;
   --shade: rgba(74, 62, 44, .22); --shade-2: rgba(74, 62, 44, .34);
   --sheen: rgba(255, 255, 255, .70); --press-ink: #8B8474;
   --stencil: rgba(20, 22, 26, .15); --stencil-hi: rgba(20, 22, 26, .30);
-  --scrim: rgba(243, 238, 227, .78); --grain-alpha: .30; --rail-lift: 0%;
+  --scrim: rgba(237, 231, 218, .78); --grain-alpha: .30; --rail-lift: 0%;
   --card-drop:
-    0 1px 1px rgba(60, 50, 32, .22),
-    0 3px 6px rgba(60, 50, 32, .17),
+    0 0 0 1px rgba(60, 50, 32, .16),
+    0 1px 2px rgba(60, 50, 32, .30),
+    0 3px 6px rgba(60, 50, 32, .18),
     0 10px 24px rgba(60, 50, 32, .13);
   --card-drop-air:
-    0 3px 3px rgba(60, 50, 32, .20),
+    0 0 0 1px rgba(60, 50, 32, .18),
+    0 3px 3px rgba(60, 50, 32, .22),
     0 8px 15px rgba(60, 50, 32, .18),
     0 25px 60px rgba(60, 50, 32, .16);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ground: #15171C; --ground-deep: #0B0D10; --surface: #20242B;
-  --fg: #F2EEE4; --fg-mute: #8E97A3;
+  --ground: #15171C; --ground-deep: #0B0D10; --surface: #404753;
+  --fg: #F2EEE4; --fg-mute: #ACB7C5;
   --act: #F2EEE4; --act-fg: #14161A;
-  --accent: #6E9BFF; --danger: #FF6A3D; --danger-ink: #FF6A3D;
-  --foil: #C9A253; --foil-ink: #C9A253;
+  --accent: #84B9FF; --danger: #FF8C53; --danger-ink: #FF9F5E;
+  --foil: #C9A253; --foil-ink: #DAB05B;
   --shade: rgba(0, 0, 0, .45); --shade-2: rgba(0, 0, 0, .68);
   --sheen: rgba(255, 255, 255, .07); --press-ink: #000000;
   --stencil: rgba(242, 238, 228, .11); --stencil-hi: rgba(242, 238, 228, .22);

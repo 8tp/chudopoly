@@ -34,35 +34,45 @@
 // peak opacity on the screen-blend plate. Trauma decays at 1.5/s and displaces
 // by trauma² × 15px (fx/shake.js) — so .30 is 1.4px and .60 is 5.4px.
 //
+// P7 round 1 changed the trauma column. Six of the ten shake triggers were
+// under fx/shake.js's 0.1px write quantisation — set_completed was 0.22px for
+// 80ms, steal-not-victim and approach_broken 0.10px for 53ms — i.e. dead code
+// that still held a transform on #table. shake.add() now refuses anything below
+// 0.141 trauma (0.30px) outright, and the beats that deserve to be felt were
+// raised past it rather than deleted. Displacement is trauma² × 15px.
+//
 //  cue               condition       particles                              flash       trauma  haptic
 //  ───────────────── ─────────────── ────────────────────────────────────── ─────────── ─────── ───────────
 //  card_flight_start —               —                                      —           0       —
-//  card_landed       yours           5 dots ø7, 150px/s, 300ms              —           0       land 10ms
-//  card_landed       anyone else's   NOTHING                                —           0       —
+//  card_flight_abort —               — (logged only; every slide resolves)  —           0       —
+//  card_landed       yours           5–7 dots ø7 in a 2.0rad fan along       —          .16     land 10ms
+//                                    travel + contact ring 3→19 steel                   .24 big
+//  card_landed       anyone else's   contact ring 3→15 steel α.22, 130ms    —           0       —
 //  card_flip         yours + big     2 glints ø20, 380ms                    —           0       —
 //  deal_done         —               —                                      —           0       —
 //  shuffle           —               5 grey puffs 12→40, α.18               —           0       —
-//  set_completed     any             flare ø74 + ring 14→78 gold lw4.2      gold .26*   .12*    setComplete*
+//  set_completed     any             flare ø74 + ring 14→78 gold lw4.2      gold .26*   .30*    setComplete*
 //                                    440ms + 9 glints ø28, 620ms
-//  steal_landed      you stole       ring 12→52 steel lw3.0 320ms + 6 dots  —           .08     —
+//  steal_landed      you stole       ring 12→52 steel lw3.0 320ms + 6 dots  —           .20     —
+//  steal_landed      neither of you  same, no shake                         —           0       —
 //  steal_landed      AGAINST YOU     flare ø62 + ring 10→86 red lw5.5       red .30     .30     targeted
 //                                    460ms + 12 red dots ø9.5, 250px/s
 //  steal_landed      …by a CHUD      + 4 more dots, "CHUD!" float           red .38     .45     targeted
-//  opsec_clash       involving you   4-arm spark cross 5/arm white ø8.5     steel .16   .14     targeted
+//  opsec_clash       involving you   4-arm spark cross 5/arm white ø8.5     steel .16   .30     targeted
 //                                    360px/s + flare ø54; "OPSEC!" float
 //  opsec_clash       others'         same cross, 3/arm at α.5, no flare     —           0       —
-//  action_blocked    involving you   6 grey puffs 14→46, α.34, 550ms        —           .10     —
+//  action_blocked    involving you   6 grey puffs 14→46, α.34, 550ms        —           .22     —
 //  denied            —               2 red dots ø6.5, 220ms                 —           0       denied 12ms
 //  payment_done      ≥4 cards        10 gold chips ø9 along the caravan     —           0       —
 //  payment_done      you paid/were paid  float −NM red / +NM gold           —           0       —
 //  turn_start        —               —                                      —           0       —
-//  final_approach    any             ring 24→62% of the viewport diagonal   amber .22   .15     —
+//  final_approach    any             ring 24→62% of the viewport diagonal   amber .22   .34     —
 //                                    lw4.4, 800ms
-//  final_approach    AGAINST YOU     + 6 amber glints ø32                   amber .26   .15     3×60ms
-//  approach_broken   any             ring 18→34% of the diagonal, 550ms     steel .12   .08     —
+//  final_approach    AGAINST YOU     + 6 amber glints ø32                   amber .26   .34     3×60ms
+//  approach_broken   any             ring 18→34% of the diagonal, 550ms     steel .12   .28     —
 //  win               yours           380 confetti, 3.2s                     gold .30    .60     win
-//  win               someone else's  150 confetti, 2.6s                     gold .12    .12     —
-//  stalemate         any             42 grey settle puffs, 1.0–1.8s         —           0       —
+//  win               someone else's  150 confetti, 2.6s                     gold .12    .26     —
+//  stalemate         any             42 grey settle puffs, 1.0–1.8s         steel .14   0       —
 //  card_pickup       —               —                                      —           0       —
 //  card_details      —               —                                      —           0       —
 //
@@ -258,6 +268,7 @@ export function reset() {
   hap.reset();
   painted = false;
   beat.live = false;
+  chudArmed = false;
   if (pumping) { pumping = false; unsubscribe(tick); }
   overlay.clear();
   overlay.setActive(false);
@@ -266,6 +277,9 @@ export function reset() {
 /* ── the held beat ──────────────────────────────────────────────────────── */
 
 const beat = { live: false, kind: '', x: 0, y: 0, mine: false, big: false };
+
+// A CHUD was played and its theft has not resolved yet (see onEvent).
+let chudArmed = false;
 
 function hold(kind, mine, big, x, y) {
   beat.live = true; beat.kind = kind; beat.x = x; beat.y = y;
@@ -300,7 +314,7 @@ function diag() {
 const _at = { x: 0, y: 0 };
 function at(x, y) { _at.x = x; _at.y = y; return _at; }
 
-function stealFx(x, y, victim, chud) {
+function stealFx(x, y, victim, chud, thief) {
   if (!reduced) {
     if (victim) {
       // Harder than the neutral ring in all three dimensions a ring has:
@@ -318,11 +332,48 @@ function stealFx(x, y, victim, chud) {
   if (victim) {
     flash(at(x, y), 'red', chud ? 0.38 : 0.30, 0.5);
     shake(chud ? 0.45 : 0.30);
-    hap.haptic(hap.HAPTICS.targeted);
-  } else {
-    shake(0.08);
+    hap.haptic('targeted');
+  } else if (thief) {
+    // Taking something is a beat too — 0.20 = 0.60px. The old 0.08 (0.10px for
+    // 53ms) was below fx/shake's perceptual floor and is now refused there, so
+    // it was dead code that still ran the clock.
+    shake(0.20);
   }
+  // A theft between two other players gets the ring and the sparks and nothing
+  // that touches your screen. §7's restraint rule.
   pump();
+}
+
+/**
+ * CONTACT (P7 round 1). A landing used to be 5 white dots at 150px/s thrown
+ * into a FULL CIRCLE (bursts.sparks defaults `spread` to TAU) with no ring, no
+ * trauma and no squash. Measured timing was already right — the first spark was
+ * ≤16.7ms behind card_snap — so the beat was not late, it was empty: a circular
+ * scatter of dots reads as sparkle, and sparkle is what a card does when it
+ * twinkles, not when it hits a table.
+ *
+ * Three things were added and each one does a different job:
+ *   • the spray is DIRECTIONAL, a 2.0rad fan thrown along the travel vector
+ *     (anim/cues carries it now) — dust pushed ahead of the card, so the eye
+ *     reads which way the card came from even after it has stopped;
+ *   • a small hard ring, 3→19px in 180ms — the only element that reads as a
+ *     surface being struck rather than as material leaving;
+ *   • trauma, on YOUR landings only, above fx/shake's 0.141 perceptual floor.
+ * The squash lives in anim/flight.js (easeOutBack on scale), where the card is.
+ */
+const LAND_CEILING = 0.34;     // see CUE.LANDED — caravans must not stack to the cap
+
+function landFx(x, y, dx, dy, big) {
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > 12) {
+    B.sparks(x, y, big ? 7 : 5, COL.WHITE, {
+      speed: big ? 210 : 165, life: 0.30, size: 7, grav: 380,
+      dir: Math.atan2(dy, dx), spread: 2.0,
+    });
+  } else {
+    B.sparks(x, y, 5, COL.WHITE, { speed: 150, life: 0.30, size: 7 });
+  }
+  B.ring(x, y, 3, big ? 26 : 19, COL.STEEL, 0.18, big ? 2.4 : 1.8, big ? 0.5 : 0.36);
 }
 
 function onCue(payload) {
@@ -337,9 +388,15 @@ function onCue(payload) {
   // tool happened to call applyState, which makes tools/screenshot.mjs
   // non-reproducible. Cues and haptics are still logged — only the pixels stop.
   if (choreographer.isInstant()) {
-    if (kind === CUE.WIN && mine) hap.haptic(hap.HAPTICS.win);
-    else if (kind === CUE.SET_COMPLETED && mine) hap.haptic(hap.HAPTICS.setComplete);
-    else if (kind === CUE.LANDED && mine) hap.haptic(hap.HAPTICS.land);
+    // Recording is not vibrating. The instant path exists to stop PARTICLES
+    // depending on when a tool called applyState; the haptic log is exactly the
+    // thing a tool is trying to read, so every pattern still goes through the
+    // same map the performed path uses. (It used to forward only win /
+    // setComplete / land, which made `denied` and `targeted` unassertable by
+    // any tool — a UI-agent repro: FX_CUE {kind:'denied'} under ?harness=1
+    // recorded nothing, the same cue with setInstant(false) recorded 12ms.)
+    const pattern = HAPTIC_FOR_CUE[kind];
+    if (pattern && (mine || ALWAYS_HAPTIC[kind])) hap.haptic(pattern);
     return;
   }
 
@@ -348,15 +405,35 @@ function onCue(payload) {
   // every card landing that is not yours), and a game that only ever fires
   // those must never allocate a canvas backing store. §0.8's idle-cost rule.
   if (!EFFECTFUL[kind]) return;
-  if (kind === CUE.LANDED && !mine) return;
 
   if (beat.live) expireBeat();
   overlay.ensure();
 
   switch (kind) {
     case CUE.LANDED:
-      if (!reduced) B.sparks(x, y, 5, COL.WHITE, { speed: 150, life: 0.30, size: 7 });
-      hap.haptic(hap.HAPTICS.land);
+      if (!mine) {
+        // Everyone else's landings used to be NOTHING — on a 4-player table
+        // that is ~90% of the 159 landings in a game rendered audio-only, so
+        // the felt never acknowledged three quarters of the game. One thin
+        // 130ms contact ring is the whole budget: it is present at the corner
+        // of the eye and it does not compete with your own cards, which keep
+        // the spray, the trauma and the tick.
+        if (!reduced) B.ring(x, y, 3, 15, COL.STEEL, 0.13, 1.4, 0.22);
+        break;
+      }
+      if (!reduced) landFx(x, y, payload.dx || 0, payload.dy || 0, big);
+      // 0.16 → 0.38px, 0.24 → 0.86px (fx/shake: trauma² × 15). Above the 0.141
+      // floor, below the point where reading the felt gets hard: a card you
+      // played arriving is a thump you feel, not an earthquake.
+      //
+      // CEILING, not a raw add. Landings come in caravans — a 5-card payment
+      // into your bank is five of them inside 350ms and trauma only decays at
+      // 1.5/s, so five unconditional adds reach shake.js's 0.75 cap (8.4px) and
+      // a routine payment shakes the table harder than the win (0.60). Above
+      // LAND_CEILING a landing adds nothing, which puts a whole caravan at
+      // ~0.50 (3.7px) and leaves the cap for the beats that earned it.
+      if (shakeSys.level() < LAND_CEILING) shake(big ? 0.24 : 0.16);
+      hap.haptic('land');
       break;
 
     case CUE.FLIP:
@@ -377,8 +454,8 @@ function onCue(payload) {
       }
       if (mine) {
         flash(at(x, y), 'gold', 0.26, 0.55);
-        shake(0.12);
-        hap.haptic(hap.HAPTICS.setComplete);
+        shake(0.30);                       // was 0.12 = 0.22px for 80ms: invisible
+        hap.haptic('setComplete');
       }
       break;
 
@@ -395,19 +472,23 @@ function onCue(payload) {
       }
       if (mine) {
         flash(at(x, y), 'steel', 0.16, 0.34);
-        shake(0.14);
-        hap.haptic(hap.HAPTICS.targeted);
+        shake(0.30);                       // was 0.14 = 0.29px
+        hap.haptic('targeted');
       }
       break;
 
     case CUE.ACTION_BLOCKED:
       if (!reduced) B.puff(x, y, 6, COL.GRAY, { size0: 14, size1: 46, alpha: 0.34, life: 0.55 });
-      if (mine) shake(0.10);
+      // Was 0.10 = 0.15px, with a comment claiming it existed so four in a row
+      // would be felt. Trauma decays at 1.5/s; four blocked actions never land
+      // inside the same 400ms, so the stack it was budgeted for cannot happen.
+      // An OPSEC chain resolving against you is a beat — 0.22 = 0.73px.
+      if (mine) shake(0.22);
       break;
 
     case CUE.DENIED:
       if (!reduced) B.sparks(x, y, 2, COL.RED, { speed: 70, life: 0.22, size: 6.5, grav: 200 });
-      hap.haptic(hap.HAPTICS.denied);
+      hap.haptic('denied');
       break;
 
     case CUE.PAYMENT_DONE:
@@ -424,26 +505,30 @@ function onCue(payload) {
         if (!mine) B.glints(x, y, 6, COL.GOLD, { size: 32, life: 0.7, radius: 34, rise: 10 });
       }
       flash(at(x, y), 'amber', mine ? 0.22 : 0.26, 0.9);
-      shake(0.15);
-      if (!mine) hap.haptic(hap.HAPTICS.finalApproach);
+      shake(0.34);                         // was 0.15 = 0.34px, on the game's peak
+      if (!mine) hap.haptic('finalApproach');
       break;
     }
 
     case CUE.APPROACH_BROKEN:
       if (!reduced) B.ring(x, y, 18, diag() * 0.34, COL.STEEL, 0.55, 3.0, 0.8);
       flash(at(x, y), 'steel', 0.12, 0.34);
-      shake(0.08);
+      shake(0.28);                         // was 0.08 = 0.10px for 53ms: nothing
       break;
 
     case CUE.WIN:
       if (!reduced) B.confetti(overlay.width(), overlay.height(), mine ? 380 : 150, { life: mine ? 3.2 : 2.6 });
       flash(null, 'gold', mine ? 0.30 : 0.12, mine ? 0.8 : 0.6);
-      shake(mine ? 0.60 : 0.12);
-      if (mine) hap.haptic(hap.HAPTICS.win);
+      shake(mine ? 0.60 : 0.26);           // others' was 0.12 = 0.22px
+      if (mine) hap.haptic('win');
       break;
 
     case CUE.STALEMATE:
       if (!reduced) B.settle(overlay.width(), overlay.height(), 42);
+      // §0.9 kept the flash everywhere else and forgot it here, so the one
+      // ending that is not a win had NO visual at all under reduced motion —
+      // the game simply stopped. A steel wash is opacity-only and legal.
+      flash(null, 'steel', 0.14, 0.9);
       break;
 
     default:
@@ -458,6 +543,25 @@ function onCue(payload) {
  * HUD already says whose it is), card_pickup and card_details (the finger under
  * the card is the feedback).
  */
+/**
+ * Cue → haptic, for the instant path only. The performed path keeps its
+ * patterns inline in the switch above, where the rest of each effect lives; this
+ * is the same table flattened so a harness run records what a player would have
+ * felt. `denied` is in ALWAYS_HAPTIC because it is only ever emitted at the
+ * player who was refused, and final_approach because §7's alarm fires when the
+ * armed player is somebody ELSE.
+ */
+const HAPTIC_FOR_CUE = Object.freeze({
+  [CUE.LANDED]: 'land',
+  [CUE.DENIED]: 'denied',
+  [CUE.SET_COMPLETED]: 'setComplete',
+  [CUE.OPSEC_CLASH]: 'targeted',
+  [CUE.STEAL_LANDED]: 'targeted',
+  [CUE.FINAL_APPROACH]: 'finalApproach',
+  [CUE.WIN]: 'win',
+});
+const ALWAYS_HAPTIC = Object.freeze({ [CUE.DENIED]: 1, [CUE.FINAL_APPROACH]: 1 });
+
 const EFFECTFUL = Object.freeze({
   [CUE.LANDED]: 1, [CUE.FLIP]: 1, [CUE.SHUFFLE]: 1, [CUE.SET_COMPLETED]: 1,
   [CUE.STEAL_LANDED]: 1, [CUE.OPSEC_CLASH]: 1, [CUE.ACTION_BLOCKED]: 1,
@@ -475,13 +579,22 @@ function onEvent(ev) {
     case 'steal':
     case 'set_stolen': {
       if (!claim(CUE.STEAL_LANDED)) break;
-      stealFx(beat.x, beat.y, ev.from === self, ev.action === 'chud');
+      const bx = beat.x, by = beat.y;
+      const chud = ev.action === 'chud' || chudArmed;
+      stealFx(bx, by, ev.from === self, chud, ev.actor === self);
+      // "CHUD!" belongs at the CRIME. It used to be floated on `play_action`,
+      // over the ACTOR's board, ~1.2s before the theft and — measured on a
+      // 4-player 1280×720 table — a full board's width away from the card
+      // actually being taken. The beat coordinate is the stolen card itself
+      // (choreographer.crimeEl), so the label now lands on it.
+      if (chud) floatText('CHUD!', bx, by - 18, 'red', 1.35);
+      chudArmed = false;
       break;
     }
 
     case 'swap': {
       if (!claim(CUE.STEAL_LANDED)) break;
-      stealFx(beat.x, beat.y, ev.target === self, false);
+      stealFx(beat.x, beat.y, ev.target === self, false, ev.actor === self);
       break;
     }
 
@@ -502,19 +615,38 @@ function onEvent(ev) {
     }
 
     // No cue exists for play_action (the card is already on the discard pile by
-    // the time the engine says who it was aimed at). The label is the whole
-    // effect: CHUD is the one card that can take a property out of a finished
-    // set, and it should announce itself.
+    // the time the engine says who it was aimed at), so the CHUD label is armed
+    // here and fired on the `steal` that follows, at the card being taken. If
+    // the steal never comes — OPSEC blocked it — the arming expires below and
+    // nothing is claimed, which is correct: nothing was stolen.
     case 'play_action':
-      if (ev.action === 'chud') {
-        const at = centreOf(table.boardEl(ev.actor));
-        floatText('CHUD!', at.x, at.y, 'red', 1.35);
-      }
+      if (ev.action === 'chud') chudArmed = true;
       break;
 
+    case 'action_blocked':
+      chudArmed = false;
+      break;
+
+    // The engine now says how many sets that player holds AFTER this one
+    // (set_completed.total, P7 round 1). Three is not one more than two — it is
+    // the arming of §3.10's final approach, and the very next event is usually
+    // `final_approach`. So the third gets a second ring on top of the cue's own
+    // and, if it is yours, the gold goes up a stop. Nothing is added for a
+    // first or second set: the escalation only means something if the earlier
+    // ones did not already spend it.
+    case 'set_completed': {
+      if (!(ev.total >= 3)) break;
+      const spot = centreOf(table.boardEl(ev.actor));
+      if (!reduced) B.ring(spot.x, spot.y, 30, diag() * 0.34, COL.GOLD, 0.6, 3.4, 0.7);
+      if (ev.actor === self) { flash(at(spot.x, spot.y), 'gold', 0.22, 0.7); shake(0.24); }
+      pump();
+      break;
+    }
+
     case 'opsec': {
-      const at = centreOf(table.zoneFor('discard'));
-      floatText('OPSEC!', at.x, at.y, 'steel', 1.35);
+      chudArmed = false;
+      const spot = centreOf(table.zoneFor('discard'));
+      floatText('OPSEC!', spot.x, spot.y, 'steel', 1.35);
       break;
     }
 

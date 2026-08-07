@@ -18,14 +18,13 @@ function shuffle(arr) {
   return arr;
 }
 
-function createBotRoom(playerConfigs, seed) {
+function createBotRoom(playerConfigs, seed, winRule) {
   const players = playerConfigs.map((cfg, i) => ({
     id: 'p' + i, name: cfg.name, isBot: true, botMode: cfg.mode,
   }));
-  const state = G.createGame(
-    players.map(p => ({ id: p.id, name: p.name })),
-    seed === undefined || seed === null ? {} : { seed }
-  );
+  const options = { winRule: G.normalizeWinRule(winRule) };
+  if (seed !== undefined && seed !== null) options.seed = seed;
+  const state = G.createGame(players.map(p => ({ id: p.id, name: p.name })), options);
   return { code: 'SIM', players, state, clients: {} };
 }
 
@@ -35,8 +34,8 @@ function getBotMode(room, botId) {
 
 /* ── Deep-analysis game runner ─────────────────────────────────────── */
 
-function runGame(playerConfigs, maxTurns = 500, seed) {
-  const room = createBotRoom(playerConfigs, seed);
+function runGame(playerConfigs, maxTurns = 500, seed, winRule) {
+  const room = createBotRoom(playerConfigs, seed, winRule);
   const state = room.state;
 
   // Per-player tracking
@@ -298,7 +297,7 @@ function runGame(playerConfigs, maxTurns = 500, seed) {
 // runMatches({ players:['neutral','chud',...], games, seed })
 //   → { games, wins, winrates, seatWins, seatWinrates, firstPlayerWin, avgTurns,
 //       medianTurns, stalemates, stalemateRate, decided }
-function runMatches({ players, games = 500, seed = null, maxTurns = 300 } = {}) {
+function runMatches({ players, games = 500, seed = null, maxTurns = 300, winRule } = {}) {
   const modes = (players && players.length ? players : ['neutral', 'neutral', 'neutral', 'neutral']).slice();
   const configs = modes.map((mode, i) => ({ name: mode.slice(0, 4) + i, mode }));
 
@@ -314,7 +313,7 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300 } = {}) 
   for (let g = 0; g < games; g++) {
     const gameSeed = seed === null || seed === undefined ? undefined : `${seed}:${g}`;
     setRng(gameSeed === undefined ? null : G.makeRng('bot:' + gameSeed));
-    const result = runGame(configs, maxTurns, gameSeed);
+    const result = runGame(configs, maxTurns, gameSeed, winRule);
     totalTurns += result.turns;
     turnList.push(result.turns);
     armings += result.armings;
@@ -343,7 +342,10 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300 } = {}) 
     firstPlayerWin: +(seatWins[0] / games * 100).toFixed(2),
     avgTurns: +(totalTurns / games).toFixed(1),
     medianTurns: sorted[Math.floor(games / 2)],
+    p90Turns: sorted[Math.min(sorted.length - 1, Math.floor(games * 0.9))],
     maxTurns: maxTurns_,
+    turnList: sorted,
+    winRule: G.normalizeWinRule(winRule),
     armings, breaks, breaksByOpponent, armingsOffTurn,
     offTurnArmRate: armings > 0 ? +(armingsOffTurn / armings * 100).toFixed(1) : 0,
     armingsPerGame: +(armings / games).toFixed(2),

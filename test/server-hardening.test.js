@@ -261,6 +261,91 @@ test('leaving a lobby deletes the room and leaves no timer running', async () =>
   ws.close();
 });
 
+/* ── §3.10 win-rule toggle: the lobby payload over the wire ──────────── */
+
+async function startTwoHumanRoom(name, extra) {
+  const host = await openClient();
+  send(host, { type: 'create_room', name });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  const guest = await openClient();
+  send(guest, { type: 'join_room', code: joined.code, name: name + 'G' });
+  await waitFor(guest, m => m.type === 'joined');
+  await sleep(150);
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30, ...extra });
+  const state = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  return { host, guest, joined, state };
+}
+
+test('start_game carries winRule and getPlayerView reports the active mode', async () => {
+  for (const rule of ['finalApproach', 'mdFaithful', 'instant']) {
+    const { host, guest, state } = await startTwoHumanRoom('WR', { winRule: rule });
+    assert.equal(state.game.winRule, rule, `room should run ${rule}`);
+    assert.ok(state.game.events.some(e => e.t === 'game_start' && e.winRule === rule));
+    if (rule === 'instant') assert.deepEqual(state.game.armedIds, []);
+    send(host, { type: 'leave_room' }); send(guest, { type: 'leave_room' });
+    host.close(); guest.close();
+    await sleep(120);
+  }
+});
+
+test('an omitted winRule is accepted and means finalApproach', async () => {
+  const { host, guest, state } = await startTwoHumanRoom('Legacy', {});
+  assert.equal(state.game.winRule, 'finalApproach');
+  send(host, { type: 'leave_room' }); send(guest, { type: 'leave_room' });
+  host.close(); guest.close();
+});
+
+test('an invalid winRule is refused without starting the game', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'BadRule' });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  send(host, { type: 'add_bot', mode: 'neutral' });
+  await sleep(150);
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30, winRule: 'sudden_death' });
+  const err = await waitFor(host, m => m.type === 'error', 1500);
+  assert.ok(err, 'a bad win rule is rejected at the protocol boundary');
+  assert.match(err.message, /win rule/i);
+  assert.ok(joined);
+  send(host, { type: 'leave_room' });
+  host.close();
+});
+
+test('the win rule is sticky across a rematch', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'Sticky' });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  send(host, { type: 'add_bot', mode: 'neutral' });
+  await sleep(150);
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30, winRule: 'instant' });
+  const first = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  assert.equal(first.game.winRule, 'instant');
+
+  // Play to a finish, then rematch without restating the rule.
+  const deadline = Date.now() + 25000;
+  while (Date.now() < deadline) {
+    const latest = host._messages.filter(m => m.type === 'state').pop();
+    const g = latest?.game;
+    if (!g) { await sleep(120); continue; }
+    if (g.phase === 'finished') break;
+    if (g.currentPlayerId === joined.playerId && !g.pendingAction) {
+      send(host, { type: 'end_turn' });
+    } else if ((g.responders || []).includes(joined.playerId)) {
+      send(host, { type: 'respond', response: 'accept' });
+    }
+    await sleep(120);
+  }
+  const finished = host._messages.filter(m => m.type === 'state').pop();
+  assert.equal(finished.game.phase, 'finished', 'the game reached an ending');
+
+  host._messages.length = 0;
+  send(host, { type: 'rematch' });
+  const again = await waitFor(host, m => m.type === 'state' && m.game?.phase === 'playing', 4000);
+  assert.ok(again, 'rematch started');
+  assert.equal(again.game.winRule, 'instant', 'the room setting survives the rematch');
+  send(host, { type: 'leave_room' });
+  host.close();
+});
+
 /* ── owner directive: automatic turn draw over the wire ──────────────── */
 
 test('a reconnecting player never draws twice and never sees a draw phase', async () => {

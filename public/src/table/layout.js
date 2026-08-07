@@ -44,6 +44,27 @@ export function zoneFor(kind, ownerId, color) {
 }
 
 /**
+ * An opponent's empty colour column is `display:none` (table.css hides
+ * `.board-opponent .propcol[data-empty="1"]` so a 10-colour board fits a
+ * 4-player strip). paintBoard clears the flag — but only at the RECONCILE, at
+ * the end of the job, which is after the choreography that put a card there.
+ *
+ * Measured consequence: a property stolen into a colour the thief did not have
+ * yet was reparented into a zero-size box, so table/moveCard's FLIP measured
+ * `last` at 0×0, the card flew to viewport (0,0), and the steal_landed cue
+ * anchored there too — four of the ten steals in the recorded game fired their
+ * red flash in the top-left corner of the screen with no card anywhere near it.
+ *
+ * A column with a card in it is not empty. Saying so here, at the moment the
+ * card arrives, is the truth; reconcile recomputes it either way.
+ */
+export function revealZone(zone) {
+  if (!zone || !zone.closest) return;
+  const col = zone.closest('.propcol[data-empty="1"]');
+  if (col) col.removeAttribute('data-empty');
+}
+
+/**
  * Does this zone belong to the viewing player? Falls out of the key scheme
  * above: my zones are never suffixed with a seat id. Drives the `mine` flag on
  * every FX cue (§7 wants your own cards louder and centred), so it has to be
@@ -67,6 +88,28 @@ export function mount(rootEl, mySeatId) {
   zones.set('deck', document.querySelector('[data-zone="deck"]'));
   zones.set('discard', document.querySelector('[data-zone="discard"]'));
   zones.set('hand', document.querySelector('[data-zone="hand"]'));
+}
+
+/**
+ * The seat id arrives AFTER mount(): main.js boots the table with
+ * store.self.id (null) and only learns the id from the `joined` message.
+ *
+ * Measured on the bug this exists for (P7 round 1, scratchpad/frames/deal):
+ * without it, zoneKeyFor('hand', myId) answered `hand:<uuid>` for the whole
+ * opening deal, zoneEl() returned null, moveCard() bailed, and the first
+ * 1,916ms of every game was a frozen table reading "DECK 0" followed by 26
+ * cards teleporting in at the job-ending reconcile — the first thing a player
+ * ever sees, and it did not animate at all.
+ *
+ * Clearing seatKey rather than trusting it: the key embeds selfId, so a rebuild
+ * would happen anyway at the next syncSeats, but zones registered under the old
+ * keys are unreachable until then and that is exactly the hole above.
+ */
+export function setSelf(id) {
+  if (id === selfId) return false;
+  selfId = id;
+  seatKey = '';
+  return true;
 }
 
 /** Rebuild boards only when the seating changes. Returns true if it rebuilt. */

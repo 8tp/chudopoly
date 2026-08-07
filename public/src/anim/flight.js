@@ -44,6 +44,7 @@ const MAX_EVENT_MS = 600;
 // 0.9 lands with ~4.5% overshoot. 1.70158 (the classic constant) put a card
 // 19px past a bank slot on a 1280px table and read as a bounce, not a landing.
 const BACK = 0.9;
+const SCALE_BACK = 0.55;  // see step(): the landing squash, measured in the comment there
 
 const pool = [];
 const live = [];
@@ -57,7 +58,7 @@ function take() {
   return {
     kind: K_FLY, node: null, t: 0, delay: 0, dur: 0.3, started: false,
     x0: 0, y0: 0, x1: 0, y1: 0, s0: 1, s1: 1, r0: 0, r1: 0,
-    ax: 0, ay: 0, env: 1, spin: 0,
+    ax: 0, ay: 0, env: 1, spin: 0, bump: 0,
     flipAt: -1, flipUp: true,
     cx0: 0, cy0: 0, cx1: 0, cy1: 0,
     mine: false, big: false, quiet: false,
@@ -95,14 +96,37 @@ function drop(r, applyEnd) {
   const i = live.indexOf(r);
   if (i >= 0) { live[i] = live[live.length - 1]; live.pop(); }
   if (applyEnd) finish(r);
-  else if (r.node && r.node[slotOf(r.kind)] === r) r.node[slotOf(r.kind)] = null;
+  else {
+    abort(r);
+    if (r.node && r.node[slotOf(r.kind)] === r) r.node[slotOf(r.kind)] = null;
+  }
   recycle(r);
+}
+
+/**
+ * EVERY STARTED FLIGHT RESOLVES. Measured over a full seeded game: 173
+ * card_slide cues against 159 card_snap cues — 14 swishes a game that begin and
+ * are never answered, because the card was superseded mid-air (stolen while
+ * landing, re-flown by a reconcile, picked up by a finger) and the record was
+ * dropped without finish(). An unanswered swish is a sound with no consequence,
+ * which is the definition of noise.
+ *
+ * So a dropped K_FLY that had already announced itself announces its ending
+ * too. It is a distinct cue, not a fake landing: nothing touched the felt.
+ */
+function abort(r) {
+  if (!r.node || r.kind !== K_FLY || !r.started || r.quiet) return;
+  r.quiet = true;                                        // never twice
+  r.node.classList.remove('is-flying');
+  r.node.classList.remove('is-hero');
+  cue(CUE.FLIGHT_ABORT, r.mine, r.big, r.cx1 || r.cx0, r.cy1 || r.cy0);
 }
 
 function recycle(r) {
   r.node = null;
   r.onDone = null;
   r.started = false;
+  r.bump = 0;                              // pooled: a hero must not haunt the next flight
   r.wx = r.wy = r.ws = r.wr = NaN;
   if (pool.length < 96) pool.push(r);
 }
@@ -118,8 +142,9 @@ function tick(dt) {
     // directly. Anything we write there is a tug-of-war the player feels.
     if (!node || !node.isConnected || node.classList.contains('is-dragging')) {
       live[i] = live[live.length - 1]; live.pop();
+      abort(r);
       if (node && node[slotOf(r.kind)] === r) node[slotOf(r.kind)] = null;
-      if (node && r.kind === K_FLY) node.classList.remove('is-flying');
+      if (node && r.kind === K_FLY) { node.classList.remove('is-flying'); node.classList.remove('is-hero'); }
       recycle(r);
       continue;
     }
@@ -155,10 +180,18 @@ function step(r, p) {
   if (r.kind === K_FLY) {
     const e = easeOutBack(p, BACK);
     const env = r.env === 1 ? Math.sin(Math.PI * p) : Math.sin(Math.PI * Math.pow(p, r.env));
+    // CONTACT. Scale used easeOutCubic — monotonic, so a card arrived at its
+    // final size and simply stopped, and every landing on this table read as a
+    // teleport with a sound on it. easeOutBack on the SAME axis costs nothing
+    // and gives the landing a direction: a card growing (deck 26px → hand 62px)
+    // overshoots ~2.5% and settles back, a card shrinking (hand 62px → a 14px
+    // property slot) undershoots and springs open. That is a squash, and it is
+    // free. SCALE_BACK 0.55 not 0.9: at 0.9 a hand card's 4.5% overshoot was
+    // 2.8px of edge movement and read as a bounce.
     write(r, node,
       r.x0 + (r.x1 - r.x0) * e + r.ax * env,
       r.y0 + (r.y1 - r.y0) * e + r.ay * env,
-      r.s0 + (r.s1 - r.s0) * easeOutCubic(p),
+      r.s0 + (r.s1 - r.s0) * easeOutBack(p, SCALE_BACK) + r.bump * env,
       r.r0 + (r.r1 - r.r0) * e + r.spin * env);
     if (r.flipAt >= 0 && p >= r.flipAt) {
       const at = r.flipAt; r.flipAt = -1;
@@ -190,8 +223,11 @@ function finish(r) {
   if (r.kind === K_FLY) {
     write(r, node, r.x1, r.y1, r.s1, r.r1);
     node.classList.remove('is-flying');
+    node.classList.remove('is-hero');
     if (r.flipAt >= 0) { const up = r.flipUp; r.flipAt = -1; setFacing(node, up); }
-    if (!r.quiet) cue(CUE.LANDED, r.mine, r.big, r.cx1, r.cy1);
+    // The travel vector rides along so fx/ can spray the impact in the direction
+    // the card was going instead of in a full circle (which reads as sparkle).
+    if (!r.quiet) cue(CUE.LANDED, r.mine, r.big, r.cx1, r.cy1, r.cx1 - r.cx0, r.cy1 - r.cy0);
   } else if (r.kind === K_FLIP) {
     node.style.removeProperty('--flip');
     node.setAttribute('data-facing', r.flipUp ? 'up' : 'down');
@@ -322,6 +358,9 @@ export function fly(node, o) {
   r.r0 = o.tiltFrom == null ? rt : o.tiltFrom; r.r1 = rt;
   r.env = o.env || 1;
   r.spin = o.spin || 0;
+  // Hero lift (table/moveCard sizes it): extra scale on the sin envelope, so it
+  // is exactly 0 at both ends and the measured FLIP still lands on 1.
+  r.bump = o.bump || 0;
   r.flipAt = o.flipTo == null ? -1 : (o.flipAt == null ? 0.55 : o.flipAt);
   r.flipUp = !!o.flipTo;
   r.mine = !!o.mine; r.big = !!o.big; r.quiet = !!o.quiet;
@@ -354,6 +393,7 @@ export function fly(node, o) {
   // caravan still has to sit above the pile it is leaving.
   write(r, node, r.x0, r.y0, r.s0, r.r0);
   node.classList.add('is-flying');
+  if (r.bump > 0) node.classList.add('is-hero');
   attach(r);
   return r;
 }

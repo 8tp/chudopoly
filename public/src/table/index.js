@@ -40,6 +40,12 @@ const DISCARD_TILT = 7;       // §5: seeded per card id, deterministic
 // steal (≈580px on desktop) at the 420 ceiling.
 const MS_MIN = 180, MS_MAX = 420, MS_PER_PX = 0.42;
 
+// Apex width of a hero flight (a steal, a set being taken, a swap). 92px puts
+// the card's name band at ~13px on a 1280×720 table — the smallest size the
+// name was still readable at in the frame captures. Bigger than ~110 and the
+// card covers the board it is being taken from.
+const HERO_APEX_PX = 92;
+
 const EMPTY = new Set();
 
 const metrics = { drift: 0, lastCorrections: [] };
@@ -58,17 +64,99 @@ export function mount(mySeatId) {
   layout.mount(document.getElementById('table'), mySeatId);
 }
 
-export function setSelf(id) { selfId = id; }
+export function setSelf(id) {
+  selfId = id;
+  // layout.js keys every zone off the seat id ('hand' vs 'hand:<uuid>'), and it
+  // used to learn that id only at mount() — before `joined` arrives — and then
+  // only inside syncSeats(), which first runs at the job-ENDING reconcile. The
+  // whole opening deal therefore addressed `hand:<uuid>`, got null, and did not
+  // move. Propagating here is the fix; see layout.setSelf.
+  layout.setSelf(id);
+}
 export function driftCount() { return metrics.drift; }
 export function resetDrift() { metrics.drift = 0; metrics.lastCorrections.length = 0; }
 export function lastCorrections() { return metrics.lastCorrections.slice(); }
 export function reducedMotion() { return reduceMotion; }
+
+/**
+ * Build the STRUCTURE a job's choreography is about to address, before any of
+ * its events run. Nothing here places a card — it seats the boards and paints
+ * the piles so that zoneEl()/boardEl() answer during the very first job.
+ *
+ * Measured: without it the first job of every game ran against zero boards, so
+ * every cue anchored on boardEl(actor) fired at viewport (0,0) and the opening
+ * deal had nowhere to deal TO. reconcile() called syncSeats itself, at the end,
+ * which is 1.9s too late.
+ */
+export function prepare(snapshot) {
+  if (!snapshot) return false;
+  const rebuilt = layout.syncSeats(snapshot, selfId);
+  if (rebuilt) structuralPending = true;
+  // A deal has to come off a visible deck. The count is the POST-deal number —
+  // the same "snapshot is truth" lie the whole animation tells — and it beats
+  // the measured alternative, which was dealing 20 cards off a stack labelled
+  // "DECK 0".
+  syncBacks(layout.zoneEl('deck'), Math.min(snapshot.deckCount || 0, DECK_DEPTH), { lift: DECK_LIFT });
+  setText(document.getElementById('deck-count'), String(snapshot.deckCount ?? 0));
+  return rebuilt;
+}
+let structuralPending = false;
+
+/**
+ * Fly `count` face-down backs from the deck into a face-down zone (an opponent's
+ * hand). Opponent deals and draws carry no card ids by design (§4 redaction), so
+ * there is nothing for moveCard to move — before this they were a `break`, and
+ * three of the four events in the opening deal animated nothing at all.
+ *
+ * The backs it flies ARE the backs reconcile will keep: syncBacks() pools by
+ * count, so adding them here and letting the reconcile re-pose them costs no
+ * churn and cannot drift (a pooled back has no card id).
+ *
+ * @returns {number} backs actually launched
+ */
+export function dealBacks(zoneKey, count, opts = {}) {
+  if (!(count > 0)) return 0;
+  const zone = layout.zoneEl(zoneKey);
+  const deck = layout.zoneEl('deck');
+  if (!zone || !deck) return 0;
+  const dr = deck.getBoundingClientRect();
+  if (!dr.width) return 0;
+  const have = zone.childElementCount;
+  const want = Math.min(have + count, HAND_BACKS);
+  if (want <= have) return 0;
+  syncBacks(zone, want, { tilt: 4 });
+  if (reduceMotion) return 0;
+
+  const dcx = dr.left + dr.width / 2, dcy = dr.top + dr.height / 2;
+  const stagger = opts.stagger || 0;
+  let i = 0, launched = 0;
+  for (let child = zone.firstElementChild; child; child = child.nextElementSibling, i++) {
+    if (i < have) continue;
+    const r = child.getBoundingClientRect();
+    if (!r.width) continue;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const dx = dcx - cx, dy = dcy - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    flight.fly(child, {
+      dx, dy,
+      scale: r.width > 0 ? dr.width / r.width : 1,
+      dur: clamp(MS_MIN + dist * MS_PER_PX, MS_MIN, MS_MAX),
+      delay: launched * stagger,
+      spin: (hash1(i + 7) * 2 - 1) * 10,
+      mine: false, big: false, key: i,
+      cx0: dcx, cy0: dcy, cx1: cx, cy1: cy,
+    });
+    launched++;
+  }
+  return launched;
+}
 
 export function spawnCard(card, zoneKey, opts = null) {
   const node = cardNode(card);
   if (!node) return null;
   const zone = layout.zoneEl(zoneKey);
   if (zone && node.parentElement !== zone) {
+    layout.revealZone(zone);
     zone.appendChild(node);
     setRest(node, 0, 0, 0);
   }
@@ -124,7 +212,17 @@ export function moveCard(id, zoneKey, opts = {}) {
   }
   if (same && !opts.force) return false;
 
-  const mine = opts.mine == null ? layout.isMineZone(zoneKey) : !!opts.mine;
+  // `mine` is EITHER END, not the destination. Destination-only got the two
+  // moments that matter exactly backwards: your own property being stolen
+  // (properties:<you>:<colour> → properties:<thief>:<colour>) and your own CHUD
+  // hitting the discard both resolved false, so audio played them −7dB,
+  // off-centre and lowpassed as if they had happened to somebody else.
+  const fromKey = node.parentElement ? node.parentElement.getAttribute('data-zone') : null;
+  const mine = opts.mine == null
+    ? (layout.isMineZone(zoneKey) || layout.isMineZone(fromKey))
+    : !!opts.mine;
+
+  layout.revealZone(zone);
 
   if (opts.animate === false || flight.isDragging(node)) {
     zone.appendChild(node);
@@ -147,7 +245,12 @@ export function moveCard(id, zoneKey, opts = {}) {
     cue(CUE.FLIGHT_START, mine, !!opts.big, cx, cy);
     // A card that turns over is still a beat even when it does not turn.
     if (opts.flip != null) cue(CUE.FLIP, mine, !!opts.big, cx, cy);
-    flight.fade(node, { dur: 120, onDone: () => cue(CUE.LANDED, mine, !!opts.big, cx, cy) });
+    // LANDED fires NOW, not on the fade's onDone. Under reduced motion the card
+    // is already at its destination the instant it is reparented, so hanging the
+    // snap 120ms off the back of a purely cosmetic opacity ramp put the sound
+    // 120ms behind the truth — §0.9 collapses motion, it does not delay signal.
+    cue(CUE.LANDED, mine, !!opts.big, cx, cy);
+    flight.fade(node, { dur: 120 });
     return true;
   }
 
@@ -166,6 +269,14 @@ export function moveCard(id, zoneKey, opts = {}) {
   }
 
   const last = node.getBoundingClientRect();
+  // The destination is not rendered (a hidden zone, a collapsed board). Inverting
+  // against a 0×0 rect is what sent stolen cards flying to viewport (0,0) — the
+  // card is placed and the beat is skipped rather than performed into a corner.
+  if (last.width === 0) {
+    if (opts.flip != null) flight.setFacing(node, opts.flip);
+    return true;
+  }
+
   const w1 = node.offsetWidth || w0;
   const dx = (first.left + first.width / 2) - (last.left + last.width / 2);
   const dy = (first.top + first.height / 2) - (last.top + last.height / 2);
@@ -184,8 +295,22 @@ export function moveCard(id, zoneKey, opts = {}) {
     ? (hash1(id + 3) * 2 - 1) * Math.min(12, 3 + dist * 0.02)
     : opts.spin;
 
+  // HERO LIFT — a big-moment card has to be READABLE while it travels.
+  // Measured on a 4-player 1280×720 table: a stolen property is a 14px-wide
+  // miniature sliding between two 14px slots, illegible even at 2.8×
+  // magnification of the capture, for the 480ms the choreographer spends
+  // calling it drama. The bump is an extra scale on a sin envelope, so the card
+  // swells at mid-flight and is back to exactly 1 when it lands — the measured
+  // FLIP end state is untouched.
+  //
+  // HERO_APEX_PX is a target width at the apex, not a factor: the same +0.5 that
+  // is right for a hand card would do nothing for a 14px mini.
+  let bump = opts.bump || 0;
+  if (!bump && opts.hero) bump = clamp(HERO_APEX_PX / Math.max(8, w1) - 1, 0.22, 4);
+  if (bump > 0) unclip(node, dur + (opts.delay || 0) + 60);
+
   flight.fly(node, {
-    dx, dy, scale, dur,
+    dx, dy, scale, dur, bump,
     delay: opts.delay || 0,
     arc: opts.arc,
     spin,
@@ -238,6 +363,51 @@ export function relayoutHand() {
   hand.layout(nodes, !reduceMotion);
 }
 
+/* ── hero flights escape their clipping ancestors ──────────────────────────
+   Every container a card lands in clips: `.opponents .board` and
+   `.board-bank` are overflow:hidden, `.opponents .board-props`, `.zone-hand`,
+   `.opponents` and `.self-board` are scroll boxes. A card magnified to 92px
+   inside a 14px slot is therefore invisible — which is the whole reason the
+   magnification exists.
+
+   So the ancestor chain is opened for exactly the length of the flight and put
+   back byte-for-byte, scroll offsets included. Precisely the chain, not a CSS
+   class on #table: a blanket `overflow:visible` on the felt spills the
+   opponents strip over the centre pile on a phone. Scrollbars are already
+   `scrollbar-width:none` on every one of these, so opening them reflows
+   nothing. */
+const unclipped = new Map();                // element -> {overflow, sl, st, until}
+let unclipTimer = 0;
+
+function unclip(node, ms) {
+  const until = performance.now() + ms;
+  for (let e = node.parentElement; e && e !== document.body; e = e.parentElement) {
+    const prev = unclipped.get(e);
+    if (prev) { if (until > prev.until) prev.until = until; continue; }
+    const cs = getComputedStyle(e);
+    if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+    unclipped.set(e, { overflow: e.style.overflow, sl: e.scrollLeft, st: e.scrollTop, until });
+    e.style.overflow = 'visible';
+    if (e.id === 'table') break;
+  }
+  if (!unclipTimer && unclipped.size) unclipTimer = setTimeout(reclip, ms + 20);
+}
+
+function reclip() {
+  unclipTimer = 0;
+  const now = performance.now();
+  let soonest = 0;
+  for (const [e, saved] of [...unclipped]) {
+    if (saved.until > now) { if (!soonest || saved.until < soonest) soonest = saved.until; continue; }
+    unclipped.delete(e);
+    if (saved.overflow) e.style.overflow = saved.overflow;
+    else e.style.removeProperty('overflow');
+    if (e.scrollLeft !== saved.sl) e.scrollLeft = saved.sl;
+    if (e.scrollTop !== saved.st) e.scrollTop = saved.st;
+  }
+  if (soonest) unclipTimer = setTimeout(reclip, Math.max(20, soonest - now) + 20);
+}
+
 function currentTilt(node) {
   const v = parseFloat(node.style.getPropertyValue('--tilt'));
   return Number.isFinite(v) ? v : 0;
@@ -253,7 +423,10 @@ function currentTilt(node) {
 export function reconcile(snapshot, opts = {}) {
   if (!snapshot) return 0;
   const expected = opts.expected || EMPTY;
-  const structural = layout.syncSeats(snapshot, selfId);
+  // prepare() may already have done the seating for this job; a rebuild is a
+  // rebuild whoever ran it, and counting drift across one is meaningless.
+  const structural = layout.syncSeats(snapshot, selfId) || structuralPending;
+  structuralPending = false;
   const counting = opts.count !== false && !structural;
   const animate = !!opts.animate && !reduceMotion;
 

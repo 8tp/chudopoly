@@ -176,9 +176,22 @@ export function confetti(w, h, count, o = {}) {
     SP.kind = KIND.CONFETTI;
     SP.col = o.col == null ? CONFETTI_COLS[(rnd() * CONFETTI_COLS.length) | 0] : o.col;
     SP.x = x0 + rnd() * w * spread;
-    // Staggered above the fold so the field arrives as a fall, not a curtain:
-    // 1.35 screen-heights of headroom at 300px/s is ~1.1s of arrival spread.
-    SP.y = -rnd() * h * 1.35 - 12;
+    // Staggered above the fold so the field arrives as a fall, not a curtain.
+    //
+    // 1.35 screen-heights was arithmetic against a speed the pieces never
+    // reach: grav 210 / drag 0.85 gives a TERMINAL velocity of 247px/s, not the
+    // 300 the old comment assumed, so the top of the stagger needed
+    // 1.35×720/247 = 3.9s to enter frame against a life of 2.3–3.7s. Measured
+    // on the win captures: 24–35% of the field expired above the fold and the
+    // celebration was a third emptier than the count says.
+    //
+    // 0.5 screen-heights = 1.46s of arrival spread, inside the SHORTEST life
+    // (3.2 × 0.72 = 2.3s) with 0.8s of visible fall left over. Re-measured by
+    // integrating this exact update loop over the spawn ranges at 720px:
+    //   headroom 1.35 → 23.8% of a 3.2s field and 37.5% of a 2.6s field die
+    //                   above the fold
+    //   headroom 0.50 → 0.0% and 0.0%
+    SP.y = -rnd() * h * 0.5 - 12;
     SP.vx = rndRange(-70, 70);
     SP.vy = rndRange(190, 330);
     SP.life = (o.life || 3.2) * (0.72 + rnd() * 0.45);

@@ -57,6 +57,29 @@
 .card.is-riffling,
 .card.is-dragging { will-change: transform; }
 
+/* ── hero flights ────────────────────────────────────────────────────────
+   A stolen card swells to a readable ~92px at mid-flight (table/index.js
+   HERO_APEX_PX; anim/flight.js `bump`). Two things have to be true for that to
+   be visible rather than merely large:
+
+     • it must paint over the boards it passes. table.css gives .is-flying
+       z-index 40, which is above the cards but level with the chrome inside a
+       board; 46 is the same rung .is-dragging sits on and it is the top of the
+       felt.
+     • its ancestors must not clip it — a 92px card inside a 14px property slot
+       is otherwise entirely inside overflow:hidden. That one cannot be done in
+       CSS without opening the scroll boxes for the whole game, so
+       table/index.js opens exactly the ancestor chain, for exactly the length
+       of the flight, and restores the scroll offsets (see unclip()).
+
+   pointer-events go off for the duration: a card three times its resting size
+   is a three-times-larger hit target sliding across the boards you are trying
+   to tap. */
+.card.is-hero {
+  z-index: 46;
+  pointer-events: none;
+}
+
 /* ── reduced motion (§0.9) ───────────────────────────────────────────────
    Flights are already collapsed to a ≤120ms in-place fade in JS
    (table/moveCard), and the FX cue vocabulary is unchanged — sound and

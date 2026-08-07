@@ -7,6 +7,7 @@ const MESSAGE_TYPES = new Set([
   'chat_history', 'scoop', 'end_turn',
 ]);
 const BOT_MODES = new Set(['random', 'conservative', 'neutral', 'aggressive', 'chud']);
+const WIN_RULES = new Set(['finalApproach', 'mdFaithful', 'instant']);
 const COLORS = new Set(['brown', 'lightblue', 'pink', 'orange', 'red', 'yellow', 'green', 'darkblue', 'base', 'intel']);
 const ID_PATTERN = /^[a-f0-9-]{16,64}$/i;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
@@ -58,6 +59,8 @@ function validateMessage(message) {
       break;
     case 'start_game':
       if (!isInt(message.turnTimeout, 0, 300) || !isInt(message.responseTimeout, 0, 120)) return fail('Invalid timer setting');
+      // Additive and backward-compatible: an absent winRule means 'finalApproach'.
+      if (message.winRule !== undefined && !WIN_RULES.has(message.winRule)) return fail('Invalid win rule');
       break;
     case 'play_money':
       if (!isInt(message.cardIndex, 0, 110)) return fail('Invalid card index');

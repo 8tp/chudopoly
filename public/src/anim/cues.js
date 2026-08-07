@@ -25,6 +25,11 @@ export const CUE = Object.freeze({
   // table motion (anim/)
   FLIGHT_START: 'card_flight_start',
   LANDED: 'card_landed',
+  // A flight that began and will never land: the card was superseded in the air
+  // (stolen while landing, re-flown by a reconcile, picked up by a finger). It
+  // exists so that every FLIGHT_START has exactly one answer — measured at 173
+  // slides against 159 snaps per game before it did.
+  FLIGHT_ABORT: 'card_flight_abort',
   FLIP: 'card_flip',
   DEAL_DONE: 'deal_done',
   SHUFFLE: 'shuffle',
@@ -44,13 +49,22 @@ export const CUE = Object.freeze({
   DETAILS: 'card_details',
 });
 
-/** One cue. Two small allocations per BEAT — never per frame. */
-export function cue(kind, mine, big, x, y) {
+/**
+ * One cue. Two small allocations per BEAT — never per frame.
+ * `dx`/`dy` (optional) is the TRAVEL VECTOR of the thing that just moved, in
+ * viewport px. A landing without it can only spray debris in a full circle,
+ * which reads as sparkle; with it, fx/ can throw the impact the way the card
+ * was going. Absent/zero = no direction known (reduced motion, a cue with no
+ * card behind it) and the omnidirectional form is correct.
+ */
+export function cue(kind, mine, big, x, y, dx, dy) {
   bus.emit(EVENTS.FX_CUE, {
     kind,
     mine: !!mine,
     big: !!big,
     at: { x: Math.round(x) || 0, y: Math.round(y) || 0 },
+    dx: dx || 0,
+    dy: dy || 0,
   });
 }
 

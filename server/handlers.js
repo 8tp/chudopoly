@@ -51,8 +51,10 @@ function seedFromEnv(env = process.env) {
 const MIN_HUMAN_TURN_TIMEOUT = 30;
 const MIN_HUMAN_RESPONSE_TIMEOUT = 15;
 
-function startRoomGame(room, turnTimeout = 60, responseTimeout = 30) {
+function startRoomGame(room, turnTimeout = 60, responseTimeout = 30, winRule) {
   room.phase = 'playing';
+  // Room setting, chosen in the lobby next to the timers. Sticky across rematches.
+  room.winRule = G.normalizeWinRule(winRule !== undefined ? winRule : room.winRule);
   room.turnTimeout = Math.max(0, Math.min(300, Number(turnTimeout) || 0));
   room.responseTimeout = Math.max(0, Math.min(120, Number(responseTimeout) || 0));
   const humans = room.players.filter(p => !p.isBot).length;
@@ -62,7 +64,8 @@ function startRoomGame(room, turnTimeout = 60, responseTimeout = 30) {
   }
   room.gameCount = (room.gameCount || 0) + 1;
   const seedBase = seedFromEnv();
-  const options = seedBase === null ? {} : { seed: `${seedBase}#${room.gameCount}` };
+  const options = { winRule: room.winRule };
+  if (seedBase !== null) options.seed = `${seedBase}#${room.gameCount}`;
   room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })), options);
   if (room.turnTimeout > 0) timers.startTurnTimer(room);
   broadcast.broadcastAndScheduleBot(room);
@@ -259,8 +262,8 @@ function handleMessage(ws, msg, state) {
       const room = rooms.get(roomCode);
       if (!room || room.hostId !== playerId) { broadcast.send(ws, { type: 'error', message: 'Only host can start' }); break; }
       if (room.players.length < 2) { broadcast.send(ws, { type: 'error', message: 'Need at least 2 players' }); break; }
-      startRoomGame(room, msg.turnTimeout, msg.responseTimeout);
-      console.log(`[GAME] ${roomCode} started with ${room.players.length} players, timeout=${room.turnTimeout}s, responseTimeout=${room.responseTimeout}s`);
+      startRoomGame(room, msg.turnTimeout, msg.responseTimeout, msg.winRule);
+      console.log(`[GAME] ${roomCode} started with ${room.players.length} players, timeout=${room.turnTimeout}s, responseTimeout=${room.responseTimeout}s, winRule=${room.winRule}`);
       break;
     }
 

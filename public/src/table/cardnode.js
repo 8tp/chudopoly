@@ -64,7 +64,14 @@ function buildCard(card) {
   return node;
 }
 
-function buildFace(card) {
+/**
+ * The card FACE, standalone. Exported so nothing has to deep-clone a live card
+ * node to render a big one: ui/peek.js was cloning a node and then stripping
+ * data-card-id and the pose vars off the copy, which is one accidental
+ * `querySelector('[data-card-id]')` away from a second node claiming a card id
+ * that §0.4 says is unique. It is also the seam an SVG art renderer plugs into.
+ */
+export function buildFace(card) {
   const face = el('div', { class: 'card-face' });
   face.appendChild(el('div', { class: 'card-band', text: kindLabel(card) }));
   face.appendChild(el('div', { class: 'card-name', text: cardName(card) || card.name || '' }));

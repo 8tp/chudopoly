@@ -15,6 +15,23 @@ const COLORS = {
 
 const HAND_LIMIT = 7;
 const SETS_TO_WIN = 3;
+// §3.10 win-rule toggle (owner directive 2026-08-06), chosen per room in the lobby.
+//   finalApproach — DEFAULT, the house identity. Strict full-cycle checkpoint: the win
+//                   resolves at the armed player's first own-turn start that is a FULL
+//                   turn cycle after arming, so every opponent is guaranteed a response
+//                   turn no matter when the third set landed.
+//   mdFaithful    — the literal Monopoly Deal rule: you win at your NEXT own turn start
+//                   while still holding 3+ sets. Identical to finalApproach when you
+//                   complete on your own turn (94.8% of armings); strictly shorter when
+//                   the third set arrives during someone else's turn.
+//   instant       — classic quick game. The third completed set wins the moment it
+//                   completes, wherever and whenever — including on an opponent's turn
+//                   through a payment, steal or swap. Nothing is ever armed.
+const WIN_RULES = ['finalApproach', 'mdFaithful', 'instant'];
+const DEFAULT_WIN_RULE = 'finalApproach';
+function normalizeWinRule(value) {
+  return WIN_RULES.includes(value) ? value : DEFAULT_WIN_RULE;
+}
 const EVENT_TAIL = 120;          // broadcast tail size (ARCHITECTURE §4)
 // Attrition cap. The §3.10 grace cycle stretched 5-player bot games from p99 63 turns to
 // p99 387 (max 401) because every break scatters a finished set. Ending the game on points
@@ -224,6 +241,7 @@ function createGame(players, opts = {}) {
     cardTotal: deck.length,
     shuffleCount: 0,
     turnCounter: 0,
+    winRule: normalizeWinRule(opts && opts.winRule),
     seed: seed === undefined ? null : seed,
     events: [],
     eventSeq: 0,
@@ -241,6 +259,8 @@ function createGame(players, opts = {}) {
   emit(state, 'game_start', {
     order: state.players.map(p => p.id),
     names: Object.fromEntries(state.players.map(p => [p.id, p.name])),
+    winRule: state.winRule,
+    setsToWin: SETS_TO_WIN,
   });
 
   state.players.forEach(p => {
@@ -301,6 +321,20 @@ function syncSets(state, player, before, byId = null) {
 
   if (state.phase !== 'playing') return;
   const sets = after.size;
+
+  // §3.10 'instant': the third set wins the moment it completes. syncSets is called from
+  // every path that can change a set count — playProperty, moveProperty, payment, both
+  // steals and swap — so this covers "wherever and whenever", including off-turn.
+  // Nothing is ever armed, so no final_approach / final_approach_broken event can be
+  // emitted and no HUD countdown can be rendered.
+  if (state.winRule === 'instant') {
+    if (sets >= SETS_TO_WIN && !player.eliminated) {
+      finishGame(state, player.id, 'sets',
+        player.name + ' wins with ' + sets + ' complete sets!');
+    }
+    return;
+  }
+
   if (sets >= SETS_TO_WIN && !player.finalApproach && !player.eliminated) {
     player.finalApproach = true;
     player.armedAtTurn = state.turnCounter || 0;
@@ -312,7 +346,8 @@ function syncSets(state, player, before, byId = null) {
       + ' left to break it before ' + player.name + ' wins!');
     emit(state, 'final_approach', {
       actor: player.id, sets, onOwnTurn,
-      turnsToCheckpoint: activeCount(state),                 // deprecated, see checkpointForecast
+      turnsToCheckpoint: checkpointThreshold(state),         // deprecated, see checkpointForecast
+      winRule: state.winRule,
       opponentTurnsRemaining: opponents,
       checkpointTurn: forecast ? forecast.turn : null,
     });
@@ -338,8 +373,15 @@ function turnsSinceArming(state, player) {
   return (state.turnCounter || 0) - (player.armedAtTurn || 0);
 }
 
+// How many turn ticks must pass after arming before the win can be claimed at the armed
+// player's own turn start. finalApproach demands a whole cycle; mdFaithful demands only
+// that this is a LATER own turn than the one the arming happened on.
+function checkpointThreshold(state) {
+  return state.winRule === 'mdFaithful' ? 1 : activeCount(state);
+}
+
 function checkpointReached(state, player) {
-  return turnsSinceArming(state, player) >= activeCount(state);
+  return turnsSinceArming(state, player) >= checkpointThreshold(state);
 }
 
 // DEPRECATED — kept only so nothing that already reads `finalApproachIn` breaks. It counts
@@ -348,8 +390,9 @@ function checkpointReached(state, player) {
 // reads 0 for a whole cycle after an off-turn arming while the win is still 2 own-turns away.
 // Use opponentTurnsRemaining()/checkpointTurn() instead.
 function turnsUntilCheckpoint(state, player) {
+  if (state.winRule === 'instant') return null;
   if (!player || !player.finalApproach) return null;
-  return Math.max(0, activeCount(state) - turnsSinceArming(state, player));
+  return Math.max(0, checkpointThreshold(state) - turnsSinceArming(state, player));
 }
 
 // Honest countdown. Walks the real seat rotation forward from the current turn to the first
@@ -359,6 +402,7 @@ function turnsUntilCheckpoint(state, player) {
 // Returns null when the player is not armed. `opponents === 0` means the next turn to start
 // is the armed player's own converting turn.
 function checkpointForecast(state, player) {
+  if (state.winRule === 'instant') return null;    // there is no checkpoint to forecast
   if (!player || !player.finalApproach || player.eliminated) return null;
   const active = state.players.filter(p => !p.eliminated);
   const n = active.length;
@@ -368,13 +412,14 @@ function checkpointForecast(state, player) {
   const cur = Math.max(0, active.findIndex(p => p.id === currentPlayer(state).id));
   const armedAt = player.armedAtTurn || 0;
   const now = state.turnCounter || 0;
+  const need = checkpointThreshold(state);
 
   // Steps ahead (in turns) at which this player's own turns start. 0 would be the turn that
   // is already running and has already been evaluated, so start the search after it.
   let step = (seat - cur + n) % n;
   if (step === 0) step = n;
   for (let own = 0; own < n + 2; own++, step += n) {
-    if (now + step - armedAt >= n) {
+    if (now + step - armedAt >= need) {
       return { turn: now + step, opponents: step - (own + 1) };
     }
   }
@@ -393,6 +438,7 @@ function armedPlayers(state) {
 // The one and only win-by-sets resolution point: the armed player's own turn start.
 function resolveFinalApproach(state, player) {
   if (state.phase !== 'playing') return false;
+  if (state.winRule === 'instant') return false;   // nothing is ever armed under 'instant'
   if (!player || player.eliminated || !player.finalApproach) return false;
   const sets = completedSets(player);
   if (sets < SETS_TO_WIN) { player.finalApproach = false; delete player.armedAtTurn; return false; }
@@ -438,7 +484,7 @@ function finishGame(state, winnerId, reason, endLine) {
       basis: state._stalemateBasis || null,   // 'sets' | 'net_worth' | 'turn_order' | 'unopposed'
     });
   }
-  else emit(state, 'win', { actor: winnerId, sets, reason });
+  else emit(state, 'win', { actor: winnerId, sets, reason, winRule: state.winRule });
   return true;
 }
 
@@ -1557,6 +1603,9 @@ function getPlayerView(state, playerId) {
     surgeOps: !!state._surgeOps,
     handLimit: HAND_LIMIT,
     setsToWin: SETS_TO_WIN,
+    // 'finalApproach' (default, grace cycle) | 'instant' (third set wins immediately).
+    // Under 'instant' armedIds is always [] and every per-player countdown field is null.
+    winRule: state.winRule || DEFAULT_WIN_RULE,
     deckCycle: state.shuffleCount || 0,
     deckCycleLimit: DECK_CYCLE_LIMIT,
     turnNumber: state.turnCounter || 0,
@@ -1601,6 +1650,7 @@ module.exports = {
   moveProperty, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
   pendingResponders, pendingEntryFor, publicCard, armedPlayers,
   turnsUntilCheckpoint, checkpointReached,
+  WIN_RULES, DEFAULT_WIN_RULE, normalizeWinRule, checkpointThreshold,
   logLine, LOG_MAX, LOG_TAIL, advanceToNextActive, forceEndTurn,
   checkpointForecast, opponentTurnsRemaining, actionLabel, receiveProperty,
 };

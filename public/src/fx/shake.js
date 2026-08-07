@@ -71,6 +71,18 @@ const MAX_Y = 11;
 const MAX_R = 1.1;        // degrees at trauma 1
 const FREQ = 26;          // Hz — below ~18 it reads as a wobble, above ~34 as noise
 
+// PERCEPTUAL FLOOR (P7 round 1). tick() quantises the write to 0.1px, so a
+// trauma whose peak displacement is under ~0.3px is three quantisation steps of
+// nothing: it holds a transform and a stacking context on #table, runs the
+// clock, and cannot be seen. Measured across ten shake triggers, SIX were under
+// it — set_completed 0.22px/80ms, steal-not-victim 0.10px/53ms,
+// approach_broken 0.10px/53ms, action_blocked 0.15px, win-not-mine 0.22px.
+//
+// sqrt(0.30/15) = 0.141. Anything below that is refused here rather than
+// silently rendered as stillness, so "this shake does nothing" is a fact the
+// call site has to deal with instead of a comment claiming it is deliberate.
+const MIN_TRAUMA = 0.141;
+
 let trauma = 0;
 let clock = 0;
 let el = null;
@@ -93,11 +105,19 @@ export function setReduced(on) {
   if (reduced) { trauma = 0; release(); }
 }
 
-/** Add trauma. Values are the §5 tuning table in fx/index.js. */
+/**
+ * Add trauma. Values are the tuning table in fx/index.js.
+ * Amounts below MIN_TRAUMA are refused unless something is ALREADY shaking —
+ * stacking is the one case where a sub-floor contribution is honest (four
+ * blocked actions inside a second really should build).
+ */
 export function add(amount) {
-  if (reduced || !(amount > 0)) return;
+  if (reduced || !(amount > 0)) return false;
+  if (amount < MIN_TRAUMA && trauma <= 0) return false;
   trauma = clamp(trauma + amount, 0, CAP);
+  return true;
 }
+export function minTrauma() { return MIN_TRAUMA; }
 
 export function active() { return trauma > 0.0005; }
 export function level() { return trauma; }

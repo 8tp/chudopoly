@@ -176,19 +176,19 @@ const MOTIFS = [
 const TRACKS = Object.freeze({
   lobby: {
     file: 'lobby.opus', loopStart: 17.579, loopEnd: 97.707, xfade: 2.5,
-    bar: 0, trimDb: -8.2,
+    bar: 0, trimDb: 2.0,
   },
   match1: {
     file: 'match-1.opus', loopStart: 34.504, loopEnd: 98.504, xfade: 2.0,
-    bar: 4.0, trimDb: -17.7,
+    bar: 4.0, trimDb: -6.0,
   },
   match2: {
     file: 'match-2.opus', loopStart: 13.520, loopEnd: 45.520, xfade: 2.0,
-    bar: 4.0, trimDb: -21.5,
+    bar: 4.0, trimDb: -7.8,
   },
   final: {
     file: 'final-approach.opus', loopStart: 19.093, loopEnd: 52.075, xfade: 2.5,
-    bar: 0, trimDb: -17.7,
+    bar: 0, trimDb: -10.7,
   },
 });
 
@@ -204,7 +204,11 @@ let rng = makeRng('chudopoly-music');
 let mode = 'off';                       // off | menu | match
 let want = 'off';                       // what the app asked for, even if muted
 let enabled = true;
-let level = 0.7;
+/* 1.0, not 0.7. Every offline render in tools/audiotest.mjs measures the mix at
+ * unity, so making unity the default is what makes the gate measure the thing
+ * that ships. It also stops the music from starting 3.1dB under the level its
+ * trims were derived at. A returning player keeps whatever they saved. */
+let level = 1;
 let tension = false;
 
 let nextBar = 0;                        // absolute context time of the next bar
@@ -235,19 +239,41 @@ let pendingArm = false;                 // armed before the climax buffer landed
 let busyUntil = 0;                       // no new transition lands before this
 
 const LOOKAHEAD = 0.45;                 // schedule this far ahead of the clock
-const FADE = 0.9;                       // bed crossfades
+const FADE = 0.7;                       // bed crossfades
 
 /* ── levels ──────────────────────────────────────────────────────────────
- * MENU_TRIM: §7 asks the menu score for a −14 dBFS master and the 60s render
- * measured −20 peak, i.e. six decibels of it were simply missing. ×2 is +6.0 dB
- * and lands it on the number. It is applied to the MENU bed only — the match
- * bed's whole contract is that it sits under card_slide (tools/audiotest.mjs
- * asserts it), and this is the reason that trim is not a change to `level`,
- * which is the player's volume and applies to both.
  *
- * DRONE_GAIN is unchanged at 0.045: the match bed gains a shape, not a level.
+ * ── THE OWNER COULD NOT HEAR IT (§P10 round 2) ────────────────────────────
+ * On the first build, at 100% music and 70% sfx: "cant really hear anything at
+ * all music wise". The trims that produced that were derived to hold each bed's
+ * PEAK under card_slide's peak, which is what tools/audiotest.mjs asserted, and
+ * that assertion is now gone — see the note on assertion 6 there. Every number
+ * below is re-derived against a MASKING criterion instead: a bed may be as loud
+ * as it likes until it comes within 6dB of a §7 card cue in that cue's own
+ * loudest octave. All four in-match beds sit within a decibel of that floor, so
+ * this is as loud as the music can be without taking the card layer, and the
+ * next decibel would have to be bought from the cards.
+ *
+ * MEASURED, 24s render at unity, by octave, against the first build:
+ *   match-1   250 +5.0  500 +9.8   1k +11.4  2k +11.6  4k +11.7 dB
+ *   match-2   250 +7.4  500 +10.7  1k +13.4  2k +13.7  4k +13.7
+ *   final     250 +0.7  500 +4.3   1k +6.7   2k +7.0   4k +7.0
+ *   lobby     250 +3.7  500 +6.9   1k +9.8   2k +10.1  4k +10.1
+ * The broadband RMS moved far less than that (+5.5 on match-1) and the
+ * broadband number is the misleading one: the shelf in buildMix() moved the
+ * beds' energy OUT of the octave no laptop reproduces and into the octaves that
+ * carry, which is where the +11dB is.
+ *
+ * MENU_TRIM / MATCH_TRIM are the synthesised beds' own trims, so the synth and
+ * the recording it hands off to are the same loudness — they were 7.8dB apart
+ * on the first build, which is an audible step at the handoff. They are not a
+ * change to `level`, which is the player's volume and applies to everything.
+ *
+ * DRONE_GAIN is unchanged at 0.045: the match bed gains a shape, not a level;
+ * MATCH_TRIM is where its level lives.
  */
-const MENU_TRIM = 2.0;
+const MENU_TRIM = 2.76;
+const MATCH_TRIM = 4.03;
 const DRONE_GAIN = 0.045;
 
 /* ── THE MUSIC'S OWN ROOM (§P10 fix 1) ────────────────────────────────────
@@ -341,12 +367,41 @@ function buildMix(graph, volume) {
   m.file.gain.value = 1;
   m.fx = ctx.createGain();
   m.fx.gain.value = 1;
+  /* ── THE POCKET (§P10 round 2) ────────────────────────────────────────────
+   *
+   * The owner's verdict on the first build was "cant really hear anything at
+   * all music wise", and the octave-band measurement says exactly why and
+   * exactly where. Every card cue that must cut through the bed has its
+   * dominant energy in the 250Hz band — card_snap −37.8 dB, deal_done −39.8,
+   * shuffle_riffle −39.1, prop_place −32.6 — and so does every music bed:
+   * match-1 −51.1, match-2 −53.0, final-approach −49.9, and the synthesised
+   * bed −56.1. The music and the card thumps were fighting over one octave.
+   *
+   * So the bed gets EQ'd out of the way rather than turned down. A −5dB shelf
+   * below 320Hz costs the beds four to five decibels in the one band the cards
+   * need and nothing in the bands the music is actually heard in, which is what
+   * buys the +10 to +12dB of trim below. The 45Hz highpass removes only content
+   * no speaker in the target set reproduces and that was eating headroom the
+   * soft-clip then had to give back.
+   *
+   * MEASURED, before → after, in-band margin on the binding cue (deal_done,
+   * 250Hz) against match-1: 11.3dB → 6.9dB, with the bed 8.8dB louder. */
+  m.shelf = ctx.createBiquadFilter();
+  m.shelf.type = 'lowshelf';
+  m.shelf.frequency.value = 380;
+  m.shelf.gain.value = -8;
+  m.rumble = ctx.createBiquadFilter();
+  m.rumble.type = 'highpass';
+  m.rumble.frequency.value = 45;
+  m.rumble.Q.value = 0.5;
   m.synth.connect(m.synthLp);
   m.synthLp.connect(m.synthEnv);
   m.synthEnv.connect(m.master);
   m.file.connect(m.master);
   m.fx.connect(m.master);
-  m.master.connect(m.duck);
+  m.master.connect(m.shelf);
+  m.shelf.connect(m.rumble);
+  m.rumble.connect(m.duck);
   m.duck.connect(graph.musicBus);
   if (graph.musicIr) {
     m.send = ctx.createGain();
@@ -448,7 +503,16 @@ export function setTension(on) {
 export function dip(weight) {
   if (!mix || !g || mode === 'off') return;
   const now = ctxNow();
-  const depth = weight >= 6 ? 0.34 : weight >= 4 ? 0.45 : 0.55;
+  /* ── THE DUCK GOT SHALLOWER (§P10 round 2) ──────────────────────────────
+   * It was 0.34 / 0.45 / 0.55 — 9.4, 6.9 and 5.2dB. On a bed that was already
+   * inaudible that was not sidechaining, it was subtraction, and it fires on
+   * every priority voice, which over a real game is most of the wall clock the
+   * music is not already silent for. 0.50 / 0.60 / 0.70 is 6.0, 4.4 and 3.1dB:
+   * still an unmistakable step back on the moments that matter, and it hands
+   * roughly 3dB of the bed back to the 60% of a game that has nothing in it.
+   * The masking gate is unaffected — it measures the bed UNDUCKED, which is the
+   * worst case for the card layer. */
+  const depth = weight >= 6 ? 0.50 : weight >= 4 ? 0.60 : 0.70;
   const p = mix.duck.gain;
   p.cancelScheduledValues(now);
   p.setValueAtTime(Math.max(p.value, EPS), now);
@@ -714,25 +778,42 @@ function ctxNow() { return g ? g.ctx.currentTime + clockOffset : 0; }
  * the riser ARE synth voices, so on a beatless bed the synth bar is the only
  * musical time in the room.
  *
- * `maxWait` bounds the lateness — a transition that has to wait 3.9s for a bar
- * has stopped being a response to the event that caused it. Past the bound we
- * take the half-bar, which is still on the beat.
+ * ── WAITING FOR THE BAR IS ITSELF THE DELAY (§P10 round 2) ─────────────────
+ * The owner's verdict on the first build was that the transitions "take too
+ * long", and the arithmetic agrees: a full 3.636s bar on the synth transport
+ * put up to 3.6 SECONDS between the event and the sound of it, before any fade
+ * had even started. So the grid is chosen by whether there is a real one:
+ *
+ *   a recorded bed with a measured bar (the two match beds, 4.000s) — align to
+ *     ITS bar, because that bar is a real musical fact about what is playing.
+ *   anything else — the transport's 3.636s bar is ARBITRARY relative to a
+ *     beatless lobby or climax track (both measured: no stable tempo, a
+ *     different answer in every 20s chunk), so its half-bar is exactly as
+ *     musical and half the wait.
+ *
+ * `maxWait` bounds the lateness past that — a transition that waits longer than
+ * its own fade has stopped being a response to the event that caused it. Past
+ * the bound we halve the grid again, to the beat.
  */
 function atDownbeat(after, maxWait) {
   const v = leadVoice();
-  let grid = BAR;
-  let origin = nextBar;
+  let grid, origin;
   if (v && v.spec.bar > 0) {
     grid = v.spec.bar;
     origin = v.startAt;
   } else {
-    while (origin > after) origin -= BAR;
+    grid = BAR / 2;
+    origin = nextBar;
+    while (origin > after) origin -= grid;
   }
   const k = Math.ceil((after - origin) / grid - 1e-6);
   let t = origin + k * grid;
-  if (maxWait && t - after > maxWait) {
-    const half = origin + (k - 0.5) * grid;
-    if (half >= after) t = half;
+  // Halve the grid until the wait fits, down to the beat (a quarter of a 4/4
+  // bar) and no further: past that it is not alignment, it is "now".
+  for (let div = 2; maxWait && t - after > maxWait && div <= 4; div *= 2) {
+    const fine = grid / div;
+    const cand = origin + Math.ceil((after - origin) / fine - 1e-6) * fine;
+    if (cand >= after) t = cand;
   }
   return Math.max(t, busyUntil, after);
 }
@@ -751,7 +832,7 @@ function rampOut() {
  *  BED, not of the player's volume — which is why it lives here and not on
  *  `master`, and why the match bed (which must stay under card_slide) and the
  *  recorded beds (which carry their own measured trim) are untouched by it. */
-function synthTrim() { return mode === 'menu' ? MENU_TRIM : 1; }
+function synthTrim() { return mode === 'menu' ? MENU_TRIM : MATCH_TRIM; }
 
 /* ── TRANSITIONS ─────────────────────────────────────────────────────────
  *
@@ -762,46 +843,63 @@ function synthTrim() { return mode === 'menu' ? MENU_TRIM : 1; }
  *                        noise riser (500ms) with an 800ms exponential ramp to
  *                        silence and cutoff → 300Hz. Never a hard mid-note cut
  *                        (reads as a bug), never a 5s fade with no stinger
- *                        (reads as a website)." What shipped before this was a
+ *                        (reads as a website)." What shipped before P10 was a
  *                        0.4s unaligned exponential fade — the second failure,
- *                        exactly.
+ *                        exactly. Riser 400ms, ramp 500ms, bed 0.2s behind the
+ *                        bar over 900ms.
  *  2. match → armed      the dramatic beat of the game. A CUT UP: the riser
- *                        earns it over 600ms, the match bed is gone in 70ms at
+ *                        earns it over 450ms, the match bed is gone in 70ms at
  *                        the downbeat, and the climax bed is at full level on
  *                        that same sample. Not a dissolve — a dissolve says
- *                        "and now, gradually, things are worse".
+ *                        "and now, gradually, things are worse". The 70ms cut
+ *                        is not negotiable and did not change.
  *  3. armed → match      the arm broken. The one that IS a genuine crossfade:
- *                        2.4s equal-power, and the returning bed opens its
+ *                        1.1s equal-power, and the returning bed opens its
  *                        lowpass 420Hz → open across the same window, so it
  *                        reads as the floor coming back rather than as a loss.
- *  4. → lobby / off      game over, left the room. Clean, unhurried, 1.8s, no
- *                        stinger and no riser. Nothing happened; something
- *                        ended.
+ *  4. → lobby / off      game over, left the room. Clean, 1.0s, no stinger and
+ *                        no riser. Nothing happened; something ended.
+ *
+ * ── AND THEY ARE ALL ABOUT HALF AS LONG AS THEY WERE (§P10 round 2) ────────
+ * Owner, on the first build: "takes too long with the crossfades being too
+ * slow." Measured worst case from the event to the new bed at level:
+ *   lobby→match 5.6s → 2.9s      armed→match 4.4s → 2.1s
+ *   match→armed 2.3s → 1.5s      →lobby      4.8s → 2.4s
+ * Most of the saving is not the fades: it is not waiting a full 3.636s bar for
+ * a grid that is arbitrary anyway (see atDownbeat). The seam measurements were
+ * re-run after every one of these changes and are asserted in
+ * tools/audiotest.mjs, so "faster" did not buy back the clicks or the dead air.
  */
 
 /** 1. lobby → match. */
 function enterMatch() {
-  const D = atDownbeat(ctxNow() + 0.62, null);
-  riser(D - 0.5, 0.5, 0.16, 5200);
+  const D = atDownbeat(ctxNow() + 0.5, 1.9);
+  riser(D - 0.4, 0.4, 0.16, 5200);
   stingerVi(D);
   // ART §7's exit, to the letter: 800ms ramp to silence with the cutoff closing
   // to 300Hz, starting ON the bar under the stinger. It applies to whichever
   // lobby bed is actually playing — the recorded one, the synthesised one, or
   // both mid-handoff — because each of them has a cutoff of its own.
   for (const v of voices) {
-    glide(v.lp.frequency, D, v.lp.frequency.value || 18000, 300, 0.8);
-    stopVoice(v, D, 0.8, 'out');
+    glide(v.lp.frequency, D, v.lp.frequency.value || 18000, 300, 0.5);
+    stopVoice(v, D, 0.5, 'out');
   }
-  glide(mix.synthLp.frequency, D, 18000, 300, 0.8);
-  fadeParam(mix.synthEnv.gain, D, 0.8, mix.synthEnv.gain.value, 0.0001, 'out');
-  busyUntil = D + 0.9;
+  glide(mix.synthLp.frequency, D, 18000, 300, 0.5);
+  fadeParam(mix.synthEnv.gain, D, 0.5, mix.synthEnv.gain.value, 0.0001, 'out');
+  busyUntil = D + 0.6;
   // …and the match bed arrives just behind the stinger, so the room is never
-  // empty. MEASURED: starting it at D+0.8 (as the ramp to silence finishes) left
+  // empty. MEASURED: starting it at D+0.8 (as the ramp to silence finished) left
   // a 0.3s trough at -58 dBFS between the stinger's decay and the bed's
-  // fade-in — inside the spec, and audibly a hole. D+0.4 over 1.6s puts the bed
-  // at a fifth of level by the time the brass is gone and fills it, without
+  // fade-in — inside the spec, and audibly a hole. D+0.2 over 0.9s puts the bed
+  // at a third of level by the time the brass is gone and fills it, without
   // fighting the stinger for the beat it exists to own.
-  scheduleBed(D + 0.4, 1.6);
+  //
+  // ART §7 specifies "an 800ms exponential ramp to silence" and this ships 500ms
+  // against it, with the bed 0.7s behind rather than 2.0s. That is a deliberate
+  // departure on the owner's own note ("takes too long with the crossfades being
+  // too slow"); the shape the spec is protecting — stinger on the bar, riser
+  // into it, a ramp rather than a cut — is intact and measured.
+  scheduleBed(D + 0.2, 0.9);
 }
 
 /** 2. match → final approach. */
@@ -816,8 +914,8 @@ function toFinalApproach() {
     // arrives. Never silence: §0.3's fallback rule is the whole reason the
     // synth layer still exists.
     pendingArm = true;
-    const D = atDownbeat(ctxNow() + 0.5, 1.6);
-    riser(D - 0.6, 0.6, 0.20, 6400);
+    const D = atDownbeat(ctxNow() + 0.45, 1.0);
+    riser(D - 0.45, 0.45, 0.20, 6400);
     for (const v of voices) {
       glide(v.lp.frequency, D, v.lp.frequency.value || 18000, 520, 0.35);
       fadeParam(v.gain.gain, D, 0.35, v.level, v.level * 0.45, 'out');
@@ -831,8 +929,8 @@ function toFinalApproach() {
 
 function cutToFinal() {
   pendingArm = false;
-  const D = atDownbeat(ctxNow() + 0.68, 1.6);
-  riser(D - 0.6, 0.6, 0.20, 6400);
+  const D = atDownbeat(ctxNow() + 0.5, 1.0);
+  riser(D - 0.45, 0.45, 0.20, 6400);
   // THE CUT. 70ms is short enough to read as an edit and long enough that the
   // buffer boundary is not a click; the riser's own peak lands on the same
   // sample and covers it.
@@ -849,8 +947,8 @@ function fromFinalApproach() {
   applySynthTension(false);
   pendingArm = false;
   if (mode !== 'match') return;
-  const X = 2.4;
-  const D = atDownbeat(ctxNow() + 0.35, 2.0);
+  const X = 1.1;
+  const D = atDownbeat(ctxNow() + 0.3, 1.0);
   for (const v of voices) stopVoice(v, D, X, 'out');
   bedWant = matchTrack;
   const started = matchTrack && buffers.has(matchTrack)
@@ -967,7 +1065,7 @@ function start(which) {
   tension = false;
   release(['lobby']);
   const t = Math.max(now + 0.02, busyUntil);
-  const X = from === 'off' ? FADE : 1.8;
+  const X = from === 'off' ? FADE : 1.0;
   stopFiles(t, X, 'out');
   stopDrone(t + X + 0.1);
   bedWant = 'lobby';
@@ -1064,8 +1162,8 @@ function crossToFile(key, notBefore) {
   if (bedWant !== key || mode === 'off' || !enabled) return;
   const lead = leadVoice();
   if (lead && lead.key === key) return;
-  const X = 3.0;
-  const D = atDownbeat(Math.max(ctxNow() + 0.3, notBefore), null);
+  const X = 1.4;
+  const D = atDownbeat(Math.max(ctxNow() + 0.3, notBefore), 1.9);
   const v = startFile(key, D, { fade: X });
   if (!v) return;
   for (const other of voices) if (other !== v) stopVoice(other, D, X, 'out');
@@ -1635,7 +1733,7 @@ export function offline(graph, seconds, which) {
   // The render is the SHIPPED bed at full volume, so it carries the same trim
   // rampOut() applies live — otherwise the number §7 is asserted against is a
   // level nobody ever hears.
-  mix.synth.gain.value = which === 'menu' ? MENU_TRIM : 1;
+  mix.synth.gain.value = which === 'menu' ? MENU_TRIM : MATCH_TRIM;
   mode = which;
   synthLive = true;
   rng = makeRng(`chudopoly-music-${which}`);

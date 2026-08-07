@@ -228,15 +228,29 @@ export const BANK = Object.freeze({
     const n = noise(g, 'white', t0, 0.05);
     n.connect(bp); bp.connect(bg); bg.connect(h);
     glide(bp.frequency, t0, f(o, 2300), f(o, 5200), 0.04);
-    perc(bg.gain, t0, 0.1, 0.001, 0.038);
+    perc(bg.gain, t0, 0.16, 0.001, 0.038);
     autoFree(n, bp);
-    // A tiny pitched edge so the sweep has a direction the ear can name.
+    /* A tiny pitched edge so the sweep has a direction the ear can name.
+     *
+     * ── IT WAS NOT TINY (§P10 round 2) ──────────────────────────────────
+     * MEASURED per octave band over the cue's own 30ms window: 1k −51.5 dB
+     * against 2k −56.2 and 4k −59.9. The 900→1600Hz square was the LOUDEST
+     * part of a cue §7 describes as a "pitch-swept tick" — 0.035 against the
+     * noise's 0.1 looks smaller, but one is a tone and the other is broadband
+     * noise through a Q=4 bandpass, so in-band the tone won by 5dB.
+     *
+     * That mattered beyond this cue: in the round-2 masking analysis card_flip
+     * was the cue BINDING the entire music mix, and it was binding it at 1kHz,
+     * a band the flip is not supposed to live in. Square −8dB / noise +4dB
+     * moves the cue's own peak band to 2k where the sweep actually is, at the
+     * same total level. The flip sounds more like a card and less like a beep,
+     * and the beds got 4dB back for free. */
     const og = gain(g, 0);
     const ov = osc(g, 'square', f(o, 900), t0, t0 + 0.035);
     const olp = filt(g, 'lowpass', 3000, 1);
     glide(ov.frequency, t0, f(o, 900), f(o, 1600), 0.03);
     ov.connect(olp); olp.connect(og); og.connect(h);
-    perc(og.gain, t0, 0.035, 0.001, 0.028);
+    perc(og.gain, t0, 0.014, 0.001, 0.028);
   },
 
   /** Hands are out: two soft taps, the dealer squaring up. */

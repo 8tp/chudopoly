@@ -205,6 +205,16 @@ const MIX_DB = {
   timer_critical: -5.5,
   timer_warn: -6.0,
   denied: -1.0,
+  // …and the FLIP, which §7 names as mandatory card-tactile vocabulary and
+  // which nobody had ever trimmed. MEASURED at 0dB: -32.8 dBFS peak / -49.3 RMS,
+  // i.e. 14.7dB under card_snap and 8.0dB under card_slide — the quietest thing
+  // in the bank that anybody would call a card sound, tension_tick aside. It was
+  // also the cue that bound the entire music mix in the §P10 round-2 masking
+  // analysis: holding a bed 6dB under a flip that quiet meant holding it 6dB
+  // under nothing. +6.0 puts it at -26.8 peak, 2.0dB under card_slide and 8.7dB
+  // under card_snap — a flip is a lighter action than a slide and a much lighter
+  // one than a landing, and now it is mixed that way instead of by accident.
+  card_flip: 6.0,
   // …except the press, which is chrome only in the sense that it is constant.
   // It was 18.4dB under card_snap and level with the match bed's RMS, i.e.
   // inaudible under the game's own music. +7 puts it about 4dB under the snap:

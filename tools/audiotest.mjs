@@ -13,9 +13,12 @@
  *     mistake to the player even when the game state is good
  *   • the sour cue's fundamental sits BELOW chime-0 — the "you are being
  *     stolen from" treatment must be unmistakable against the reward tone
- *   • the synthesised match bed peaks under card_slide (6) and the RECORDED
- *     beds inherit that contract (7) — see the note there for why one of those
- *     is a peak comparison and the other is not, and why neither was loosened
+ *   • A CARD SOUND CUTS THROUGH THE MUSIC (6): every cue in §7's card-tactile
+ *     vocabulary clears every in-match bed by 6dB in the cue's own loudest
+ *     octave. This replaced a peak-vs-peak comparison that read PASS on a build
+ *     the owner could not hear the music in — see the note there
+ *   • the two menu-screen beds are the same loudness (6b), because they
+ *     crossfade into each other
  *   • the four bed TRANSITIONS contain no click at any scheduled seam and no
  *     dead air (8). Both real bugs found in the P10 round were found here.
  *
@@ -236,137 +239,202 @@ try {
     }
   }
 
-  /* ---- 6. the score never creeps over the card layer -----------------------
-   * §7 puts sfx/ui/music on separate buses for a reason. A match bed that
-   * renders at or above a card slide has stopped being a bed.                 */
+  /* ---- 6. A CARD SOUND MUST CUT THROUGH THE MUSIC -------------------------
+   *
+   * This slot used to hold "the match bed's PEAK is below card_slide's PEAK".
+   * That assertion was written for a synthesised drone and it did not survive
+   * contact with the room: it read PASS on the build the owner played, and the
+   * owner's verdict was "cant really hear anything at all music wise".
+   *
+   * It was measuring the wrong quantity, and the reason is measurable. Peak
+   * says nothing about masking — two signals with identical peaks mask each
+   * other completely differently depending on where their energy sits — and a
+   * mastered recording carries ~19dB of crest against the synth bed's 12.8, so
+   * matching PEAKS between them makes the recording 6dB quieter in loudness.
+   * What the assertion was always FOR is the thing its own failure message
+   * said: a card must be audible over the bed. So it measures that.
+   *
+   * THE TEST. For each cue in §7's card-tactile vocabulary — the list §7 writes
+   * down verbatim, "shuffle riffle, card slide, card snap-down, flip,
+   * chip/coin", plus prop_place which shares the snap — find the octave band
+   * that cue's own energy peaks in, measured over the cue's own active window
+   * (onset to −30dB off its peak, so the number is not a function of how long
+   * the render happened to be). Every IN-MATCH bed must sit at least MASK_FLOOR
+   * dB below the cue in that band.
+   *
+   * 6dB: inside one critical band a probe becomes reliably audible a few dB
+   * above the masker's spectrum level, and a transient against a sustained bed
+   * gets more margin than that from its own onset. 6 leaves room on top and it
+   * is a FLOOR, not a target — all four in-match beds are trimmed to sit within
+   * a decibel of it, so it is the binding constraint on how loud the music is
+   * allowed to be, which is exactly what the old assertion failed to be.
+   *
+   * MENU-screen beds are excluded, and that is a scope statement rather than an
+   * exemption: cards only exist inside #screen-game, so not one of these cues
+   * can fire while the menu or lobby bed is playing. They are held against each
+   * other instead (6b) — they crossfade into one another, so a level difference
+   * between them is an audible handoff, and the shipped build had 7.8dB of it.
+   */
   const hasMusic = await h.page.evaluate(() => typeof window.__CHUD.audio.renderMusic === 'function');
-  const slide = measured.card_slide;
+  const MASK_FLOOR = 6;
+  const GATE_CUES = ['shuffle_riffle', 'card_slide', 'card_snap', 'card_flip',
+    'chip', 'prop_place'].filter((n) => names.includes(n));
+  const IN_MATCH = ['match', 'match1', 'match2', 'final'];
+  const MENU_BEDS = ['menu', 'lobby'];
+
   if (!hasMusic) {
-    r.warn('__CHUD.audio.renderMusic absent — music/sfx balance not asserted');
-  } else if (!slide) {
-    r.warn('card_slide is not in the bank — nothing to measure the music bed against');
+    r.warn('__CHUD.audio.renderMusic absent — music/sfx masking not asserted');
+  } else if (GATE_CUES.length < 4) {
+    r.warn(`only ${GATE_CUES.length} of §7's card-tactile cues are in the bank — masking not asserted`);
   } else {
-    const bed = await h.page.evaluate(async () => {
-      const out = await window.__CHUD.audio.renderMusic('match', 8);
-      const buf = out instanceof Float32Array ? out : out.channels[0];
-      let peak = 0;
-      for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
-      return { peak };
-    });
-    const db = (v) => (v > 0 ? 20 * Math.log10(v) : -Infinity);
-    if (bed.peak < slide.peak) {
-      r.pass(`match bed ${db(bed.peak).toFixed(1)}dBFS sits under card_slide ${db(slide.peak).toFixed(1)}dBFS`);
-    } else {
-      r.fail(`match music peaks at ${db(bed.peak).toFixed(1)}dBFS, at or above card_slide `
-        + `${db(slide.peak).toFixed(1)}dBFS — the score is over the card layer (§7)`);
+    const band = await h.page.evaluate(async ([cues, beds]) => {
+      /* radix-2 FFT, in place */
+      function fft(re, im) {
+        const n = re.length;
+        for (let i = 1, j = 0; i < n; i++) {
+          let bit = n >> 1;
+          for (; j & bit; bit >>= 1) j ^= bit;
+          j ^= bit;
+          if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+        }
+        for (let len = 2; len <= n; len <<= 1) {
+          const ang = -2 * Math.PI / len;
+          const wr = Math.cos(ang), wi = Math.sin(ang);
+          for (let i = 0; i < n; i += len) {
+            let cr = 1, ci = 0;
+            for (let k = 0; k < len / 2; k++) {
+              const ur = re[i + k], ui = im[i + k];
+              const vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+              const vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+              re[i + k] = ur + vr; im[i + k] = ui + vi;
+              re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+              const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+            }
+          }
+        }
+      }
+      const EDGES = [180, 355, 710, 1420, 2840, 5680, 11360];
+      const LABEL = ['250', '500', '1k', '2k', '4k', '8k'];
+      const dbp = (p) => (p > 0 ? 10 * Math.log10(p) : -Infinity);
+      /** Welch octave-band POWERS (10log10) over [a,b) — N=1024 so a 30ms cue
+       *  still yields a whole frame; short windows are zero-padded, not skipped. */
+      function bands(x, a, b, sr) {
+        const N = 1024;
+        const pow = new Float64Array(LABEL.length);
+        let frames = 0;
+        for (let s = a; s < Math.max(a + N, b); s += N / 2) {
+          const re = new Float64Array(N), im = new Float64Array(N);
+          let any = false;
+          for (let i = 0; i < N; i++) {
+            if (s + i >= b) break;
+            re[i] = x[s + i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)));
+            any = true;
+          }
+          if (!any) break;
+          fft(re, im);
+          for (let k = 1; k < N / 2; k++) {
+            const f = k * sr / N;
+            for (let e = 0; e < LABEL.length; e++) {
+              if (f >= EDGES[e] && f < EDGES[e + 1]) {
+                pow[e] += (re[k] * re[k] + im[k] * im[k]) * 2 / (N * N * 0.375);
+                break;
+              }
+            }
+          }
+          frames++;
+          if (b - a < N) break;
+        }
+        return Array.from(pow, (p) => dbp(frames ? p / frames : 0));
+      }
+      const mono = (o) => {
+        const L = o.channels[0], R = o.channels[1];
+        const m = new Float64Array(L.length);
+        for (let i = 0; i < L.length; i++) m[i] = (L[i] + R[i]) * 0.5;
+        return m;
+      };
+      const out = { cues: {}, beds: {}, labels: LABEL };
+      for (const n of cues) {
+        const o = await window.__CHUD.audio.renderOffline(n, 1.5);
+        const m = mono(o);
+        // The window the cue is actually SOUNDING in: onset to -30dB off peak.
+        const W = Math.round(o.sampleRate * 0.005);
+        let pk = 0;
+        const env = [];
+        for (let i = 0; i + W <= m.length; i += W) {
+          let s = 0; for (let j = i; j < i + W; j++) s += m[j] * m[j];
+          const rr = Math.sqrt(s / W); env.push(rr); if (rr > pk) pk = rr;
+        }
+        let last = 0;
+        for (let i = 0; i < env.length; i++) if (env[i] > pk / 31.6) last = i;
+        out.cues[n] = bands(m, 0, Math.min(m.length, (last + 1) * W), o.sampleRate);
+      }
+      for (const w of beds) {
+        try {
+          const o = await window.__CHUD.audio.renderMusic(w, 24);
+          const m = mono(o);
+          let s = 0;
+          for (let i = 0; i < m.length; i++) s += m[i] * m[i];
+          out.beds[w] = { bands: bands(m, 0, m.length, o.sampleRate), rms: 10 * Math.log10(s / m.length) };
+        } catch (e) { out.beds[w] = { error: String((e && e.message) || e) }; }
+      }
+      return out;
+    }, [GATE_CUES, [...IN_MATCH, ...MENU_BEDS]]);
+
+    const broken = Object.entries(band.beds).filter(([, v]) => v.error);
+    if (broken.length) {
+      r.fail(`${broken.length} music bed(s) failed to render: `
+        + broken.map(([k, v]) => `${k} (${v.error})`).join(', '));
+    }
+    const dom = {};
+    for (const c of GATE_CUES) {
+      let bi = 0;
+      for (let i = 1; i < band.cues[c].length; i++) if (band.cues[c][i] > band.cues[c][bi]) bi = i;
+      dom[c] = bi;
+    }
+    const masked = [];
+    const worst = [];
+    for (const w of IN_MATCH) {
+      const b = band.beds[w];
+      if (!b || b.error) continue;
+      let low = Infinity, lowCue = '';
+      for (const c of GATE_CUES) {
+        const m = band.cues[c][dom[c]] - b.bands[dom[c]];
+        if (!Number.isFinite(m)) continue;
+        if (m < low) { low = m; lowCue = c; }
+        if (m < MASK_FLOOR) {
+          masked.push(`${w} masks ${c} in the ${band.labels[dom[c]]} band: ${m.toFixed(1)}dB of margin, floor ${MASK_FLOOR}`);
+        }
+      }
+      worst.push(`${w} ${low.toFixed(1)}dB (${lowCue}/${band.labels[dom[lowCue]]})`);
+    }
+    if (masked.length) {
+      r.fail(`${masked.length} cue/bed pair(s) below the ${MASK_FLOOR}dB masking floor — `
+        + 'the music is over the card layer (§7)');
+      for (const m of masked.slice(0, 8)) r.info(m);
+    } else if (worst.length) {
+      r.pass(`every §7 card cue clears every in-match bed by ≥${MASK_FLOOR}dB in its own octave `
+        + dim(`(tightest per bed: ${worst.join(', ')})`));
+    }
+
+    /* ---- 6b. the two menu-screen beds are the same loudness ----------------
+     * They crossfade into each other on every boot (synth first, recorded bed
+     * when it lands), so a level difference between them is an audible handoff
+     * rather than a mix opinion. The shipped build had 7.8dB of it, because the
+     * recorded bed had been trimmed to the synth bed's PEAK — the same
+     * crest-factor mistake assertion 6 used to make.                          */
+    const mm = band.beds.menu, ll = band.beds.lobby;
+    if (mm && ll && !mm.error && !ll.error) {
+      const d = ll.rms - mm.rms;
+      if (Math.abs(d) > 2) {
+        r.fail(`the recorded lobby bed is ${d > 0 ? '+' : ''}${d.toFixed(1)}dB against the synthesised `
+          + 'menu bed it hands off from — that difference is audible at the handoff');
+      } else {
+        r.pass(`menu-screen beds match within ${Math.abs(d).toFixed(1)}dB `
+          + dim(`(synth ${mm.rms.toFixed(1)}, recorded ${ll.rms.toFixed(1)} dBFS RMS)`));
+      }
     }
   }
 
-  /* ---- 7. the RECORDED beds inherit the synthesised bed's contract ---------
-   * §0.3's 2026-08-07 amendment lets four .opus tracks ship as MUSIC ONLY. The
-   * level question they raise is not the one assertion 6 answers, and this is
-   * the honest statement of the difference rather than a rewrite of it:
-   *
-   *   assertion 6 compares PEAKS. That is right for the synthesised bed, whose
-   *   crest factor is 12.8dB, and it stays exactly as it was.
-   *   A mastered recording has a ~19dB crest factor, so holding its PEAK to the
-   *   synth bed's would put its LOUDNESS 6dB lower — and matching its broadband
-   *   RMS instead would put its peak 3dB OVER card_slide, because the synth
-   *   bed's RMS is mostly 55–82Hz content under a 240Hz lowpass that a laptop
-   *   speaker does not reproduce (music.js:555 measured exactly this).
-   *
-   * So both are asserted, and they turned out not to conflict at all: trimmed
-   * to peak 2.1dB under card_slide, both match beds land within 1.5dB of the
-   * synthesised bed's RMS ABOVE 300Hz — the band that carries. Nothing was
-   * loosened to make that true; it is what the tracks measure.
-   *
-   * The climax bed is the one deliberate exception and it is bounded rather
-   * than exempt: Final Approach is the moment the score IS the event, so it may
-   * peak above card_slide, by at most 1.5dB, and must stay 5dB under card_snap
-   * (a card actually landing). Measured at ship: -23.97 vs -24.83 / -18.07.  */
-  const snap = measured.card_snap;
-  if (hasMusic && slide && snap) {
-    const dbv = (v) => (v > 0 ? 20 * Math.log10(v) : -Infinity);
-    const beds = await h.page.evaluate(async () => {
-      const out = {};
-      for (const w of ['match', 'lobby', 'match1', 'match2', 'final']) {
-        try {
-          const o = await window.__CHUD.audio.renderMusic(w, 24);
-          const sr = o.sampleRate;
-          const a = Math.exp(-2 * Math.PI * 300 / sr);
-          let peak = 0, hsum = 0, n = 0;
-          for (const c of o.channels) {
-            let prev = 0, hp = 0;
-            for (let i = 0; i < c.length; i++) {
-              const x = c[i];
-              const ax = x < 0 ? -x : x;
-              if (ax > peak) peak = ax;
-              hp = a * (hp + x - prev); prev = x;
-              hsum += hp * hp; n++;
-            }
-          }
-          out[w] = { peak, hi: Math.sqrt(hsum / n) };
-        } catch (e) { out[w] = { error: String((e && e.message) || e) }; }
-      }
-      return out;
-    });
-    const missing = Object.entries(beds).filter(([, v]) => v.error);
-    if (missing.length) {
-      r.fail(`${missing.length} music bed(s) failed to render: `
-        + missing.map(([k, v]) => `${k} (${v.error})`).join(', '));
-    }
-    const under = ['lobby', 'match1', 'match2'].filter((k) => beds[k] && !beds[k].error);
-    const over = under.filter((k) => beds[k].peak >= slide.peak);
-    // The lobby bed plays on a screen with no cards on it and §7 sets its own
-    // target (-14 dBFS master); it is excluded from the card comparison and
-    // asserted against that number instead.
-    const overGame = over.filter((k) => k !== 'lobby');
-    if (overGame.length) {
-      r.fail(`${overGame.join(', ')} peak at or above card_slide ${dbv(slide.peak).toFixed(1)}dBFS `
-        + `(${overGame.map((k) => `${k}=${dbv(beds[k].peak).toFixed(1)}`).join(', ')}) — `
-        + 'a recorded bed over the card layer is still a bed over the card layer (§7)');
-    } else if (beds.match1 && beds.match2) {
-      r.pass('both recorded match beds sit under card_slide '
-        + dim(`(match1 ${dbv(beds.match1.peak).toFixed(1)}, match2 ${dbv(beds.match2.peak).toFixed(1)} `
-          + `vs ${dbv(slide.peak).toFixed(1)} dBFS)`));
-    }
-    if (beds.lobby && !beds.lobby.error) {
-      const d = dbv(beds.lobby.peak);
-      if (d > -12 || d < -17) {
-        r.fail(`lobby bed peaks at ${d.toFixed(2)} dBFS — §7 asks the menu score for a -14 dBFS master`);
-      } else {
-        r.pass(`lobby bed master ${d.toFixed(2)} dBFS ${dim('(§7: -14)')}`);
-      }
-    }
-    if (beds.final && !beds.final.error) {
-      const d = dbv(beds.final.peak);
-      const overSlide = d - dbv(slide.peak);
-      const underSnap = dbv(snap.peak) - d;
-      if (overSlide > 1.5 || underSnap < 5) {
-        r.fail(`final-approach bed ${d.toFixed(2)} dBFS is ${overSlide.toFixed(1)}dB over card_slide `
-          + `and ${underSnap.toFixed(1)}dB under card_snap — the climax may rise over a slide `
-          + '(≤1.5dB) but never over a card landing (≥5dB)');
-      } else {
-        r.pass(`final-approach bed ${d.toFixed(2)} dBFS: +${overSlide.toFixed(1)}dB on card_slide, `
-          + `-${underSnap.toFixed(1)}dB on card_snap ${dim('(the climax is allowed to rise, bounded)')}`);
-      }
-    }
-    if (beds.match && beds.match1 && beds.match2 && !beds.match.error) {
-      const ref = dbv(beds.match.hi);
-      const loud = ['match1', 'match2'].map((k) => [k, dbv(beds[k].hi) - ref]);
-      const bad = loud.filter(([, d]) => Math.abs(d) > 4);
-      if (bad.length) {
-        r.fail(`${bad.map(([k, d]) => `${k} ${d > 0 ? '+' : ''}${d.toFixed(1)}dB`).join(', ')} `
-          + 'against the synthesised match bed above 300Hz — a recorded bed must be no louder '
-          + 'in the band that carries than the procedural bed it replaces');
-      } else {
-        r.pass('recorded match beds match the synthesised one above 300Hz '
-          + dim(loud.map(([k, d]) => `${k} ${d > 0 ? '+' : ''}${d.toFixed(1)}dB`).join(' ')));
-      }
-    }
-  } else if (hasMusic && !snap) {
-    r.warn('card_snap is not in the bank — the recorded beds were not bounded above');
-  }
 
   /* ---- 8. the four transitions, measured rather than described -------------
    * "A transition you did not measure is a transition you did not test." Each

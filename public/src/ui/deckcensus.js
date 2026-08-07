@@ -100,8 +100,61 @@ function buildTotals() {
 
 export const DECK_TOTALS = buildTotals();
 
-/** 106 (§10: the deck size is an invariant, so this is a checkable claim). */
+/** 106 — the STOCK deck. Still a checkable claim, and still checked; it is just no
+ *  longer the only deck a game can be played with (see totalsFor). */
 export const DECK_SIZE = [...DECK_TOTALS.values()].reduce((a, b) => a + b, 0);
+
+/* ── custom decks (§3 deck knob) ──────────────────────────────────────────
+ *
+ * The whole census rests on "total(kind) is a known constant". A lobby can now
+ * change thirteen of those constants, so the constant is per-GAME rather than
+ * per-build, and the snapshot carries it: getPlayerView ships the resolved
+ * ruleset, and `rules.deck` is the count map the deck was built from.
+ *
+ * Without this the panel silently lies on any custom deck — a third Inspector
+ * General reads as "1 gone, 1 live" out of a total of 2, and the conservation
+ * line stops adding up. It is the same failure the file's own header warns
+ * about ("a mirror nobody checks is a lie with a timer on it"), so the mirror
+ * is extended rather than left to rot.
+ *
+ * WILD_PAIR_ORDER is the one genuinely new mirror: game.js WILD_PAIRS is an
+ * ORDERED list and `wildPairs: n` takes the first n, so the client cannot know
+ * which pairs a count of 8 means without knowing the order. Pinned against the
+ * real deck, at several counts, by test/deckconfig.test.js.
+ */
+export const WILD_PAIR_ORDER = Object.freeze([
+  'brown|lightblue', 'orange|pink', 'red|yellow', 'darkblue|green',
+  'base|intel', 'base|green', 'brown|lightblue', 'orange|pink', 'red|yellow',
+].map(k => k.split('|').sort().join('|')));
+
+/** The count map's keys, so an unknown field cannot silently become a card. */
+const DECK_ACTION_KINDS = Object.freeze(Object.keys(ACTION_COUNTS));
+
+/**
+ * The totals table for the deck THIS GAME is played with.
+ * @param {object|null|undefined} deck  `snapshot.rules.deck`; absent ⇒ the stock deck
+ * @returns {Map<string, number>}
+ */
+export function totalsFor(deck) {
+  if (!deck || typeof deck !== 'object') return DECK_TOTALS;
+  const t = new Map(DECK_TOTALS);
+  for (const kind of DECK_ACTION_KINDS) {
+    if (Number.isInteger(deck[kind])) t.set(`act:${kind}`, deck[kind]);
+  }
+  if (Number.isInteger(deck.wildAny)) t.set('wild:any', deck.wildAny);
+  if (Number.isInteger(deck.wildPairs)) {
+    for (const key of new Set(WILD_PAIR_ORDER)) t.set(`wild:${key}`, 0);
+    for (const key of WILD_PAIR_ORDER.slice(0, deck.wildPairs)) {
+      t.set(`wild:${key}`, (t.get(`wild:${key}`) || 0) + 1);
+    }
+  }
+  return t;
+}
+
+/** The size of the deck this game is played with. */
+export function sizeOf(totals) {
+  return [...totals.values()].reduce((a, b) => a + b, 0);
+}
 
 /* ── labels ───────────────────────────────────────────────────────────────── */
 
@@ -194,6 +247,10 @@ function bump(map, key, n = 1) {
  *   not be able to print a negative count.
  */
 export function census(snapshot, selfId) {
+  // Per-GAME totals, not the build's constants — a custom deck must not make this
+  // panel print numbers that do not add up (§3 deck knob).
+  const totals = totalsFor(snapshot?.rules?.deck);
+  const deckSize = sizeOf(totals);
   const gone = new Map();
   const seen = new Map();
 
@@ -213,8 +270,10 @@ export function census(snapshot, selfId) {
   const groups = GROUPS.map(g => ({
     id: g.id,
     title: g.title,
-    rows: g.keys().map((key) => {
-      const total = DECK_TOTALS.get(key) || 0;
+    // A kind the deck was built with ZERO of is not a row worth printing — an
+    // MD Faithful table has no CHUD card and should not be told "0 of 0 live".
+    rows: g.keys().filter(key => (totals.get(key) || 0) > 0).map((key) => {
+      const total = totals.get(key) || 0;
       const g0 = gone.get(key) || 0;
       const s0 = seen.get(key) || 0;
       return {
@@ -231,10 +290,10 @@ export function census(snapshot, selfId) {
   const goneTotal = (snapshot?.discardPile || []).length;
   const visible = [...seen.values()].reduce((a, b) => a + b, 0);
   return {
-    total: DECK_SIZE,
+    total: deckSize,
     gone: goneTotal,
     visible,
-    unseen: Math.max(0, DECK_SIZE - goneTotal - visible),
+    unseen: Math.max(0, deckSize - goneTotal - visible),
     deckCount: snapshot?.deckCount || 0,
     hiddenHands,
     groups,

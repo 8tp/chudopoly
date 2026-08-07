@@ -12,6 +12,8 @@ import {
   WIN_RULE_NAMES, WIN_RULE_LINE, TOGGLE_COPY,
   matchPreset, presetLabel, normalizeRules, rulesPayload,
   loadHostRules, saveHostRules, winRuleSummary,
+  DECK_ORDER, DECK_COPY, DECK_BASE, DECK_MIN, DECK_MAX, deckKindMax, deckSize,
+  SUDDEN_DEATH_RULES, SUDDEN_DEATH_COPY,
 } from './ruleset.js';
 import { BOT_LABEL, BOT_BLURB, botBlurb } from '../core/bots.js';
 
@@ -194,7 +196,7 @@ let pending = normalizeRules(null);
 let pickerRoot = null;
 
 /** name → the four inputs that must reflect `pending`, cached at build time. */
-const inputs = { preset: [], winRule: [], setsToWin: [], flags: {} };
+const inputs = { preset: [], winRule: [], setsToWin: [], flags: {}, suddenDeath: [], deck: {} };
 
 function radio(name, value, checked) {
   return el('input', {
@@ -257,6 +259,54 @@ function flagRow(key, name) {
   ]);
 }
 
+/* ── the deck editor (§3 deck knob) ────────────────────────────────────────
+ *
+ * A STEPPER PER CARD, not a free text field and not a slider. Three reasons, and
+ * the first is the one that decided it:
+ *   * every count is a small integer with a hard per-kind ceiling, so − and +
+ *     can be DISABLED at the bounds. A host is never offered a value the server
+ *     would refuse, which is the only honest way to build a control in front of
+ *     an authoritative validator.
+ *   * the numbers are the whole point. "2 → 3 Inspector General" is the edit;
+ *     a slider hides exactly the digit being chosen.
+ *   * it degrades to a plain +/− pair on a phone at 44px (§0.9) without a
+ *     custom gesture.
+ *
+ * The running deck TOTAL is shown because it is the one number with a global
+ * bound (game.js DECK_MIN/DECK_MAX): a per-card step can be individually legal
+ * and still push the deck out of range, and the host has to be able to see why
+ * the + went dead.
+ */
+function deckStepper(kind) {
+  const dec = el('button', {
+    class: 'deck-step', attrs: { type: 'button', 'data-deck': kind, 'data-delta': '-1',
+      'aria-label': `One fewer ${DECK_COPY[kind]}` }, text: '−' });
+  const inc = el('button', {
+    class: 'deck-step', attrs: { type: 'button', 'data-deck': kind, 'data-delta': '1',
+      'aria-label': `One more ${DECK_COPY[kind]}` }, text: '+' });
+  const count = el('span', { class: 'deck-count', attrs: { 'aria-live': 'polite' } });
+  inputs.deck[kind] = { dec, inc, count, row: null };
+  const row = el('div', { class: 'deck-row' }, [
+    el('span', { class: 'deck-name', text: DECK_COPY[kind] }),
+    el('span', { class: 'deck-ctl' }, [dec, count, inc]),
+  ]);
+  inputs.deck[kind].row = row;
+  return row;
+}
+
+function suddenDeathRow(id) {
+  const input = radio('chud-sudden', id, pending.suddenDeath === id);
+  inputs.suddenDeath.push(input);
+  const copy = SUDDEN_DEATH_COPY[id];
+  return el('label', { class: 'rule-row' }, [
+    input,
+    el('span', { class: 'rule-body' }, [
+      el('span', { class: 'rule-name', text: copy.label }),
+      el('span', { class: 'rule-line', text: copy.line }),
+    ]),
+  ]);
+}
+
 /** Fold one changed control back into `pending`, persist, repaint the label. */
 function onPick(e) {
   const t = e.target;
@@ -268,9 +318,34 @@ function onPick(e) {
     case 'chud-sets': pending = { ...pending, setsToWin: Number(t.value) }; break;
     case 'chud-pure': pending = { ...pending, pureSetRequired: t.checked }; break;
     case 'chud-pcs': pending = { ...pending, passGoRestartsTurn: t.checked }; break;
+    case 'chud-sudden': pending = { ...pending, suddenDeath: t.value }; break;
     default: return;
   }
   pending = normalizeRules(pending);
+  saveHostRules(pending);
+  syncPicker();
+}
+
+/**
+ * A deck stepper. Clamped against the SAME bounds game.js normalizeDeck uses, so
+ * a step the server would refuse cannot be taken — but the button is also
+ * disabled at those bounds by syncPicker(), and this is the second line of
+ * defence rather than the first (a keyboard Enter on a disabled-looking control,
+ * a stale DOM, a double-fire).
+ */
+function onDeckStep(e) {
+  const btn = e.target.closest?.('[data-deck]');
+  if (!btn || !pickerRoot.contains(btn)) return;
+  e.preventDefault();
+  const kind = btn.getAttribute('data-deck');
+  const delta = Number(btn.getAttribute('data-delta'));
+  const deck = { ...(pending.deck || DECK_BASE) };
+  const next = (deck[kind] ?? DECK_BASE[kind]) + delta;
+  if (next < 0 || next > deckKindMax(kind)) return;
+  const size = deckSize({ ...deck, [kind]: next });
+  if (size < DECK_MIN || size > DECK_MAX) return;
+  deck[kind] = next;
+  pending = normalizeRules({ ...pending, deck });
   saveHostRules(pending);
   syncPicker();
 }
@@ -288,6 +363,29 @@ function syncPicker() {
   for (const input of inputs.setsToWin) input.checked = Number(input.value) === pending.setsToWin;
   inputs.flags.pureSetRequired.checked = pending.pureSetRequired;
   inputs.flags.passGoRestartsTurn.checked = pending.passGoRestartsTurn;
+  for (const input of inputs.suddenDeath) input.checked = input.value === pending.suddenDeath;
+  // §3.10b is meaningless under 'instant' — nothing is ever armed, so there is no
+  // contest to suspend. game.js normalizeSuddenDeath forces it off; the control is
+  // disabled here so the host sees WHY rather than watching their choice revert.
+  const sdDead = pending.winRule === 'instant';
+  for (const input of inputs.suddenDeath) input.disabled = sdDead;
+  setHidden($('sudden-na'), !sdDead);
+
+  const deck = pending.deck || DECK_BASE;
+  const size = deckSize(deck);
+  for (const kind of DECK_ORDER) {
+    const ui = inputs.deck[kind];
+    if (!ui) continue;
+    const n = deck[kind] ?? DECK_BASE[kind];
+    setText(ui.count, String(n));
+    // Disabled at the per-kind bound OR where the step would take the whole deck
+    // out of [DECK_MIN, DECK_MAX] — both are server refusals, so both are dead here.
+    ui.dec.disabled = n <= 0 || size - 1 < DECK_MIN;
+    ui.inc.disabled = n >= deckKindMax(kind) || size + 1 > DECK_MAX;
+    ui.row.classList.toggle('is-changed', n !== DECK_BASE[kind]);
+  }
+  setText($('deck-total'), `${size} cards`);
+  setAttr($('deck-total'), 'data-stock', size === 106 ? 'stock' : 'custom');
 
   // The label the host reads is computed the same way the server computes the
   // one the table will read (game.js resolveRules), so flipping a toggle off a
@@ -295,6 +393,12 @@ function syncPicker() {
   const bits = [`${WIN_RULE_NAMES[pending.winRule]}`, `${pending.setsToWin} sets`];
   if (pending.pureSetRequired) bits.push('no all-wild sets');
   if (pending.passGoRestartsTurn) bits.push('PCS Orders restarts');
+  if (pending.suddenDeath !== 'off') bits.push(SUDDEN_DEATH_COPY[pending.suddenDeath].label.toLowerCase());
+  // Only ever says "custom deck" when it IS one — a deck that happens to equal the
+  // stock 106 after two cancelling edits is the stock deck and says nothing.
+  if (size !== 106 || DECK_ORDER.some(k => (deck[k] ?? DECK_BASE[k]) !== DECK_BASE[k])) {
+    bits.push(`custom deck (${size})`);
+  }
   setText($('ruleset-name'), presetLabel(preset));
   setText($('ruleset-bits'), bits.join(' · '));
   setText($('ruleset-win'), winRuleSummary(pending));
@@ -349,11 +453,33 @@ function ensurePicker() {
           flagRow('pureSetRequired', 'chud-pure'),
           flagRow('passGoRestartsTurn', 'chud-pcs'),
         ]),
+        el('fieldset', { class: 'adv-group' }, [
+          el('legend', { class: 'adv-legend', text: 'When two players are armed at once' }),
+          ...SUDDEN_DEATH_RULES.map(suddenDeathRow),
+          el('p', {
+            class: 'hint', attrs: { id: 'sudden-na', hidden: true },
+            text: 'Not available with instant win — nothing is ever armed, so an approach '
+              + 'can never be contested.',
+          }),
+        ]),
+        el('fieldset', { class: 'adv-group adv-group-deck' }, [
+          el('legend', { class: 'adv-legend' }, [
+            el('span', { text: 'The deck' }),
+            el('span', { class: 'deck-total', attrs: { id: 'deck-total', 'aria-live': 'polite' } }),
+          ]),
+          el('p', {
+            class: 'hint',
+            text: `Property, money and rent are fixed at 61 cards — a colour's card count IS `
+              + `its set size. Everything else is yours, between ${DECK_MIN} and ${DECK_MAX} cards.`,
+          }),
+          ...DECK_ORDER.map(deckStepper),
+        ]),
       ]),
     ]),
   ]);
 
   pickerRoot.addEventListener('change', onPick);
+  pickerRoot.addEventListener('click', onDeckStep);
   hostBox.insertBefore(pickerRoot, start);
   syncPicker();
 }

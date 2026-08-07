@@ -17,6 +17,11 @@ const BOT_MODES = new Set(['random', 'conservative', 'neutral', 'aggressive', 'c
 const WIN_RULES = new Set(['finalApproach', 'mdFaithful', 'instant']);
 const RULE_PRESETS = new Set(['chudopoly', 'mdFaithful', 'blitz', 'longGame']);
 const SETS_TO_WIN = new Set([3, 4, 5]);
+// §3.10b. Restated rather than imported for the same reason as the three above — a short
+// closed vocabulary, pinned against the engine by test/deckconfig.test.js. The
+// instant-win combination is refused by game.js normalizeSuddenDeath, not here: this
+// layer validates a FIELD, and legality that depends on another field is the engine's.
+const SUDDEN_DEATH = new Set(['off', 'oneLap', 'escalate', 'points']);
 function validOptionalBool(value) { return value === undefined || typeof value === 'boolean'; }
 const COLORS = new Set(['brown', 'lightblue', 'pink', 'orange', 'red', 'yellow', 'green', 'darkblue', 'base', 'intel']);
 const ID_PATTERN = /^[a-f0-9-]{16,64}$/i;
@@ -54,6 +59,9 @@ function validateRuleFields(message) {
   if (message.setsToWin !== undefined && !SETS_TO_WIN.has(message.setsToWin)) return fail('Invalid sets to win (3, 4 or 5)');
   if (!validOptionalBool(message.pureSetRequired)) return fail('Invalid pure-set setting');
   if (!validOptionalBool(message.passGoRestartsTurn)) return fail('Invalid PCS Orders setting');
+  if (message.suddenDeath !== undefined && !SUDDEN_DEATH.has(message.suddenDeath)) {
+    return fail('Invalid sudden death setting');
+  }
   // Deck composition (§3 deck knob). The counts are the engine's to police — game.js owns
   // the kind list, the per-kind ceilings and the total bounds, and this is the strict door
   // in front of the same function normalizeDeck() falls back to silently. One source, so a

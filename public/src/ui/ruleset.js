@@ -43,6 +43,11 @@ export function activeRules() {
     preset: r?.preset ?? null,
     pureSetRequired: r ? !!r.pureSetRequired : null,
     passGoRestartsTurn: r ? !!r.passGoRestartsTurn : null,
+    suddenDeath: r?.suddenDeath ?? 'off',
+    // The deck this game is ACTUALLY played with. Null with no game on screen —
+    // the copy then describes the default deck and says so, rather than
+    // asserting a composition for a game that does not exist yet.
+    deck: r?.deck ?? null,
     live: !!snap,
   };
 }
@@ -91,13 +96,85 @@ export const WIN_RULE_NAMES = Object.freeze({
  */
 
 export const RULE_KEYS = Object.freeze(
-  ['winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn']);
+  ['winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath']);
+
+/* ── the deck (§3 deck knob) ──────────────────────────────────────────────
+ * game.js DECK_BASE / DECK_KIND_MAX / DECK_MIN / DECK_MAX, mirrored for the
+ * picker and pinned card-for-card by test/deckconfig.test.js. The server is
+ * still authoritative — validateDeck() refuses anything these numbers would
+ * have allowed by mistake, and the first broadcast replaces the host's pending
+ * deck with the resolved one. This mirror exists so the lobby can DISABLE an
+ * illegal step instead of offering it and being refused. */
+export const DECK_BASE = Object.freeze({
+  inspector_general: 2, opsec: 3, midnight_requisition: 3, tdy_orders: 3,
+  finance_office: 3, roll_call: 3, pcs_orders: 10, upgrade: 3, foc: 2,
+  surge_ops: 2, chud: 2, wildAny: 2, wildPairs: 7,
+});
+export const DECK_KINDS = Object.freeze(Object.keys(DECK_BASE));
+export const DECK_FIXED = 61;                 // 28 property + 20 money + 13 rent
+export const DECK_MIN = 80;
+export const DECK_MAX = 130;
+const DECK_ACTION_MAX = 12;
+const DECK_KIND_MAX = Object.freeze({ wildAny: 4, wildPairs: 9 });
+export function deckKindMax(kind) {
+  return DECK_KIND_MAX[kind] !== undefined ? DECK_KIND_MAX[kind] : DECK_ACTION_MAX;
+}
+export function deckSize(counts) {
+  return DECK_KINDS.reduce((n, k) => n + (counts?.[k] ?? DECK_BASE[k]), DECK_FIXED);
+}
+export function normalizeDeck(raw, base = DECK_BASE) {
+  const out = { ...base };
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const kind of DECK_KINDS) {
+      const v = raw[kind];
+      if (!Number.isInteger(v)) continue;
+      out[kind] = Math.max(0, Math.min(deckKindMax(kind), v));
+    }
+  }
+  const size = deckSize(out);
+  return (size < DECK_MIN || size > DECK_MAX) ? { ...base } : out;
+}
+export function sameDeck(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return DECK_KINDS.every(k => a[k] === b[k]);
+}
+
+/** What each editable count is CALLED, in the words on the card face. */
+export const DECK_COPY = Object.freeze({
+  inspector_general: 'Inspector General', chud: 'THE CHUD CARD', opsec: 'OPSEC',
+  midnight_requisition: 'Midnight Requisition', tdy_orders: 'TDY Orders',
+  finance_office: 'Finance Office', roll_call: 'Roll Call', pcs_orders: 'PCS Orders',
+  upgrade: 'Upgrade (House)', foc: 'Full Op Capability', surge_ops: 'Surge Operations',
+  wildAny: 'Wild: any colour', wildPairs: 'Wild: two-colour',
+});
+
+/** Presentation order: the cards that decide a final approach lead, because
+ *  "how many set-breakers are in this deck?" is the question the knob exists
+ *  for. ui/deckcensus.js groups the discard view the same way. */
+export const DECK_ORDER = Object.freeze([
+  'inspector_general', 'chud', 'opsec', 'midnight_requisition', 'tdy_orders',
+  'wildAny', 'wildPairs',
+  'finance_office', 'roll_call', 'pcs_orders', 'upgrade', 'foc', 'surge_ops',
+]);
+
+/* ── §3.10b sudden death ──────────────────────────────────────────────── */
+export const SUDDEN_DEATH_RULES = Object.freeze(['off', 'oneLap', 'escalate', 'points']);
+export const SUDDEN_DEATH_COPY = Object.freeze({
+  off: { label: 'Turn order decides', line: 'If two players are armed at once, whoever\u2019s turn comes first wins. The default.' },
+  oneLap: { label: 'One extra lap', line: 'A contested approach suspends the win for one full round, then turn order decides.' },
+  escalate: { label: 'The bar rises', line: 'While two players are armed, winning takes one MORE set \u2014 pull ahead or nobody converts.' },
+  points: { label: 'Nobody converts', line: 'A contested approach never converts. After two rounds the game is decided on points.' },
+});
 
 export const PRESETS = Object.freeze({
-  chudopoly:  Object.freeze({ winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false }),
-  mdFaithful: Object.freeze({ winRule: 'mdFaithful',    setsToWin: 3, pureSetRequired: true,  passGoRestartsTurn: false }),
-  blitz:      Object.freeze({ winRule: 'instant',       setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true }),
-  longGame:   Object.freeze({ winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false }),
+  chudopoly:  Object.freeze({ winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: DECK_BASE }),
+  // MD Faithful's deck IS the official Monopoly Deal deck: no CHUD (it has no MD
+  // equivalent) and the two wilds we were short restored. Still 106 — the two
+  // changes cancel. game.js RULE_PRESETS carries the full derivation.
+  mdFaithful: Object.freeze({ winRule: 'mdFaithful',    setsToWin: 3, pureSetRequired: true,  passGoRestartsTurn: false, suddenDeath: 'off', deck: Object.freeze({ ...DECK_BASE, chud: 0, wildPairs: 9 }) }),
+  blitz:      Object.freeze({ winRule: 'instant',       setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true,  suddenDeath: 'off', deck: DECK_BASE }),
+  longGame:   Object.freeze({ winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: DECK_BASE }),
 });
 /** Presentation order. Default first — it is the one most tables want. */
 export const PRESET_ORDER = Object.freeze(['chudopoly', 'mdFaithful', 'blitz', 'longGame']);
@@ -188,6 +265,9 @@ function legal(key, value) {
   switch (key) {
     case 'winRule': return WIN_RULES.includes(value);
     case 'setsToWin': return SETS_TO_WIN_CHOICES.includes(value);
+    // §3.10b is refused with 'instant' by game.js normalizeSuddenDeath, so the
+    // picker never offers it there; sending it anyway resolves to 'off'.
+    case 'suddenDeath': return SUDDEN_DEATH_RULES.includes(value);
     default: return typeof value === 'boolean';
   }
 }
@@ -195,10 +275,15 @@ function legal(key, value) {
 /** Any object → a complete, legal toggle set. Unknown/illegal fields fall back
  *  to the Chudopoly default rather than being sent for the server to reject. */
 export function normalizeRules(raw) {
-  const out = { ...PRESETS.chudopoly };
+  const out = { ...PRESETS.chudopoly, deck: { ...PRESETS.chudopoly.deck } };
   if (raw && typeof raw === 'object') {
     for (const key of RULE_KEYS) if (legal(key, raw[key])) out[key] = raw[key];
+    if (raw.deck !== undefined) out.deck = normalizeDeck(raw.deck, out.deck);
   }
+  // game.js normalizeSuddenDeath: nothing is ever armed under 'instant', so a
+  // contested approach cannot exist and the control is forced off rather than
+  // offered as a switch wired to nothing.
+  if (out.winRule === 'instant') out.suddenDeath = 'off';
   return out;
 }
 
@@ -209,8 +294,8 @@ export function normalizeRules(raw) {
  */
 export function matchPreset(rules) {
   const r = normalizeRules(rules);
-  return PRESET_ORDER.find(name => RULE_KEYS.every(key => PRESETS[name][key] === r[key]))
-    || 'custom';
+  return PRESET_ORDER.find(name => RULE_KEYS.every(key => PRESETS[name][key] === r[key])
+    && sameDeck(PRESETS[name].deck, r.deck)) || 'custom';
 }
 
 /**
@@ -223,6 +308,10 @@ export function matchPreset(rules) {
 export function rulesPayload(rules) {
   const r = normalizeRules(rules);
   const preset = matchPreset(r);
+  // A named preset goes as ONE field so the preset path is actually exercised;
+  // 'custom' goes as every toggle INCLUDING the deck, which resolveRules()
+  // resolves to exactly the same ruleset. The deck must ride along or a host who
+  // changed only the deck would send a payload identical to Chudopoly's.
   return preset === 'custom' ? r : { preset };
 }
 

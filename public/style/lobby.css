@@ -348,3 +348,89 @@
    exists, so the pending choice is unreadable from any other seat; printing the
    default here would be right only when the host leaves it alone. */
 .ruleset-guest { margin: 0; }
+
+/* ── the deck editor (§3 deck knob) ───────────────────────────────────────
+ *
+ * A stepper per card. The counts are the point of the control, so they are set
+ * in the mono face at tabular width — the column cannot reflow as 9 becomes 10,
+ * which is exactly the moment a host is watching the number.
+ *
+ * Both buttons are real <button>s at the --tap floor (§0.9), and both are
+ * DISABLED at the bounds rather than silently refusing, so the deck's total
+ * limit is legible as "the + went dead" instead of "nothing happened".
+ */
+.adv-group-deck .adv-legend {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .6em;
+}
+.deck-total {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--fg-mute);
+}
+/* The stock 106 is unremarkable; anything else is a decision the host made and
+   should be able to see they made. */
+.deck-total[data-stock='custom'] { color: var(--act); }
+
+.deck-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6em;
+  padding: .15em 0;
+  min-width: 0;
+}
+.deck-name {
+  font-size: var(--t-small);
+  color: var(--fg-mute);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A count that is no longer the stock one is the whole state of this control,
+   so it is carried by weight and colour on the NAME as well as the number —
+   colour alone would be the only signal for a monochrome or colour-blind read. */
+.deck-row.is-changed .deck-name { color: var(--fg); font-weight: 700; }
+
+.deck-ctl { display: flex; align-items: center; gap: .25em; flex: 0 0 auto; }
+.deck-count {
+  min-width: 2ch;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: var(--t-small);
+  color: var(--fg);
+}
+.deck-row.is-changed .deck-count { color: var(--act); }
+
+.deck-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--deboss);
+  color: var(--fg);
+  font-size: var(--t-body);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+@media (hover: hover) {
+  .deck-step:not(:disabled):hover { background: var(--surface-hi, var(--surface)); color: var(--act); }
+}
+.deck-step:not(:disabled):active { box-shadow: none; transform: translateY(1px); }
+/* Disabled is a BOUND, not an error: it reads as unavailable rather than wrong,
+   and it keeps its focus ring so keyboard traversal does not fall into a hole. */
+.deck-step:disabled { opacity: .35; cursor: default; }
+.deck-step:focus-visible { outline: var(--ring); outline-offset: 2px; }

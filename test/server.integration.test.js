@@ -108,13 +108,22 @@ test('reconnect requires the private token and an available seat', async () => {
   assert.equal(resumedJoined.playerId, joined.playerId);
 });
 
-test('quick play creates a live three-player game', async () => {
+// FOUR seats since the 2026-08-07 owner ruling ("change default to 4 then"). Quick Play
+// used to seat two bots, which made the configuration the owner actually played the ONE
+// configuration BOT-STRATEGY.md's matrices never covered — and 3-player measured as a
+// materially thinner game (final approaches shot down 19.5% against 47.5% at four seats,
+// and a turn count so tight, SD 6.5, that every game felt the same). The seat count is
+// asserted here rather than left to the handler because it is a ruling, not an accident.
+test('quick play creates a live four-player game', async () => {
   const ws = await openClient();
   send(ws, { type:'quick_play', name:'Solo' });
   const joined = await waitMessage(ws, msg => msg.type === 'joined');
   const state = await waitMessage(ws, msg => msg.type === 'state' && msg.phase === 'playing');
-  assert.equal(state.players.length, 3);
-  assert.equal(state.players.filter(player => player.isBot).length, 2);
+  assert.equal(state.players.length, 4);
+  assert.equal(state.players.filter(player => player.isBot).length, 3);
+  // Still exactly one human, which is what keeps the 0 turn clock legitimate: only that
+  // player can stall and only their own game suffers.
+  assert.equal(state.players.filter(player => !player.isBot).length, 1);
   assert.equal(state.game.phase, 'playing');
 
   const me = state.game.players.find(player => player.id === joined.playerId);

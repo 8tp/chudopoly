@@ -284,16 +284,47 @@ function handleMessage(ws, msg, state) {
       const player = { id: state.playerId, resumeToken: genResumeToken(), name: msg.name, ws };
       const room = { code, phase: 'lobby', hostId: player.id, players: [player], state: null, chat: [],
         turnTimeout: 0, responseTimeout: DEFAULT_RESPONSE_TIMEOUT };
-      for (const mode of ['neutral', 'aggressive']) {
+      // THREE bots, not two — OWNER RULING 2026-08-07 ("change default to 4 then"), and the
+      // measurement that produced the question is the reason the ruling is right.
+      //
+      // Quick Play seated two bots, so the configuration the owner actually played was a
+      // 3-player table — the one configuration BOT-STRATEGY.md's matrices never covered
+      // (every seat × every 4-subset, with 5 players only for the cost analysis). So every
+      // number this project quotes described a table nobody was sitting at. Measured, 4000
+      // games per bench, seat 0 held by `neutral` as a stand-in for a competent human:
+      //
+      //   bench                              seat0 win   avg turns  p90  SD  shot down  contested
+      //   neutral+aggressive        (3p, old)    31.9%       24.8    33  6.5     19.5%      8.0%
+      //   neutral+aggressive+conservative (4p)   21.5%       32.4    47 13.0     47.5%     19.7%
+      //
+      // Three players is not merely a shorter game, it is a thinner one. FINAL APPROACH —
+      // the mechanic the whole win rule is built around — barely functions: four of every
+      // five approaches simply convert, against slightly better than half at four seats.
+      // And the turn count is nearly CONSTANT (SD 6.5, median 25, p10 17, p90 33), which is
+      // exactly the owner's "right now every game is 20-25ish points": that number is the
+      // TURN COUNTER, not net worth, which sits at a median of 9M. Four seats doubles the
+      // spread (SD 13.0, median 30, p10 20, p90 46).
+      //
+      // WHY `conservative` FOR THE THIRD SEAT. It builds where `aggressive` attacks and
+      // `neutral` balances, so the bench is three different opponents rather than two plus a
+      // duplicate — and it measured best on the axis that matters: highest shot-down rate
+      // (47.5% vs 43.9% seating `chud`, 42.4% seating `random`) and the most contested
+      // approaches (19.7%). `random` also makes the table measurably easier (seat 0 wins
+      // 26.8%). Personalities stay unlabelled in-game per the owner's standing constraint;
+      // this chooses the bench, it does not announce it.
+      for (const mode of ['neutral', 'aggressive', 'conservative']) {
         room.players.push({ id: genId(), name: absent.generateBotName(room), ws: null, isBot: true, botMode: mode });
       }
       rooms.set(code, room);
       sendJoined(ws, room, player);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
-      // Turn clock 0 by design: one human at the table, so only they can stall and only
-      // their own game suffers. The ANSWER clock is not optional though — the third
-      // argument is omitted so Quick Play takes the same 45s default every other match
-      // gets, and a bot's charge is answered on a deadline like anyone else's.
+      // Turn clock 0 by design: still exactly ONE human at the table after the fourth seat
+      // was added (the three new seats are all bots), so only that player can stall and only
+      // their own game suffers — the reasoning is unchanged by the seat count, and was
+      // re-checked rather than assumed when it changed. The ANSWER clock is not optional
+      // though — the third argument is omitted so Quick Play takes the same 45s default
+      // every other match gets, and a bot's charge is answered on a deadline like anyone
+      // else's.
       startRoomGame(room, 0);
       console.log(`[GAME] ${code} quick play started for ${player.name} `
         + `(response clock ${room.responseTimeout}s)`);

@@ -736,3 +736,151 @@ hollow — the table demonstrably fights, and it fires a counter 100% of the tim
 Not futile — the majority of approaches still convert. The remaining ceiling is the deck: four
 set-breaking cards in 106, against three OPSEC. Raising the break rate further would take a
 rules change, not a bot change.
+
+---
+
+## Round 6 (2026-08-07) — the deck knob, the contested approach, and the table nobody measured
+
+Round 5 closed with a hypothesis: *"The remaining ceiling is the deck: four set-breaking cards
+in 106 against three OPSEC. Getting materially above ~46% would take a rules change."*
+
+The deck is now a **rule** (game.js `DECK_BASE`, thirteen editable counts), so that hypothesis
+became measurable rather than arguable. It is **confirmed as a mechanism and rejected as a
+change**, and the reason is the cost the round-5 verdict had already flagged.
+
+### The matrices
+
+`simulate.js lineupsFor()` was generalised from the 4-player drop-one loop to **every k-subset
+of the 5-personality roster × every rotation** — the k=4 case reproduces the old loop lineup
+for lineup (asserted in `test/deckconfig.test.js`), and 3- and 5-player matrices exist for the
+first time. 10,000 games per variant per seat count; ≥333 per matchup at every count.
+
+**4 players** (the Quick Play default since this round):
+
+| variant | size | shot down | avg turns | p90 | points% |
+|---|---|---|---|---|---|
+| **baseline** | 106 | **45.8%** | **35.7** | **53** | **0.29%** |
+| +1 IG | 107 | 52.4% | 37.3 | 56 | 0.68% |
+| +1 Chud | 107 | 52.5% | 38.4 | 59 | 0.78% |
+| +1 each | 108 | 59.0% | 40.6 | 63 | 1.41% |
+| +2 wilds (9→11) | 108 | 41.7% | 33.8 | 48 | 0.15% |
+| +1 each, +1 OPSEC | 109 | 57.5% | 40.5 | 63 | 0.94% |
+| +1 IG, −1 PCS (size-neutral) | 106 | 53.3% | 37.7 | 56 | 0.80% |
+| mdFaithful deck | 106 | 24.8% | 30.4 | 42 | 0.00% |
+
+**5 players**, where round 5 said the cost lives — and it does:
+
+| variant | shot down | avg turns | p90 | points% |
+|---|---|---|---|---|
+| **baseline** | **62.6%** | **47.9** | **96** | **8.39%** |
+| +1 IG | 69.5% | 53.9 | 112 | **13.12%** |
+| +1 Chud | 68.6% | 55.3 | 115 | **14.35%** |
+| +1 each | 74.0% | 61.8 | 125 | **19.12%** |
+| +2 wilds | 59.9% | 44.2 | **81** | **5.93%** |
+| mdFaithful deck | 41.5% | 35.1 | 52 | 0.76% |
+
+### What the numbers say
+
+1. **The hypothesis was right about the mechanism.** One more Inspector General really does
+   move the shot-down rate (45.8% → 52.4% at four seats). The **size-neutral control**
+   (+1 IG, −1 PCS Orders, still 106 cards) reaches 53.3%, so the effect is the *breaker*, not
+   the bigger deck. The deck was genuinely the ceiling.
+
+2. **And it is still not worth shipping.** Every breaker addition pushes 5-player
+   points-endings from 8.4% to 13–19% and p90 past 110. The bar was "not materially past ~8%
+   and ~100 turns". Every one of them fails it. **Baseline is fine; the bots just got better.**
+
+3. **The surprise: restoring the two missing wilds goes the other way and is the only deck
+   change that pays.** It *lowers* the shot-down rate (approaches convert more, because sets
+   are easier to rebuild) but improves every cost at once: 5-player p90 96 → 81, points 8.39%
+   → 5.93%, average turns 47.9 → 44.2. Wilds are a *tail* fix, not a breaker fix.
+
+4. **CHUD is doing most of the set-breaking work.** The MD-faithful deck — the official
+   Monopoly Deal deck exactly, which is our deck minus CHUD plus the two wilds — shoots down
+   **24.8%** at four seats against our 45.8%. That is the honest price of fidelity, and it is
+   why MD needs no grace cycle: it has instant win instead.
+
+### §3.10b — the contested approach
+
+A contested approach (two or more seats armed at the same turn start) is **not rare**:
+**8.1% of 3-player games, 16.7% at 4 players, 26.1% at 5.** At the new default it is roughly
+one game in six, so this is a real part of the game rather than a curiosity.
+
+The owner's rule as stated does not terminate, so each mode carries its own bound. 10,000
+games per mode:
+
+| mode | 4p shot down | 4p p90 | 4p points% | 5p p90 | 5p points% |
+|---|---|---|---|---|---|
+| **off** (default) | 45.3% | 53 | 0.35% | 96 | 8.52% |
+| oneLap | 50.9% | 55 | 0.75% | 104 | 12.02% |
+| **escalate** | **55.1%** | 57 | 1.18% | 105 | 13.27% |
+| points | 58.6% | 59 | **4.95%** | 107 | **15.68%** |
+
+`escalate` buys **+9.8 points of shot-down at four seats — more than any deck change, at
+lower cost.** `points` is rejected outright: it converts one 4-player game in twenty into a
+technical ending, which is the failure mode the whole exercise exists to avoid.
+
+### The combination that actually pays for itself
+
+`escalate` lengthens games; restored wilds shorten them. Together (12,000 games, independent
+confirming seed, `suddenDeath: 'escalate'` + `wildPairs: 9, wildAny: 4` = 110 cards):
+
+| | 3p | 4p | 5p |
+|---|---|---|---|
+| shot down | 22.6 → **23.5%** | 45.4 → **46.8%** | 62.5 → **64.1%** |
+| avg turns | 28.2 → **25.8** | 35.6 → **32.3** | 47.7 → **41.3** |
+| p90 turns | 38 → **36** | 53 → **47** | 95 → **76** |
+| max turns | 78 → **61** | 145 → **131** | 147 → **142** |
+| decided on points | 0.00% | 0.31 → 0.50% | 8.08 → **6.16%** |
+| contested approaches | 8.3 → 14.4% | 16.1 → 21.1% | 26.0 → 29.5% |
+
+**Better or equal on every axis at every seat count**, §3 personality bounds green throughout
+(8–60% at 3, 4 and 5 players). It directly repairs the 5-player cost round 5 shipped —
+p90 96 → 76 and points 8.4% → 6.2% — while adding the drama the owner asked for.
+
+Sensitivity on the rainbow wilds, which are the part that pays (5 players):
+
+| wilds | 5p p90 | 5p points% |
+|---|---|---|
+| 11 (MD exactly) | 99 | 10.21% |
+| 12 | 86 | 7.47% |
+| 13 | 75 | 6.10% |
+
+Eleven wilds — the MD-faithful count — is **not** enough to pay for `escalate` at five seats.
+Twelve is. So the combination that works is a deliberate departure from MD, not a return to it.
+
+### Quick Play was measuring the wrong table
+
+Quick Play seated **two** bots, so the configuration the owner actually played was 3-player —
+the one configuration these matrices had never covered. Every number this document quotes
+described a table nobody was sitting at.
+
+| | 3p (old default) | 4p (new default) |
+|---|---|---|
+| seat-0 win rate | 31.9% | 21.5% |
+| avg / median turns | 24.8 / 25 | 32.4 / 30 |
+| **SD of turn count** | **6.5** | **13.0** |
+| final approaches shot down | **19.5%** | **47.5%** |
+| contested approaches | 8.0% | 19.7% |
+
+Three players is not a shorter game, it is a **thinner** one: four of every five final
+approaches simply convert, so the mechanic the whole win rule is built around barely
+functions. And the turn count is nearly constant — which is exactly the owner's complaint
+that *"every game is 20-25ish points."* **That number is the turn counter** (median 25, p10
+17, p90 33), not net worth, which sits at a median of 9M. Four seats doubles the spread.
+
+Bench chosen by measurement: `neutral + aggressive + conservative` gave the highest shot-down
+rate (47.5%, against 43.9% seating `chud` and 42.4% seating `random`) and the most contested
+approaches, and `random` measurably softens the table (seat 0 wins 26.8%).
+
+### Verdict
+
+**Ship nothing to the stock deck.** Round 5's hypothesis was correct about the mechanism and
+wrong about the remedy: the breakers work, and every way of adding them costs more at five
+seats than the shot-down rate is worth. A null result, and it is the real one.
+
+**Ship the configurability**, which makes the question cheap to re-ask, and makes MD Faithful
+genuinely faithful for the first time. **`escalate` + 12–13 wilds is the one variant measured
+that improves every axis at every seat count** — it is offered rather than defaulted, because
+defaulting a rule that changes the deck is a bigger decision than a balance round should make
+alone, and because the case for it rests on the tail rather than on the shot-down rate.

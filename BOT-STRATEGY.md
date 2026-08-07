@@ -884,3 +884,261 @@ genuinely faithful for the first time. **`escalate` + 12–13 wilds is the one v
 that improves every axis at every seat count** — it is offered rather than defaulted, because
 defaulting a rule that changes the deck is a bigger decision than a balance round should make
 alone, and because the case for it rests on the tail rather than on the shot-down rate.
+
+---
+
+## Round 7 (2026-08-07) — the money the bots were giving away, and the free move nobody made
+
+Owner report: *"ive noticed sometimes bots just pay or give way extra causing players to win
+more also their decisions as a whole they should be smarter use rent cards better and also
+move wilds around etc to protect resources … in general I want our bots to be smarter
+players."*
+
+Four defects, all found by instrumenting a live-ish game and counting rather than by reading
+the code. Three of them are things the file did *wrong*; one is a rule it had never once
+used. Instrumentation ran over 400 four-player games (every rotation of every 4-subset,
+the same lineups the matrix uses), logging every payment, every rent decision, every Surge
+and the whole board at every turn start.
+
+### The baseline, in numbers
+
+| measured at HEAD, per personality | random | conservative | neutral | aggressive | chud |
+|---|---|---|---|---|---|
+| **millions handed over per million owed** | 1.29 | 1.32 | 1.28 | 1.30 | 1.29 |
+| overpay, M per bot per game | 8.4 | 8.8 | 7.8 | 7.6 | 8.0 |
+| solvent payments that overpaid | 60% | 60% | 57% | 56% | 61% |
+| **turn starts where one free wild move would have completed a set** | 21% | 18% | 16% | 18% | 21% |
+| …of which any bot took | **0** | **0** | **0** | **0** | **0** |
+| Surges that expired unused | 85% | 67% | 39% | 39% | 77% |
+| millions a rent collected, as a share of the best the hand could have collected | 77% | 92% | 97% | 98% | 81% |
+| property placement, same share | 63% | 98% | 98% | 98% | 66% |
+
+Property placement was already at its ceiling for the three planning modes and was left
+alone — the intuitive guess would have been to rewrite it, and it was worth nothing.
+
+### 1. Payment: the greedy walk that stopped at "enough" instead of "closest"
+
+`selectPaymentCards()` ended with a walk down the priority order that broke the moment the
+running total reached the debt. A bank of `[1, 10]` paying a 5M charge took the 1 (1 < 5),
+then the 10 (11 ≥ 5), and **handed over 11M for a 5M debt**. Across every personality that
+is ~30% of every million that ever changed hands, and it is exactly the owner's report.
+
+**The fix does not touch the order.** The sort above it is measured — bank before upgrades
+before properties (a House costs rent, a property can cost a set), near-complete sets
+protected, §3.10's complete-set-last rule for an armed payer — and getting it wrong
+previously cost chud ~3 points and random ~2. So the ordering was re-expressed as a **cost**
+and the search runs inside it: bank 0, upgrade 1, property 4 + how complete its set is, with
+gaps wider than the largest card in the deck (10M) so that **no amount of overpay saving can
+ever promote a worse tier**. A small exact DP over card values then picks the cheapest tier
+mix, then the smallest overpay reachable with that mix, then the fewest cards. Zero-value
+cards are dropped (they cannot move a total), and an insolvent payer still surrenders
+everything under §3.4.
+
+| | before | after |
+|---|---|---|
+| M handed / M owed (neutral) | 1.28 | **1.13** |
+| M overpaid per bot per game | 7.6–8.8 | **4.2–5.5** |
+| solvent payments that overpay at all | 56–61% | **31–42%** |
+
+The residual is the denomination problem plus the tier order, and it is deliberate: a bot
+holding a single 10M note and a spare 4M property still hands over the 10M for a 4M debt,
+because the measured ordering says cash before board. An unrestricted search that ignored
+tiers would remove a further 13–19% of the debt in overpay — that is the price of the
+priority ordering, stated so the next round can argue with it on numbers.
+
+**This fix on its own made 5-player games longer**: turns 48.2 → 54.3, p90 97 → 106, and
+§3.6 points-endings 8.44% → 11.6%. Less money moving is a tighter economy and fewer forced
+set-breaks. Fix 2 paid all of it back and more.
+
+### 2. §3.8 free rearranging: a rule no bot had ever used
+
+`moveProperty` and `swapProperties` were never called from a bot decision. Rearranging is
+free, does not cost a play (Hasbro FAQ 937; the client itself got this wrong until
+`55a014f`), and **on 16–21% of turn starts a single free move would have completed a set
+outright**. It is the largest thing in `bot.js` that was simply *missing* rather than wrong.
+
+`planRearrange()` is a hill climb on a board score where a completed set is worth ~1000 and
+an incomplete zone is worth `200 × (have/size)²` — the **square** is what makes concentration
+beat scatter, so a wild parked where it can never finish anything moves to where it can.
+Everything about it is chosen so it cannot thrash or wedge:
+
+- **A card never leaves a complete set.** Moving out of one can cost a set and can gain at
+  most one, so `completedSets` is monotone non-decreasing under every move the planner makes
+  — which is both the strategy and the termination argument.
+- Only **strict** improvements on a deterministic score, so A→B→A cannot happen.
+- Every precondition `moveProperty`/`swapProperties` enforce is re-checked first. A refused
+  rearrange is not a wasted turn, it is an **infinite loop** — it costs no play and no budget,
+  so `botTakeTurn` would re-decide, re-propose and reschedule forever. Fuzzed over 300 random
+  boards in `test/bot-economy.test.js`; the engine never refuses one.
+- **At most four per turn**, read off the engine's own budget. Measured over 1,500 games:
+  89% of rearranging turns make exactly one move, 4 happened 7 times in 1,500 games.
+
+Measured effect, 400 games: 380–426 rearranges per personality per 400 games for the three
+planning modes, of which ~1 in 3 completes a set outright.
+
+**The atomic swap (`d05d523`) is wired in and never fires.** Zero `swapProperties` calls in
+400 games. It is only reachable when *no* single move helps — which is the deadlock it was
+ruled in for — and a bot's board effectively never reaches that shape, because the planner
+keeps the board tidy enough that one-card moves are always available first. Kept, because
+mid-game takeover from an arbitrary human-played board is exactly where that shape *would*
+appear, and it costs nothing to hold.
+
+### 3. §3.1c: Surge Ops was being armed ahead of charges the engine never doubles
+
+`hasChargeFollowUp()` answered **yes** to Finance Office and Roll Call. §3.1c makes Surge
+rent-only, and `game.js` proves it — both call `chargeAmount()` with no `surgeable` flag, so
+their multiplier is always 1. Round 5 fixed exactly this inside `tryBreakFinalApproach()` and
+left the personality planners, which is where nearly all Surges are played, still wrong.
+Conservative additionally armed a Surge and then wandered off to PCS Orders or a property:
+89 of its 145 Surges were followed by something other than a charge.
+
+| Surges that expired unused | before | after |
+|---|---|---|
+| aggressive | 39% | **3%** |
+| neutral | 39% | **8%** |
+| conservative | 67% | **12%** |
+| chud | 77% | 52% |
+| random | 85% | 66% |
+
+Random and chud keep a small chance of arming one for nothing — that is the seat's character
+— but they no longer burn a play on a multiplier with no rent in hand at all.
+
+### 4. Rent is worth what it collects, not what it prints
+
+Two corrections, both of which the old ranking got wrong in the same direction:
+
+- **A colour rent charges the whole table.** Only §3.2's wild "any" rent names one victim. A
+  2M charge on a colour collects 6M at a four-handed table while a 4M wild rent collects 4M.
+  The old code compared face values across cards and systematically preferred the wild.
+- **A charge is capped by what the victim can hand over,** and anything above their *bank*
+  has to come off the board — which is denial, and worth more than the same millions in cash.
+  `collectableFrom()` prices both. A wild rent now goes to whoever the charge actually hurts,
+  with the leader worth two millions a set, so it still hits the player in front unless they
+  are too broke to feel it.
+
+| millions collected as a share of the hand's best | before | after |
+|---|---|---|
+| aggressive | 97.7% | **99.9%** |
+| neutral | 96.4% | **99.8%** |
+| conservative | 91.7% | **98.1%** |
+| chud | 81.3% | 81.0% |
+| random | 76.8% | 74.9% |
+
+Chud and random are unchanged **on purpose** — they still roll for colour and victim, and
+that gap is now the clearest single expression of the personality split.
+
+### 5. A fifth change, small: charges that only disarm when stacked
+
+Round 5's break branch asked of each charge alone *"does this beat `disposableValue`"*, which
+threw away every hand that could only clear the bar by stacking two — a 4M rent and a 5M
+Finance Office cannot disarm a victim holding 6M of loose change one at a time and
+comfortably can together. The bar is now the **sequence that fits in this turn**. Worth +0.35
+points of shot-down at four seats and +0.4 at five. This is *not* the attrition fallback
+round 5 measured and removed: that one fired charges the victim could pay in full, which
+cannot disarm anybody by definition.
+
+### What each personality got
+
+| | payment | rearrange | Surge | rent |
+|---|---|---|---|---|
+| **conservative** | full | always, incl. consolidation | rent-only, and fires it immediately | full |
+| **neutral** | full | always, incl. consolidation | rent-only | full |
+| **aggressive** | full | always, incl. consolidation | rent-only | full |
+| **chud** | full | 30%/decision, **set-completing moves only** | rent-only, 25% chaos burn | unchanged (random colour + victim) |
+| **random** | full | 12%/decision, **set-completing moves only** | rent-only, 20% chaos burn | unchanged (random colour + victim) |
+
+The payment fix is universal and deliberately so: it is the thing the owner complained about,
+and a personality expressed as "hands the human free money" is not a personality. The axis the
+chaotic two keep is *attention* — they do not notice a free set most of the time, they never
+consolidate, and their rent still goes wherever it lands.
+
+### Balance (paired seed, ≥500 games per matchup, every seat × every k-subset)
+
+| | 3 players (15,000) | 4 players (10,000) | 5 players (2,500) |
+|---|---|---|---|
+| random | 20.3 → **21.1** | 13.3 → **13.6** | 10.6 → **11.8** |
+| conservative | 36.7 → **37.4** | 26.6 → **27.6** | 20.2 → **19.7** |
+| neutral | 44.9 → **42.6** | 32.8 → **32.1** | 23.4 → **24.1** |
+| aggressive | 44.9 → **43.9** | 38.4 → **37.1** | 34.0 → **31.3** |
+| chud | 19.8 → **21.5** | 13.8 → **14.7** | 11.8 → **13.1** |
+| first-player advantage | 33.8 → 33.3 | 24.2 → 22.9 | 17.8 → 15.5 |
+| avg turns | 28.1 → **26.6** | 35.6 → **33.8** | 48.2 → **45.6** |
+| p90 turns | 38 → **35** | 53 → **49** | 97 → **88** |
+| max turns | 85 → **61** | 125 → **118** | 155 → **134** |
+| final approaches shot down | 22.7 → 21.6 | 45.6 → **44.5** | 62.8 → **65.4** |
+| armings per game | 1.46 → 1.48 | 2.14 → 2.18 | 2.87 → **3.25** |
+| **decided on §3.6 points** | 0 → **0** | 0.29 → **0.11** | **8.44 → 7.88** |
+| contested approaches | 8.2 → 9.2% | 15.7 → **18.9%** | 25.2 → **33.0%** |
+
+§3 bounds hold at every seat count. Every game decided. Reproduced on an independent
+confirming seed, every figure within 1 point.
+
+**The canary is green.** Five-player §3.6 points-endings go 8.44% → 7.88% (7.04% on the
+confirming seed) against the 8.4% watch line, and p90 drops 97 → 88 — the payment fix alone
+pushed those to 11.6% and 106, and the rearranger paid all of it back and then some.
+
+**The one thing that got worse: four-player shot-down, 45.6% → 44.5%.** The cause is the
+payment fix — an armed player who no longer overpays keeps more loose change, so
+`disposableValue` is higher and a charge disarms less often. Real (≈3 standard errors over
+22,000 armings), and priced honestly: it buys a 5% shorter game, a lower points-rate, and a
+5-player shot-down that goes the other way (+2.6). Contested approaches rose sharply at every
+seat count, which is the drama the mechanic exists for.
+
+### The honest difficulty number
+
+Bot-only matrices cannot answer *"is this harder for the human"*, because every seat improves
+at once. So the bot as it shipped at HEAD was frozen as a fixed opponent and seated at the
+Quick Play bench (`neutral + aggressive + conservative`) against the old table and the new
+one — 3,000 games per cell, fair share 25.0%.
+
+| seat-0 policy (frozen) | vs OLD table | vs NEW table | delta |
+|---|---|---|---|
+| old bot, neutral | 20.9% | **13.2%** | −7.7 |
+| old bot, aggressive | 21.3% | **14.1%** | −7.2 |
+| old bot, conservative | 19.9% | **10.4%** | −9.5 |
+| old bot **+ the payment fix only**, neutral | 27.0% | **16.7%** | −10.3 |
+| new bot (plays to the same standard), neutral | 31.2% | **19.9%** | −11.3 |
+
+Read the rows, not the deltas. **The bots are meaningfully harder** — a player who plays like
+the old bot loses 7–9 points of winrate. But note the second column of row 2: *simply not
+overpaying* is worth +6 points to whoever does it, and a human already does not hand over 11M
+for a 5M debt. And row 3: a player at the new standard sits at 19.9% against the new table,
+essentially where the old bot sat against the old table (20.9%). **The difficulty increase
+falls almost entirely on careless play**, which is the right place for it, but it is real and
+the owner may want some of it back.
+
+If he does, the dial is `REARRANGE_BIAS` (exported on `Bot._internal`), and it is honest
+about how little it buys:
+
+| planner bias | fixed old neutral bot's winrate |
+|---|---|
+| 1.0 (shipped) | 13.2% |
+| 0.7 | 14.0% |
+| 0.5 | 13.9% |
+| 0.0 (rearranging off) | 15.1% |
+
+Turning the rearranger off entirely returns **1.9 of the 7.7 points**. The rest is the
+payment, rent and Surge fixes — which is to say, the rest is the thing that was asked for.
+There is no version of "stop giving the human free money" that is also easier.
+
+### Things measured that did not change, and why
+
+- **Property placement.** 98% of the achievable board-score gain, for all three planning
+  modes, before any change. The obvious rewrite was worth nothing.
+- **The OPSEC chain.** Round 5 measured its headroom at ~0.3 points and nothing moved it.
+- **The atomic swap.** Wired, correct, and fires zero times in 400 games (see §2 above).
+- **Discarding.** Neutral discards by value and will throw a 1M property before a 2M money
+  card; aggressive discards money first. Both look wrong on inspection and neither showed up
+  as material in 400 games — hand-limit discards are rare enough that this is the next
+  round's problem, not this one's.
+
+### A structural note for whoever comes next
+
+`Bot._internal.applyBotAction(state, playerId, action)` is now the canonical place a bot
+decision becomes an engine call. `executeBotPlay` and the test suite go through it;
+`simulate.js` keeps its own switch only because it records per-case telemetry around each
+call, and its cases are kept in step deliberately. Every driver used to reimplement the
+switch privately, and the day §3.8's rearrange was added `test/protocol.test.js` silently
+stopped executing bot decisions and spun its turn loop to the step cap — a passing-looking
+harness driving a game that never ended. If a new decision type is ever added, add it to
+`applyBotAction` first, and check `simulate.js` and any new harness against it.

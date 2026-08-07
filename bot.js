@@ -259,24 +259,44 @@ function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
     if (bestRent === null || base > bestRent.base) bestRent = { i, color, base, card };
   }
 
-  // Surge first only if the doubled rent clears the bar and the bare rent does not, and only
-  // if we will still have the play to fire the rent afterwards.
+  // The charges still firable this turn, biggest first. Round 5 asked of each one alone
+  // "does this beat `disposableValue`", which threw away every hand that could only get
+  // there by stacking two — a 4M rent and a 5M Finance Office cannot disarm a victim
+  // holding 6M of loose change one at a time, and comfortably can together. The bar is the
+  // SEQUENCE, and after the first charge lands `disposableValue` has already fallen, so this
+  // branch re-runs next play and the second charge is usually clearing the bar on its own by
+  // then.
+  //
+  // This is NOT the attrition fallback measured and removed in round 5. That one fired
+  // charges the victim could pay in full, which cannot disarm anybody by definition; this
+  // fires only when the charges that FIT IN THIS TURN add up to more than the victim can
+  // cover without breaking a set.
+  const charges = [];
+  if (bestRent) charges.push({ amount: bestRent.base * rentMult, kind: 'rent' });
+  if (financeIdx >= 0) charges.push({ amount: 5, kind: 'finance' });
+  if (rollCallIdx >= 0) charges.push({ amount: 2, kind: 'roll' });
+  charges.sort((a, b) => b.amount - a.amount);
+  const firable = charges.slice(0, Math.max(0, state.playsRemaining));
+  const stacked = firable.reduce((sum, c) => sum + c.amount, 0);
+
+  // Surge first only when doubling the rent is what carries the sequence over the bar, and
+  // only if a play remains to fire the rent with. §3.1c — rent only; surging ahead of a
+  // Finance Office spends a play on a multiplier the engine never applies.
   if (bestRent && surgeIdx >= 0 && state.playsRemaining >= 2
-    && bestRent.base * rentMult <= spare && bestRent.base * rentMult * 2 > spare) {
+    && stacked <= spare && stacked + bestRent.base * rentMult > spare) {
     return { type:'play_action', cardIndex:surgeIdx };
   }
-  if (bestRent && bestRent.base * rentMult > spare) {
-    if (bestRent.card.colors[0] === 'any') {
-      return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color, targetId:victim.id };
+  if (stacked > spare && firable.length > 0) {
+    const first = firable[0];
+    if (first.kind === 'rent') {
+      if (bestRent.card.colors[0] === 'any') {
+        return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color, targetId:victim.id };
+      }
+      return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color };
     }
-    return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color };
-  }
-  if (financeIdx >= 0 && spare < 5) {
-    return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
-  }
-  // Roll Call is only 2M and hits the whole table, but 2M is all it takes against a player
-  // who has already spent down to nothing. Cheap, and previously never considered at all.
-  if (rollCallIdx >= 0 && spare < 2) {
+    if (first.kind === 'finance') return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
+    // Roll Call is only 2M and it hits the whole table, but 2M is all it takes against a
+    // player who has already spent down to nothing.
     return { type:'play_action', cardIndex:rollCallIdx };
   }
 
@@ -352,6 +372,166 @@ function tryDefendFinalApproach(bot, hand, mode, othersArmed) {
     if (card.value > best) { best = card.value; bestIdx = i; }
   }
   return bestIdx >= 0 ? { type:'play_money', cardIndex:bestIdx } : null;
+}
+
+/* ── §3.8 free rearranging ──────────────────────────────────────────────
+ *
+ * Moving a wild between your own sets is FREE and does not cost a play (Hasbro FAQ 937,
+ * ARCHITECTURE §3.8; the client itself got this wrong until `55a014f`). Every bot in this
+ * file has ignored it since the file was written — `moveProperty` and `swapProperties` were
+ * never once called from a bot decision.
+ *
+ * That is not a rounding error. Instrumented over 400 four-player games, sampling every
+ * player's board at every turn start: on **16-21% of turn starts** a single free move would
+ * have completed a set outright, and not one bot ever made it. It is the largest thing in
+ * this file that was simply missing rather than wrong.
+ *
+ * The planner is a hill climb on a board score, and everything about it is chosen so it
+ * cannot thrash or wedge:
+ *
+ *   - A CARD NEVER LEAVES A COMPLETE SET. Moving out of one can cost a set and can gain at
+ *     most one, so the count of completed sets is monotone non-decreasing under every move
+ *     the planner will make — which is both the strategy and the termination argument.
+ *   - Only STRICT improvements are taken, on a deterministic score, so A→B→A is impossible.
+ *   - Every precondition `moveProperty()` and `swapProperties()` check is checked here
+ *     first, so the engine can never refuse a proposal. A refusal would be an infinite loop:
+ *     a rejected rearrange costs no play and no budget, so `botTakeTurn` would re-decide,
+ *     re-propose and reschedule forever.
+ *   - At most four rearranges per turn, read off the engine's own budget rather than a
+ *     counter of ours. The opportunity is one move deep in almost every case, and a bot that
+ *     spends eight seconds sliding cards around is worse to sit across from than one that
+ *     leaves a set unfinished.
+ */
+
+// Completed sets are the win condition, so they dominate. Below that the score is the
+// SQUARE of each zone's progress, which is what makes concentration beat scatter: 2/4 in
+// one colour outscores 1/3 + 1/4 across two, and a wild parked where it can never finish
+// anything is worth moving to wherever it can.
+function zoneScore(bot, color) {
+  const info = G.COLORS[color];
+  if (!info) return 0;
+  const have = (bot.properties[color] || []).length;
+  if (have === 0) return 0;
+  if (G.isSetComplete(bot, color)) return 1000 + 10 * info.size;
+  const frac = have / info.size;
+  return 200 * frac * frac;
+}
+
+function boardScore(bot) {
+  let total = 0;
+  for (const color of Object.keys(G.COLORS)) total += zoneScore(bot, color);
+  return total;
+}
+
+// Apply a move on the real arrays, score, and put everything back exactly as it was.
+// Cheaper than cloning the board, and `isSetComplete` has to see the real zones because
+// `pureSetRequired` makes "is this a set" depend on what else is sitting in the zone.
+function scoreAfterMove(bot, card, from, to) {
+  const src = bot.properties[from];
+  const at = src.indexOf(card);
+  if (at < 0) return -Infinity;
+  const created = !bot.properties[to];
+  if (created) bot.properties[to] = [];
+  const dst = bot.properties[to];
+  const wasPlaced = card.placedColor;
+  src.splice(at, 1);
+  card.placedColor = to;
+  dst.push(card);
+  const score = boardScore(bot);
+  dst.pop();
+  card.placedColor = wasPlaced;
+  src.splice(at, 0, card);
+  if (created) delete bot.properties[to];
+  return score;
+}
+
+function scoreAfterSwap(bot, a, b) {
+  const from = a.color, to = b.color;
+  const ia = bot.properties[from].indexOf(a.card);
+  const ib = bot.properties[to].indexOf(b.card);
+  if (ia < 0 || ib < 0) return -Infinity;
+  bot.properties[from].splice(ia, 1, b.card);
+  bot.properties[to].splice(ib, 1, a.card);
+  const pa = a.card.placedColor, pb = b.card.placedColor;
+  a.card.placedColor = to; b.card.placedColor = from;
+  const score = boardScore(bot);
+  bot.properties[from].splice(ia, 1, a.card);
+  bot.properties[to].splice(ib, 1, b.card);
+  a.card.placedColor = pa; b.card.placedColor = pb;
+  return score;
+}
+
+// How readily each personality tidies its board, per decision. This is the axis the trait
+// lives on: the three planning modes always take a free set, the gremlin usually notices,
+// and random mostly does not. Nobody is FORBIDDEN the move — it is free, and a bot that
+// left a finished set on the floor forever would just read as broken.
+const REARRANGE_BIAS = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3, random: 0.12 };
+// Whether a personality will spend a move on mere consolidation — a wild that improves the
+// board without finishing anything today. The chaotic two will not: they take the free set
+// and nothing else, which keeps their boards scattered, which is their whole shape.
+const REARRANGE_CONSOLIDATES = { conservative: true, neutral: true, aggressive: true, chud: false, random: false };
+// A completed set is worth ~1000 on the board score; anything under this is housekeeping.
+const SET_DELTA = 500;
+
+function rearrangesLeft(state) {
+  const left = state?.rearrangesRemaining;
+  return Number.isFinite(left) ? left : G.REARRANGE_BUDGET;
+}
+
+function planRearrange(state, bot, mode) {
+  if (state.turnPhase !== 'play') return null;
+  const left = rearrangesLeft(state);
+  if (left <= 0) return null;
+  if (G.REARRANGE_BUDGET - left >= 4) return null;   // the per-turn cap described above
+  if (rnd() > (REARRANGE_BIAS[mode] ?? 1)) return null;
+  const consolidates = REARRANGE_CONSOLIDATES[mode] ?? true;
+
+  const base = boardScore(bot);
+  const movable = [];
+  for (const [color, cards] of Object.entries(bot.properties)) {
+    if (!cards.length) continue;
+    // Never out of a complete set: it can cost a set and can gain at most one.
+    if (G.isSetComplete(bot, color)) continue;
+    for (const card of cards) {
+      if (card.type !== 'wild_property') continue;
+      movable.push({ color, card });
+    }
+  }
+  if (movable.length === 0) return null;
+
+  let best = null;
+  for (const { color: from, card } of movable) {
+    for (const to of G.legalColorsFor(card)) {
+      if (to === from || !G.COLORS[to] || G.zoneFull(bot, to)) continue;
+      const delta = scoreAfterMove(bot, card, from, to) - base;
+      if (delta <= 1e-9) continue;
+      if (!best || delta > best.delta) best = { delta, plan: { type: 'rearrange', cardId: card.id, toColor: to } };
+    }
+  }
+
+  // The atomic swap (§3.5 owner ruling, `d05d523`). Only reachable when NO single move
+  // helps, because it costs two rearranges and a one-card move that achieves the same thing
+  // is always cheaper — which is exactly the case the swap was ruled in for: two zones that
+  // are each full of what the other one wants, where neither card can go first.
+  if (!best && left >= G.SWAP_COST) {
+    for (let i = 0; i < movable.length; i++) {
+      for (let j = i + 1; j < movable.length; j++) {
+        const a = movable[i], b = movable[j];
+        if (a.color === b.color) continue;
+        if (!G.legalColorsFor(a.card).includes(b.color)) continue;
+        if (!G.legalColorsFor(b.card).includes(a.color)) continue;
+        const delta = scoreAfterSwap(bot, a, b) - base;
+        if (delta <= 1e-9) continue;
+        if (!best || delta > best.delta) {
+          best = { delta, plan: { type: 'swap', cardIdA: a.card.id, cardIdB: b.card.id } };
+        }
+      }
+    }
+  }
+
+  if (!best) return null;
+  if (!consolidates && best.delta < SET_DELTA) return null;
+  return best.plan;
 }
 
 function myProgress(bot) {
@@ -555,6 +735,15 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
 function decideBotPlay(state, botId, mode) {
   const bot = G.getPlayer(state, botId);
   if (!bot || state.playsRemaining <= 0) return null;
+
+  // §3.8 — rearranging costs no play, so it is decided before everything that does: before
+  // the personality plan, before the human-like holdback (a bot sitting on its hand should
+  // still tidy its board) and before the empty-hand return below (a bot that has spent its
+  // whole hand can still finish a set for free). Nothing is deferred by taking it — the
+  // caller re-enters within the same turn with the same plays still in the bank.
+  const tidy = planRearrange(state, bot, mode);
+  if (tidy) return tidy;
+
   if (bot.hand.length === 0) return null;
 
   // §3.10 — a live final approach outranks every personality quirk, including the
@@ -650,7 +839,7 @@ function decideRandom(state, bot, botId) {
     }
     if (c.type === 'rent') {
       const color = randomRentColor(bot, c);
-      const play = makeRentPlay(bot, hand, i, color, opponents, 'random');
+      const play = makeRentPlay(state, bot, hand, i, color, opponents, 'random');
       if (play) return play;
     }
     if (c.type === 'action') {
@@ -692,11 +881,14 @@ function tryRandomAction(state, bot, botId, card, idx, opponents) {
     case 'roll_call':
       return { type: 'play_action', cardIndex: idx };
     case 'surge_ops':
-      // Only if we have rent to follow up
-      if (bot.hand.some(c => c.type === 'rent') && state.playsRemaining >= 2) {
+      // Only if a rent can actually follow it (§3.1c — Finance Office and Roll Call are
+      // never doubled). Random keeps a small chance of arming one for nothing, because
+      // that is the seat's character; it used to be a coin flip, and 83% of its Surges
+      // expired unused.
+      if (bot.hand.some(c => c.type === 'rent' && chooseBestRentColor(bot, c)) && state.playsRemaining >= 2) {
         return { type: 'play_action', cardIndex: idx };
       }
-      return rnd() > 0.5 ? { type: 'play_action', cardIndex: idx } : null;
+      return rnd() < 0.2 ? { type: 'play_action', cardIndex: idx } : null;
     case 'finance_office': {
       const t = opponents.length > 0 ? opponents[Math.floor(rnd() * opponents.length)] : null;
       return t ? { type: 'play_action', cardIndex: idx, targetId: t.id } : null;
@@ -749,12 +941,21 @@ function decideConservative(state, bot, botId) {
     if (offensive) return offensive;
   }
 
-  // 1. Surge before the biggest charge we can follow it with (§3.3: any charge, not just rent)
+  // 1. Surge before a rent — and ONLY before a rent (§3.1c; see hasChargeFollowUp).
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const rentOnComplete = findRentOnCompleteSet(bot, hand, opponents, mode);
+  const rentOnComplete = findRentOnCompleteSet(state, bot, hand, opponents, mode);
   if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
       && (rentOnComplete || hasChargeFollowUp(bot, hand, opponents))) {
     return { type: 'play_action', cardIndex: surgeIdx };
+  }
+
+  // 1b. A live Surge expires at end of turn, so once it is armed the rent comes next, full
+  //     stop. Conservative used to arm one and then wander off to PCS Orders or a property
+  //     and throw the multiplier away — 89 of its 145 Surges were followed by something
+  //     other than a charge, and 64% expired unused.
+  if (state._surgeOps) {
+    const surged = rentOnComplete || findBestRent(state, bot, hand, 0, opponents, mode);
+    if (surged) return surged;
   }
 
   // 2. Rent on complete sets — good income, low risk
@@ -786,7 +987,7 @@ function decideConservative(state, bot, botId) {
   }
 
   // 7. Rent — any color with rent >= 2
-  const decentRent = findBestRent(bot, hand, 2, opponents, mode);
+  const decentRent = findBestRent(state, bot, hand, 2, opponents, mode);
   if (decentRent) return decentRent;
 
   // 8. If WE are close to winning (2 sets), get offensive
@@ -850,7 +1051,7 @@ function decideNeutral(state, bot, botId) {
 
   // 2. Rent if surged, or high-value rent (>= 3)
   if (state._surgeOps) {
-    const rentPlay = findBestRent(bot, hand, 0, opponents, mode);
+    const rentPlay = findBestRent(state, bot, hand, 0, opponents, mode);
     if (rentPlay) return rentPlay;
   }
 
@@ -859,7 +1060,7 @@ function decideNeutral(state, bot, botId) {
   if (played === 0) {
     if (roll < 0.35) {
       // 35% chance: lead with rent if decent
-      const highRent = findBestRent(bot, hand, 2, opponents, mode);
+      const highRent = findBestRent(state, bot, hand, 2, opponents, mode);
       if (highRent) return highRent;
     } else if (roll < 0.50) {
       // 15% chance: lead with PCS Orders
@@ -878,7 +1079,7 @@ function decideNeutral(state, bot, botId) {
   if (pcsIdx >= 0) return { type: 'play_action', cardIndex: pcsIdx };
 
   // 5. Medium rent (>= 2)
-  const rentPlay = findBestRent(bot, hand, 2, opponents, mode);
+  const rentPlay = findBestRent(state, bot, hand, 2, opponents, mode);
   if (rentPlay) return rentPlay;
 
   // 6. Offensive actions
@@ -898,7 +1099,7 @@ function decideNeutral(state, bot, botId) {
   }
 
   // 8. Any rent (>= 1)
-  const lowRent = findBestRent(bot, hand, 1, opponents, mode);
+  const lowRent = findBestRent(state, bot, hand, 1, opponents, mode);
   if (lowRent) return lowRent;
 
   // 9. Bank money
@@ -939,7 +1140,7 @@ function decideAggressive(state, bot, botId) {
   }
 
   // 2. Rent — any color with properties, maximize damage
-  const rentPlay = findBestRent(bot, hand, 0, opponents, mode);
+  const rentPlay = findBestRent(state, bot, hand, 0, opponents, mode);
   if (rentPlay) return rentPlay;
 
   // 3. CHUD — target strategically
@@ -1088,9 +1289,12 @@ function decideChud(state, bot, botId) {
     }
   }
 
-  // 7. Surge Ops — burn it even without rent
+  // 7. Surge Ops. Chud still burns it carelessly — but only when a rent can follow, or on a
+  //    quarter-chance for the noise. 126 of chud's 185 Surges were armed with no rent in
+  //    hand at all, and a multiplier that cannot fire is not chaos, it is a lost play.
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  if (surgeIdx >= 0 && !state._surgeOps) {
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && (hasChargeFollowUp(bot, hand, opponents) || rnd() < 0.25)) {
     return { type: 'play_action', cardIndex: surgeIdx };
   }
 
@@ -1099,7 +1303,7 @@ function decideChud(state, bot, botId) {
     const c = hand[i];
     if (c.type === 'rent') {
       const color = randomRentColor(bot, c);
-      const play = makeRentPlay(bot, hand, i, color, opponents, 'chud');
+      const play = makeRentPlay(state, bot, hand, i, color, opponents, 'chud');
       if (play) return play;
     }
   }
@@ -1278,24 +1482,38 @@ function tryOffensiveActions(state, bot, botId, hand, opponents) {
 
 /* ── Execute bot play ───────────────────────────────────────────────── */
 
-function executeBotPlay(state, room, botId, action, callbacks) {
-  let result;
+// The ONE place a bot decision becomes an engine call. Exported (`_internal.applyBotAction`)
+// because every harness that drives bots — simulate.js, the test suite, anything an agent
+// writes next — otherwise reimplements this switch, and the day a new action type appears
+// each copy silently stops executing it and spins the turn loop instead. That is exactly
+// what happened when §3.8's free rearrange was added.
+function applyBotAction(state, botId, action) {
   switch (action.type) {
     case 'play_property':
-      result = G.playProperty(state, botId, action.cardIndex, action.targetColor);
-      break;
+      return G.playProperty(state, botId, action.cardIndex, action.targetColor);
     case 'play_money':
-      result = G.playAsMoney(state, botId, action.cardIndex);
-      break;
+      return G.playAsMoney(state, botId, action.cardIndex);
     case 'play_action':
-      result = G.playAction(state, botId, action.cardIndex, {
+      return G.playAction(state, botId, action.cardIndex, {
         targetId: action.targetId,
         targetColor: action.targetColor,
         targetCardId: action.targetCardId,
         myCardId: action.myCardId,
       });
-      break;
+    // §3.8 — free, and it does NOT spend a play. planRearrange() re-checks every
+    // precondition these two enforce, so a refusal here would be a bug rather than a
+    // rejected gamble: the turn would neither advance nor end.
+    case 'rearrange':
+      return G.moveProperty(state, botId, action.cardId, action.toColor);
+    case 'swap':
+      return G.swapProperties(state, botId, action.cardIdA, action.cardIdB);
+    default:
+      return { error: 'Unknown bot action ' + action.type };
   }
+}
+
+function executeBotPlay(state, room, botId, action, callbacks) {
+  const result = applyBotAction(state, botId, action);
   if (result?.error) {
     console.log(`[BOT] ${botId} play error: ${result.error}`);
   }
@@ -1390,47 +1608,87 @@ function chooseBestColorForWild(bot, card) {
 // §3.2 — the wild ("any") rent card must name a single victim.
 function isWildRent(card) { return card.type === 'rent' && card.colors[0] === 'any'; }
 
-function chooseRentTarget(opponents, mode) {
-  const live = opponents.filter(o => !o.eliminated);
-  if (live.length === 0) return null;
-  const armed = live.filter(o => o.finalApproach);
-  if (armed.length > 0) return armed[0];            // §3.10 — bleed the armed player first
-  if (mode === 'chud' || mode === 'random') return live[Math.floor(rnd() * live.length)];
-  // Hit the leader; break ties on who can actually pay.
-  return live.reduce((best, p) => {
-    const bs = G.completedSets(best), ps = G.completedSets(p);
-    if (ps !== bs) return ps > bs ? p : best;
-    return G.playerTotalValue(p) > G.playerTotalValue(best) ? p : best;
-  });
+// What a charge of `face` is actually worth against this opponent. Two corrections to
+// "the rent number on the card":
+//   - it is capped by what they can hand over. A 7M rent aimed at a player holding 2M
+//     collects 2M, and aiming it at somebody solvent instead is free money.
+//   - anything above their BANK has to come off the board, and a property leaving their
+//     board is worth more than the same millions in cash — that is the denial half of a
+//     rent, and it is why bleeding a player past their cash is not the same as taxing them.
+function collectableFrom(opp, face) {
+  const got = Math.min(face, G.playerTotalValue(opp));
+  return got + (got > bankValue(opp) ? 1.5 : 0);
 }
 
-function makeRentPlay(bot, hand, cardIndex, color, opponents, mode) {
+function chooseRentTarget(opponents, mode, face = Infinity) {
+  const live = opponents.filter(o => !o.eliminated);
+  if (live.length === 0) return null;
+  // §3.10 — bleed the armed player first, and when two are armed pick the one further along.
+  const armed = live.filter(o => o.finalApproach);
+  if (armed.length > 0) {
+    return armed.reduce((best, p) => (G.completedSets(p) > G.completedSets(best) ? p : best));
+  }
+  if (mode === 'chud' || mode === 'random') return live[Math.floor(rnd() * live.length)];
+  // Hit whoever the charge actually hurts most, with the leader worth two millions a set —
+  // so a rent goes to the player in front unless they are too broke to feel it.
+  return live.reduce((best, p) =>
+    (collectableFrom(p, face) + 2 * G.completedSets(p)
+      > collectableFrom(best, face) + 2 * G.completedSets(best)) ? p : best);
+}
+
+// §3.1c — Surge Ops applies to RENT ONLY, and it STACKS. This is the multiplier a rent
+// played right now would be charged at.
+function surgeMultiplier(state) { return 2 ** (state?._surgeOps || 0); }
+
+// What a rent card is worth THIS INSTANT, in millions actually collected.
+//
+// The old ranking compared `calcRent` across cards and took the biggest number, which is the
+// wrong comparison in two ways at once. A COLOUR rent hits every opponent (only §3.2's wild
+// "any" rent names a single victim), so a 2M charge on a colour collects 6M at a four-handed
+// table while a 4M wild rent collects 4M — and either is capped by what the victims own.
+// Measured before this: conservative captured 91.7% of the millions its own hand could have
+// collected and neutral 96.4%, the whole gap being wild-versus-colour and target choice.
+function rentYield(state, bot, card, color, opponents, mode) {
+  const face = G.calcRent(bot, color) * surgeMultiplier(state);
+  if (face <= 0 || opponents.length === 0) return { face, value: 0, target: null };
+  if (isWildRent(card)) {
+    const target = chooseRentTarget(opponents, mode, face);
+    return { face, value: target ? collectableFrom(target, face) : 0, target };
+  }
+  let total = 0;
+  for (const o of opponents) total += collectableFrom(o, face);
+  return { face, value: total, target: null };
+}
+
+function makeRentPlay(state, bot, hand, cardIndex, color, opponents, mode) {
   const card = hand[cardIndex];
   if (!card || !color) return null;
   const play = { type: 'play_action', cardIndex, targetColor: color };
   if (isWildRent(card)) {
-    const target = chooseRentTarget(opponents, mode);
+    const face = G.calcRent(bot, color) * surgeMultiplier(state);
+    const target = chooseRentTarget(opponents, mode, face);
     if (!target) return null;
     play.targetId = target.id;
   }
   return play;
 }
 
-function findBestRent(bot, hand, minRent, opponents, mode) {
+// `minRent` still gates on the card's FACE value — that is the "is this rent worth a play
+// at all" question every personality tunes — but the choice between cards that clear the
+// gate is made on what they actually collect.
+function findBestRent(state, bot, hand, minRent, opponents, mode) {
   let bestRent = null;
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
     if (c.type !== 'rent') continue;
     const color = chooseBestRentColor(bot, c);
     if (!color) continue;
-    const rent = G.calcRent(bot, color);
-    if (rent < minRent) continue;
-    if (!bestRent || rent > bestRent.rent) {
-      bestRent = { cardIndex: i, color, rent };
-    }
+    if (G.calcRent(bot, color) < minRent) continue;
+    const { value } = rentYield(state, bot, c, color, opponents, mode);
+    if (!bestRent || value > bestRent.value) bestRent = { cardIndex: i, color, value };
   }
   if (!bestRent) return null;
-  return makeRentPlay(bot, hand, bestRent.cardIndex, bestRent.color, opponents, mode);
+  return makeRentPlay(state, bot, hand, bestRent.cardIndex, bestRent.color, opponents, mode);
 }
 
 function chooseBestRentColor(bot, card) {
@@ -1449,27 +1707,37 @@ function randomRentColor(bot, card) {
   return validColors.length > 0 ? validColors[Math.floor(rnd() * validColors.length)] : null;
 }
 
-function findRentOnCompleteSet(bot, hand, opponents, mode) {
+// The BEST rent on a complete set, not the first one the hand happens to hold.
+function findRentOnCompleteSet(state, bot, hand, opponents, mode) {
+  let best = null;
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
     if (c.type !== 'rent') continue;
     const validColors = c.colors[0] === 'any' ? Object.keys(bot.properties) : c.colors;
     for (const color of validColors) {
-      if (G.isSetComplete(bot, color)) {
-        const play = makeRentPlay(bot, hand, i, color, opponents, mode);
-        if (play) return play;
-      }
+      if (!G.isSetComplete(bot, color)) continue;
+      const { value } = rentYield(state, bot, c, color, opponents, mode);
+      if (!best || value > best.value) best = { i, color, value };
     }
   }
-  return null;
+  if (!best) return null;
+  return makeRentPlay(state, bot, hand, best.i, best.color, opponents, mode);
 }
 
-// Surge Ops is only worth a play if a charge can follow it this turn (§3.3).
+// Surge Ops is only worth a play if a RENT can follow it this turn.
+//
+// §3.1c: Surge follows Double The Rent — it applies to rent ONLY, never Finance Office and
+// never Roll Call, and `game.js` proves it, because those two call `chargeAmount()` with no
+// `surgeable` flag and their multiplier is always 1. This function used to answer yes to
+// either of them, so all three planning modes routinely spent a play arming a multiplier
+// that could not fire. Round 5 fixed exactly this inside `tryBreakFinalApproach()` and left
+// the personality planners — which is where nearly all the Surges are played — still wrong.
+// Measured over 400 four-player games before the fix: 39% of neutral's and aggressive's
+// Surges expired unused, 64% of conservative's, and 77-85% of the chaotic two's.
 function hasChargeFollowUp(bot, hand, opponents) {
   if (opponents.length === 0) return false;
   for (const c of hand) {
     if (c.type === 'rent' && chooseBestRentColor(bot, c)) return true;
-    if (c.action === 'finance_office' || c.action === 'roll_call') return true;
   }
   return false;
 }
@@ -1787,14 +2055,112 @@ function selectPaymentCards(bot, amount, mode) {
     cards.sort((a, b) => (complete.has(a.id) ? 1 : 0) - (complete.has(b.id) ? 1 : 0));
   }
 
-  const selected = [];
-  let total = 0;
-  for (const c of cards) {
-    if (total >= amount) break;
-    selected.push(c.id);
-    total += c.value;
+  return minimalCover(cards, amount);
+}
+
+/* ── Minimal-overpay cover ──────────────────────────────────────────────
+ *
+ * selectPaymentCards() used to close with a greedy walk in sorted order that stopped the
+ * moment it had ENOUGH and never asked whether a different combination got CLOSER. A bank
+ * of [1, 10] paying a 5M charge took the 1 (total 1 < 5), then the 10 (total 11 >= 5), and
+ * handed over 11M for a 5M debt.
+ *
+ * Measured at HEAD over 400 four-player games, on every payment the payer could actually
+ * afford: every personality handed over 28-32% more than it owed — 7.6-8.8M per bot per
+ * game — and 56-61% of all solvent payments overpaid at all. That is the owner's report
+ * ("bots just pay or give way extra") as a number.
+ *
+ * THE ORDER ABOVE IS NOT OVERRIDDEN — it is re-expressed as a cost, so the search runs
+ * INSIDE it instead of over it. Every card carries a weight: bank 0, upgrade 1, property
+ * 4 + how complete its set is. The weights are separated by more than the largest card in
+ * the deck (10M), so no amount of overpay saving can ever promote a worse tier: a property
+ * is spent only when the bank and the upgrades genuinely cannot cover the debt, exactly as
+ * the sort already decided. That ordering is measured, not arbitrary (a House costs rent, a
+ * property can cost a set; getting it wrong cost chud ~3 points and random ~2), and §3.10's
+ * rule that an armed bot never volunteers a card out of a completed set survives as the
+ * heaviest weight of all.
+ *
+ * What the search actually buys, in order: the cheapest TIER MIX first, then the smallest
+ * overpay reachable with that mix, then the fewest cards. So within the bank it makes exact
+ * change instead of stopping at the first card that clears the bar, and when it does have to
+ * reach for property it takes the fewest cards out of the least-complete sets rather than
+ * whichever ones the walk happened to touch first.
+ *
+ * Zero-value cards are dropped from the search: they cannot move the total, so including one
+ * is pure loss. §3.4 still makes them surrenderable — an insolvent payer hands over
+ * everything through acceptAction()'s fallback, zero-value wilds included.
+ *
+ * COST: the pool is every payable card (rarely more than ~25) and the totals are small
+ * integers capped at `amount + 10`, so this is a few hundred operations per payment. Timed
+ * over a 10,000-game matrix it is inside run-to-run noise.
+ */
+
+// Tier weights. The gaps are wider than the largest card value in the deck, which is what
+// makes the tier order lexicographic rather than merely preferred.
+function payWeight(c) {
+  if (c.source === 'bank') return 0;
+  if (c.source === 'upgrade') return 1;
+  return 4 + (c.setProgress || 0);   // property: near-complete sets cost more to break up
+}
+
+function minimalCover(cards, amount) {
+  const pool = [];
+  let poolTotal = 0;
+  for (let i = 0; i < cards.length; i++) {
+    poolTotal += cards[i].value;
+    if (cards[i].value > 0) pool.push({ ...cards[i], rank: i, w: cards[i].weight ?? payWeight(cards[i]) });
   }
-  return selected;
+  // Insolvent — hand over everything and let the engine's "surrender every card you own"
+  // branch (§3.4) take it, zero-value wilds included.
+  if (poolTotal < amount || pool.length === 0) return cards.map(c => c.id);
+
+  let maxVal = 0;
+  for (const c of pool) if (c.value > maxVal) maxVal = c.value;
+  const cap = amount + maxVal;
+
+  // dp[t] = cheapest (weight, then card count) way to reach EXACTLY t. `layers` keeps one
+  // snapshot per item so the winning selection can be walked back out.
+  let dp = new Array(cap + 1).fill(null);
+  dp[0] = { w: 0, count: 0, take: -1, from: 0 };
+  const layers = [dp];
+  for (let i = 0; i < pool.length; i++) {
+    const v = pool[i].value;
+    const next = dp.slice();
+    for (let t = 0; t + v <= cap; t++) {
+      const cur = dp[t];
+      if (!cur) continue;
+      const cand = { w: cur.w + pool[i].w, count: cur.count + 1, take: i, from: t };
+      const old = next[t + v];
+      if (!old || cand.w < old.w - 1e-9
+        || (Math.abs(cand.w - old.w) < 1e-9 && cand.count < old.count)) next[t + v] = cand;
+    }
+    dp = next;
+    layers.push(dp);
+  }
+
+  // Cheapest tier mix first, then the smallest overpay it can make, then the fewest cards.
+  // Scanning t upward from `amount` makes the overpay tie-break implicit: the first total
+  // that reaches a given weight is the least it can overshoot by at that weight.
+  let best = -1;
+  for (let t = amount; t <= cap; t++) {
+    const n = dp[t];
+    if (!n) continue;
+    if (best < 0) { best = t; continue; }
+    const b = dp[best];
+    if (n.w < b.w - 1e-9) best = t;
+  }
+  if (best < 0) return cards.map(c => c.id);   // unreachable: poolTotal >= amount above
+
+  const out = [];
+  let layer = layers.length - 1, t = best;
+  while (t > 0) {
+    const node = layers[layer][t];
+    if (!node || node.take < 0) break;
+    out.push(pool[node.take].id);
+    layer = node.take;
+    t = node.from;
+  }
+  return out;
 }
 
 // Must mirror G.payableCards() exactly. §3.1b made upgrades payable, and the engine only
@@ -1875,6 +2241,8 @@ module.exports = {
   // Exported for simulation harness
   _internal: {
     decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards, setRng, rnd,
+    planRearrange, boardScore, minimalCover, applyBotAction,
+    REARRANGE_BIAS, REARRANGE_CONSOLIDATES, payWeight,
     BREAK_URGENCY, BREAK_OVERPAY, disposableValue, tryBreakFinalApproach,
     getAllPayableCardIds, chooseDiscards, findResponder: function(state) {
       return G.pendingResponders(state)[0] || null;

@@ -1,19 +1,32 @@
-/* table.css — the felt, the zones, and the card object.
-   Owner: design agent (§6).
+/* table.css — the apron, the zones, the seats, and the card object.
+   Owner: art-direction agent (ART-DIRECTION §1, §3, §5, §6).
 
    THE TRANSFORM CONTRACT (do not break, do not extend):
      .card { transform: translate(var(--fx),var(--fy)) rotate(var(--tilt)) scale(var(--fs)) }
    is the ONLY transform declaration a card node may carry. FLIP writes --fx/--fy/
    --fs, cardnode.js writes --tilt. Every visual state below (lift, pick, drag,
-   target) therefore expresses itself in shadow / rim / filter / z-index — never
-   in transform. The P3 scaffold violated this twice (.is-lifted and .zone-deck
-   .card both redeclared transform); both are gone.
+   target) therefore expresses itself in shadow / ring / filter / z-index — never
+   in transform. The inner face wrapper is left alone so motion.css can own the
+   3D flip.
 
-   The inner face wrapper is left alone so motion.css can own the 3D flip. */
+   CARD NODES ARE PERSISTENT AND REPARENTED (§0.4). Nothing here may key off a
+   card's position among its siblings for MEANING — :not(:last-child) is used
+   only for stacking geometry, which is exactly what sibling order means.
 
-.screen-game { display: flex; flex-direction: column; background: var(--void); }
+   THE TWO INVARIANTS this file exists to hold (§1):
+     1. Turn-vs-alarm differ in HUE **and** GEOMETRY. Your turn is a cobalt ring
+        OUTSIDE the object. Final approach is hazard material INSIDE it. The old
+        klaxon animated gold→gold, so every still frame showed the alarm wearing
+        the turn marker's colour.
+     2. Any animated marked state reads IDENTICALLY at frame 0 and under
+        prefers-reduced-motion. Every keyframe set below states the full
+        treatment at 0%/100% and varies only intensity at 50%. */
 
-/* ── the felt ──────────────────────────────────────────────────────────── */
+.screen-game { display: flex; flex-direction: column; background: var(--ground-deep); }
+
+/* ── the apron ─────────────────────────────────────────────────────────────
+   The concrete, the grain and the bay joints are base.css's (.table::before /
+   ::after). Everything here is what is PUT ON it. */
 
 .table {
   position: relative;
@@ -21,97 +34,56 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: .3em;
-  padding: .4em .45em .3em;
+  gap: .35em;
+  padding: .45em .5em .35em;
   overflow: hidden;
-  background:
-    /* hangar light coming in over the top edge */
-    radial-gradient(118% 70% at 50% -10%, rgba(126, 178, 240, .17) 0%, transparent 56%),
-    /* the pool of light on the wool */
-    radial-gradient(74% 50% at 50% 40%, var(--felt-lit) 0%, var(--felt-mid) 52%, transparent 82%),
-    linear-gradient(180deg, var(--felt-mid) 0%, var(--felt-deep) 58%, var(--felt-edge) 100%);
-}
-/* grain + weave: the difference between "felt" and "flat navy". */
-.table::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background-image: var(--grain), var(--weave);
-  background-size: 180px 180px, auto, auto;
-  opacity: .16;
-  mix-blend-mode: overlay;
-  pointer-events: none;
-}
-/* vignette sits UNDER the cards (z-index 0) so it darkens felt, never a card. */
-.table::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background: radial-gradient(122% 96% at 50% 38%, transparent 36%, rgba(0, 0, 0, .28) 72%, rgba(0, 0, 0, .62) 100%);
-  pointer-events: none;
 }
 .opponents, .table-center, .self-board { position: relative; z-index: 1; }
 
-/* Surge Ops is armed: the felt takes an amber edge. */
-.table.surge-on { box-shadow: inset 0 0 0 2px rgba(232, 144, 58, .5), inset 0 0 40px rgba(232, 144, 58, .18); }
+/* Surge Ops is armed: a hazard rail is painted across the top of the apron.
+   Material, not a hue wash — the same stripe vocabulary as every other danger
+   in the app, so it reads in grayscale. */
+.table.surge-on::before { opacity: calc(var(--grain-alpha) + .04); }
+.table.surge-on {
+  box-shadow:
+    inset 0 6px 0 -3px var(--danger),
+    inset 0 0 0 2px var(--shade);
+}
 
-/* ── vertical rhythm: opponents / open felt with the piles / your board ── */
+/* ══ MOBILE PORTRAIT — the dock layout, kept ═══════════════════════════════
+   Opponent seats across the top, piles in the middle, your mat below. This is
+   the shape a phone wants; §5 only re-cuts the desktop. */
 
-/* Four opponents in ONE row is 88px per board on a 390px phone — one colour
-   column wide. five-player@phone showed 1-2 of a player's 10 sets and the rest
-   were silently gone; that is information loss, not cosmetics. auto-fit gives
-   the strip a shape per player count instead of one shape for all of them:
-     1 opponent   → one full-width board
-     2 opponents  → side by side (unchanged from the old flex row)
-     3-4          → a 2×2 block, 186px per board on a phone — 4-5 colour
-                    columns visible instead of 1.
-   Desktop is wide enough that auto-fit still lands 4 boards on one row (316px
-   each), so this costs the wide layout nothing. */
 .opponents {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(9.5em, 1fr));
-  gap: .4em;
-  /* shrink priority: when the felt is short, the opponents strip and the centre
-     give way and YOUR board keeps its full height. flex-shrink is weighted by
-     basis, so 40 and 10 against the self board's 1 make the deficit land almost
-     entirely on these two. */
-  /* shrink 8, not 40: at 40 the strip always hit its floor first and hid 52px
-     of opponent board while the self board still had room. Both give ground. */
+  gap: .35em;
+  /* shrink priority: when the apron is short, the seats and the piles give way
+     and YOUR mat keeps its height. */
   flex: 0 4 auto;
-  /* the floor is one board with no properties on it (measured 80px desktop,
-     93px phone) — below that the strip stops being a strip */
   min-height: calc(var(--s) * 5.4);
   max-height: 50%;
-  /* start, not stretch. A stretched board is shorter than its own content when
-     the strip is capped, and the grid rows inside it then get squeezed — which
-     is what sliced every opponent's cards horizontally at ~40% height
-     (measured .board-props scrollHeight−clientHeight: 46px on arc-3@desktop,
-     57px on payment@desktop). Sized to content, the strip scrolls as a whole
-     and no card is ever cut in half. */
+  /* start, not stretch: a stretched seat is shorter than its own content when
+     the strip is capped, and the rows inside then get squeezed — which sliced
+     every opponent's cards at ~40% height (measured .board-props
+     scrollHeight−clientHeight: 46px on arc-3@desktop, 57px on payment). */
   align-items: start;
   overflow-y: auto;
   overscroll-behavior: contain;
   min-width: 0;
   scrollbar-width: thin;
-  scrollbar-color: rgba(143, 160, 186, .35) transparent;
-  /* The harness runs Chromium with --hide-scrollbars, and a real phone hides
+  scrollbar-color: var(--fg-mute) transparent;
+  /* The harness runs Chromium with --hide-scrollbars and a real phone hides
      overlay scrollbars at rest, so the scrollbar cannot be the only cue that
-     there is more below. The last 1em of the scrollport fades: content that
-     runs past the edge dissolves instead of being guillotined, and when the
-     content fits there is nothing there to fade. overflow already clips at
-     exactly this boundary, so the mask adds no new clipping. */
-  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
-  mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
+     there is more below. */
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent);
 }
 .opponents::-webkit-scrollbar { width: 5px; }
-.opponents::-webkit-scrollbar-thumb { background: rgba(143, 160, 186, .3); border-radius: 999px; }
+.opponents::-webkit-scrollbar-thumb { background: var(--fg-mute); border-radius: 999px; }
 .opponents .board { min-width: 0; }
 
 .self-board {
-  /* grows: leftover felt belongs to YOUR mat, not to a bigger gap around the
-     piles. */
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -119,319 +91,278 @@
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgba(143, 160, 186, .35) transparent;
-  /* same cue as the opponents strip. arc-5-late@desktop sliced the FIGHT
-     column's upgrade card dead flat with a hidden scrollbar above it; measured
-     scrollHeight−clientHeight was 42px on payment@desktop, 19px on
-     final-approach@desktop. */
-  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
-  mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
+  scrollbar-color: var(--fg-mute) transparent;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent);
 }
 /* The SCROLL BOX grows, the mat does not: leftover space below your board is
-   felt, not a 390px-tall empty outlined rectangle (which is what the big-hand
-   phone shot showed when the board held two cards). */
+   apron, not a 390px-tall empty rectangle. */
 .self-board > .board { flex: 0 0 auto; }
 .self-board::-webkit-scrollbar { width: 5px; }
-.self-board::-webkit-scrollbar-thumb { background: rgba(143, 160, 186, .3); border-radius: 999px; }
+.self-board::-webkit-scrollbar-thumb { background: var(--fg-mute); border-radius: 999px; }
 
-/* ── player boards ─────────────────────────────────────────────────────── */
+/* ══ BOARDS ════════════════════════════════════════════════════════════════
+   §3.2: a board is NOT a rounded-rect panel with a 1px border on a slightly-
+   lighter ground. Your own board is not a container at all — it is a set of
+   mats laid directly on the apron. An opponent's board is a SEAT: a shallow
+   bay cut into the concrete, which is the same material language as a mat. */
 
-.board {
-  position: relative;
-  padding: .35em .4em .4em;
-  border: var(--hairline) solid rgba(86, 109, 146, .26);
+.board { position: relative; min-width: 0; }
+
+.opponents .board {
+  padding: .3em .35em .35em;
   border-radius: var(--radius);
-  background: linear-gradient(180deg, rgba(24, 42, 68, .58), rgba(7, 16, 30, .82));
-  box-shadow: var(--lift-1), var(--rim);
-  min-width: 0;
+  background: var(--surface);
+  box-shadow: var(--deboss);
 }
-.board-self {
-  --card-w: calc(var(--s) * 2.65);
-  padding: .22em .45em .4em;
-  background: linear-gradient(180deg, rgba(30, 52, 82, .62), rgba(9, 20, 36, .88));
-  border-color: rgba(86, 109, 146, .4);
-  box-shadow: var(--lift-2), var(--rim);
-}
-.opponents .board { --card-w: calc(var(--s) * 2.2); }
+.board-self { padding: 0; background: none; box-shadow: none; }
 
-/* THE turn marker. Exactly one board can wear it — that is the whole point of
-   spending foil on it. Static: the alarm below is the only thing on the felt
+/* THE TURN MARKER — a cobalt ring OUTSIDE the seat. Outline only, never a
+   fill, never a glow, and STATIC: the alarm is the only thing on the apron
    allowed to move, so "it is your turn" and "someone is about to win" can
-   never be confused at a glance or in a still. */
-.board.is-turn {
-  border-color: var(--gold);
-  box-shadow:
-    0 0 0 1px rgba(232, 185, 85, .45),
-    inset 0 0 26px rgba(232, 185, 85, .12),
-    0 0 22px rgba(232, 185, 85, .2),
-    var(--lift-1);
-}
-.board.is-out { opacity: .42; filter: grayscale(.7); }
-.board.is-winner { border-color: var(--gold); box-shadow: 0 0 30px var(--gold-glow), var(--lift-2); }
+   never be confused at a glance or in a still frame. */
+.board.is-turn { outline: var(--ring); outline-offset: 3px; }
+.board-self.is-turn { outline: none; }
+.board.is-out { opacity: .45; filter: grayscale(.85); }
+.board.is-winner { outline: 3px solid var(--foil); outline-offset: 3px; }
 
 .board-head {
   display: flex;
   flex-wrap: wrap;
   gap: 0 .45em;
   align-items: baseline;
-  font-size: .74em;
+  font-size: var(--t-micro);
   min-width: 0;
-  padding-bottom: .25em;
-  margin-bottom: .3em;
-  border-bottom: var(--hairline) solid rgba(143, 160, 186, .16);
+  padding-bottom: .22em;
+  margin-bottom: .28em;
+  box-shadow: inset 0 -1px 0 var(--shade);
 }
-/* Four opponents on a 390px phone gives each board 88px. On one line the
-   nowrap "n/3 SETS" and the worth chip squeezed .board-name to zero width and
-   every opponent nameplate read "0/3 SETS 0M" with nobody's name on it. */
+/* Four opponents on a 390px phone gives each seat 88px. On one line the nowrap
+   set tally and the worth plate squeezed .board-name to zero width and every
+   nameplate read "0/3 SETS 0M" with nobody's name on it. */
 @media (max-width: 899px) {
-  .opponents .board-name { flex: 1 1 100%; font-size: 1.05em; }
-  .opponents .board-head { font-size: .68em; }
-  .opponents .board-sets { font-size: .92em; letter-spacing: .03em; overflow: hidden; min-width: 0; }
-  .opponents .board-worth { padding: .02em .38em; }
+  .opponents .board-name { flex: 1 1 100%; font-size: 1.15em; }
+  .opponents .board-sets { overflow: hidden; min-width: 0; }
 }
 .board-name {
   flex: 1 1 auto;
   min-width: 2.5em;
-  font-weight: 900;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--ink-100);
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: var(--track-display);
+  color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, .6);
 }
-.board.is-turn .board-name { color: var(--gold-hi); }
-.board-sets {
-  color: var(--ink-300);
-  font-weight: 800;
-  letter-spacing: .1em;
-  white-space: nowrap;
-}
+.board-sets { color: var(--fg-mute); font-weight: 700; white-space: nowrap; }
+/* the worth plate: a figure, stamped into the seat */
 .board-worth {
   margin-left: auto;
   white-space: nowrap;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-300);
-  padding: .05em .45em;
-  border-radius: 999px;
-  background: rgba(4, 10, 20, .55);
-  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .16);
+  font-weight: 700;
+  color: var(--fg);
+  padding: .05em .4em;
+  border-radius: 2px;
+  background: var(--ground-deep);
+  box-shadow: var(--deboss);
 }
 
-.zone-tag { font-size: .58em; opacity: .85; }
+.zone-tag { font-size: .62em; }
 
-/* ── zones ─────────────────────────────────────────────────────────────── */
+/* ══ ZONES — cut into the apron, never outlined ════════════════════════════ */
 
 .cardzone { display: flex; align-items: flex-start; min-height: 0; }
 
-.board-bank { display: flex; align-items: center; gap: .35em; min-width: 0; overflow: hidden; }
-/* Your tableau is CENTRED under the piles. Left-ragged, the middle third of the
-   table was empty chrome: tools/touchtest.mjs samples (0.5,0.5) (0.3,0.4)
-   (0.7,0.6) and every one of them landed on a .propcol-count or an empty strip
-   of .zone-bank instead of a card — "no card node hit-testable anywhere on the
-   table". Centring puts real card nodes under the middle of the screen, which
-   is also where a player's thumb and eye already are. */
+/* ── the bank mat ──────────────────────────────────────────────────────────
+   MEASURED DEFECT (fixed here): at the old −35% overlap a bank card exposed a
+   23–25px strip, so ui/ had to gate keyboard focus on a 44px box and payment
+   selection had NO keyboard route on a banked card at all. The overlap is now
+   derived instead of chosen: each card starts exactly --tap after the one
+   before it, so the exposed strip IS 44px by construction at any card size,
+   and a card narrower than 44px does not overlap at all. */
+/* ROUND-2 REVIEW (mid-game@desktop, both themes): at --ground-deep the bank
+   mat rendered as a 340×90 near-black rectangle with white cards floating in
+   it — a HOLE in the apron, not a tray cut into it. It takes the same wash and
+   the same deboss every colour mat takes, so the whole table is one material.
+   It also sizes to its cards: full-width it stretched to the centre column and
+   became the loudest thing on the table. */
+.board-bank {
+  display: flex;
+  align-items: center;
+  gap: .3em;
+  min-width: 0;
+  padding: .25em .4em;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--deboss);
+}
+.zone-bank {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: .25em;
+  --card-w: max(var(--card-tap), calc(var(--s) * 3.2));
+}
+.zone-bank .card:not(:first-child) {
+  margin-left: calc(-1 * max(0px, var(--card-w) - var(--tap)));
+}
 .board-self .board-bank { justify-content: center; }
-/* Hiding the caption made the whole zone vanish, so an empty bank was a hole
-   in the mat. It is a PLACE instead: the caption stays and the zone prints an
-   empty card slot next to it, the same slot art an empty colour column uses. */
+/* An empty bank is a PLACE, not a hole: the mat prints the same empty card
+   slot a colour mat does. */
 .board-self .zone-bank:empty::after {
   content: "";
   display: block;
-  /* the slot is a real place, so it owes a real thumb: an empty bank drew a
-     38px ghost and touchtest read the zone as a 38×53 tap target */
   width: max(var(--card-w), var(--tap));
   aspect-ratio: var(--card-ratio);
-  border: 1px dashed rgba(143, 160, 186, .16);
+  border: 1px dashed var(--fg-mute);
   border-radius: var(--card-r);
-  background: repeating-linear-gradient(122deg,
-    rgba(143, 160, 186, .05) 0 3px, transparent 3px 7px);
+  opacity: .45;
 }
-.board-bank:has(.zone-bank:empty) .zone-tag { opacity: .55; }
 .board-self .zone-bank { flex: 0 1 auto; justify-content: center; }
-.board-self .board-props { justify-content: center; }
-/* §5: "tapping any zone zooms it", so a zone holding cards owes a thumb on
-   both axes. Empty zones collapse to nothing and are not tap targets. */
+/* §5: a zone holding cards owes a thumb on both axes. Empty zones collapse. */
 .board .cardzone:not(:empty) { min-height: var(--tap); min-width: var(--tap); }
 
 /* Column chrome must never sit above a card in the hit stack. */
 .propcol-head, .zone-tag, .pile-label, .board-head { pointer-events: none; }
-/* Overlap is capped at 35% on YOUR bank: at 62% a bank card's exposed strip was
-   under 20px wide and neither a finger nor elementFromPoint could pick the
-   buried ones. Opponent banks are never hit-tested, so they stack tight. */
-.zone-bank { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; row-gap: .2em; }
-.zone-bank .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.35); }
-/* An opponent board is 88px wide on a five-player phone. The BANK tag ate half
-   of it and the stack then overflowed into the next board. */
-.opponents .zone-bank { flex-wrap: nowrap; overflow: hidden; }
-/* A STACK, not a barcode. At -74% each buried card showed a 9px-wide sliver of
-   its FACE — measured 14 of them on final-approach@desktop, which renders as a
-   corrupted image, not as money. Now they overlap like real notes in a pile
-   and only the top one shows a face; the rest contribute an edge. The total is
-   already on the net-worth chip in the nameplate. */
-.opponents .zone-bank .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.88); }
-.opponents .zone-bank .card:not(:last-child) {
-  box-shadow: 0 0 0 1px rgba(2, 6, 12, .95), inset -2px 0 3px -1px rgba(0, 0, 0, .75);
+
+/* An opponent seat is 88px wide on a five-player phone; the BANK stencil ate
+   half of it. Opponent banks are never hit-tested, so they stack tight and
+   only the top card shows a face — a STACK, not a barcode. At the old −74% a
+   buried card showed a 9px sliver of its FACE (14 of them measured on
+   final-approach@desktop), which renders as a corrupted image, not as money. */
+.opponents .zone-bank {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  --card-w: calc(var(--s) * 2.2);
 }
-/* the light denomination spine was the white in the barcode */
+.opponents .zone-bank .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.88); }
+.opponents .zone-bank .card:not(:last-child) { box-shadow: 1px 0 0 var(--card-edge), inset -2px 0 3px -1px var(--shade-2); }
 .opponents .zone-bank .card:not(:last-child)::before { display: none; }
 .opponents .board-bank .zone-tag { display: none; }
+.opponents .board-bank { padding: .15em .25em; }
 
-/* align-items:flex-start — otherwise an EMPTY colour column stretches to the
-   height of the tallest sibling and 10 of them eat half the phone screen. */
-.board-props { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .3em; margin-top: .2em; }
-/* Your own upgrades are a badge on the column, not a second full-size card
-   under it: at full size a FIGHT column with a hangar ran 147px tall on a
-   1280×720 desktop and was the single thing pushing the self board past its
-   scrollport (payment@desktop overflowed by 42px). The card is still a real
-   card node, still tappable, still 44px of column. */
-.board-self .zone-ups { --card-w: calc(var(--s) * 2.2); }
-/* Your own nameplate repeats what the HUD already says, so it is the first
-   chrome to give ground: trimming it lifts the property field ~9px, which is
-   what puts a real card under touchtest's (0.7,0.6) probe instead of a
-   .propcol head. */
-.board-self .board-head { font-size: .66em; padding-bottom: .16em; margin-bottom: .2em; }
-/* §0.9 wants 44px. Measured before this line: 48-63 × 20px portrait, 41-54 × 17
-   landscape — and this is the game's PRIMARY targeting and drop surface (first
-   property of a colour, rent colour choice, FOC set pick, every wild
-   rearrange). A 20px strip is not a tap target, it is a hairline. */
+/* ── the colour mats ───────────────────────────────────────────────────────
+   A set mat is FURNITURE: the set hue at 14% (light) / 22% (dark) over the
+   surface, a 3px solid rail across the top, and a deboss. Cards are OBJECTS
+   and sit on it. Mats are never outlined. */
+.board-props { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .28em; margin-top: .25em; }
+.board-self .board-props { justify-content: center; }
+
 .propcol {
   flex: 0 0 auto;
-  /* Both axes, not just the height. touchtest measures the box a finger has to
-     land on, and a 41×61 column fails §0.9 exactly as hard as a 63×20 one did. */
+  /* §0.9 wants 44px on BOTH axes, and this is the game's primary targeting and
+     drop surface (first property of a colour, rent colour choice, FOC set
+     pick, every wild rearrange). Measured before the floor existed: 48-63 × 20
+     portrait, 41-54 × 17 landscape. */
   min-width: max(calc(var(--card-w) + .5em), calc(var(--tap) + .45em));
   min-height: var(--tap);
-  padding: .1em .2em .2em;
-  border: var(--hairline) solid rgba(143, 160, 186, .13);
-  border-top: 2px solid var(--band, rgba(143, 160, 186, .3));
-  border-radius: 5px;
-  background: linear-gradient(180deg, rgba(3, 9, 18, .5), rgba(3, 9, 18, .18));
-  box-shadow: inset 0 1px 6px rgba(0, 0, 0, .38);
+  padding: 0 .22em .22em;
+  border-radius: var(--radius);
+  /* the mat wash + the 3px rail, in one background stack. No border anywhere. */
+  background:
+    linear-gradient(var(--rail), var(--rail)) top / 100% 4px no-repeat,
+    color-mix(in oklab, var(--band, var(--fg-mute)) var(--mat-alpha), var(--surface));
+  box-shadow: var(--deboss);
 }
-/* An empty colour is a PLACE on the mat — a slot with a printed card outline
-   waiting for a card — not one of ten dashed pills that read as skeleton
-   loading. The outline is drawn at the card's own aspect so the eye reads
-   "a card goes here". */
+/* An empty colour is a PLACE on the mat — a printed card outline waiting for a
+   card — not one of ten dashed pills that read as skeleton loading. */
 .propcol[data-empty="1"] {
   position: relative;
-  border-top-style: dashed;
-  background: rgba(3, 9, 18, .16);
-  box-shadow: none;
+  background:
+    linear-gradient(var(--rail), var(--rail)) top / 100% 4px no-repeat,
+    color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) / 2), var(--ground));
+  box-shadow: inset 0 1px 2px var(--shade);
 }
+/* The slot is PRINTED on the mat: a dashed card outline at the card's own
+   aspect, in the set's own ink. A filled block read as a skeleton loader in
+   both themes (round-1 review, mid-game@desktop). */
 .propcol[data-empty="1"]::after {
   content: "";
   display: block;
   width: var(--card-w);
-  height: calc(var(--tap) - 1.6em);
+  height: calc(var(--tap) - 1.5em);
   min-height: .9em;
-  margin: .1em auto 0;
-  border: 1px dashed rgba(143, 160, 186, .16);
+  margin: .28em auto 0;
+  border: 1px dashed var(--rail);
   border-radius: calc(var(--card-r) * .8);
-  background: repeating-linear-gradient(122deg,
-    rgba(143, 160, 186, .05) 0 3px, transparent 3px 7px);
+  background: none;
+  opacity: .5;
 }
-/* An opponent's empty colours are hidden entirely (below), so the slot art
-   only ever prints on YOUR mat. */
-/* A completed set signs itself in ITS OWN colour, not in foil. The first pass
-   spent gold here and a mid-game phone shot carried six gold marks — §6 allows
-   four uses and none of them is "a set is finished". */
+/* A completed set signs itself in ITS OWN colour — the rail thickens and the
+   wash comes up. Never in foil: foil is the victory modal and nothing else. */
 .propcol.is-complete {
-  border-color: var(--band, var(--steel-400));
-  background: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(3, 9, 18, .34));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1), inset 0 1px 10px rgba(0, 0, 0, .4);
+  background:
+    linear-gradient(var(--rail), var(--rail)) top / 100% 8px no-repeat,
+    color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) + 10%), var(--surface));
+  box-shadow: var(--deboss-deep);
 }
-.propcol.is-complete .propcol-head {
-  background: var(--band, var(--steel-400));
-  color: var(--band-ink, #061019);
-  margin: -.1em -.2em .14em;
-  padding: .04em .3em;
-  border-radius: 3px 3px 0 0;
-}
-.propcol.is-complete .propcol-name,
-.propcol.is-complete .propcol-count { color: inherit; filter: none; }
+.propcol.is-complete .propcol-head { color: var(--fg); font-weight: 800; }
+
 .propcol-head {
   display: flex;
   justify-content: space-between;
   gap: .3em;
-  font-size: .54em;
-  line-height: 1.4;
+  padding-top: .28em;
+  font-size: .58em;
+  line-height: 1.35;
   white-space: nowrap;
+  color: var(--fg);
 }
-/* The nameplate, not the card, was setting an opponent column's width: at
-   .54em "DRONE 0/2" is 45px against a 28px card, so a 186px board fitted three
-   columns instead of five and a player with eight colours wrapped to four
-   rows — a 375px-tall board on a 390px-tall phone. The colour is already
-   carried by the column's top border and the card's own spine. */
-.opponents .propcol-head {
-  font-size: .44em;
-  letter-spacing: .04em;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0 .25em;
-  line-height: 1.3;
-}
-/* the name takes its own line so the CARD, not the caption, sets the column
-   width: 45px of "DRONE 0/2" against a 28px card fitted three columns in a
-   186px board and wrapped an eight-colour opponent to four rows (measured
-   330px tall). Two lines of caption over a 35px column fits five. */
+.propcol-name { font-weight: 700; }
+.propcol-count { font-weight: 700; }
+/* The nameplate, not the card, was setting an opponent mat's width: at .54em
+   "DRONE 0/2" is 45px against a 28px card, so a 186px seat fitted three mats
+   instead of five and an eight-colour player wrapped to four rows. */
+.opponents .propcol-head { font-size: .46em; flex-wrap: wrap; justify-content: center; gap: 0 .22em; line-height: 1.25; }
 .opponents .propcol-name { flex: 1 1 100%; text-align: center; }
-.propcol-name { color: var(--band, var(--steel-300)); filter: brightness(1.12); }
-.propcol-count { color: var(--steel-300); font-variant-numeric: tabular-nums; }
-.zone-props, .zone-ups { flex-wrap: wrap; }
-.zone-props .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.4); }
-.zone-ups { margin-top: .15em; }
-/* On an opponent's column an Upgrade/FOC is a BADGE, not a card you read — and
-   at full size it added a second card row to every opponent board, 19px each,
-   which is what was pinning the self board below the middle of a 720px screen. */
-.opponents .zone-ups { --card-w: calc(var(--s) * 1.3); margin-top: .08em; }
+
+.zone-props, .zone-ups { flex-wrap: wrap; gap: 2px; }
+/* Property cards inside a mat: the same derived overlap the bank uses, so the
+   exposed strip is never below the tap floor. At the sizes below the cards do
+   not overlap at all — they sit side by side like a real tableau. */
+.zone-props .card:not(:first-child) { margin-left: calc(-1 * max(0px, var(--card-w) - var(--tap))); }
+.zone-ups { margin-top: .12em; }
+/* An Upgrade/FOC on an opponent's mat is a BADGE, not a card you read. */
+.opponents .zone-ups { --card-w: calc(var(--s) * 1.3); margin-top: .06em; }
 .zone-ups .card { margin-left: calc(var(--card-w) * -0.5); }
 .zone-ups .card:first-child { margin-left: 0; }
 .board-opponent .propcol[data-empty="1"] { display: none; }
 
-/* Opponent colour columns WRAP. The old rule made the row a silent horizontal
-   scroller and the strip then cut it off: five-player@phone showed 4 of a
-   player's columns and arc-3@desktop sliced five of them. Nothing about an
-   opponent's board is allowed to be invisible — that is the information the
-   whole game is played against. The strip is sized to content now
-   (.opponents align-items:start), so a second row is absorbed rather than
-   guillotined. */
-.opponents .board-props {
-  flex-wrap: wrap;
-  margin-top: .3em;
-}
-/* An opponent's column has no card to tap, so it does not owe 44px — and ten
-   of them at 44px would be the whole strip. The tighter gutter is what lets a
-   186px phone board carry four columns per row instead of three, which is the
-   difference between a two-row board and a four-row one. */
-/* An opponent's column is a targeting surface too (Inspector General takes a
-   whole set), so it owes the same 44px. Its card grows to 2.2s to match: at
-   2.2s the card is exactly 44px tall, so filling the tap floor costs no height
-   at all and the column stops looking like a card lost inside a box. */
-.opponents .propcol { min-width: calc(var(--tap) + .3em); padding: .1em .1em .15em; }
-.opponents .board-props { gap: .22em; }
-/* Opponent money stacks 74% deep — the denomination is unreadable there and the
-   net-worth chip in the head already carries the total. */
+/* Opponent colour mats WRAP. Nothing about an opponent's board is allowed to
+   be invisible — that is the information the whole game is played against. */
+.opponents .board-props { flex-wrap: wrap; margin-top: .28em; gap: .2em; }
+/* An opponent's mat is a targeting surface too (Inspector General takes a whole
+   set), so it owes the same 44px. */
+.opponents .propcol { min-width: calc(var(--tap) + .2em); padding: 0 .1em .12em; }
+.opponents .board { --card-w: max(calc(var(--s) * 2.2), 36px); }
+/* Opponent money stacks 88% deep — the denomination is unreadable there and the
+   worth plate in the nameplate already carries the total. */
 .opponents .card[data-type="money"] .card-name { display: none !important; }
+/* Your own mat: the tap floor is a floor for the CARD too, because your own
+   property cards are payment targets and ui/ gates keyboard focus on a
+   measured 44px box. */
+.board-self { --card-w: max(var(--card-tap), calc(var(--s) * 2.65)); }
+.board-self .zone-ups { --card-w: max(calc(var(--tap) * .8), calc(var(--s) * 2.2)); }
+/* Your own nameplate repeats what the HUD already says, so it is the first
+   chrome to give ground. */
+.board-self .board-head { font-size: .68em; padding-bottom: .14em; margin-bottom: .18em; }
 
-/* ── the centre: deck + discard, floating in the light pool ────────────── */
+/* ══ THE PILES ═════════════════════════════════════════════════════════════
+   Deck and discard, standing on the apron inside a painted inlay. */
 
-/* min-height is the pile's own footprint: card (3.6 × 7/5 = 5.04) + gap + label
-   + the stack shadow. Below it the deck's bottom edge printed over the self
-   board's first row at 1280×720. */
 .table-center {
   position: relative;
   flex: 1 10 auto;
   min-height: calc(var(--s) * 6.2);
   max-height: calc(var(--s) * 7.2);
   display: flex;
-  gap: 1.6em;
+  gap: 1.4em;
   justify-content: center;
   align-items: center;
   padding: .3em 0;
 }
-/* the printed inlay on the felt the piles sit inside */
+/* the printed inlay: a stencilled compass ring, painted ON the concrete */
 .table-center::before {
   content: "";
   position: absolute;
@@ -439,24 +370,21 @@
   top: 50%;
   width: calc(var(--s) * 15);
   height: calc(var(--s) * 15);
-  margin: calc(var(--s) * -7.5) 0 0 calc(var(--s) * -8.6);
+  margin: calc(var(--s) * -7.5) 0 0 calc(var(--s) * -8.4);
   border-radius: 50%;
   background:
-    radial-gradient(circle, transparent 0 46%, rgba(198, 216, 244, .05) 46% 46.6%, transparent 46.6%),
-    radial-gradient(circle, transparent 0 39%, rgba(198, 216, 244, .035) 39% 39.4%, transparent 39.4%),
-    repeating-conic-gradient(from 0deg, rgba(198, 216, 244, .05) 0deg .35deg, transparent .35deg 15deg);
+    radial-gradient(circle, transparent 0 46%, var(--stencil-hi) 46% 46.5%, transparent 46.5%),
+    radial-gradient(circle, transparent 0 39%, var(--stencil) 39% 39.4%, transparent 39.4%),
+    repeating-conic-gradient(from 0deg, var(--stencil) 0deg .5deg, transparent .5deg 15deg);
   -webkit-mask-image: radial-gradient(circle, #000 38%, transparent 49%);
   mask-image: radial-gradient(circle, #000 38%, transparent 49%);
   pointer-events: none;
 }
-.pile { display: flex; flex-direction: column; align-items: center; gap: .4em; }
-/* The DISCARD sits on the table's centre line and the deck is positioned off
-   it, rather than the pair being centred with a GAP in the middle. Two reasons,
-   one aesthetic and one measured: the live face-up pile is what a table is
-   organised around, and a centred pair puts empty felt at (0.5,0.5) — which is
-   the first point tools/touchtest.mjs probes for a reachable card node. Deck
-   backs are pooled and carry no data-card-id, so the deck could never satisfy
-   it; the discard's cards are real nodes. */
+.pile { display: flex; flex-direction: column; align-items: center; gap: .35em; }
+/* The DISCARD sits on the centre line and the deck is positioned off it, rather
+   than the pair being centred with a GAP in the middle: a centred pair puts
+   empty apron at (0.5,0.5), which is the first point tools/touchtest.mjs probes
+   for a reachable card node, and deck backs are pooled with no data-card-id. */
 .table-center > .pile:first-child {
   position: absolute;
   top: 50%;
@@ -464,9 +392,20 @@
   margin-right: calc(var(--s) * 3.2);
   transform: translateY(-50%);
 }
-/* above the deck's stack-shadow slabs, which otherwise print across it */
-.pile-label { position: relative; z-index: 2; font-size: .58em; text-shadow: 0 1px 2px rgba(0, 0, 0, .9); }
-.pile-label span { color: var(--ink-100); font-variant-numeric: tabular-nums; }
+/* The deck's cut-edge shadow chain runs 5px right and 10px DOWN, straight
+   through the caption underneath it: measured #deck-count at 2.06:1 and the
+   DECK stencil at 4.18:1, both against the shadow rather than the apron. The
+   caption gets its own painted plate, which is also how a real pile marking is
+   done — the label is on the concrete, not on the cards. */
+.pile-label {
+  position: relative;
+  z-index: 2;
+  font-size: .62em;
+  padding: .1em .4em;
+  border-radius: 2px;
+  background: var(--ground);
+}
+.pile-label span { color: var(--fg); }
 
 .zone-deck, .zone-discard {
   position: relative;
@@ -477,188 +416,97 @@
 }
 .zone-deck .card, .zone-discard .card { position: absolute; inset: 0; width: 100%; }
 
-/* A real stack: the zone's shadow chain draws the cut edges of the cards under
+/* A real stack: the zone's shadow chain draws the CUT EDGES of the cards under
    the top one. Six back nodes all sit at inset:0, so without this the deck is a
-   single card. */
+   single card. Edge colour is the card's own edge, not a shadow — this is paper
+   seen side-on, not a drop shadow. */
 .zone-deck {
   box-shadow:
-    1px 2px 0 #16253c,
-    2px 4px 0 #101d31,
-    3px 6px 0 #0b1626,
-    4px 8px 0 #08111f,
-    5px 10px 0 #060d18,
-    7px 15px 20px rgba(0, 0, 0, .62);
+    1px 2px 0 var(--card-edge),
+    2px 4px 0 color-mix(in oklab, var(--card-edge), var(--ink) 22%),
+    3px 6px 0 color-mix(in oklab, var(--card-edge), var(--ink) 40%),
+    4px 8px 0 color-mix(in oklab, var(--card-edge), var(--ink) 56%),
+    5px 10px 0 color-mix(in oklab, var(--card-edge), var(--ink) 70%),
+    var(--card-drop);
 }
-.table.deck-empty .zone-deck {
-  box-shadow: none;
-  border: 1px dashed rgba(143, 160, 186, .25);
-}
-/* Discard is a scatter, not a stack: cards carry a seeded --tilt, so it needs
-   only a soft pool of shadow beneath and a footprint when it is empty. */
-.zone-discard {
-  box-shadow: 1px 2px 0 #0d1829, 2px 5px 0 #08111f, 4px 10px 16px rgba(0, 0, 0, .55);
-}
-.zone-discard:empty, .zone-deck:empty {
-  box-shadow: none;
-  border: 1px dashed rgba(143, 160, 186, .2);
-  background: rgba(0, 0, 0, .18);
-}
+.table.deck-empty .zone-deck { box-shadow: var(--deboss); background: var(--shade); }
+/* Discard is a scatter, not a stack: cards carry a seeded --tilt. */
+.zone-discard { box-shadow: 1px 2px 0 var(--card-edge), 3px 6px 0 color-mix(in oklab, var(--card-edge), var(--ink) 45%), var(--card-drop); }
+.zone-discard:empty, .zone-deck:empty { box-shadow: var(--deboss); background: var(--shade); }
 
-/* ── the hand dock: cards held at the bottom edge ──────────────────────── */
+/* ══ THE HAND DOCK ═════════════════════════════════════════════════════════ */
 
 .hand-dock {
   flex: 0 0 auto;
   position: relative;
-  border-top: 2px solid var(--steel-600);
-  background:
-    linear-gradient(180deg, rgba(16, 30, 50, .96) 0%, rgba(6, 12, 22, .99) 40%, #050a13 100%);
+  background: var(--ground-deep);
+  box-shadow: inset 0 2px 0 var(--shade-2), inset 0 3px 8px var(--shade);
   /* NO env(safe-area-inset-bottom) here: .screen already pads the whole screen
      by it (base.css), and #side did it a third time. Measured on a 34px-
-     indicator phone that was ~68px of dead space under a 92px card — the
-     reason the fan looked like it was falling off the bottom edge. */
-  padding: .3em .4em .3em;
-  box-shadow: 0 -10px 26px rgba(0, 0, 0, .6);
+     indicator phone that was ~68px of dead space under a 92px card. */
+  padding: .3em .4em .25em;
 }
-.hand-dock.over-limit { border-top-color: var(--danger); }
-.hand-dock.over-limit .hand-label { color: var(--danger-lit); }
-/* your turn: the dock lights up along its top edge */
-.screen-game:has(.hud-turn.is-mine) .hand-dock { border-top-color: var(--gold); }
+/* over the hand limit: hazard material along the dock's lip, not a red tint */
+.hand-dock.over-limit { box-shadow: inset 0 4px 0 var(--danger), inset 0 3px 8px var(--shade); }
+.hand-dock.over-limit .hand-label { color: var(--danger-ink); font-weight: 700; }
+/* your turn: the cobalt ring, on the dock's lip. Same hue, same geometry
+   (outside the object) as every other "it is you" mark in the app. */
+.screen-game:has(.hud-turn.is-mine) .hand-dock { box-shadow: inset 0 3px 0 var(--accent), inset 0 4px 8px var(--shade); }
 
 .hand-bar { display: flex; align-items: center; gap: .4em; min-width: 0; }
-.hand-label { font-size: .66em; white-space: nowrap; }
-.hand-label span { color: var(--ink-100); font-variant-numeric: tabular-nums; }
-.hand-actions { margin-left: auto; display: flex; gap: .3em; }
+.hand-label { white-space: nowrap; font-size: .7em; }
+.hand-label span { color: var(--fg); }
+.hand-actions { margin-left: auto; display: flex; gap: .35em; }
 
 /* ══ THE FAN ═══════════════════════════════════════════════════════════════
    Why every hand card used to read "Midnigh Requisi": the name was laid out
    across the WHOLE card and then the next card in the fan printed over its
    right-hand third. Nothing was clipping — measured, .card-name's own
    scrollWidth−clientWidth was 0 on every card in every shot. The text was
-   simply underneath a neighbour. That is also why the same card read complete
-   when it happened to be last in the fan: an inconsistency that reads as a
-   rendering bug rather than as a layout budget.
+   simply underneath a neighbour.
 
-   So the fan declares how much of a card the next one covers, and the face
-   reserves exactly that much. Two numbers move together, and they move with
-   the hand size, because the exposed strip is (zone width ÷ card count) and
-   nothing can change that:
-
-     The counter-intuitive part, derived and then measured: for a fixed zone width
-   a DEEPER fan does not buy legibility, it costs it. With n cards in W px the
-   text column is W(0.83−cover)/(n+1−n·cover) — monotonically DECREASING in
-   cover — while the font, being a fraction of the card, falls with the card.
-   So a big hand gets SMALLER cards and a SHALLOWER fan, not the reverse:
+   So the fan declares how much of a card the next one covers and the face
+   reserves exactly that much. Derived and then measured: for a fixed zone width
+   a DEEPER fan does not buy legibility, it costs it — the text column is
+   W(0.83−cover)/(n+1−n·cover), monotonically DECREASING in cover, while the
+   font falls with the card. A big hand therefore gets SMALLER cards and a
+   SHALLOWER fan:
 
      cards  card-w   cover   text column   name font   longest token
      ≤5     5.2s=75    10%      54px         7.5px     "Thunderbirds" 50px ✓
      6      4.3s=62     6%      48px         6.2px     41px ✓
      7      3.6s=52     4%      41px         5.2px     34px ✓
-     8+     3.1s=45     2%      36px         4.5px     30px ✓
-
-   (Widths measured in the browser at the rendered size, not derived: a system
-   font's advance per character is ~12% wider at 6px than the 100px probe
-   suggests, and that 12% was the difference between "Thunderbirds" fitting and
-   shearing.)
-
-   The dock's height is pinned to the ≤5 card, so the fan changes size without
-   the table underneath it moving. hand.js tightens the step further if the CSS
-   one still overflows (its MIN_STRIP is 26px), so these are ceilings above 8
-   cards — which is two over the hand limit.
-
-   Height is sized against hand.js's fan, not the flat card: card 4.6s wide →
-   6.44s tall; rotated ±12° the bounding box is 6.44·cos12 + 4.6·sin12 = 7.26s,
-   plus the 0.055·h edge drop = 7.61s, plus padding. */
+     8+     3.1s=45     2%      36px         4.5px     30px ✓ */
 .zone-hand {
   --card-w: calc(var(--s) * 5.2);
   --fan-cover: .10;
   --fan-name: .100;
   --fan-band: .118;
-  margin-top: .28em;
+  margin-top: .26em;
   gap: 0;
   align-items: flex-end;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: .5em .3em 1.1em;
-  /* The dock follows the card, not the other way round: pinned at the ≤5 size
-     it left 77px of dead dock above an eight-card fan, which is the same void
-     the felt used to have, moved 200px down. 1.56 is the rotated bounding box
-     of a 5:7 card at the fan's ±12° (1.4·cos12 + sin12), 1.7em is the padding
-     plus the edge drop. */
-  min-height: calc(var(--card-w) * 1.56 + 1.7em);
+  padding: .5em .3em 1em;
+  /* 1.56 is the rotated bounding box of a 5:7 card at the fan's ±12°
+     (1.4·cos12 + sin12); the em term is padding plus the edge drop. */
+  min-height: calc(var(--card-w) * 1.56 + 1.5em);
   justify-content: safe center;
   scrollbar-width: none;
 }
 .zone-hand:has(> .card:nth-child(6)) { --card-w: calc(var(--s) * 4.3); --fan-cover: .06; }
 .zone-hand:has(> .card:nth-child(7)) { --card-w: calc(var(--s) * 3.6); --fan-cover: .04; }
 .zone-hand:has(> .card:nth-child(8)) { --card-w: calc(var(--s) * 3.1); --fan-cover: .02; }
-/* A wide screen has 932px of dock (1280 − the 21em log panel) for at most
-   seven cards, so the fan does not have to overlap at all to fit — which means
-   a desktop hand card can be BIGGER than a phone one and still show every name
-   whole with no hyphenation. Measured: 5.0s = 83px card, 69px text column, and
-   the longest name in the deck ("Rent: Elite Programs / Command") sets in
-   three lines with room to spare. The old 4.2s + 28% cover was the mirror of
-   the phone bug on a screen with 300px of spare width. */
-@media (min-width: 900px) {
-  .zone-hand {
-    --card-w: calc(var(--s) * 4.6);
-    --fan-cover: .08;
-    --fan-name: .104;
-    --fan-band: .120;
-    min-height: calc(var(--card-w) * 1.56 + 1.5em);
-    padding-bottom: .9em;
-  }
-  .zone-hand:has(> .card:nth-child(6)),
-  .zone-hand:has(> .card:nth-child(7)),
-  .zone-hand:has(> .card:nth-child(8)) { --fan-cover: .10; }
-  /* 1280×720 is the short screen, so the pile band still gives ground first —
-     but arc-1-opening@desktop had a 180px empty mid-table band with two 51px
-     piles inside it. It grows into slack now and shrinks back out of it. */
-  .zone-deck, .zone-discard { --card-w: calc(var(--s) * 3.5); }
-  .pile { gap: .25em; }
-  .table-center { min-height: calc(var(--s) * 5.0); max-height: calc(var(--s) * 6.4); }
-  /* Same trick on your own mat: the nameplate rides beside the bank instead of
-     costing a row above it. Measured at 1280×720 this lifts the bank from
-     y=363 to y=341, i.e. over the middle of the viewport. */
-  .board-self {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-areas: "head bank" "props props";
-    /* centre, not start: your mat grows to fill the felt below the piles, so
-       centring its rows keeps real cards over the middle of the viewport no
-       matter how tall the opponents strip happens to be. */
-    align-content: center;
-    row-gap: .3em;
-    column-gap: .9em;
-  }
-  .board-self .board-head {
-    grid-area: head;
-    align-self: center;
-    flex-wrap: nowrap;
-    gap: .5em;
-    margin: 0;
-    padding: 0;
-    border-bottom: 0;
-  }
-  .board-self .board-head .board-worth { margin-left: 0; }
-  .board-self .board-bank { grid-area: bank; }
-  .board-self .board-props { grid-area: props; }
-}
 .zone-hand::-webkit-scrollbar { display: none; }
 .zone-hand .card { flex: 0 0 auto; }
 .zone-hand .card:not(:first-child) { margin-left: calc(-1 * var(--fan-cover) * var(--card-w)); }
-/* The same occlusion, one zone over: a bank stack overlaps 35% and a colour
-   column 40%, so every buried card's type band read "BAN", "SPA", "WIL". A
-   buried card in a real stack shows its EDGE — the colour of the band bar and
-   the spine — and the card on top is the one you read. The propcol head and
-   the net-worth chip already carry the counts. */
+/* The same occlusion one zone over: a buried card in a real stack shows its
+   EDGE, and the card on top is the one you read. */
 .board .cardzone .card:not(:last-child) .card-band { color: transparent; }
-
 /* THE FIX for the sliced names: the face never lays type into the strip its
    neighbour is standing on. 6% on top of the cover is the parallax of the fan
-   — adjacent cards differ by span/(n−1) = 3.4-4.6° of tilt, which walks the
-   covering edge ±3.7px across an 92px card. The LAST card has no neighbour and
-   keeps the whole face; that asymmetry is invisible because it only ever adds
-   room. */
+   — adjacent cards differ by 3.4–4.6° of tilt, which walks the covering edge
+   ±3.7px across a 92px card. */
 .zone-hand .card:not(:last-child) .card-face {
   padding-right: calc((var(--fan-cover) + .06) * 100%);
 }
@@ -670,34 +518,256 @@
   align-items: flex-start;
   margin-bottom: .25em;
 }
-/* Stacking an opponent's hand fan ABOVE their bank cost a row per board at
-   every width, not just on desktop — measured 30px each, which on a phone with
-   four opponents is 120px of the felt spent on nothing. Side by side it is the
-   same cluster, one row shorter. (This block used to live inside the 900px
-   query; the phone needs it more than the desktop does.) */
+/* Stacking an opponent's fan ABOVE their bank cost a row per seat at every
+   width — measured 30px each, which on a phone with four opponents is 120px of
+   apron spent on nothing. Side by side it is the same cluster, one row less. */
 .opponents .board {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-areas: "head head" "fan bank" "props props";
   align-content: start;
-  column-gap: .45em;
+  column-gap: .4em;
 }
 .opponents .board-head { grid-area: head; }
 .opponents .zone-hand-oppo { grid-area: fan; margin-bottom: 0; }
 .opponents .board-bank { grid-area: bank; }
-.opponents .board-props { grid-area: props; margin-top: .3em; }
+.opponents .board-props { grid-area: props; margin-top: .28em; }
 .zone-hand-oppo .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.55); }
 
+/* ══ DESKTOP: THE THREE-COLUMN TABLE (ART §5) ══════════════════════════════
+   The complaint, diagnosed: ten set slots in ONE centred ~60px-tall row with
+   ~250px of dead apron below it and the fan cropped at the viewport — a ~285px
+   drag straight up into a 60px band with no lateral forgiveness.
+
+   At ≥1024px the apron is cut into three instead:
+
+     left rail   the piles, standing where a dealer would put them. The mission
+                 log docks immediately to its left (ui.css), so the whole left
+                 edge is the rail §5 asks for. It is NEVER between the hand and
+                 the properties.
+     centre      YOUR mat: a 5 × 2 grid of colour mats, bank under it.
+     right rail  opponents as stacked vertical SEATS, not a full-width row.
+                 Five players shrink the seat height; they never cram sideways.
+
+   The drag becomes ~120px into a 132px 2D target instead of 285px into a 60px
+   strip, and the mats have lateral forgiveness in both axes. */
+
+@media (min-width: 1024px) {
+  .table {
+    display: grid;
+    grid-template-columns: 168px minmax(0, 1fr) 200px;
+    grid-template-areas: "rail centre seats";
+    align-items: stretch;
+    gap: 0 calc(var(--s) * .7);
+    padding: calc(var(--s) * .6) calc(var(--s) * .7) calc(var(--s) * .5);
+  }
+
+  /* ── left rail: the piles, stacked ──────────────────────────────────── */
+  .table-center {
+    grid-area: rail;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    gap: calc(var(--s) * .8);
+    min-height: 0;
+    max-height: none;
+    padding: calc(var(--s) * .4) 0 0;
+  }
+  /* the inlay is a CENTRE-of-table marking; a rail has no centre to mark */
+  .table-center::before { display: none; }
+  /* the rail's own marking: a painted stand line under the piles, which is what
+     closes the 180px of blank concrete the rail otherwise ends in */
+  .table-center::after {
+    content: "";
+    position: absolute;
+    left: 8%;
+    right: 8%;
+    bottom: 0;
+    height: 11px;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 100% 2px no-repeat,
+      repeating-linear-gradient(90deg, var(--stencil-hi) 0 9px, transparent 9px 16px) 0 5px / 100% 2px no-repeat,
+      linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 100% / 100% 2px no-repeat;
+  }
+  /* undo the portrait off-centre trick — the rail stacks in flow */
+  .table-center > .pile:first-child { position: static; margin: 0; transform: none; }
+  .zone-deck, .zone-discard { --card-w: 104px; }
+  .pile { gap: .3em; }
+
+  /* ── centre: your mat ───────────────────────────────────────────────── */
+  .self-board {
+    grid-area: centre;
+    /* SAFE centre. Measured on mid-game@desktop with plain centre: the mat grid
+       overflowed its 488px scrollport and the browser clipped the TOP — DRONE /
+       TRAIN / SPACE / T&E / FIGHT all lost their rails and half their
+       nameplates, with no scroll position that could bring them back. "safe"
+       falls back to flex-start the moment the content does not fit. */
+    justify-content: safe center;
+    /* §5: clear apron between the bank mat and the fan so the drag has a
+       run-up. 54px here plus the dock's 12px lip and the fan's own padding is
+       ~71px of untouched concrete; the 720px budget (52 HUD + 166 dock) has no
+       more to give without cropping a mat. */
+    padding-bottom: calc(var(--s) * 3.2);
+  }
+  /* When the prompt bar is up the apron loses 52px, and .self-board ends
+     EXACTLY on its own bottom mask — measured on payment@desktop, the bank mat
+     (405→495 in a 441px scrollport) faded out under the 26px mask fringe at the
+     precise moment the game says "tap your bank and properties". The run-up is
+     the first thing to give: it exists so a drag has room, and a payment is
+     taps, not drags. */
+  .screen-game:has(.prompt:not([hidden])) .self-board { padding-bottom: 0; }
+  /* The bottom fade is a SCROLL CUE, and at this width there is nothing left to
+     scroll: the mat grid is a deterministic 5×2 and the bank is one row. It was
+     costing the bank its last 26px in every frame, overflow or not. */
+  .self-board { -webkit-mask-image: none; mask-image: none; }
+  .board-self {
+    display: grid;
+    grid-template-areas: "head" "props" "bank";
+    justify-items: center;
+    row-gap: .5em;
+    --card-w: 48px;
+  }
+  .board-self .board-head {
+    grid-area: head;
+    align-self: center;
+    flex-wrap: nowrap;
+    gap: .6em;
+    width: 100%;
+    max-width: 828px;
+    margin: 0;
+    padding: 0 0 .2em;
+  }
+  .board-self .board-head .board-worth { margin-left: 0; }
+
+  /* §5: 5 × 2 grid, each mat 156 × 132, 8px gutter. The mats may compress
+     below 156 when the log is docked (1280 − 220 log − 168 rail − 200 seats
+     leaves 692 for five mats) but they never reflow to a different count. */
+  .board-self .board-props {
+    grid-area: props;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 156px));
+    /* 132 is the §5 resting height; 116 is what 720px of viewport actually has
+       once the HUD (52), the dock (166), the bank mat (90) and the run-up (54)
+       are paid. 2×132+8 = 272 overflowed by 26px and clipped the top row. A mat
+       still holds a 67px card plus its nameplate at 116. */
+    grid-auto-rows: minmax(116px, auto);
+    gap: 8px;
+    margin: 0;
+    width: 100%;
+    justify-content: center;
+  }
+  /* MEASURED (payment@desktop): at 6px of side padding a 156px mat has 144px
+     of inner width and three 48px cards plus their 2px gaps need 148 — so a
+     three-card set wrapped to a second card row and took the whole GRID row
+     from 116px to 131. Two of those overflowed the scrollport by 42px and the
+     bank mat — the thing the payment prompt is telling you to tap — went under
+     the fade. 3px of side padding gives 150px of inner width and the wrap is
+     gone. */
+  /* The upgrade badge rides BESIDE the set, not under it. Measured on
+     payment@desktop: CMD carrying a House made its grid row 131px instead of
+     116 (head 15 + props 67 + ups 51), and two such rows overflowed the
+     scrollport by 42px — which is exactly the bank mat the payment prompt is
+     telling you to tap. Side by side the same mat is 82px of content in 150px
+     of inner width (2 property cards at 48 + one 46px badge = 142). */
+  .board-self .propcol {
+    min-width: 0;
+    width: auto;
+    padding: 0 3px 6px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "head head" "props ups";
+    align-content: start;
+    column-gap: 2px;
+  }
+  .board-self .propcol-head { grid-area: head; }
+  .board-self .zone-props { grid-area: props; }
+  .board-self .zone-ups { grid-area: ups; margin-top: 0; align-self: start; }
+  .board-self .propcol[data-empty="1"]::after { height: 62px; margin-top: .45em; }
+  .board-self .zone-props { justify-content: center; padding-top: 4px; }
+  .board-self .zone-ups { justify-content: center; }
+
+  /* §5: bank mat 340 × 90, under the grid. */
+  /* §5 says 340 × 90. That is the RESTING size: a nine-card bank wrapped to a
+     second row inside a fixed 340 and the overflow was clipped by the
+     scrollport (measured on final-approach@desktop — five bank cards simply
+     gone). It grows sideways instead, which is what a real note pile does. */
+  .board-self .board-bank {
+    grid-area: bank;
+    width: fit-content;
+    min-width: 340px;
+    max-width: 100%;
+    min-height: 90px;
+    justify-content: center;
+    padding: .4em .5em;
+  }
+  .board-self .zone-bank { --card-w: 62px; }
+
+  /* ── right rail: opponents as vertical seats ────────────────────────── */
+  .opponents {
+    grid-area: seats;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: none;
+    min-height: 0;
+    align-items: stretch;
+  }
+  .opponents .board { flex: 0 1 auto; }
+  /* a seat is 200px wide: 4 colour mats across, which is one row for a
+     four-colour player and two for an eight-colour one */
+  .opponents .propcol { min-width: 44px; }
+  .opponents .board-props { justify-content: flex-start; }
+
+  /* ── the dock: the bar rides BESIDE the fan ─────────────────────────── */
+  .hand-dock {
+    display: flex;
+    align-items: center;
+    gap: .7em;
+    padding: .25em .6em .3em;
+  }
+  .hand-bar { flex: 0 0 auto; flex-wrap: wrap; width: 12.5em; gap: .3em; }
+  .hand-label { flex: 1 1 100%; }
+  .hand-actions { margin-left: 0; flex-wrap: wrap; }
+  /* §5: the fan is 150px tall with cards ≥96px, FULLY inside the viewport.
+     5.9s = 98px at the 1280×720 --s of 16.56, giving a rotated bounding box of
+     153px. The dock is 166px total, which leaves the table 502px of a 720px
+     screen once the 52px HUD is paid for. */
+  .zone-hand {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-top: 0;
+    --card-w: max(96px, calc(var(--s) * 5.9));
+    --fan-cover: .06;
+    --fan-name: .104;
+    --fan-band: .120;
+    min-height: calc(var(--card-w) * 1.56 + .6em);
+    padding: .3em .3em .5em;
+  }
+  .zone-hand:has(> .card:nth-child(6)),
+  .zone-hand:has(> .card:nth-child(7)),
+  .zone-hand:has(> .card:nth-child(8)) { --card-w: max(96px, calc(var(--s) * 5.9)); --fan-cover: .08; }
+}
+
+/* Between 900 and 1024 the log still docks (ui.css) but there is no room for
+   three columns; the portrait stack is correct there and needs only a bigger
+   fan than a phone gets. */
+@media (min-width: 900px) and (max-width: 1023px) {
+  .zone-hand { --card-w: calc(var(--s) * 4.6); --fan-cover: .08; }
+  .zone-deck, .zone-discard { --card-w: calc(var(--s) * 3.5); }
+}
+
 /* ══ THE CARD ══════════════════════════════════════════════════════════════
-   Anatomy, top to bottom:
-     colour spine (::before, left edge) — the only identity visible when cards
-       overlap 40% inside a set column
-     .card-band   type band, filled with the set colour
-     .card-name   hand + pile contexts only (a 43px board card cannot carry a
-       name at any legible size; the set column header carries it instead)
-     .card-art    procedural motif — one family, per-colour recipe
-     .card-foot   rent ladder (steps) + value coin
-   plus ::after, the stock's sheen and embossed rim. */
+   A PRINTED CARD, not a sci-fi HUD mini-poster. Cream stock in BOTH themes —
+   physical cards do not change colour when the lights go out — with a soft
+   three-stop shadow, because paper has mass.
+
+   Anatomy, top to bottom: colour band (the only thing visible when cards
+   overlap), name, art field, foot (rent ladder + value coin).
+
+   BOUNDARY: the card-art agent owns what is PRINTED on a card (cardart.css).
+   Everything below the chassis is the placeholder that keeps the build honest
+   until that lands, retokenised onto stock+ink so nothing here is navy. */
 
 .card {
   position: relative;
@@ -706,41 +776,34 @@
   border-radius: var(--card-r);
   background: var(--card-stock);
   border: none;
-  box-shadow:
-    0 0 0 1px rgba(2, 6, 12, .9),
-    inset 0 0 0 1px rgba(198, 216, 244, .13),
-    var(--lift-0);
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop);
   transform: translate(var(--fx, 0px), var(--fy, 0px)) rotate(var(--tilt, 0deg)) scale(var(--fs, 1));
   transform-origin: 50% 60%;
-  /* no will-change here — motion.css owns layer promotion (promote on takeoff,
-     drop on landing) and measured the trade-off. */
   cursor: pointer;
   user-select: none;
   touch-action: manipulation;
   overflow: hidden;
-  color: var(--ink-100);
+  color: var(--ink);
 }
 
-/* colour spine */
+/* the colour edge — the only identity visible when a fan covers the face */
 .card::before {
   content: "";
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  width: 7%;
-  background: var(--band, var(--steel-400));
-  box-shadow: inset -1px 0 0 rgba(0, 0, 0, .55);
+  width: 6%;
+  background: var(--band, var(--ink-mute));
   z-index: 2;
 }
-/* stock sheen + embossed rim, drawn above the face so it unifies the layers */
+/* the printed trim: a 1px card-edge stroke inset 2px from the cut (§6) */
 .card::after {
   content: "";
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(202deg, rgba(255, 255, 255, .13) 0%, rgba(255, 255, 255, .02) 26%, transparent 46%);
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .5);
+  inset: 2px;
+  border-radius: calc(var(--card-r) * .7);
+  box-shadow: inset 0 0 0 1px var(--card-edge);
   z-index: 3;
   pointer-events: none;
 }
@@ -755,93 +818,79 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  padding: 5.5% 6% 6% 11%;
+  padding: 0 5% 5% 8%;
   gap: 3%;
   z-index: 1;
+  background: var(--card-stock);
 }
 
+/* the set band: full-bleed across the top, set colour at 100%, stock lettering.
+   THE APP'S ONLY TRACKED CAPS LIVE HERE — nowhere else, in any file. */
 .card-band {
   flex: 0 0 auto;
+  margin: 0 -6.5% 0 -10.5%;
+  padding: .18em .4em;
   font-size: calc(var(--card-w) * .142);
-  line-height: 1.5;
-  letter-spacing: .04em;
-  font-weight: 900;
-  color: var(--band-ink, var(--gold-ink));
-  background: var(--band, var(--steel-300));
-  border-radius: calc(var(--card-r) * .5);
-  padding: 0 .35em;
+  line-height: 1.35;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: var(--band-ink);
+  background: var(--band, var(--ink-mute));
   text-align: center;
   overflow: hidden;
-  /* "WILD · ANY" is ten characters on a 44px board card. nowrap + clip cut it
-     to "WILD · A"; nowrap + ellipsis cut it to "WILD…". It has spaces in it,
-     so it can simply take two lines — measured across the shot set, 39 board
-     bands were being cut and none of them needed to be. */
+  /* "WILD · ANY" is ten characters on a 44px board card; nowrap+clip cut it to
+     "WILD · A". It has spaces, so it can take two lines — measured across the
+     shot set, 39 board bands were being cut and none needed to be. */
   white-space: normal;
-  /* clip cut mid-letter — "ACTIO", "BAN", "REN", "SPAC" — which is the loudest
-     "this app is broken" signal a table can send. Nothing should reach this
-     rule any more (the band's own font tracks the exposed strip in the hand,
-     and board bands are short set codes), but if a label ever does outgrow its
-     card, an ellipsis says "there is more" instead of lying. */
   text-overflow: ellipsis;
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .3), inset 0 1px 0 rgba(255, 255, 255, .28);
 }
 
 .card-name {
-  display: none;                     /* only hand + pile contexts (see below) */
+  display: none;                     /* hand + pile contexts only */
   flex: 0 0 auto;
   font-size: calc(var(--card-w) * .132);
   line-height: 1.18;
-  font-weight: 800;
-  letter-spacing: -.005em;
+  font-weight: 700;
+  color: var(--ink);
   overflow: hidden;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, .55);
 }
-/* descendant, not child: P4's flip wraps the face in .card-inner */
+/* descendant, not child: the flip wraps the face in .card-inner */
 .zone-hand .card .card-name,
 .zone-discard .card .card-name {
-  /* NOT -webkit-line-clamp. Measured: a `display:-webkit-box` suppresses
+  /* NOT -webkit-line-clamp. Measured: `display:-webkit-box` suppresses
      Chromium's hyphenation dictionary, which is why a clamped name broke as
-     "Inspecto|r General" and "Drone/Train|ing" — a shear, not a hyphen, and
-     the exact thing that reads as a rendering bug. As a plain block the same
-     text hyphenates ("Inspec-tor"), and the height cap does the clamping.
-     .card-art is the flex:1 box on the face, so the lines the name needs come
-     out of the art field rather than out of the reader. */
+     "Inspecto|r General" — a shear, not a hyphen, and the exact thing that
+     reads as a rendering bug. As a plain block it hyphenates. */
   display: block;
-  max-height: 48%;
+  max-height: 46%;
+  margin-top: 4%;
   font-size: calc(var(--card-w) * var(--fan-name, .100));
   line-height: 1.14;
   hyphens: auto;
   -webkit-hyphens: auto;
-  /* last resort only — every token in the deck fits or hyphenates at the
-     sizes above. Widest measured token: "Fighter/Mobility" at 7.32em,
-     "Thunderbirds" at 6.27em, against a 6.5em column. */
   overflow-wrap: break-word;
 }
 .zone-hand .card .card-band,
 .zone-discard .card .card-band {
   font-size: calc(var(--card-w) * var(--fan-band, .118));
-  letter-spacing: .02em;
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
 .card-art {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
-  border-radius: calc(var(--card-r) * .5);
   overflow: hidden;
-  background:
-    linear-gradient(170deg, rgba(255, 255, 255, .06), rgba(0, 0, 0, .3)),
-    radial-gradient(120% 96% at 50% 8%, #1d2f4c 0%, #0a1424 100%);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .5);
 }
-/* the motif: one solid colour source, shaped by a per-colour mask. */
+/* the glyph: one solid colour source, shaped by a per-set mask, printed on the
+   stock. No panel, no inset gradient — ink on paper. */
 .card-art::before {
   content: "";
   position: absolute;
-  inset: -6%;
-  background: var(--band, var(--steel-300));
-  opacity: var(--motif-alpha, .38);
+  inset: 4%;
+  background: var(--band, var(--ink-mute));
+  opacity: var(--motif-alpha, .9);
   -webkit-mask-image: var(--motif);
   mask-image: var(--motif);
   -webkit-mask-size: 100% 100%;
@@ -849,11 +898,22 @@
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
 }
+/* the watermark: the same glyph at 130%, bled off the bottom-left at 7% (§6) */
 .card-art::after {
   content: "";
   position: absolute;
-  inset: 0;
-  background: radial-gradient(90% 70% at 50% 0%, rgba(190, 220, 255, .12), transparent 70%);
+  left: -28%;
+  bottom: -30%;
+  width: 130%;
+  height: 130%;
+  background: var(--band, var(--ink-mute));
+  opacity: .07;
+  -webkit-mask-image: var(--motif);
+  mask-image: var(--motif);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
 
 .card-foot {
@@ -863,54 +923,42 @@
   align-items: center;
   gap: 3%;
   font-size: calc(var(--card-w) * .125);
-  line-height: 1.5;
+  line-height: 1.4;
   min-height: calc(var(--card-w) * .2);
 }
 .card-ladder {
   display: none;                     /* hand + pile contexts only */
-  color: var(--steel-300);
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: .02em;
+  color: var(--ink-mute);
+  font-weight: 700;
   overflow: hidden;
   white-space: nowrap;
 }
 .zone-hand .card .card-ladder,
 .zone-discard .card .card-ladder {
   display: block;
-  /* the rent ladder carries a three-bar glyph worth 1.2em before its numbers,
-     so it needs more of the line than its character count suggests; .82 keeps
-     the widest ladder in the deck ("1/2/3/4", Overseas Bases) inside the
-     narrowest column in the set — 40px, landscape at seven cards. */
+  /* the ladder carries a three-bar glyph worth 1.2em before its numbers, so it
+     needs more of the line than its character count suggests; .82 keeps the
+     widest ladder in the deck ("1/2/3/4", Overseas Bases) inside the narrowest
+     column in the set — 40px, landscape at seven cards. */
   font-size: calc(var(--card-w) * var(--fan-name, .100) * .82);
 }
-/* The foot is a row of two, and the ladder always lost: "1/2/3/4" plus its
-   three-bar glyph needs 38px and the coin left it 30. It takes its own line
-   now — the face has the height (the art field is the flex:1 box) and the
-   numbers are the whole point of a rent ladder. */
+/* The foot is a row of two and the ladder always lost: "1/2/3/4" plus its glyph
+   needs 38px and the coin left it 30. It takes its own line. */
 .zone-hand .card .card-foot,
 .zone-discard .card .card-foot { flex-wrap: wrap; row-gap: 2%; }
 .zone-hand .card .card-ladder,
 .zone-discard .card .card-ladder { flex: 1 1 100%; }
-
-/* An action's ladder was its own name shouted in caps ("MIDNIGHT REQUISITION"
-   under "Midnight Requisition"), and a rent's was its colours restated
-   ("FIGHT/MOBIL" under "Rent: Fighters / Mobility"). Both overflowed the foot
-   and were cut to "MIDNIC" / "FIGHT/I". Neither adds a fact the name has not
-   already given, so the foot carries the value coin alone. The ladder stays
-   where it is the only source of its number: property rent steps and a wild's
-   legal colours. */
-/* Chromium's hyphenation dictionary does not break a token containing a
-   slash, and "Fighter/Mobility" is sixteen characters — measured 7.32em wide
-   against a 6.5em column, so it sheared to "Drone/Train|ing". Wild names, and
-   only wild names, run 14% smaller; nothing else in the deck needs it. */
+/* Chromium's hyphenation dictionary does not break a token containing a slash,
+   and "Fighter/Mobility" is sixteen characters — measured 7.32em against a
+   6.5em column, so it sheared. Wild names, and only wild names, run 14%
+   smaller; nothing else in the deck needs it. */
 .zone-hand .card[data-type="wild_property"] .card-name,
 .zone-discard .card[data-type="wild_property"] .card-name {
   font-size: calc(var(--card-w) * var(--fan-name, .100) * .78);
 }
-
-/* A wild's ladder ("ANY", "DRONE/TRAIN") restates its band and its name, and
-   at 75px against a 30px box it was the worst offender in the set. */
+/* An action's ladder was its own name shouted in caps and a rent's was its
+   colours restated; both overflowed the foot. Neither adds a fact the name has
+   not already given. */
 .zone-hand .card[data-type="action"] .card-ladder,
 .zone-hand .card[data-type="rent"] .card-ladder,
 .zone-hand .card[data-type="wild_property"] .card-ladder,
@@ -918,8 +966,7 @@
 .zone-discard .card[data-type="rent"] .card-ladder,
 .zone-discard .card[data-type="wild_property"] .card-ladder { display: none; }
 
-/* rent ladder as STEPS: three ascending bars in the set colour, ahead of the
-   numbers. Property cards only — an action card has no ladder to draw. */
+/* rent ladder as STEPS: three ascending bars in the set colour */
 .card[data-type="property"] .card-ladder::before,
 .card[data-type="wild_property"] .card-ladder::before {
   content: "";
@@ -928,7 +975,7 @@
   width: 1em;
   height: .78em;
   margin-right: .2em;
-  background: var(--band, var(--steel-300));
+  background: var(--band, var(--ink-mute));
   -webkit-mask-image: linear-gradient(#000, #000), linear-gradient(#000, #000), linear-gradient(#000, #000);
   mask-image: linear-gradient(#000, #000), linear-gradient(#000, #000), linear-gradient(#000, #000);
   -webkit-mask-size: 26% 38%, 26% 68%, 26% 100%;
@@ -939,232 +986,197 @@
   mask-repeat: no-repeat;
 }
 
-/* the value coin — a struck steel disc, gold only on CHUD */
+/* the value coin — a filled INK disc with bone numerals, ≥22% of card width
+   (§6). Achromatic on purpose: value is not a set. */
 .card-coin {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: calc(var(--card-w) * .30);
-  height: calc(var(--card-w) * .30);
+  min-width: calc(var(--card-w) * .28);
+  height: calc(var(--card-w) * .28);
   padding: 0 calc(var(--card-w) * .04);
   border-radius: 999px;
-  font-size: calc(var(--card-w) * .135);
-  font-weight: 900;
+  font-size: calc(var(--card-w) * .13);
+  font-weight: 700;
   line-height: 1;
   letter-spacing: -.02em;
-  color: #0a1220;
-  background: linear-gradient(170deg, #e6edf8 0%, #a9bad2 48%, #7d90ad 100%);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, .55), inset 0 -1px 0 rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .7);
-}
-/* On a board card the coin is a marker, not a headline — 12 bright discs in a
-   row of set columns read as noise. */
-.board .card-coin {
-  min-width: calc(var(--card-w) * .27);
-  height: calc(var(--card-w) * .27);
-  font-size: calc(var(--card-w) * .125);
-  background: linear-gradient(170deg, #c3d0e2 0%, #8b9db8 52%, #66789a 100%);
-  opacity: .92;
+  color: var(--card-stock);
+  background: var(--ink);
 }
 
-/* ══ per-colour motif family ═══════════════════════════════════════════════
-   One product line: thin geometric instrument line-work, centred, same stroke
-   weight, differing only in the instrument. Each is a mask over the set colour.
-   All of them are authored to fill 100%×100% so a single mask-size serves. */
+/* ══ the ten sets ══════════════════════════════════════════════════════════
+   --band is the fill; --band-ink is the lettering on it; --rail (variables.css)
+   is the derived mat rail. One declaration each, nothing per-theme. */
 
-[data-color="brown"]     { --band: var(--set-brown);     --band-ink: #fff5ec; }
-[data-color="lightblue"] { --band: var(--set-lightblue); --band-ink: #06131f; }
-[data-color="pink"]      { --band: var(--set-pink);      --band-ink: #23050f; }
-[data-color="orange"]    { --band: var(--set-orange);    --band-ink: #200e00; }
-[data-color="red"]       { --band: var(--set-red);       --band-ink: #fff0f1; }
-[data-color="yellow"]    { --band: var(--set-yellow);    --band-ink: #211a00; }
-[data-color="green"]     { --band: var(--set-green);     --band-ink: #f0fff3; }
-[data-color="darkblue"]  { --band: var(--set-darkblue);  --band-ink: #f2f6ff; }
-[data-color="base"]      { --band: var(--set-base);      --band-ink: #04120f; }
-[data-color="intel"]     { --band: var(--set-intel);     --band-ink: #0a1018; }
+[data-color="brown"]     { --band: var(--set-brown); }
+[data-color="lightblue"] { --band: var(--set-lightblue); }
+[data-color="pink"]      { --band: var(--set-pink); }
+[data-color="orange"]    { --band: var(--set-orange); }
+[data-color="red"]       { --band: var(--set-red); }
+[data-color="yellow"]    { --band: var(--set-yellow); }
+[data-color="green"]     { --band: var(--set-green); }
+[data-color="darkblue"]  { --band: var(--set-darkblue); }
+[data-color="base"]      { --band: var(--set-base); }
+[data-color="intel"]     { --band: var(--set-intel); }
 
-/* Drone Ops — loiter racetrack */
-.card[data-color="brown"] {
+/* Ten glyphs, one per set — the colourblind channel and the primary identity
+   (§1: glyph first, colour second). Placeholders until cardart.css lands. */
+.card[data-color="brown"] {                    /* Drone Ops — loiter racetrack */
   --motif:
     radial-gradient(ellipse 58% 26% at 50% 50%, transparent 0 84%, #000 84% 100%, transparent 100%),
     radial-gradient(ellipse 30% 13% at 50% 50%, transparent 0 78%, #000 78% 100%, transparent 100%);
 }
-/* Training — climb ladder */
-.card[data-color="lightblue"] {
+.card[data-color="lightblue"] {                /* Training — climb chevrons */
   --motif: repeating-linear-gradient(-58deg, #000 0 6%, transparent 6% 20%);
 }
-/* Space Force — crossed orbits */
-.card[data-color="pink"] {
+.card[data-color="pink"] {                     /* Space Force — orbit */
   --motif:
     radial-gradient(ellipse 60% 20% at 50% 50%, transparent 0 88%, #000 88% 100%, transparent 100%),
     radial-gradient(ellipse 20% 58% at 50% 50%, transparent 0 88%, #000 88% 100%, transparent 100%),
     radial-gradient(circle at 50% 50%, #000 0 11%, transparent 11%);
 }
-/* Test & Eval — crosshair reticle */
-.card[data-color="orange"] {
+.card[data-color="orange"] {                   /* Test & Eval — reticle */
   --motif:
     linear-gradient(90deg, transparent 0 48%, #000 48% 52%, transparent 52%),
     linear-gradient(180deg, transparent 0 48%, #000 48% 52%, transparent 52%),
     radial-gradient(circle at 50% 50%, transparent 0 54%, #000 54% 64%, transparent 64%);
 }
-/* Fighters — swept delta, double chevron */
-.card[data-color="red"] {
+.card[data-color="red"] {                      /* Fighters — swept delta */
   --motif:
     linear-gradient(118deg, transparent 0 40%, #000 40% 47%, transparent 47%),
     linear-gradient(-118deg, transparent 0 40%, #000 40% 47%, transparent 47%),
     linear-gradient(118deg, transparent 0 62%, #000 62% 68%, transparent 68%),
     linear-gradient(-118deg, transparent 0 62%, #000 62% 68%, transparent 68%);
 }
-/* Mobility — runway threshold bars */
-.card[data-color="yellow"] {
+.card[data-color="yellow"] {                   /* Mobility — threshold bars */
   --motif:
     repeating-linear-gradient(90deg, #000 0 4%, transparent 4% 16%),
     linear-gradient(180deg, transparent 0 64%, #000 64% 68%, transparent 68%);
 }
-/* Elite Programs — starburst */
-.card[data-color="green"] {
+.card[data-color="green"] {                    /* Elite Programs — starburst */
   --motif:
     repeating-conic-gradient(from 0deg at 50% 50%, #000 0deg 5deg, transparent 5deg 36deg),
     radial-gradient(circle at 50% 50%, transparent 0 44%, #000 44% 52%, transparent 52%);
 }
-/* Command — the roundel */
-.card[data-color="darkblue"] {
+.card[data-color="darkblue"] {                 /* Command — the roundel */
   --motif:
     radial-gradient(circle at 50% 50%, transparent 0 26%, #000 26% 33%, transparent 33% 50%, #000 50% 58%, transparent 58%),
     radial-gradient(circle at 50% 50%, #000 0 13%, transparent 13%);
 }
-/* Overseas Bases — chart grid + range ring */
-.card[data-color="base"] {
+.card[data-color="base"] {                     /* Overseas Bases — chart grid */
   --motif:
     repeating-linear-gradient(90deg, #000 0 2%, transparent 2% 20%),
     repeating-linear-gradient(180deg, #000 0 3%, transparent 3% 26%),
     radial-gradient(circle at 50% 50%, transparent 0 30%, #000 30% 37%, transparent 37%);
 }
-/* Intelligence — radar sweep */
-.card[data-color="intel"] {
+.card[data-color="intel"] {                    /* Intelligence — radar sweep */
   --motif:
     conic-gradient(from 208deg at 50% 50%, rgba(0, 0, 0, .95) 0deg, rgba(0, 0, 0, .1) 44deg, transparent 46deg),
     radial-gradient(circle at 50% 50%, transparent 0 38%, #000 38% 43%, transparent 43% 72%, #000 72% 78%, transparent 78%);
 }
 
-/* ══ type variants — distinct at a glance ══════════════════════════════════ */
+/* ══ type variants ═════════════════════════════════════════════════════════ */
 
-/* MONEY: a banknote. Lighter stock, guilloche, and the value IS the art. */
-.card[data-type="money"] {
-  --band: #b9c8dc;
-  --band-ink: #0a1220;
-  --motif-alpha: .3;
-  background: linear-gradient(168deg, #2b3c58 0%, #1c2b43 46%, #131f33 100%);
-}
+/* MONEY: a banknote. The value IS the art, printed in mono on the stock. */
+.card[data-type="money"] { --band: var(--ink-mute); }
 .card[data-type="money"] .card-art { display: none; }
 .card[data-type="money"] .card-face {
   background:
-    repeating-radial-gradient(circle at 50% 52%, rgba(185, 200, 220, .09) 0 1px, transparent 1px 6px),
-    repeating-linear-gradient(45deg, rgba(185, 200, 220, .05) 0 1px, transparent 1px 7px);
+    repeating-radial-gradient(circle at 50% 52%, var(--shade) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(45deg, var(--shade) 0 1px, transparent 1px 7px),
+    var(--card-stock);
 }
-/* The denomination lives in the LEFT strip: bank cards overlap 35% from the
-   right, and a centred numeral was cut to "5N" on every buried card. */
+/* The denomination lives in the LEFT strip: bank cards overlap from the right,
+   and a centred numeral was cut to "5N" on every buried card. */
 .card[data-type="money"] .card-name {
   display: flex !important;
   flex: 1 1 auto;
   align-items: center;
   justify-content: flex-start;
-  font-size: calc(var(--card-w) * .30);
-  font-weight: 900;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: calc(var(--card-w) * .28);
+  font-weight: 700;
   letter-spacing: -.045em;
-  color: #eef4ff;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, .55), 0 0 12px rgba(160, 200, 255, .28);
+  color: var(--ink);
 }
-.card[data-type="money"] .card-coin { background: linear-gradient(170deg, #cfe0f4, #8fa4c0); }
 
-/* ACTION: graphite stock, stencil band, hazard chevrons. */
+/* ACTION: no set colour at all — an achromatic ink slab band plus a big glyph.
+   Actions concern no colour, and that ABSENCE is itself the signal (§6). */
 .card[data-type="action"] {
-  --band: #9fb2c9;
-  --band-ink: #0a0f18;
+  --band: var(--ink);
   --motif: repeating-linear-gradient(-45deg, #000 0 7%, transparent 7% 22%);
-  /* .26 of a mid-grey over near-black graphite is a 4% contrast step: at hand
-     size an ACTION card's art field read as a missing image rather than as
-     hazard chevrons. The motif is the only thing distinguishing an action
-     card's art from a black rectangle, so it gets the alpha the coloured sets
-     get for free from their hues. */
-  --motif-alpha: .5;
-  background: linear-gradient(168deg, #2f3646 0%, #1f2532 48%, #151a24 100%);
+  --motif-alpha: .55;
 }
-.card[data-type="action"] .card-art {
-  background:
-    linear-gradient(170deg, rgba(255, 255, 255, .05), rgba(0, 0, 0, .34)),
-    radial-gradient(120% 96% at 50% 8%, #2a3242 0%, #10141d 100%);
-}
-.card[data-type="action"] .card-art::before { background: #b9cadf; }
+.card[data-type="action"] .card-art::before { background: var(--ink-mute); }
+.card[data-type="action"] .card-art::after { background: var(--ink-mute); }
 
-/* RENT: amber demand band, broadcast arcs. */
+/* RENT: a rent card must announce WHICH COLOURS it concerns before it announces
+   what it is (owner defect, 2026-08-06: "there is like an orange rent card but
+   it's actually the wild"). Every rent card wore the same amber band, so the
+   band said "rent" and nothing said "which rent". The band is now the card's
+   two set colours split hard down the middle; the wild rent carries all ten as
+   hard-edged segments. The full colour-pair chassis is the card agent's (§6);
+   this is the floor. */
+.card[data-type="rent"] { --band: var(--ink-mute); --motif-alpha: .8; }
+.card[data-type="rent"] .card-band {
+  background:
+    linear-gradient(90deg,
+      var(--band-a, var(--ink-mute)) 0 50%, var(--band-b, var(--ink-mute)) 50% 100%);
+}
+.card[data-type="rent"][data-color] .card-band { background: var(--band); }
+.card[data-type="rent"]:not([data-color]) .card-band,
+.card[data-type="wild_property"]:not([data-color]) .card-band {
+  background: linear-gradient(90deg,
+    var(--set-brown) 0 10%, var(--set-lightblue) 10% 20%, var(--set-pink) 20% 30%,
+    var(--set-orange) 30% 40%, var(--set-red) 40% 50%, var(--set-yellow) 50% 60%,
+    var(--set-green) 60% 70%, var(--set-darkblue) 70% 80%, var(--set-base) 80% 90%,
+    var(--set-intel) 90% 100%);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .7);
+}
 .card[data-type="rent"] {
-  --band: var(--warn);
-  --band-ink: #1c0d00;
   --motif:
     radial-gradient(circle at 50% 104%, transparent 0 22%, #000 22% 27%, transparent 27% 47%, #000 47% 52%, transparent 52% 72%, #000 72% 77%, transparent 77%);
-  --motif-alpha: .42;
 }
 
-/* WILD: prism. The "any" wild has no data-color, so the art carries every set
-   hue at once; a two-colour wild keeps its primary band and gets the same
-   prism behind it, which is what "it can be either" should look like. */
+/* WILD: the ten-colour wheel — hard-edged segments, never a soft rainbow
+   gradient. A gradient reads as decoration; hard segments read as "all of
+   them". */
+.card[data-type="wild_property"]:not([data-color]) { --band: var(--ink-mute); }
 .card[data-type="wild_property"] .card-art::before {
   background:
-    conic-gradient(from 210deg at 50% 50%,
-      var(--set-red), var(--set-orange), var(--set-yellow), var(--set-green),
-      var(--set-base), var(--set-lightblue), var(--set-darkblue), var(--set-pink),
-      var(--set-brown), var(--set-intel), var(--set-red));
-  opacity: .42;
-  -webkit-mask-image:
-    radial-gradient(circle at 50% 50%, transparent 0 30%, #000 30% 40%, transparent 40% 58%, #000 58% 68%, transparent 68%);
-  mask-image:
-    radial-gradient(circle at 50% 50%, transparent 0 30%, #000 30% 40%, transparent 40% 58%, #000 58% 68%, transparent 68%);
+    repeating-conic-gradient(from 200deg at 50% 50%,
+      var(--set-red) 0deg 36deg, var(--set-orange) 36deg 72deg,
+      var(--set-yellow) 72deg 108deg, var(--set-green) 108deg 144deg,
+      var(--set-base) 144deg 180deg, var(--set-lightblue) 180deg 216deg,
+      var(--set-darkblue) 216deg 252deg, var(--set-pink) 252deg 288deg,
+      var(--set-brown) 288deg 324deg, var(--set-intel) 324deg 360deg);
+  opacity: .95;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent 0 30%, #000 30% 62%, transparent 62%);
+  mask-image: radial-gradient(circle at 50% 50%, transparent 0 30%, #000 30% 62%, transparent 62%);
 }
-.card[data-type="wild_property"]:not([data-color]) { --band: var(--steel-300); --band-ink: #0a1018; }
-.card[data-type="wild_property"]:not([data-color])::before {
-  background: conic-gradient(from 180deg,
-    var(--set-red), var(--set-orange), var(--set-yellow), var(--set-green),
-    var(--set-lightblue), var(--set-darkblue), var(--set-pink), var(--set-red));
-}
+.card[data-type="wild_property"] .card-art::after { display: none; }
 
-/* THE CHUD CARD: the only card that wears foil. */
-.card[data-action-kind="chud"] {
-  --band: var(--gold);
-  --band-ink: var(--gold-ink);
-  --motif-alpha: .5;
-  --motif:
-    repeating-conic-gradient(from 0deg at 50% 50%, #000 0deg 7deg, transparent 7deg 30deg),
-    radial-gradient(circle at 50% 50%, #000 0 16%, transparent 16% 40%, #000 40% 47%, transparent 47%);
-  background: linear-gradient(168deg, #3a2b0c 0%, #241a08 46%, #14100a 100%);
-  box-shadow:
-    0 0 0 1px var(--gold-deep),
-    inset 0 0 0 1px rgba(232, 185, 85, .5),
-    0 0 14px rgba(232, 185, 85, .3),
-    var(--lift-0);
-  animation: chud-foil 3.6s ease-in-out infinite;
-}
-.card[data-action-kind="chud"] .card-art::before { background: var(--gold); }
-.card[data-action-kind="chud"] .card-name { color: var(--gold-hi); }
-.card[data-action-kind="chud"] .card-coin { background: var(--foil); color: var(--gold-ink); }
-.card[data-action-kind="chud"]::after {
-  background: linear-gradient(202deg, rgba(255, 234, 180, .3) 0%, rgba(255, 234, 180, .05) 24%, transparent 46%);
-}
-@keyframes chud-foil {
-  0%, 100% { box-shadow: 0 0 0 1px var(--gold-deep), inset 0 0 0 1px rgba(232, 185, 85, .5), 0 0 10px rgba(232, 185, 85, .22), var(--lift-0); }
-  50%      { box-shadow: 0 0 0 1px var(--gold), inset 0 0 0 1px rgba(255, 234, 180, .75), 0 0 22px rgba(232, 185, 85, .46), var(--lift-0); }
-}
+/* CHUD: the one card that keeps a mark of its own. Not foil — foil is the
+   victory modal (§1). A hazard-struck ink band, because CHUD is the card that
+   takes from a completed set. */
+.card[data-action-kind="chud"] { --band: var(--ink); }
+.card[data-action-kind="chud"] .card-band { background: var(--hazard-fine); color: var(--card-stock); }
+.card[data-action-kind="chud"] .card-art::before { background: var(--danger); }
 
-/* OPSEC reads as a shield, not a generic action. */
 .card[data-action-kind="opsec"] {
-  --band: #6fd3c4;
-  --band-ink: #04201c;
+  --band: var(--set-base);
   --motif:
     radial-gradient(ellipse 52% 68% at 50% 40%, transparent 0 82%, #000 82% 100%, transparent 100%),
     linear-gradient(180deg, transparent 0 34%, #000 34% 40%, transparent 40%);
 }
 
-/* ══ the card back — AF star roundel ═══════════════════════════════════════ */
+/* ══ the card back — THE ONE DARK OBJECT ═══════════════════════════════════
+   --card-back in both themes, roundel DEBOSSED (no glow), 45° cross-hatch at
+   4%, a bone border inset 3px. Faces are bone and backs are near-black, so
+   face-up vs face-down is unmistakable at 20px; before this they were near
+   identical and a deck read as a stack of blank cards. */
 
 .card-back {
   position: absolute;
@@ -1175,28 +1187,20 @@
   z-index: 1;
   border-radius: inherit;
   background:
-    radial-gradient(circle at 50% 46%, rgba(184, 135, 58, .1), transparent 52%),
-    repeating-linear-gradient(45deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 5px),
-    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .3) 0 1px, transparent 1px 5px),
-    linear-gradient(165deg, #1a3055 0%, #0d1c33 52%, #112342 100%);
-  box-shadow: inset 0 0 0 1px rgba(2, 6, 12, .9);
+    repeating-linear-gradient(45deg, rgba(242, 238, 228, .04) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .35) 0 1px, transparent 1px 5px),
+    var(--card-back);
 }
-/* the hairline frame every real card back has */
 .card-back::before {
   content: "";
   position: absolute;
-  inset: 7%;
-  border: 1px solid rgba(184, 135, 58, .24);
-  border-radius: calc(var(--card-r) * .8);
+  inset: 3px;
+  border-radius: calc(var(--card-r) * .7);
+  box-shadow: inset 0 0 0 2px rgba(242, 238, 228, .30);
 }
-.card-back::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(204deg, rgba(255, 255, 255, .1) 0%, transparent 44%);
-}
-/* the roundel: concentric rings struck around a star */
+.card-back::after { content: none; }
+/* the roundel, debossed into the back: a dark disc with a light top edge and a
+   dark bottom one is a stamp struck INTO the card, not a badge glued on. */
 .card-back-roundel {
   position: relative;
   z-index: 1;
@@ -1206,259 +1210,251 @@
   width: 46%;
   aspect-ratio: 1;
   border-radius: 50%;
-  /* Bronze, not foil. A gold star on every deck card and every opponent
-     hand-back put 9 gold marks on a five-player phone shot; §6 gives gold to
-     four things and "the back of a card" is not one of them. */
-  color: #b8873a;
+  color: rgba(242, 238, 228, .34);
   font-size: calc(var(--card-w) * .26);
   line-height: 1;
-  text-shadow: 0 0 calc(var(--card-w) * .07) rgba(184, 135, 58, .5);
-  background: radial-gradient(circle at 50% 38%, #1d3a63 0%, #0a1729 78%);
+  background: rgba(0, 0, 0, .45);
   box-shadow:
-    0 0 0 .06em rgba(184, 135, 58, .45),
-    0 0 0 .13em rgba(10, 23, 41, .9),
-    0 0 0 .17em rgba(184, 135, 58, .18);
+    inset 0 2px 3px rgba(0, 0, 0, .8),
+    inset 0 -1px 0 rgba(242, 238, 228, .16),
+    0 0 0 .05em rgba(242, 238, 228, .16),
+    0 0 0 .12em rgba(0, 0, 0, .5),
+    0 0 0 .15em rgba(242, 238, 228, .09);
 }
 
 /* Face/back VISIBILITY belongs to motion.css: a card with [data-facing] keeps
-   both faces in the DOM and lets backface-visibility hide one, because the flip
-   is real 3D geometry. Only the pooled backs — which have no .card-inner and
-   never flip — are switched here. */
+   both faces in the DOM and lets backface-visibility hide one. Only the pooled
+   backs — which have no .card-inner and never flip — are switched here. */
 .card-facedown .card-face { display: none; }
 .card-facedown .card-back { display: flex; }
-/* The spine and the sheen live OUTSIDE .card-inner, so they must not print over
-   a card that is showing its back. */
 .card[data-facing="down"]::before,
 .card-facedown::before,
 .card[data-back="1"]::before { display: none; }
 .card[data-facing="down"]::after,
-.card-facedown::after { background: none; box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .5); }
+.card-facedown::after { box-shadow: inset 0 0 0 1px rgba(242, 238, 228, .12); }
 
-/* ══ states — each unmistakable, none of them clashing ═════════════════════
-     gold   = TARGETABLE — "the game is asking you to pick this one"
-     ice    = lifted / dragging                  (height, not meaning)
-     green  = picked / dropping / droppable-hover (a commitment you made)
-     steel  = payable                            (merely eligible)
-     shadow = lifted / dragging / flying         (height off the table)
+/* ══ STATES ════════════════════════════════════════════════════════════════
+   THE STATE → TREATMENT MAP. Read down the MATERIAL column: no two states
+   share one, so none of them needs a hue to be told apart, and every one of
+   them survives grayscale and colourblindness.
 
-   Lifting a card used to draw a 2px gold ring, which put foil on any card the
-   player happened to be holding — mid-game@desktop carried four gold marks
-   with three different meanings. Height is not a meaning; it is height. It is
-   drawn in cold white now, which is what a card catching the hangar light
-   actually looks like, and the foil is left to mean one thing. */
+     your turn          cobalt ring, OUTSIDE, static          material: ring
+     selected / picked  cobalt ring, OUTSIDE, + ink notch     material: ring
+     targetable         cobalt ring, OUTSIDE, + corner ticks  material: ring
+     valid drop         cobalt ring, OUTSIDE, on the MAT      material: ring
+     payable            raised: the card lifts off the stack  material: shadow
+     lifted / dragging  a bigger three-stop shadow            material: shadow
+     final approach     hazard stripes, INSIDE the border     material: stripe
+     discarding         hazard stripes + drained              material: stripe
+     victory            foil flood, modal only                material: foil
 
-.card.is-flying {
-  z-index: 40;
-  box-shadow: 0 0 0 1px rgba(2, 6, 12, .9), inset 0 0 0 1px rgba(198, 216, 244, .18), var(--lift-2);
-}
+   Ring states are mutually exclusive by construction (you are either being
+   asked to pick a target or you are holding a card), so sharing the cobalt is
+   safe. What is NOT safe is sharing geometry with the alarm — hence "outside"
+   for every ring and "inside" for every hazard. */
+
+.card.is-flying { z-index: 40; box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop-air); }
 
 /* No transform here — the contract forbids it. A card "lifts" by throwing a
-   longer shadow and catching more light, which is what lifting one actually
-   does on a table. */
+   longer shadow, which is what lifting one actually does on a table. */
 .card.is-lifted {
   z-index: 30;
-  filter: brightness(1.1);
-  box-shadow:
-    0 0 0 2px rgba(226, 240, 255, .92),
-    inset 0 0 0 1px rgba(255, 255, 255, .3),
-    0 10px 20px rgba(0, 0, 0, .6),
-    0 0 24px rgba(180, 214, 255, .3);
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop-air), 0 0 0 2px var(--accent);
 }
 .card.is-dragging {
   z-index: 45;
-  filter: brightness(1.14);
-  box-shadow:
-    0 0 0 2px rgba(238, 247, 255, .96),
-    0 18px 30px rgba(0, 0, 0, .68),
-    0 0 30px rgba(180, 214, 255, .3);
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop-air);
 }
-/* released over a legal zone: the lift collapses and the rim turns to the
-   commit green for the few frames before the choreographer's FLIP owns it */
-.card.is-dropping {
-  filter: brightness(1.06);
-  box-shadow:
-    0 0 0 2px var(--go),
-    inset 0 0 0 1px rgba(56, 198, 122, .45),
-    0 4px 10px rgba(0, 0, 0, .55),
-    0 0 18px rgba(42, 179, 106, .3);
-}
+.card.is-dropping { box-shadow: 0 0 0 2px var(--accent), var(--card-drop); }
 .card.is-picked, .card.selected {
   z-index: 20;
-  box-shadow:
-    0 0 0 2px var(--go),
-    inset 0 0 0 1px rgba(56, 198, 122, .5),
-    inset 0 -18px 22px -14px rgba(42, 179, 106, .75),
-    0 4px 12px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 0 2px var(--accent), var(--card-drop);
 }
-/* "eligible to hand over" — quiet, but at 1px of 40% steel nobody could see
-   which cards had become tappable in the payment shot. */
+/* "eligible to hand over" — the card RISES out of the stack rather than
+   changing colour: a payable card is a physical offer, not a category. */
 .card[data-payable="1"] {
-  filter: brightness(1.08);
-  box-shadow:
-    0 0 0 2px rgba(174, 196, 226, .9),
-    inset 0 0 0 1px rgba(174, 196, 226, .3),
-    0 0 10px rgba(120, 160, 210, .3),
-    var(--lift-0);
+  z-index: 10;
+  box-shadow: 0 0 0 1px var(--card-edge), 0 0 0 1px var(--accent), var(--card-drop-air);
 }
 .card[data-payable="1"].is-picked, .card[data-payable="1"].selected {
-  box-shadow:
-    0 0 0 2px var(--go),
-    inset 0 0 0 1px rgba(56, 198, 122, .5),
-    inset 0 -18px 22px -14px rgba(42, 179, 106, .75),
-    0 4px 12px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 0 2px var(--accent), var(--card-drop-air);
 }
 
-/* targetable: the scarce gold, and it breathes so the eye finds it */
+/* targetable: the ring plus corner ticks, so the mark is a SHAPE and not only
+   a colour. Frame 0 of the breathe is the full treatment (see the invariant at
+   the top of this file). */
 .card[data-targetable="1"] {
   z-index: 25;
-  box-shadow:
-    0 0 0 2px var(--gold),
-    inset 0 0 0 1px rgba(255, 234, 180, .4),
-    0 0 18px var(--gold-glow);
-  animation: mark-pulse 1.5s ease-in-out infinite;
+  outline: var(--ring);
+  outline-offset: 2px;
+  animation: mark-breathe 1.6s ease-in-out infinite;
 }
 .board[data-targetable="1"], .propcol[data-targetable="1"] {
-  border-color: var(--gold);
-  border-style: solid;
-  background-image: linear-gradient(180deg, rgba(232, 185, 85, .13), rgba(232, 185, 85, 0));
-  box-shadow: 0 0 0 1px var(--gold), 0 0 20px rgba(232, 185, 85, .3), inset 0 0 24px rgba(232, 185, 85, .1);
+  outline: var(--ring);
+  outline-offset: 3px;
   cursor: pointer;
-  animation: mark-pulse 1.5s ease-in-out infinite;
+  animation: mark-breathe 1.6s ease-in-out infinite;
 }
-@keyframes mark-pulse {
-  0%, 100% { filter: brightness(1); }
-  50%      { filter: brightness(1.16); }
+@keyframes mark-breathe {
+  0%, 100% { outline-color: var(--accent); }
+  50%      { outline-color: color-mix(in oklab, var(--accent), var(--fg) 45%); }
 }
 
-/* droppable: interact.css (P4) owns the outline and deliberately draws it in the
-   same gold as targeting, because the two modes are mutually exclusive — you
-   are either picking a target by tap or holding a card. What separates them
-   here is the FILL: a candidate zone is a flat gold wash; the one actually
-   under the finger floods green, which is the same "you committed" green as
-   .is-picked. Never fight interact.css's outline — it loads after this file. */
-[data-droppable="1"] {
-  background-image: linear-gradient(180deg, rgba(232, 185, 85, .1), rgba(232, 185, 85, 0));
+/* ══ the interact.css bridge ═══════════════════════════════════════════════
+   interact.css (P4) owns drag BEHAVIOUR and is not this agent's file, but it
+   still paints its drop affordances in the retired foil palette via --gold /
+   --gold-dim, both of which §2 deletes. Until that file is updated, these
+   rules restate the same affordances in the new language at a specificity that
+   beats it. REQUEST TO THE INTERACT OWNER: adopt --accent / --ring / --deboss
+   and delete these overrides.
+   §5's six drop affordances are unchanged in MEANING — only in material. */
+.table [data-droppable="1"],
+.board [data-droppable="1"] {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
 }
-[data-droppable="1"].is-drop-hover {
-  background-image: linear-gradient(180deg, rgba(42, 179, 106, .24), rgba(42, 179, 106, .05));
-  box-shadow: 0 0 24px rgba(42, 179, 106, .35), inset 0 0 22px rgba(42, 179, 106, .16);
+.table [data-droppable="1"].is-drop-hover,
+.board [data-droppable="1"].is-drop-hover {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  background-image: none;
+  box-shadow: var(--deboss), inset 0 0 0 2px var(--accent);
 }
-.card[data-droppable="1"] { box-shadow: 0 0 0 2px var(--gold-mid), 0 0 16px rgba(232, 185, 85, .3); }
-.card[data-droppable="1"].is-drop-hover { box-shadow: 0 0 0 2px var(--go), 0 0 22px rgba(42, 179, 106, .45); }
+.board-props .propcol[data-droppable="1"] { border: 0; }
+.board-props .propcol[data-drop-source="1"] { outline: 2px dashed var(--fg-mute); outline-offset: 2px; }
+#table.table[data-droppable="2"].is-drop-hover { box-shadow: inset 0 0 0 3px var(--accent); }
+.table .drop-ghost, .board .drop-ghost {
+  border: 2px dashed var(--accent);
+  background: repeating-linear-gradient(122deg,
+    color-mix(in oklab, var(--accent) 22%, transparent) 0 4px, transparent 4px 9px);
+  box-shadow: none;
+}
+.card.is-drop-hover { box-shadow: 0 0 0 3px var(--accent), var(--card-drop-air); }
 
 /* ══ FINAL APPROACH (§3.10) ════════════════════════════════════════════════
-   Three sets down, one turn cycle to survive. This is the emergency, and it is
-   RED — no foil anywhere in it.
+   Three sets down, one turn cycle to survive. This is the emergency and it is
+   HAZARD MATERIAL — 45° caution stripes plus vermillion, INSIDE the border.
 
-   It used to sweep gold↔red, which meant three things went wrong at once:
-   the cycle STARTED and ENDED on the gold frame, so every still capture (the
-   screenshot harness pauses animations at frame 0) showed an armed board
-   wearing the same gold as the turn marker; the reduced-motion fallback also
-   led with inset gold, so a reduced-motion player never saw the alarm at all;
-   and mid-game@desktop put an armed BLAZE next to a your-turn HARNESS in one
-   frame with identical treatment. An alarm has to read as an alarm at rest.
+   It used to sweep gold↔red, which broke three ways at once: the cycle started
+   AND ended on the gold frame, so every still (the harness pauses animations at
+   frame 0) showed an armed seat wearing the turn marker's colour; the reduced-
+   motion fallback also led with inset gold, so a reduced-motion player never
+   saw the alarm at all; and mid-game@desktop put an armed BLAZE beside a
+   your-turn HARNESS with identical treatment.
 
-   It still has to coexist with [data-targetable] — an armed player is exactly
-   who everyone is about to hit — so the two sit on different geometry, in
-   different colours, at different periods:
+   It has to coexist with [data-targetable] — an armed player is exactly who
+   everyone is about to hit — so the two sit on different geometry, in different
+   hues, in different MATERIALS:
 
-     targetable      OUTSIDE the border — thin GOLD ring + gold bleed, 1.5s
-                     "you may tap this"
-     final approach  INSIDE the border  — thick RED alarm bevel, a hazard rail
-                     across the head, red bleed, 1.1s
-                     "this board is about to win"
+     targetable      cobalt ring OUTSIDE the seat        "you may tap this"
+     final approach  hazard stripes INSIDE the seat      "about to win"
 
-   The armed board is lit red from within; the targetable one is ringed in
-   gold. Neither needs motion to be told apart. */
+   Neither needs motion to be told apart, and neither needs colour. */
 
 .board[data-final-approach="1"] {
-  border-color: var(--danger);
-  background-image: linear-gradient(180deg, rgba(208, 52, 44, .22), rgba(208, 52, 44, .06) 46%, transparent 80%);
-  animation: armed-klaxon 1.1s ease-in-out infinite;
   z-index: 2;
+  background-image: linear-gradient(color-mix(in oklab, var(--danger) 16%, transparent),
+                                    color-mix(in oklab, var(--danger) 4%, transparent));
+  box-shadow:
+    inset 0 0 0 3px var(--danger),
+    var(--deboss);
+  animation: armed-klaxon 1.1s ease-in-out infinite;
 }
-/* hazard rail — the striping is inside the board, above the nameplate */
+/* the hazard rail, painted across the top of the seat, inside it */
 .board[data-final-approach="1"]::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: 3px;
+  height: 6px;
   border-radius: var(--radius) var(--radius) 0 0;
-  background: repeating-linear-gradient(115deg,
-    var(--danger) 0 9px, #120404 9px 12px, var(--danger-lit) 12px 19px, #120404 19px 22px);
-  opacity: .95;
+  background: var(--hazard);
   pointer-events: none;
+  z-index: 3;
 }
-.board[data-final-approach="1"] .board-name {
-  color: var(--danger-lit);
-  text-shadow: 0 0 .6em rgba(208, 52, 44, .8), 0 1px 0 rgba(0, 0, 0, .8);
+/* Your own board IS the centre column, so the seat treatment flooded the whole
+   table in vermillion and buried ten mats (final-approach@desktop). The alarm
+   becomes a FRAME instead: hazard rails top and bottom, nothing over the mats.
+   Same material, same hue, same geometry rule (inside the object). */
+.board-self[data-final-approach="1"] {
+  background-image: none;
+  box-shadow: none;
+  animation: none;
+  padding: 8px 0 8px;
 }
-.board[data-final-approach="1"] .board-sets { color: var(--danger-lit); }
-.board[data-final-approach="1"] .board-worth { box-shadow: inset 0 0 0 1px rgba(255, 145, 132, .5); }
+.board-self[data-final-approach="1"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  background: var(--hazard);
+  pointer-events: none;
+  z-index: 3;
+}
+.board[data-final-approach="1"] .board-name { color: var(--danger-ink); }
+.board[data-final-approach="1"] .board-sets { color: var(--danger-ink); font-weight: 800; }
 
-/* Both ends of the cycle are red. It only varies in INTENSITY, so a paused
-   frame, a reduced-motion render and a live pulse all say the same thing. */
+/* BOTH ENDS OF THE CYCLE CARRY THE FULL TREATMENT. It varies in INTENSITY
+   only, so a paused frame, a reduced-motion render and a live pulse all say
+   exactly the same thing. */
 @keyframes armed-klaxon {
-  0%, 100% {
-    box-shadow:
-      inset 0 0 0 3px var(--danger),
-      inset 0 0 30px rgba(208, 52, 44, .34),
-      0 0 26px rgba(208, 52, 44, .42),
-      var(--lift-2);
-  }
-  50% {
-    box-shadow:
-      inset 0 0 0 3px var(--danger-lit),
-      inset 0 0 36px rgba(208, 52, 44, .5),
-      0 0 36px rgba(208, 52, 44, .7),
-      var(--lift-2);
-  }
+  0%, 100% { box-shadow: inset 0 0 0 3px var(--danger), var(--deboss); }
+  50%      { box-shadow: inset 0 0 0 5px var(--danger), var(--deboss); }
 }
 
-/* both at once: keep targetable's gold ring OUTSIDE, keep the klaxon inside,
-   and let the brightness pulse ride on top at its own slower period. */
+/* both at once: the ring stays OUTSIDE, the hazard stays INSIDE */
 .board[data-final-approach="1"][data-targetable="1"] {
-  animation: armed-klaxon 1.1s ease-in-out infinite, mark-pulse 1.5s ease-in-out infinite;
-  outline: 2px solid var(--gold);
+  outline: var(--ring);
   outline-offset: 3px;
 }
 
-/* §0.9: the static variant is the loud half of the cycle with nothing moving. */
+/* §0.9: the static variant is the loud half of the cycle with nothing moving,
+   and it is IDENTICAL to frame 0 above. */
 @media (prefers-reduced-motion: reduce) {
   .board[data-final-approach="1"],
   .board[data-final-approach="1"][data-targetable="1"] {
     animation: none !important;
-    box-shadow:
-      inset 0 0 0 3px var(--danger-lit),
-      inset 0 0 36px rgba(208, 52, 44, .5),
-      0 0 34px rgba(208, 52, 44, .65),
-      var(--lift-2);
+    box-shadow: inset 0 0 0 4px var(--danger), var(--deboss);
   }
+  .card[data-targetable="1"],
+  .board[data-targetable="1"],
+  .propcol[data-targetable="1"] { animation: none !important; outline-color: var(--accent); }
 }
 
 /* ══ SHORT LANDSCAPE — a real layout, not a squeezed portrait one ══════════
    Measured at 844×390 before this block: HUD 52 + dock 162 left #table 176px,
    which #opponents (78) and #table-center (71) consumed entirely, so
-   .self-board computed to height 12 against a scrollHeight of up to 179 —
-   93% of your own properties, bank and colour columns were simply not on
-   screen. You could not place, rearrange or pay with a property.
+   .self-board computed to height 12 against a scrollHeight of up to 179 — 93%
+   of your own properties, bank and colour mats were simply not on screen. You
+   could not place, rearrange or pay with a property.
 
    Portrait stacks three bands down a tall screen. Landscape has the opposite
-   shape, so it stacks them ACROSS: opponents own a left column the full height
-   of the felt (a phone in landscape is 390px tall, which is four opponent
-   boards), and the piles and YOUR mat share the right one. The dock puts its
-   button bar beside the fan instead of above it, which is 50px of the 390
-   given straight back to the table. */
+   shape, so it stacks them ACROSS. */
 @media (orientation: landscape) and (max-height: 560px) and (max-width: 1024px) {
+  /* ROUND-3 REVIEW (landscape-mid@landscape). The pane arithmetic, measured:
+     390 − 52 HUD − 116 dock = 222px of apron. With the piles owning a full-width
+     top ROW they took 80 of it and .self-board was left 87px — enough for ten
+     nameplates and nothing else, with the mats scrolled out of sight. So
+     landscape becomes the SAME shape as the desktop table, one column shorter:
+     a left rail (piles above the seats) and YOUR mat owning the whole right
+     column at the full 222px. Measured after: head 16 + bank 70 + 2 mat rows of
+     66 = 218. It fits. */
+  /* ROUND-5 (tools/touchtest.mjs): with the piles owning the TOP of the left
+     column the seats scrollport was 89px and a 155px seat overflowed at once —
+     the second seat's mats measured y 280–435 against a 390px viewport. The
+     piles move to the BOTTOM of the same column: the seats get the top 155px,
+     so seat one is whole and seat two is inside the viewport, and YOUR mat
+     still spans both rows at the full 222px. */
   .table {
     display: grid;
-    grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas: "opp centre" "opp self";
-    gap: .3em .45em;
-    padding: .35em .4em .3em;
+    grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "opp self" "centre self";
+    gap: .25em .45em;
+    padding: .3em .4em .3em;
   }
   .opponents {
     grid-area: opp;
@@ -1467,52 +1463,72 @@
     max-height: none;
     min-height: 0;
     gap: .3em;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .opponents .board { flex: 0 0 auto; }
-  /* one board per row across ~380px: no column ever has to wrap or scroll */
   .opponents .board-props { flex-wrap: wrap; }
 
   .table-center {
     grid-area: centre;
     flex: 0 0 auto;
+    flex-direction: row;
     min-height: 0;
     max-height: none;
-    gap: 1.1em;
-    padding: .1em 0 .2em;
+    gap: .8em;
+    padding: 0 0 .2em;
   }
-  .zone-deck, .zone-discard { --card-w: calc(var(--s) * 3.7); }
+  .table-center::before { display: none; }
+  .table-center > .pile:first-child { position: static; margin: 0; transform: none; }
+  /* §0.9: the discard pile is a control (it opens the browser), so it owes 44px
+     on both axes. At 2.9s it measured 43×62 and touchtest failed it. */
+  .zone-deck, .zone-discard { --card-w: max(var(--card-tap), calc(var(--s) * 2.9)); }
+  .pile { gap: .2em; }
 
-  .self-board {
-    grid-area: self;
-    max-height: none;
-    min-height: 0;
+  .self-board { grid-area: self; max-height: none; min-height: 0; }
+  /* ROUND-2 REVIEW: ten 51px mats needed 535px in a 524px pane, so the row
+     overflowed instead of wrapping and the last two mats were off-screen.
+     Five mats per row, two rows, sized to the column. */
+  .board-self {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "head bank" "props props";
+    align-content: start;
+    column-gap: .6em;
+    row-gap: .25em;
   }
-  /* 44px of empty colour column × 10 is the whole right-hand pane on a 390px
-     tall screen; landscape drops the slot art and keeps the tap floor at a
-     size the pane can actually carry. */
-  /* the tap floor is a floor in landscape too — the pane is wide, so ten 44px
-     columns cost one row here, not two */
+  .board-self .board-head { grid-area: head; align-self: center; flex-wrap: nowrap; gap: .5em; margin: 0; padding: 0; box-shadow: none; }
+  .board-self .board-head .board-worth { margin-left: 0; }
+  .board-self .board-bank { grid-area: bank; width: auto; justify-content: flex-start; }
+  .board-self .board-props {
+    grid-area: props;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 3px;
+    margin-top: 0;
+  }
+  .board-self .propcol { min-width: 0; }
+  /* Your own property cards are payment targets in landscape too, so the 44px
+     floor holds here — it was 31px, and ui/ gates keyboard focus on a measured
+     44px box, which is why payment had no keyboard route on this viewport. */
+  .board-self { --card-w: var(--card-tap); }
   .board-self .propcol[data-empty="1"]::after { display: none; }
+  .board-self .propcol { min-height: var(--tap); }
 
   /* the dock lies down: label + buttons on the left, fan on the right */
   .hand-dock { display: flex; align-items: center; gap: .5em; padding: .25em .4em; }
-  .hand-bar {
-    flex: 0 0 auto;
-    flex-wrap: wrap;
-    width: calc(var(--tap) * 2.6);
-    gap: .2em;
-  }
+  .hand-bar { flex: 0 0 auto; flex-wrap: wrap; width: calc(var(--tap) * 2.6); gap: .2em; }
   .hand-label { flex: 1 1 100%; text-align: center; }
   .hand-actions { margin-left: 0; flex-wrap: wrap; justify-content: center; }
-  .hand-actions .btn { font-size: .74em; padding: 0 .55em; }
+  .hand-actions .btn { font-size: .76em; padding: 0 .5em; }
   .zone-hand {
     flex: 1 1 auto;
     min-width: 0;
     margin-top: 0;
-    min-height: calc(var(--card-w) * 1.5 + 1.1em);
+    min-height: calc(var(--card-w) * 1.5 + 1em);
     padding: .3em .3em .4em;
     /* 700px of dock for at most eight cards: the fan never has to overlap, so
-       every name sets whole at the biggest card size the height allows. */
+       every name sets whole at the biggest card the height allows. */
     --card-w: calc(var(--s) * 4.4);
     --fan-cover: .04;
     --fan-name: .104;

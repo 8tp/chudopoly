@@ -1,124 +1,160 @@
 /* ui.css — screens, HUD, prompt bar, comms, sheets, overlays.
-   Owner: design agent (§6). Chrome is steel; foil appears only on the turn
-   marker, the CHUD card, a completed set, and the victory ceremony. */
+   Owner: art-direction agent (ART-DIRECTION §3, §4).
 
-/* ── panels ───────────────────────────────────────────────────────────── */
+   §3 named eight things that make this read as a web app. Five of them are
+   fixed in this file:
+     1  full-width stacked bands              → §5's three columns (table.css)
+     2  the ×9 rounded-rect panel stack       → material, below
+     3  the login-form home screen            → the apron IS the home screen
+     4  gradient CTAs                         → base.css's ink slab
+     5  glow as personality                   → the roundel is DEBOSSED
+     6  ~40 tracked-caps micro-labels         → base.css's type scale
+     7  floating hint pills                   → stencilled (content.css)
+   Nothing in this file may reintroduce `border: 1px solid` on furniture, a
+   gradient on a control, or a glow on anything. */
+
+/* ── panels: content surfaces, not table furniture ─────────────────────────
+   A sheet or a modal is the ONE place a raised plane is honest — it is a piece
+   of paper held over the table. It gets the card's own soft shadow (paper has
+   mass) and the card's own hard edge, and it never gets a 1px outline on a
+   slightly-lighter ground. */
 
 .panel {
   position: relative;
   width: min(24em, 100%);
   margin: auto;
-  padding: 1.4em 1.25em 1.3em;
+  padding: 1.2em 1.1em 1.2em;
   display: flex;
   flex-direction: column;
-  gap: .7em;
-  background: var(--panel);
-  border: var(--hairline) solid rgba(86, 109, 146, .38);
+  gap: .65em;
+  background: var(--surface);
   border-radius: var(--radius-lg);
-  box-shadow: var(--lift-3), var(--rim);
+  box-shadow: var(--card-drop-air), inset 0 0 0 1px var(--shade);
 }
-.panel::before {
+
+/* ══ HOME — the apron, seen from above (§3.3) ══════════════════════════════
+   It was a centred 430px card with five equal full-width buttons, a label-
+   above-input and a gradient CTA: a login form. There is no card here now. The
+   controls are painted straight onto the concrete inside a stencilled box, the
+   way a marshalling area is painted onto a real apron. */
+
+.home-panel, .lobby-panel {
+  width: min(27em, 100%);
+  background: none;
+  box-shadow: none;
+  padding: 1.4em 1.6em 1.6em;
+}
+/* the stencilled marshalling box: hard corner ticks, no rounded rect */
+.home-panel::before, .lobby-panel::before {
   content: "";
   position: absolute;
-  left: 12%;
-  right: 12%;
-  top: -1px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--gold-deep) 30%, var(--gold) 50%, var(--gold-deep) 70%, transparent);
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 2.2em 3px no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 3px 2.2em no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 0 / 2.2em 3px no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 0 / 3px 2.2em no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 100% / 2.2em 3px no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 100% / 3px 2.2em no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 100% / 2.2em 3px no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 100% / 3px 2.2em no-repeat;
+}
+/* the hold-short marking under the controls: two solid, two dashed */
+.home-panel::after {
+  content: "";
+  position: absolute;
+  left: 1.6em;
+  right: 1.6em;
+  bottom: .4em;
+  height: 9px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 100% 2px no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 3px / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 6px / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 9px / 100% 2px no-repeat;
 }
 
-/* ── the mark: star-and-bars roundel, drawn in CSS ────────────────────── */
+/* ── the mark: the roundel, DEBOSSED into the concrete (§3.5) ──────────────
+   It used to be a gold star with a 1.4em glow ring — the loudest object on the
+   screen and pure decoration. A stamp pressed into concrete has a dark inside
+   and a light lower lip; that is the entire recipe and it costs no colour. */
 
-.brand { text-align: center; margin-bottom: .5em; }
+.brand { text-align: center; margin-bottom: .6em; }
 .brand-star {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.3em;
-  height: 2.3em;
-  margin: .1em auto .5em;
-  font-size: 2.1em;
+  width: 2.6em;
+  height: 2.6em;
+  margin: .1em auto .55em;
+  font-size: 2em;
   line-height: 1;
   border-radius: 50%;
-  color: var(--gold-hi);
-  background: radial-gradient(circle at 50% 34%, #23406b 0%, #0a1729 76%);
-  text-shadow: 0 0 .28em rgba(232, 185, 85, .7);
+  /* the glyph is a stamp, not decoration: it still has to clear 3:1 as large
+     text. --stencil-hi measured 1.86:1 in light and 1.84:1 in dark. */
+  color: var(--fg-mute);
+  background: var(--ground-deep);
   box-shadow:
-    0 0 0 .06em var(--gold),
-    0 0 0 .13em #0a1729,
-    0 0 0 .17em rgba(232, 185, 85, .35),
-    0 0 1.4em rgba(232, 185, 85, .3);
+    inset 0 3px 5px var(--shade-2),
+    inset 0 -2px 0 var(--sheen),
+    0 0 0 3px var(--ground),
+    0 0 0 5px var(--stencil-hi);
 }
-/* the two bars of the insignia */
+/* the two bars of the insignia, painted not plated */
 .brand-star::before, .brand-star::after {
   content: "";
   position: absolute;
   top: 50%;
-  width: .92em;
+  width: 1em;
   height: .26em;
   margin-top: -.13em;
-  background: var(--foil);
-  box-shadow: 0 0 0 1px rgba(4, 10, 20, .85);
+  background: var(--stencil-hi);
 }
-.brand-star::before { right: 100%; margin-right: .2em; border-radius: .05em 0 0 .05em; }
-.brand-star::after  { left: 100%;  margin-left: .2em;  border-radius: 0 .05em .05em 0; }
+.brand-star::before { right: 100%; margin-right: .34em; }
+.brand-star::after  { left: 100%;  margin-left: .34em; }
 
 .brand-title {
-  font-size: 2.15em;
-  font-weight: 900;
-  letter-spacing: -.025em;
-  margin: 0 0 .18em;
-  background: linear-gradient(178deg, #ffffff 0%, #d7e3f5 42%, #8ea4c4 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .65)) drop-shadow(0 6px 14px rgba(0, 0, 0, .5));
+  font-family: var(--font-display);
+  font-size: var(--t-display);
+  font-weight: 800;
+  letter-spacing: var(--track-display);
+  margin: 0 0 .1em;
+  color: var(--fg);
 }
 .brand-sub {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: .7em;
   margin: 0;
-  font-size: .64em;
-  letter-spacing: .34em;
-  text-indent: .34em;
-  color: var(--gold);
-  opacity: .85;
+  font-size: var(--t-small);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fg-mute);
 }
-.brand-sub::before, .brand-sub::after {
-  content: "";
-  flex: 1 1 2em;
-  max-width: 3.4em;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--gold-deep));
-}
-.brand-sub::after { background: linear-gradient(270deg, transparent, var(--gold-deep)); }
 
 /* ── lobby ────────────────────────────────────────────────────────────── */
 
-.lobby-title { text-align: center; font-size: 1.1em; letter-spacing: .18em; color: var(--steel-300); text-transform: uppercase; }
-.lobby-code { color: var(--gold); letter-spacing: .3em; font-size: 1.35em; text-shadow: 0 0 .5em rgba(232, 185, 85, .4); }
-.lobby-players { display: flex; flex-direction: column; gap: .35em; }
+.lobby-title { text-align: center; font-size: var(--t-title); color: var(--fg); }
+.lobby-code { color: var(--fg); font-size: 1.2em; }
+.lobby-players { display: flex; flex-direction: column; gap: .3em; }
+/* a seat in the lobby is the same recess a seat at the table is */
 .lobby-row {
   display: flex;
   align-items: center;
   gap: .5em;
-  padding: .3em .5em .3em .75em;
-  border: var(--hairline) solid rgba(86, 109, 146, .3);
-  border-left: 3px solid var(--steel-400);
+  padding: .3em .5em .3em .7em;
   border-radius: var(--radius);
-  background: linear-gradient(180deg, rgba(31, 51, 80, .55), rgba(9, 18, 32, .7));
+  background: var(--surface);
+  box-shadow: var(--deboss);
   min-height: var(--tap);
-  box-shadow: var(--rim);
 }
-.lobby-seat-name { font-weight: 800; letter-spacing: .03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lobby-seat-tag { margin-left: auto; font-size: .66em; white-space: nowrap; }
-.lobby-host { display: flex; flex-direction: column; gap: .55em; }
+.lobby-seat-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lobby-seat-tag { margin-left: auto; white-space: nowrap; }
+.lobby-host { display: flex; flex-direction: column; gap: .5em; }
 .lobby-host .row .field-label { flex: 0 0 auto; margin-bottom: 0; }
 
-/* ── HUD ───────────────────────────────────────────────────────────────── */
+/* ── HUD — a raised strip of painted steel across the top ─────────────── */
 
 .hud {
   flex: 0 0 auto;
@@ -127,83 +163,61 @@
   gap: .4em;
   padding: .3em .4em;
   min-width: 0;
-  background: var(--chrome);
-  border-bottom: var(--hairline) solid rgba(0, 0, 0, .85);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), 0 3px 12px rgba(0, 0, 0, .55);
+  background: var(--surface);
+  box-shadow: var(--emboss), 0 2px 0 var(--shade);
   z-index: 5;
 }
 .hud-left, .hud-right { display: flex; align-items: center; gap: .25em; flex: 0 0 auto; }
 .hud-mid { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: .5em; min-width: 0; padding: 0 .35em; }
 .hud-turn {
-  font-weight: 900;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  font-size: .88em;
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: var(--track-display);
+  font-size: 1.05em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--ink-300);
-  text-shadow: 0 1px 0 rgba(0, 0, 0, .6);
+  color: var(--fg-mute);
 }
 /* "YOUR TURN" is the single most important piece of state in the game and it
-   was rendering as "YOU…". The ellipsis was the symptom; the cause was
-   arithmetic — four 44px icon buttons (176px) plus the room-code chip (70px)
-   plus gaps left .hud-mid about 110px of a 390px bar, and "YOUR TURN" plus the
-   plays chip need ~150px. The four buttons are a §0.9 floor and cannot shrink,
-   so the room code goes: it is static for the whole game, it is on the lobby
-   screen and in the side panel, and nobody reads it mid-hand. That returns
-   ~78px and .hud-mid clears 180px.
-   The turn line also refuses to shrink at all when it is YOURS — a long
-   opponent name may ellipsize, your own turn never will. */
+   was rendering as "YOU…". The cause was arithmetic: four 44px icon buttons
+   (176px) plus the room-code plate (70px) plus gaps left .hud-mid about 110px
+   of a 390px bar, and "YOUR TURN" plus the plays plate need ~150px. The four
+   buttons are a §0.9 floor and cannot shrink, so the room code goes — it is
+   static for the whole game and lives on the lobby screen and the side panel. */
 @media (max-width: 899px) {
   #hud-room { display: none; }
-  /* The reconnect banner takes 89px of the bar the moment the socket blinks,
-     which put the turn line back under 80px — "Iceman's turn" needs 118. The
-     .conn indicator beside it already carries the state as a shape (hollow
-     amber ring), so on a phone the word is redundant chrome competing with
-     the one line that must never truncate. */
   .hud .conn-label { display: none; }
 }
-/* content.css caps .conn-label at 9em, which is 27px short of "RECONNECTING…"
-   at every width — it was clipped in all 42 in-game shots. The cap is a layout
-   constraint inside a bar this file owns, so it is relaxed here; the content
-   owner may prefer to shorten the string instead. */
 @media (min-width: 900px) {
   .hud .conn-label.is-on { max-width: 12em; }
 }
 .hud-left { min-width: 0; }
-/* YOUR TURN — one of the five marked states, and the only one in the HUD. */
+/* YOUR TURN — the cobalt ring's typographic twin: it goes to full --fg weight
+   and gains an underline rule in --accent. It never truncates. */
 .hud-turn.is-mine {
   flex: 0 0 auto;
-  color: var(--gold-hi);
-  text-shadow: 0 0 .7em rgba(232, 185, 85, .55), 0 1px 0 rgba(0, 0, 0, .7);
-  animation: turn-breathe 2.4s ease-in-out infinite;
+  color: var(--fg);
+  box-shadow: inset 0 -3px 0 var(--accent);
+  padding-bottom: 1px;
 }
-@keyframes turn-breathe {
-  0%, 100% { opacity: .88; }
-  50%      { opacity: 1; }
-}
-/* A solid glowing dot reads as a recording light, and the disconnected state
-   rendered it in full red — which, next to a room code, looks like the app is
-   on fire rather than like a link indicator. Connected is a quiet filled dot;
-   offline is a HOLLOW ring, which is the shape difference a glance catches
-   before the colour. */
+/* A solid glowing dot reads as a recording light. Connected is a quiet filled
+   dot; offline is a HOLLOW ring — the shape difference a glance catches before
+   the colour does. */
 .conn {
   width: .5em;
   height: .5em;
   border-radius: 50%;
-  background: var(--steel-300);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .5);
+  background: var(--fg-mute);
   flex: 0 0 auto;
 }
-.conn.is-off {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px var(--warn), 0 0 .35em rgba(232, 144, 58, .45);
-}
+.conn.is-off { background: transparent; box-shadow: inset 0 0 0 2px var(--danger); }
 
-/* the timer RING — conic sweep, hollow centre, urgency by colour */
+/* the timer RING — conic sweep, hollow centre, urgency by MATERIAL: the ring
+   thickens and then goes to hazard stripes. Not three colours of the same
+   shape, which is what a colourblind player cannot read. */
 .timer {
-  --ring-col: var(--steel-300);
+  --ring-col: var(--fg-mute);
   position: relative;
   flex: 0 0 auto;
   display: inline-flex;
@@ -212,30 +226,22 @@
   width: 2.35em;
   height: 2.35em;
   border-radius: 50%;
-  background: conic-gradient(var(--ring-col) calc(var(--frac, 1) * 360deg), rgba(143, 160, 186, .14) 0);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .6);
+  background: conic-gradient(var(--ring-col) calc(var(--frac, 1) * 360deg), var(--shade) 0);
 }
 .timer::before {
   content: "";
   position: absolute;
-  inset: 16%;
+  inset: 18%;
   border-radius: 50%;
-  background: var(--steel-900);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07);
+  background: var(--surface);
+  box-shadow: var(--deboss);
 }
-.timer-text {
-  position: relative;
-  font-size: .68em;
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-100);
-  letter-spacing: -.02em;
-}
-/* urgency is not foil — the ring goes amber, then red */
-.timer.is-urgent { --ring-col: var(--warn); }
-.timer.is-urgent .timer-text { color: #ffcb99; }
-.timer.is-critical { --ring-col: var(--danger); box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 0 12px rgba(208, 52, 44, .6); }
-.timer.is-critical .timer-text { color: var(--danger-lit); }
+.timer-text { position: relative; font-size: .7em; font-weight: 700; color: var(--fg); letter-spacing: -.02em; }
+.timer.is-urgent { --ring-col: var(--fg); }
+.timer.is-urgent::before { inset: 24%; }
+.timer.is-critical { --ring-col: var(--danger); }
+.timer.is-critical::before { inset: 28%; }
+.timer.is-critical .timer-text { color: var(--danger-ink); }
 
 /* ── prompt bar: the one contextual strip above the hand ──────────────── */
 
@@ -247,38 +253,22 @@
   gap: .45em;
   padding: .45em .5em;
   min-width: 0;
-  background: linear-gradient(180deg, rgba(31, 53, 84, .97), rgba(10, 20, 36, .99));
-  /* was gold-deep: the prompt bar is present for most of the game and a foil
-     rail across it made the scarce colour ambient chrome */
-  border-top: 2px solid var(--steel-500);
-  box-shadow: 0 -6px 18px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .06);
+  background: var(--surface);
+  box-shadow: var(--emboss), 0 -2px 0 var(--shade);
   z-index: 4;
 }
-.prompt .btn { --btn-drop: .2em; font-size: .82em; }
-.prompt-text {
-  font-weight: 800;
-  font-size: .86em;
-  letter-spacing: .01em;
-  flex: 1 1 11em;
-  min-width: 0;
-  color: var(--ink-100);
-}
-.prompt-why { font-size: .72em; color: var(--warn); flex: 1 1 100%; font-weight: 700; }
+.prompt .btn { --btn-drop: 3px; font-size: .88em; }
+.prompt-text { font-weight: 700; font-size: .92em; flex: 1 1 11em; min-width: 0; color: var(--fg); }
+.prompt-why { font-size: var(--t-small); color: var(--danger-ink); flex: 1 1 100%; font-weight: 700; }
 /* payment bar: the running total is the thing you are watching */
-.chip.total {
-  font-size: .78em;
-  padding: .3em .8em;
-  border-color: rgba(143, 160, 186, .35);
-  color: var(--ink-100);
-}
-.chip.total.is-enough {
-  border-color: var(--go);
-  color: #9ff0c1;
-  background: linear-gradient(180deg, rgba(42, 179, 106, .35), rgba(18, 112, 63, .3));
-  box-shadow: 0 0 12px rgba(42, 179, 106, .3), var(--rim);
-}
+.chip.total { font-size: .84em; padding: .3em .7em; color: var(--fg); }
+.chip.total.is-enough { background: var(--act); color: var(--act-fg); box-shadow: none; }
 
-/* ── side panel: mission log + comms ──────────────────────────────────── */
+/* ══ THE LEFT RAIL — mission log + comms (§5) ══════════════════════════════
+   §5 puts the log in the LEFT rail with the piles, and explicitly NOT between
+   the hand and the properties. On a phone it stays an overlay drawer; on
+   desktop it docks to the left of the table (see the media query at the end),
+   so the whole left edge of the screen is one rail. */
 
 .side {
   position: absolute;
@@ -290,72 +280,62 @@
   /* .screen already pads env(safe-area-inset-bottom) — base.css. Adding it
      again here double-counted the indicator. */
   padding: .6em;
-  background: linear-gradient(180deg, rgba(11, 20, 35, .98), rgba(4, 9, 17, .99));
-  border-left: var(--hairline) solid rgba(86, 109, 146, .35);
-  box-shadow: -14px 0 34px rgba(0, 0, 0, .6);
+  background: var(--surface);
+  box-shadow: -12px 0 30px var(--scrim);
   z-index: 60;
 }
-/* iOS does not shrink the LAYOUT viewport for the software keyboard, so a
-   panel pinned to bottom:0 put #chat-input and SEND at y=835 on an 844
-   viewport — 327px under the keyboard. ui/comms.js publishes the occluded
-   height from visualViewport as --kb-inset. Reclaimed from content.css
-   OVERRIDE 6; measured and passing, do not simplify away. */
+/* iOS does not shrink the LAYOUT viewport for the software keyboard, so a panel
+   pinned to bottom:0 put #chat-input and SEND at y=835 on an 844 viewport —
+   327px under the keyboard. ui/comms.js publishes the occluded height from
+   visualViewport as --kb-inset. Measured and passing; do not simplify away. */
 .side { bottom: var(--kb-inset, 0px); }
 body.kb-open .side { transition: bottom .14s ease-out; }
-/* with the keyboard up the log is the first thing that can afford to shrink;
-   the composer is the reason the keyboard is open */
 body.kb-open .log { flex: 0 1 22%; }
 body.kb-open .chat-row { position: sticky; bottom: 0; }
-.side-head { display: flex; align-items: center; justify-content: space-between; font-size: .68em; }
-/* the head keeps its .68em type; only the close button grows back to the
-   floor (2em of .68em computed to 44×20). Reclaimed from content.css
-   OVERRIDE 4. */
+.side-head { display: flex; align-items: center; justify-content: space-between; }
 .side-head .btn-icon { min-height: var(--tap); width: var(--tap); height: var(--tap); font-size: 1.1em; }
 .log {
   flex: 1 1 40%;
   overflow-y: auto;
-  font-size: .78em;
+  font-size: var(--t-small);
   line-height: 1.4;
   padding: .3em .45em;
   border-radius: var(--radius);
-  background: rgba(0, 0, 0, .35);
-  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .1);
+  background: var(--ground);
+  box-shadow: var(--deboss);
   scrollbar-width: thin;
 }
 .log-line {
   padding: .22em 0 .22em .6em;
-  border-bottom: 1px solid rgba(143, 160, 186, .1);
-  color: var(--ink-300);
+  box-shadow: inset 0 -1px 0 var(--shade);
+  color: var(--fg-mute);
   position: relative;
 }
 .log-line::before {
   content: "";
   position: absolute;
-  left: 0; top: .58em;
+  left: 0; top: .62em;
   width: 3px; height: 3px;
-  border-radius: 50%;
-  background: var(--steel-400);
+  background: var(--fg-mute);
 }
 .chat-tabs { display: flex; gap: .3em; }
-/* §0.9 floor: these were 34px (--tap × .78). Reclaimed from content.css's
-   OVERRIDE 3 so the rule lives with the component. */
-.chat-tab { flex: 1 1 0; font-size: .72em; min-height: var(--tap); --btn-drop: .14em; }
-.chat-tab.is-on { --btn-face: var(--steel-500); color: var(--ink-100); }
+.chat-tab { flex: 1 1 0; font-size: .8em; min-height: var(--tap); --btn-drop: 2px; --btn-edge: var(--fg-mute); }
+.chat-tab.is-on { --btn-face: var(--act); --btn-ink: var(--act-fg); --btn-edge: transparent; }
 .chat-msgs {
   flex: 1 1 40%;
   overflow-y: auto;
-  font-size: .8em;
+  font-size: var(--t-small);
   padding: .3em .45em;
   border-radius: var(--radius);
-  background: rgba(0, 0, 0, .28);
-  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .08);
+  background: var(--ground);
+  box-shadow: var(--deboss);
   scrollbar-width: thin;
 }
-.chat-msg { padding: .16em 0; word-break: break-word; color: var(--ink-300); }
-.chat-who { color: var(--steel-300); font-weight: 800; }
+.chat-msg { padding: .16em 0; word-break: break-word; color: var(--fg-mute); }
+.chat-who { color: var(--fg); font-weight: 700; }
 .chat-row { display: flex; gap: .3em; }
 .chat-row .field { flex: 1 1 auto; min-width: 0; }
-.chat-row .btn { flex: 0 0 auto; font-size: .78em; padding: 0 .7em; }
+.chat-row .btn { flex: 0 0 auto; font-size: .82em; padding: 0 .7em; }
 
 /* ── bottom sheet ─────────────────────────────────────────────────────── */
 
@@ -366,7 +346,7 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(2, 5, 10, .72);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
 }
@@ -378,11 +358,9 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   flex-direction: column;
   gap: .5em;
   padding: 1.1em .9em calc(.9em + env(safe-area-inset-bottom));
-  background: var(--panel);
-  border: var(--hairline) solid rgba(86, 109, 146, .4);
-  border-bottom: 0;
+  background: var(--surface);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  box-shadow: 0 -18px 50px rgba(0, 0, 0, .7);
+  box-shadow: var(--card-drop-air);
 }
 /* grab handle */
 .sheet-panel::before {
@@ -394,29 +372,30 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   height: 4px;
   margin-left: -1.3em;
   border-radius: 999px;
-  background: var(--steel-500);
+  background: var(--fg-mute);
+  opacity: .5;
 }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: .5em; }
-.sheet-head h3 { margin: 0; font-size: 1.05em; letter-spacing: .02em; }
+.sheet-head h3 { margin: 0; font-size: var(--t-title); }
 .sheet-body { overflow-y: auto; scrollbar-width: thin; }
 .sheet-confirm { display: flex; flex-direction: column; gap: .55em; }
 .emote-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .45em; }
-.emote-grid .btn { padding: 0 .3em; font-size: .8em; }
+.emote-grid .btn { padding: 0 .3em; font-size: .85em; }
 /* a help sheet is twenty headings long; in foil it was twenty gold marks */
 .help h4 {
-  margin: 1em 0 .35em;
-  color: var(--ink-100);
-  font-size: .78em;
-  letter-spacing: var(--micro-track);
-  text-transform: uppercase;
-  border-bottom: 1px solid rgba(143, 160, 186, .28);
-  padding-bottom: .25em;
+  margin: 1.1em 0 .3em;
+  color: var(--fg);
+  font-size: var(--t-lede);
+  letter-spacing: var(--track-display);
+  text-transform: none;
+  padding-bottom: .2em;
+  box-shadow: inset 0 -2px 0 var(--shade);
 }
-.help li { font-size: .84em; color: var(--ink-300); }
-.details-kind { font-size: .7em; }
-.details p { color: var(--ink-300); }
+.help li { font-size: var(--t-small); color: var(--fg-mute); }
+.details-kind { }
+.details p { color: var(--fg-mute); }
 
-/* ── victory: restrained ceremony, and the one place gold may flood ───── */
+/* ══ VICTORY — the ONE place foil is allowed to flood (§1) ═════════════════ */
 
 .win-overlay {
   position: fixed;
@@ -426,39 +405,41 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   align-items: center;
   justify-content: center;
   padding: 1em;
-  background:
-    radial-gradient(58% 42% at 50% 36%, rgba(232, 185, 85, .26) 0%, transparent 72%),
-    rgba(2, 5, 10, .9);
+  background: var(--scrim);
   /* dimmed but not blurred left a full ACTION card perfectly legible behind
      the ceremony, so the table competed with the win */
   backdrop-filter: blur(7px) saturate(.85);
   -webkit-backdrop-filter: blur(7px) saturate(.85);
 }
-/* light rays */
+/* the flood: brass light rays, hard-edged, cast across the whole apron. The
+   only animated ambient in the app and the only foil outside this element. */
 .win-overlay::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: repeating-conic-gradient(from 0deg at 50% 34%,
-    rgba(232, 185, 85, .07) 0deg 5deg, transparent 5deg 22deg);
-  -webkit-mask-image: radial-gradient(60% 46% at 50% 34%, #000, transparent 78%);
-  mask-image: radial-gradient(60% 46% at 50% 34%, #000, transparent 78%);
+  background: repeating-conic-gradient(from 0deg at 50% 36%,
+    color-mix(in oklab, var(--foil) 28%, transparent) 0deg 4deg, transparent 4deg 20deg);
+  -webkit-mask-image: radial-gradient(62% 48% at 50% 36%, #000, transparent 78%);
+  mask-image: radial-gradient(62% 48% at 50% 36%, #000, transparent 78%);
   pointer-events: none;
 }
+/* MEASURED (checkContrast, win@desktop-light): #btn-rematch's rect was
+   y 701 → 745 in a 720px viewport — the ceremony's primary action was below
+   the fold, reachable only by scrolling a box nobody knows scrolls. The recap
+   the content agent added made a 24em column ~790px tall. A wider column sets
+   the same content in fewer lines; on desktop it is 34em and the title fits on
+   one line, which is 3 lines and ~120px recovered. */
 .win-box {
   position: relative;
   width: min(24em, 94%);
-  padding: 1.5em 1.3em 1.4em;
+  padding: 1.4em 1.2em 1.3em;
   display: flex;
   flex-direction: column;
-  gap: .55em;
+  gap: .5em;
   text-align: center;
-  background:
-    linear-gradient(180deg, rgba(52, 42, 20, .5) 0%, transparent 34%),
-    var(--panel);
-  border: var(--hairline) solid var(--gold-deep);
+  background: var(--surface);
   border-radius: var(--radius-lg);
-  box-shadow: 0 0 60px rgba(232, 185, 85, .3), var(--lift-3), var(--rim);
+  box-shadow: inset 0 0 0 3px var(--foil), var(--card-drop-air);
 }
 .win-star {
   position: relative;
@@ -468,62 +449,56 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   justify-content: center;
   width: 2.1em;
   height: 2.1em;
-  font-size: 2.1em;
+  font-size: 2em;
   line-height: 1;
   border-radius: 50%;
-  color: var(--gold-hi);
-  background: radial-gradient(circle at 50% 34%, #3a2f14 0%, #120c02 78%);
-  text-shadow: 0 0 .3em rgba(255, 234, 180, .8);
-  box-shadow: 0 0 0 .06em var(--gold), 0 0 0 .12em #120c02, 0 0 0 .16em rgba(232, 185, 85, .4), 0 0 1.6em rgba(232, 185, 85, .45);
+  color: var(--foil-ink);
+  background: var(--ground-deep);
+  box-shadow: inset 0 3px 5px var(--shade-2), 0 0 0 3px var(--surface), 0 0 0 5px var(--foil);
 }
 #win-title {
-  font-size: 1.5em;
-  letter-spacing: -.01em;
-  margin: .15em 0 0;
-  background: var(--foil);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .6));
+  font-family: var(--font-display);
+  font-size: 2em;
+  letter-spacing: var(--track-display);
+  margin: .1em 0 0;
+  color: var(--foil-ink);
 }
-.win-summary { display: flex; flex-direction: column; gap: .12em; font-size: .82em; margin-top: .4em; }
+.win-summary { display: flex; flex-direction: column; gap: .14em; font-size: var(--t-small); margin-top: .4em; }
 .win-row {
   display: flex;
   justify-content: space-between;
   gap: .5em;
   padding: .3em .55em;
-  border-radius: 5px;
-  background: rgba(0, 0, 0, .3);
-  color: var(--ink-300);
+  border-radius: 2px;
+  background: var(--ground);
+  color: var(--fg-mute);
+  box-shadow: var(--deboss);
 }
-.win-row:first-child { background: linear-gradient(90deg, rgba(232, 185, 85, .2), rgba(232, 185, 85, .05)); color: var(--gold-hi); }
-.win-name { font-weight: 800; letter-spacing: .03em; }
-.win-stats { color: var(--steel-300); margin-top: .5em; font-size: .92em; letter-spacing: .04em; }
+.win-name { font-weight: 700; }
+.win-stats { color: var(--fg-mute); margin-top: .5em; font-size: .95em; }
 
 /* ── toast + emotes ───────────────────────────────────────────────────── */
 
 .toast {
   position: fixed;
   left: 50%;
-  /* NOT the bottom. #toast is a sibling of .screen, so a bottom-anchored
-     toast lands squarely on the hand — the cards the player is touching while
-     the toast is telling them something about them. Under the header it
-     covers felt and, at most, the top edge of the opponents strip. 7em clears
-     a two-row HUD (measured 96px at 390×844, 93px at 1280×720). */
+  /* NOT the bottom. #toast is a sibling of .screen, so a bottom-anchored toast
+     lands squarely on the hand — the cards the player is touching while the
+     toast is telling them something about them. 7em clears a two-row HUD
+     (measured 96px at 390×844, 93px at 1280×720). */
   top: calc(7em + env(safe-area-inset-top));
   transform: translateX(-50%) translateY(-1em);
   max-width: 88vw;
-  padding: .55em 1.05em;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #24395c, #0c1728);
-  border: var(--hairline) solid rgba(143, 160, 186, .35);
-  color: var(--ink-100);
-  font-size: .84em;
+  padding: .5em 1em;
+  border-radius: var(--radius);
+  background: var(--act);
+  color: var(--act-fg);
+  font-size: var(--t-small);
   font-weight: 700;
   text-align: center;
   opacity: 0;
   pointer-events: none;
-  box-shadow: var(--lift-2), var(--rim);
+  box-shadow: var(--card-drop-air);
   transition: opacity .18s ease, transform .22s cubic-bezier(.18, 1.5, .4, 1);
   z-index: 100;
 }
@@ -537,14 +512,13 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   position: absolute;
   transform: translate(-50%, 0);
   padding: .3em .7em;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #2b4166, #101d33);
-  border: var(--hairline) solid var(--steel-500);
-  color: var(--ink-100);
-  font-size: .78em;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: var(--t-small);
   font-weight: 700;
   white-space: nowrap;
-  box-shadow: var(--lift-1);
+  box-shadow: var(--card-drop);
 }
 .emote-bubble::after {
   content: "";
@@ -553,18 +527,29 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   bottom: -5px;
   margin-left: -4px;
   border: 4px solid transparent;
-  border-top-color: #101d33;
+  border-top-color: var(--surface);
 }
 
-/* ── desktop: the log docks instead of covering the table ─────────────── */
+/* ── desktop: the log docks into the LEFT rail (§5) ───────────────────── */
 
 @media (min-width: 900px) {
-  .screen-game { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto auto; }
+  .screen-game {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+  }
   .hud { grid-column: 1 / -1; }
-  .table { grid-column: 1; grid-row: 2; }
-  .side { position: static; width: 21em; grid-column: 2; grid-row: 2 / span 3; box-shadow: none; }
-  .prompt { grid-column: 1; grid-row: 3; }
-  .hand-dock { grid-column: 1; grid-row: 4; }
+  .side {
+    position: static;
+    width: 13.5em;
+    grid-column: 1;
+    grid-row: 2 / span 3;
+    box-shadow: 2px 0 0 var(--shade);
+    padding: .5em .45em;
+  }
+  .table { grid-column: 2; grid-row: 2; }
+  .prompt { grid-column: 2; grid-row: 3; }
+  .hand-dock { grid-column: 2; grid-row: 4; }
   .panel { width: min(26em, 100%); }
 
   /* A bottom sheet is a phone gesture. On a 1280px screen it was a 490px-wide
@@ -575,11 +560,13 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   .sheet-panel {
     width: min(44em, 100%);
     max-height: min(86vh, 44em);
-    border: var(--hairline) solid rgba(86, 109, 146, .4);
     border-radius: var(--radius-lg);
     padding: 1.2em 1.4em 1.3em;
-    box-shadow: var(--lift-3), var(--rim);
+    box-shadow: var(--card-drop-air);
   }
   /* the drag handle is a touch affordance and means nothing to a mouse */
   .sheet-panel::before { display: none; }
+
+  .win-box { width: min(34em, 88%); padding: 1.2em 1.6em 1.2em; gap: .4em; }
+  #win-title { font-size: 2.4em; }
 }

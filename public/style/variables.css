@@ -1,133 +1,303 @@
-/* variables.css — the "night flight line" token set (§6).
-   Owner: design agent. Everything downstream sizes off --s and these tokens;
-   there are no other px font sizes in the client.
+/* variables.css — the "APRON" token set (ART-DIRECTION §2).
+   Owner: art-direction agent. This file is the ONLY place a literal colour is
+   allowed to appear; every other file in public/style/ reads semantic tokens.
+
+   THE THESIS (§0): real printed cards on a real airfield apron.
+   Light  = the apron in daylight — warm concrete, never pure white.
+   Dark   = the apron at night    — NEUTRAL near-black, never navy.
+   THE CARDS DO NOT CHANGE. --card-stock / --ink / --card-edge / --card-back are
+   declared once, outside both themes, because a printed card is the same object
+   in a lit room and a dark one. The TABLE changes; the OBJECTS don't.
 
    MUST-PRESERVE (client depends on these): --s is the one scale unit,
-   --card-ratio is 5/7 everywhere, --card-w is set per context (hand / table /
-   mini / pile), --tap is the 44px floor (§0.9). Dark only — no light theme. */
+   --card-ratio is 5/7 everywhere, --card-w is set per context, --tap is the
+   44px floor (ARCHITECTURE §0.9).
+
+   DELETED this wave, per §2: --felt-*, --steel-*, --gold-dim, --go, --warn.
+   The hue-collision table the previous agent left here is why. Measured HSL
+   angles, all of them signals sitting inside a set's hue band:
+       --go     152° vs Elite  136°  — 16°
+       --warn    31° vs T&E     29°  —  2°
+       --gold    42° vs Mobility 46° —  4°
+       --danger   3° vs Fighters 353° — 10°
+   Ten categorical hues plus four semantic ones do not fit in 360°. §1 fixes it
+   by making colour and MATERIAL two independent channels: sets own colour-as-
+   fill; signals own material (ink slab / cobalt ring / hazard stripe / foil).
+   Nothing below is allowed to reintroduce a semantic hue.
+
+   Every ratio in a comment here was computed by the WCAG 2.x relative-luminance
+   formula, not estimated. */
 
 :root {
-  /* One scale unit. Width AND height bound it: at 1280×720 the vh term wins
-     (720 × 3.1% = 22.3 → clamped to 19) so a short desktop window cannot push
-     the table taller than it is; at 390×844 the vw term wins (14.35px).
-     Measured: at a flat 17px the 1280×720 mid-game shot left 70px of dead felt
-     under the self board and the hand cards read at 8px. */
+  /* Both schemes are supported; index.html's <meta name="color-scheme"> is
+     overridden here because the app is no longer dark-only. */
+  color-scheme: light dark;
+
+  /* ── the one scale unit ──────────────────────────────────────────────────
+     Width AND height bound it: at 1280×720 the vh term wins (720 × 2.3% =
+     16.6) so a short desktop window cannot push the table taller than it is;
+     at 390×844 the vw term wins (14.35px). Measured at a flat 17px the
+     1280×720 mid-game shot left 70px of dead table under the self board. */
   --s: clamp(12px, min(1.5vw + 8.5px, 2.3vh), 18px);
 
-  /* ── felt: navy wool under a hangar light pool ───────────────────────── */
-  --felt-lit:   #1d3d63;
-  --felt-mid:   #102542;
-  --felt-deep:  #08192e;
-  --felt-edge:  #040c18;
-  --void:       #04080f;
+  /* ══ THE CARD — identical in both themes ══════════════════════════════ */
+  --card-stock: #FBF8F1;
+  --card-edge:  #D9D2C4;
+  --card-back:  #14161A;
+  --ink:        #14161A;             /* 17.08:1 on stock */
+  --ink-mute:   #5C6470;             /*  5.64:1 on stock */
+  /* The card-art system (style/cardart.css, owned by the card agent) consumes
+     the same two values under card-scoped names. Declared here, not aliased
+     there, so there is exactly one place either can be changed. */
+  --card-ink:      var(--ink);
+  --card-ink-mute: var(--ink-mute);
+  /* white-on-set is 5.07–11.04 across the ten sets; stock-on-set is 4.71–9.7,
+     so the band label is legible on every one of them. */
+  --band-ink:   #FBF8F1;
 
-  /* ── steel: every piece of chrome, in one ramp ───────────────────────── */
-  --steel-950: #070d18;
-  --steel-900: #0a1322;
-  --steel-800: #0f1c30;
-  --steel-700: #16263e;
-  --steel-600: #1f3350;
-  --steel-500: #2d4568;
-  --steel-400: #566d92;
-  --steel-300: #8fa0ba;              /* 5.3:1 on felt — micro-labels only */
-  --ink-300:   #becbdf;
-  --ink-100:   #eef3fb;
+  /* ══ THE TEN SETS — one set, both themes (§2) ═════════════════════════
+     Certified ≥4.5:1 on card stock AND ≥4.5:1 for stock-on-them. They appear
+     ONLY as: a solid band on stock, a 3px mat rail, a mat wash, and the glyph.
+     Never as a glow, a gradient, a ring or an animation. */
+  --set-brown:     #8A4B1E;          /* Drone Ops      6.37 on stock */
+  --set-lightblue: #136C90;          /* Training       5.54 */
+  --set-pink:      #B01C63;          /* Space Force    6.20 */
+  --set-orange:    #A85200;          /* Test & Eval    5.11 */
+  --set-red:       #B81A33;          /* Fighters       6.12 */
+  --set-yellow:    #8A6A00;          /* Mobility       4.78 */
+  --set-green:     #1B6E37;          /* Elite Programs 5.94 */
+  --set-darkblue:  #26308F;          /* Command       10.41 */
+  --set-base:      #0C5F5B;          /* Overseas Bases 7.06 */
+  --set-intel:     #465767;          /* Intelligence   7.02 */
 
-  /* ── THE FIVE MARKED STATES (§6). One treatment each, no two alike ─────
-       your turn        foil border + foil nameplate, STATIC        (--gold)
-       targetable/drop  foil ring OUTSIDE the border, pulsing       (--gold)
-       CHUD             foil card stock                             (--gold)
-       victory          foil flood, modal only                      (--gold)
-       final approach   RED alarm bevel INSIDE the border + hazard rail (--danger)
-     Everything else that used to wear foil — a lifted card, a dragged card,
-     the urgent timer ring, the prompt rail, the chat handle, a help heading —
-     now wears steel, ice or green. mid-game@desktop carried 4 gold marks in
-     one frame with two different meanings; the alarm and the turn marker were
-     the same colour.
-     "your turn" and "targetable" share the foil deliberately: they are on
-     different geometry (fill vs ring), and they never appear on the same node
-     — you target opponents, and the turn marker is on the actor. */
-  /* ── foil: SCARCE. See the table above. ─────────────────────────────── */
-  --gold:      #e8b955;
-  --gold-hi:   #ffeab4;
-  --gold-mid:  #c8922f;
-  --gold-deep: #7d5a18;
-  --gold-ink:  #2a1d05;
-  --gold-glow: rgba(232, 185, 85, .55);
-  --gold-dim: var(--gold-mid);       /* alias kept: interact.css builds its drop
-                                        outlines on it (P4 owns that file) */
-  --foil: linear-gradient(155deg, var(--gold-hi) 0%, var(--gold) 34%,
-                          var(--gold-mid) 56%, var(--gold-hi) 74%, var(--gold-mid) 100%);
+  /* ══ LIGHT — "apron, daylight" ════════════════════════════════════════
+     A white UI is a flashlight in the face. Warm concrete instead. */
+  --ground:      #E8E2D4;
+  --ground-deep: #D5CDBB;
+  --surface:     #F3EEE3;
+  --fg:          #14161A;            /* 14.02 on ground · 15.65 on surface */
+  /* MEASURED CORRECTION to §2. The brief publishes #5C6470 at "5.1:1", which
+     is its ratio against --surface; against --ground-deep it is 3.78 and the
+     stencil labels that live on recessed furniture (BANK, HAND, the roundel,
+     the hint marks) all sit there. tools/checkContrast.mjs failed exactly those
+     runs in light and passed them in dark. #4B525D holds every light surface:
+     ground 6.10 · surface 6.81 · ground-deep 4.98 · stock 7.43.
+     --ink-mute keeps §2 verbatim because it is a CARD token and the card only
+     ever sits on stock, where 5.64 is correct. */
+  --fg-mute:     #4B525D;
+  --act:         #14161A;            /* the achromatic ink slab */
+  --act-fg:      #FBF8F1;            /* 17.08 on --act */
+  --accent:      #0B4FD8;            /* AF cobalt. 5.20 on ground, 6.34 on
+                                        stock. RING ONLY — never a fill. */
+  --danger:      #C9300B;            /* 4.16 on ground: hazard MATERIAL only,
+                                        always with stripes; never bare text */
+  --danger-ink:  #A82708;            /* 5.50 on ground, 6.13 on surface — the
+                                        text weight of danger */
+  --foil:        #8A6320;            /* 4.67 on surface. VICTORY MODAL ONLY. */
+  /* §2's foil is a MATERIAL value (rules, rims, the flood). As lettering it is
+     4.18:1 on --ground, which tools/checkContrast.mjs failed on the win tag and
+     the recap. Brass text gets its own ink: 5.71 on ground, 6.37 on surface. */
+  --foil-ink:    #705018;
+  /* §2's foil is a MATERIAL value (rules, rims, the flood). As lettering it is
+     4.18:1 on --ground, which tools/checkContrast.mjs failed on the win tag and
+     the recap. Brass text gets its own ink: 5.71 on ground, 6.37 on surface. */
+  --foil-ink:    #705018;
 
-  /* ── signal roles (buttons + states). Never decorative. ────────────────
-     KNOWN COLLISION — HANDED TO THE ART-DIRECTION WAVE, NOT FIXED HERE.
-     §6 says the saturated colour on the table comes from the card sets, so a
-     signal sitting inside a set's hue band lies about what it is. Measured
-     hue angles (HSL):
-        --go 152°        vs --set-green  136°  — 16° apart. payment@desktop
-                         puts a green CONFIRM chip 40px from a green ELITE
-                         chip and they read as one family.
-        --warn 31°       vs --set-orange  29°  —  2° apart. --warn is the RENT
-                         card's band, so a rent card and a Test & Eval
-                         property wear the same colour.
-        --gold 42°       vs --set-yellow  46°  —  4° apart. A MOBIL chip is
-                         indistinguishable from foil.
-        --danger 3°      vs --set-red    353°  — 10° apart.
-        --info 210°      vs --set-intel  210°  —  0° apart (intel is at 20%
-                         saturation, so this one survives).
-     Whoever re-cuts the palette: every signal needs ≥ 20° of separation from
-     every set hue it can sit beside, or a different MATERIAL (foil gradient
-     vs flat ink) to carry the difference. The structural work in this pass is
-     hue-independent and must survive the recut — see the state table above. */
-  --go:         #2ab36a;             /* taxiway green — "the next thing to do" */
-  --go-deep:    #12703f;
-  --go-ink:     #04160c;
-  --danger:     #d0342c;             /* 4.99:1 with white */
-  --danger-deep:#7a1a14;
-  --danger-lit: #ff9184;
-  --info:       #4a90d9;
-  --warn:       #e8903a;
+  /* material: how a surface is cut into or raised off the apron */
+  --shade:   rgba(74, 62, 44, .22);
+  --shade-2: rgba(74, 62, 44, .34);
+  --sheen:   rgba(255, 255, 255, .70);
+  --press-ink: #8B8474;              /* the hard-edged shadow a painted plate
+                                        throws on concrete */
+  --stencil: rgba(20, 22, 26, .15);  /* markings PAINTED on the apron */
+  --stencil-hi: rgba(20, 22, 26, .30);
+  /* A sheet held over the apron in DAYLIGHT scatters light: the table behind
+     it goes lighter, not darker. A dark veil over a light UI is what dropped
+     36 runs of table text under 3:1 in the win and discard-browser shots —
+     dark ink on a darkened light ground. Measured through this scrim: --fg
+     15.27, --accent 5.67, --danger-ink 5.98. At night the veil is dark, which
+     is the same physics with the light source removed. */
+  --scrim:   rgba(243, 238, 227, .78);
+  --grain-alpha: .30;
+  --rail-lift: 0%;                   /* set rails need no lift in daylight */
+  --card-drop:
+    0 1px 1px rgba(60, 50, 32, .22),
+    0 3px 6px rgba(60, 50, 32, .17),
+    0 10px 24px rgba(60, 50, 32, .13);
+  --card-drop-air:
+    0 3px 3px rgba(60, 50, 32, .20),
+    0 8px 15px rgba(60, 50, 32, .18),
+    0 25px 60px rgba(60, 50, 32, .16);
 
-  /* ── geometry ────────────────────────────────────────────────────────── */
-  --radius:      .6em;
-  --radius-lg:   1em;
-  --tap:         44px;               /* §0.9 floor */
-  --hairline:    1px;
-
+  /* ══ geometry — hard, printed, not app-rounded ════════════════════════ */
+  --radius:    4px;                  /* chrome */
+  --radius-lg: 8px;                  /* sheets, panels, modals */
+  --tap:       44px;                 /* §0.9 floor */
+  /* The floor for a CARD that is itself a control (your bank notes, your
+     property cards during payment). 44px exactly renders at 43.99 and
+     tools/touchtest.mjs measures 43×62; +2px is the smallest value that
+     survives sub-pixel layout and a 2× device ratio. */
+  --card-tap:  calc(var(--tap) + 2px);
+  --hairline:  1px;
   --card-ratio: 5 / 7;
   --card-w:     calc(var(--s) * 2.6);
-  --card-r:     calc(var(--card-w) * .075);
+  /* §6: 6px. Not 0 (a spreadsheet cell), not 12 (an app card). Capped so a
+     28px mini tier does not turn into a lozenge. */
+  --card-r:     clamp(2px, calc(var(--card-w) * .06), 6px);
 
-  /* ── elevation. One ladder; components pick a rung, never invent one. ── */
-  --lift-0: 0 1px 2px rgba(0, 0, 0, .55);
-  --lift-1: 0 2px 4px rgba(0, 0, 0, .5), 0 6px 14px rgba(0, 0, 0, .38);
-  --lift-2: 0 4px 8px rgba(0, 0, 0, .5), 0 14px 34px rgba(0, 0, 0, .5);
-  --lift-3: 0 10px 22px rgba(0, 0, 0, .55), 0 30px 70px rgba(0, 0, 0, .6);
-  --rim:    inset 0 var(--hairline) 0 rgba(255, 255, 255, .13);
+  /* ══ type (§4) — hierarchy from SIZE and WEIGHT, never from tracking ═══
+     No webfonts (§0.3). ui-rounded on Apple platforms is distinctive, costs
+     zero bytes, and is nothing like Inter. Tracked caps survive in exactly one
+     place in the whole app — the set name on a card band — which lives in the
+     card agent's file, so in these files: nowhere. */
+  --font-display: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display",
+                  system-ui, -apple-system, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  /* Money, rent, counters, timers and room codes. Mono + tabular-nums IS the
+     character of this app and is an instant non-Inter signal. */
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Menlo,
+               Consolas, monospace;
 
-  /* ── set colours: the ONLY saturated colour on the table besides foil ── */
-  --set-brown:     #a9622a;          /* Drone Ops   — raised off #8B4513 for 4.6:1 white */
-  --set-lightblue: #7cc4ec;          /* Training    */
-  --set-pink:      #ff6fb2;          /* Space Force */
-  --set-orange:    #ff9127;          /* Test & Eval */
-  --set-red:       #e33b4d;          /* Fighters    */
-  --set-yellow:    #f5c518;          /* Mobility    — 46°, 4° off --gold: see the collision note above */
-  --set-green:     #2fa34a;          /* Elite       */
-  --set-darkblue:  #3f6fd8;          /* Command     — #00308F was 1.9:1 on card stock */
-  --set-base:      #4e8d86;          /* Overseas Bases */
-  --set-intel:     #93a4b6;          /* Intelligence */
+  --t-display: 2.6em;
+  --t-title:   1.45em;
+  --t-lede:    1.06em;
+  --t-small:    .85em;
+  --t-micro:    .74em;
+  --track-display: -.02em;
 
-  /* ── surfaces ────────────────────────────────────────────────────────── */
-  --card-stock: linear-gradient(168deg, #21324e 0%, #16233a 46%, #0e1a2c 100%);
-  --chrome:     linear-gradient(180deg, #14243c 0%, #0c1626 100%);
-  --panel:      linear-gradient(180deg, rgba(23, 39, 63, .96), rgba(9, 17, 30, .97));
-
-  /* ── procedural textures (authored as text — §0.3 allows inline SVG) ─── */
+  /* ══ procedural textures — authored as text (§0.3) ════════════════════ */
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
-  --weave:
-    repeating-linear-gradient(45deg,  rgba(255, 255, 255, .022) 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .085) 0 1px, transparent 1px 3px);
-
-  /* micro-label type — used by every ALL-CAPS chrome label in the app */
-  --micro-track: .16em;
+  /* concrete aggregate: two out-of-phase dot fields so no tile edge shows */
+  --aggregate:
+    radial-gradient(circle at 17% 31%, var(--stencil) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 63% 11%, var(--stencil) 0 1.2px, transparent 1.8px),
+    radial-gradient(circle at 41% 77%, var(--stencil) 0 .9px, transparent 1.4px),
+    radial-gradient(circle at 88% 59%, var(--stencil) 0 1.1px, transparent 1.7px);
+  --aggregate-size: 37px 41px, 53px 47px, 29px 31px, 61px 59px;
 }
+
+/* ══ DARK — "apron, night" ══════════════════════════════════════════════
+   NEUTRAL near-black. #15171C is 219° at 12% saturation; the retired identity
+   sat at #102542, 214° at 61%, which is what made the whole app read navy. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:      #15171C;
+    --ground-deep: #0B0D10;
+    --surface:     #20242B;
+    --fg:          #F2EEE4;          /* 15.48 on ground · 13.44 on surface */
+    --fg-mute:     #8E97A3;          /*  6.07 on ground ·  5.27 on surface */
+    --act:         #F2EEE4;
+    --act-fg:      #14161A;          /* 15.63 on --act */
+    --accent:      #6E9BFF;          /*  6.66 on ground ·  5.78 on surface */
+    --danger:      #FF6A3D;          /*  6.30 on ground ·  5.47 on surface */
+    --danger-ink:  #FF6A3D;
+    --foil:        #C9A253;          /*  6.51 on surface */
+    --foil-ink:    #C9A253;          /*  7.49 on ground · 6.51 on surface */
+
+    --shade:   rgba(0, 0, 0, .45);
+    --shade-2: rgba(0, 0, 0, .68);
+    --sheen:   rgba(255, 255, 255, .07);
+    --press-ink: #000000;
+    --stencil:    rgba(242, 238, 228, .11);
+    --stencil-hi: rgba(242, 238, 228, .22);
+    --scrim:   rgba(4, 5, 7, .74);
+    --grain-alpha: .16;
+    /* A painted set rail on night asphalt needs the same lift a real marking
+       gets from a landing light. 38% toward --fg keeps the hue and puts the
+       worst case (Command, 1.41 raw against --surface) at 3.74 — above the
+       3:1 floor for a graphical object. Nothing about the ten TOKENS changes;
+       only how a rail is rendered on a dark table. */
+    --rail-lift: 38%;
+    --card-drop:
+      0 1px 2px rgba(0, 0, 0, .55),
+      0 4px 9px rgba(0, 0, 0, .48),
+      0 12px 28px rgba(0, 0, 0, .42);
+    --card-drop-air:
+      0 3px 5px rgba(0, 0, 0, .6),
+      0 10px 22px rgba(0, 0, 0, .55),
+      0 30px 70px rgba(0, 0, 0, .5);
+  }
+}
+
+/* [data-theme] on <html> overrides both. Declared twice, in this order, so
+   neither one can be "the fallback": each is a full statement of its theme. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #E8E2D4; --ground-deep: #D5CDBB; --surface: #F3EEE3;
+  --fg: #14161A; --fg-mute: #4B525D;
+  --act: #14161A; --act-fg: #FBF8F1;
+  --accent: #0B4FD8; --danger: #C9300B; --danger-ink: #A82708;
+  --foil: #8A6320; --foil-ink: #705018;
+  --shade: rgba(74, 62, 44, .22); --shade-2: rgba(74, 62, 44, .34);
+  --sheen: rgba(255, 255, 255, .70); --press-ink: #8B8474;
+  --stencil: rgba(20, 22, 26, .15); --stencil-hi: rgba(20, 22, 26, .30);
+  --scrim: rgba(243, 238, 227, .78); --grain-alpha: .30; --rail-lift: 0%;
+  --card-drop:
+    0 1px 1px rgba(60, 50, 32, .22),
+    0 3px 6px rgba(60, 50, 32, .17),
+    0 10px 24px rgba(60, 50, 32, .13);
+  --card-drop-air:
+    0 3px 3px rgba(60, 50, 32, .20),
+    0 8px 15px rgba(60, 50, 32, .18),
+    0 25px 60px rgba(60, 50, 32, .16);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #15171C; --ground-deep: #0B0D10; --surface: #20242B;
+  --fg: #F2EEE4; --fg-mute: #8E97A3;
+  --act: #F2EEE4; --act-fg: #14161A;
+  --accent: #6E9BFF; --danger: #FF6A3D; --danger-ink: #FF6A3D;
+  --foil: #C9A253; --foil-ink: #C9A253;
+  --shade: rgba(0, 0, 0, .45); --shade-2: rgba(0, 0, 0, .68);
+  --sheen: rgba(255, 255, 255, .07); --press-ink: #000000;
+  --stencil: rgba(242, 238, 228, .11); --stencil-hi: rgba(242, 238, 228, .22);
+  --scrim: rgba(4, 5, 7, .74); --grain-alpha: .16; --rail-lift: 38%;
+  --card-drop:
+    0 1px 2px rgba(0, 0, 0, .55),
+    0 4px 9px rgba(0, 0, 0, .48),
+    0 12px 28px rgba(0, 0, 0, .42);
+  --card-drop-air:
+    0 3px 5px rgba(0, 0, 0, .6),
+    0 10px 22px rgba(0, 0, 0, .55),
+    0 30px 70px rgba(0, 0, 0, .5);
+}
+
+/* ══ DERIVED — every component reads these, never a literal ═════════════ */
+:root {
+  /* MATERIAL, not outline. §3.2: zero `border: 1px solid` on table furniture;
+     a zone is CUT INTO the apron. */
+  --deboss:
+    inset 0 2px 3px var(--shade-2),
+    inset 0 -1px 0 var(--sheen);
+  --deboss-deep:
+    inset 0 3px 6px var(--shade-2),
+    inset 0 1px 0 var(--shade),
+    inset 0 -1px 0 var(--sheen);
+  /* raised chrome (the HUD bar, a seat plate): the inverse cut */
+  --emboss:
+    inset 0 1px 0 var(--sheen),
+    inset 0 -2px 3px var(--shade);
+  /* PRESSABLES ONLY — hard offset, zero blur, collapses on :active. Never on
+     a card, a panel or a decoration; those are becoming the next cliché. */
+  --press:      4px 4px 0 var(--press-ink);
+  --press-soft: 2px 2px 0 var(--press-ink);
+
+  /* the ring: selection / your turn / valid drop. Outline, never a fill. */
+  --ring: 2px solid var(--accent);
+
+  /* hazard MATERIAL: 45° caution stripes. Danger is never a plain chip. */
+  --hazard: repeating-linear-gradient(45deg,
+    var(--danger) 0 9px, var(--ink) 9px 18px);
+  --hazard-fine: repeating-linear-gradient(45deg,
+    var(--danger) 0 5px, var(--ink) 5px 10px);
+
+  /* the set rail, rendered for the table it is painted on (see --rail-lift) */
+  --rail: color-mix(in oklab,
+          var(--band, var(--fg-mute)) calc(100% - var(--rail-lift)),
+          var(--fg) var(--rail-lift));
+  /* the mat wash: same hue as the rail, laid over the surface it sits in */
+  --mat-alpha: 14%;
+}
+@media (prefers-color-scheme: dark) { :root { --mat-alpha: 22%; } }
+:root[data-theme="light"] { --mat-alpha: 14%; }
+:root[data-theme="dark"]  { --mat-alpha: 22%; }

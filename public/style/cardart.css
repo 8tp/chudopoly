@@ -25,8 +25,11 @@
      >66px   band + name + glyph + rent ladder + coin      (hand, deck, discard)
      ≤66px   band + name + glyph + coin                    (crowded hand, browser)
      ≤48px   band + glyph + coin — three marks             (your board)
-     ≤34px   the card FLOODS its set colour, glyph knocks  (opponent boards, ups)
-             out white. One mark, unmistakable at 16px.
+     ≤34px   the card FLOODS its set colour and the glyph  (opponent boards, ups)
+             steps aside for the 3-character SET_MARK,
+             knocked out in bone. One mark, and it is now
+             TYPE, not a 20px drawing (ART §6 amendment,
+             2026-08-07 — see .ca-mark below).
 
    Measured against the real widths in table.css: hand 37–95, board 32–48,
    opponent board 26–40, opponent upgrades 16–23, deck/discard 42–95, discard
@@ -259,6 +262,23 @@
   color: var(--ca-mute);
 }
 
+/* THE SECOND MARK (ART §6 amendment, 2026-08-07). The drawn glyph answers from
+   the table tier up; below 34px this owns the card instead. `inset: 0` on the
+   .ca-art padding box, so the tier's 14% art padding does not squeeze it — the
+   three characters get the card's full width and set at 54% of it. */
+.ca-mark {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--ca-mono);
+  font-weight: 700;
+  letter-spacing: -.03em;
+  line-height: 1;
+  color: var(--ca-onset);
+}
+
 /* ── RENT — the face IS the colours (§6.3, the owner defect) ──────────────
    No cream chassis, no band: the colour bleeds to the trim. That single
    structural difference is what stops a rent being read as a wild property. */
@@ -387,8 +407,36 @@
   align-items: center;
   justify-content: center;
   box-shadow: inset 0 0 0 1px rgba(251, 248, 241, .22);
+  /* A knockout on the back must show the BACK through, not cream stock. The
+     default --ca-knock is the paper, which was harmless only for as long as the
+     back's mark had no knockouts in it; the stencil bridges in BACK_MARK are
+     the first, and without this they would print as four cream chips. */
+  --ca-knock: var(--ca-dark);
 }
 .ca-back::after { mix-blend-mode: screen; opacity: .05; }
+/* The 45° halftone SCREEN, as a background with an absolute px pitch rather
+   than fill-opacity — a screen reads as the printing process it imitates where
+   a faded fill just reads as faded (MIL-STD-38784B house style). Clipped to a
+   centred diamond so the flat corners stay flat and the mark sits on a field
+   rather than on noise. Pitch is px, not %, so it does not stretch as the card
+   grows from a 30px mini back to a 248px peek. */
+.ca-back::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(242, 238, 228, .40) 0 .85px, transparent 1.05px),
+    radial-gradient(circle at 50% 50%, rgba(242, 238, 228, .40) 0 .85px, transparent 1.05px);
+  background-size: 6px 6px, 6px 6px;
+  /* the half-tile offset is what makes it a 45° lattice rather than an
+     orthogonal grid — a square screen reads as a mesh, a 45° one as halftone */
+  background-position: 0 0, 3px 3px;
+  clip-path: polygon(50% 4%, 96% 50%, 50% 96%, 4% 50%);
+  pointer-events: none;
+}
+/* the wordmark and the deck mark are in flow, so they would paint UNDER an
+   absolutely-positioned ::before; these put them back on top of the screen */
+.ca-back-word, .ca-back-sub, .ca-back-art { position: relative; z-index: 1; }
 .ca-back .ca-tick { border-color: rgba(251, 248, 241, .45); }
 .ca-back-word { font-weight: 800; text-transform: uppercase; letter-spacing: .26em; text-indent: .26em; }
 .ca-back-sub { font-family: var(--ca-mono); font-weight: 400; letter-spacing: .14em; text-indent: .14em; opacity: .62; }
@@ -521,6 +569,24 @@
     box-shadow: inset 0 0 0 1px rgba(20, 22, 26, .38);
   }
   .ca-hand.ca-prop .ca-art > .ca-glyph { color: #fff; }
+
+  /* THE TWO-MARK SWAP. A plain property hands the card to its 3-character code
+     here and the drawing steps off. Measured on the proof sheet: this tier runs
+     26–34px, so the drawing was being rendered into 20–24px minus its own 14%
+     padding, and three redraws of the ten glyphs were spent losing that fight —
+     the pink mark thresholded into a witch's hat chasing it. Three mono
+     characters at 30cqw set 7.8–10.2px, which is the first card mark to clear
+     checkContrast's 8px type/texture line at this size.
+
+     Scoped to :not(.ca-wild) deliberately. A wild's two glyphs at half size are
+     the only thing separating it from its neighbour, and a rent's identity here
+     is the split colour field (the owner defect fix, §6.3) — neither can spare
+     the room for two codes, and neither is asking "which ONE set is this". */
+  .ca-hand.ca-prop:not(.ca-wild) .ca-art > .ca-glyph { display: none; }
+  .ca-hand.ca-prop:not(.ca-wild) .ca-mark {
+    display: flex;
+    font-size: max(8px, 30cqw);
+  }
   .ca-hand.ca-action { background: var(--ca-ink); --ca-knock: var(--ca-ink); }
   .ca-hand.ca-action .ca-art > .ca-glyph { color: var(--ca-paper); }
   .ca-hand .ca-art { padding: 14%; }

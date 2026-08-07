@@ -57,6 +57,26 @@ const SET_CODE = {
   yellow: 'MOB', green: 'ELITE', darkblue: 'CMD', base: 'BASE', intel: 'INTEL',
 };
 
+/** The SECOND of the two marks (ART §6 amendment, 2026-08-07).
+ *
+ *  MIL-STD-2525 carries air platform type as a Sector-1 letter — B bomber,
+ *  C cargo, F fighter, K tanker, R recon — precisely because a drawing cannot
+ *  be asked to survive every size. Below 34px this client stops asking the
+ *  drawing and asks the code instead.
+ *
+ *  Uniformly THREE characters, not SET_CODE's 3–5: ten of these stand in a row
+ *  on an opponent's board and a ragged set width reads as noise. Measured, the
+ *  mini tier is 26–34px wide (style/cardart.css header), and three mono
+ *  characters advance 1.8em, so `max(8px, 30cqw)` sets 7.8–10.2px type inside a
+ *  26–34px card at 54% of its width — the 8px floor is checkContrast's own line
+ *  between type and texture and this is the first card mark to clear it at that
+ *  tier. SET_CODE is unchanged: it still owns the band and the wild's title,
+ *  where there is room for the longer form. */
+const SET_MARK = {
+  brown: 'DRN', lightblue: 'TRN', pink: 'SPC', orange: 'T&E', red: 'FTR',
+  yellow: 'MOB', green: 'ELT', darkblue: 'CMD', base: 'OSB', intel: 'INT',
+};
+
 /** Short face name where the deck name will not fit a small card on two lines.
  *  Every key is a real name from game.js buildDeck(). */
 const PROP_SHORT = {
@@ -149,6 +169,37 @@ function arcHead(cx, cy, m, a, len, halfw) {
        + ` L${p(bx - ux * halfw, by - uy * halfw)} Z`;
 }
 
+/** A bar of width w from (x0,y0) to (x1,y1). Authored as a filled quad, not a
+ *  stroke: butt ends and mitre corners are ASME Y14.2 (there is no round cap
+ *  anywhere in this system), and a fill cannot be thinned out of existence by a
+ *  transform the way a stroke can. */
+function bar(x0, y0, x1, y1, w) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * (w / 2), ny = (dx / len) * (w / 2);
+  const p = (x, y) => x.toFixed(2) + ' ' + y.toFixed(2);
+  return `M${p(x0 + nx, y0 + ny)} L${p(x1 + nx, y1 + ny)}`
+       + ` L${p(x1 - nx, y1 - ny)} L${p(x0 - nx, y0 - ny)} Z`;
+}
+
+/** The same bar laid along the ray at a°, between radii r0 and r1. */
+function radialBar(cx, cy, r0, r1, a, w) {
+  const rad = (a * Math.PI) / 180;
+  const ux = Math.cos(rad), uy = Math.sin(rad);
+  return bar(cx + r0 * ux, cy + r0 * uy, cx + r1 * ux, cy + r1 * uy, w);
+}
+
+/** One ship of the Elite four-ship: a swept delta, nose up, scaled about (cx,cy).
+ *  Traced from the generic swept-delta planform shared by the FM 44-80 recognition
+ *  plates and the Navy SAC 3-views — the same drawing as SET_GLYPHS.red at 1/4
+ *  size, so the two marks are visibly one family. */
+function shipPath(cx, cy, s) {
+  const P = [[0, -6.5], [1.2, -1.5], [6, 4], [6, 5.6], [1.6, 4.9], [1.6, 6.5],
+             [-1.6, 6.5], [-1.6, 4.9], [-6, 5.6], [-6, 4], [-1.2, -1.5]];
+  return 'M' + P.map(([x, y]) =>
+    (cx + x * s).toFixed(2) + ' ' + (cy + y * s).toFixed(2)).join(' L') + ' Z';
+}
+
 /** One hard-edged wedge of the ten-colour wheel, as an SVG path. */
 function wedge(cx, cy, R, i, n) {
   const a0 = -Math.PI / 2 + (i * 2 * Math.PI) / n;
@@ -159,53 +210,108 @@ function wedge(cx, cy, R, i, n) {
 }
 
 /* ── SET GLYPHS ───────────────────────────────────────────────────────────
-   SOLID silhouettes on a 48×48 viewBox, drawn in `currentColor` with knockouts
-   punched in `--ca-knock`. Solid, not stroked: these are re-used at 14px as
-   1-bit silhouettes (the ≤34px flood tier knocks them out of the set colour),
-   and 2px strokes on a 48 viewBox vanish at that size.
+   Solid marks on a 48×48 viewBox, `currentColor` with knockouts in
+   `--ca-knock`. Drawn as fills rather than strokes because a stroke width is
+   not scaled by the container query ladder and a 2-unit stroke on a 48 viewBox
+   is a sub-pixel smear on a board card.
 
-   Silhouette separation was the design constraint, and it cost two redraws
-   against real screenshots:
-     • DRONE OPS was an MQ-9 planform — sensor ball, fuselage, straight wing,
-       V-tail. At 44px on five-player@phone it read unmistakably as a STICK
-       FIGURE: round head, arms out, legs apart. It is now a quadcopter, which
-       is both more literally "drone" and structurally unlike anything else
-       here (four rotor rings on an X frame).
-     • That also leaves only TWO aircraft, so they can afford to be far apart:
-       FIGHTER is a narrow swept delta pointing up, MOBILITY is a wide straight
-       wing with four pods and a broad T-tail.
-   TRAINING is deliberately not a third winged shape — it is a chevron stack. */
+   ── WHAT CHANGED, AND WHY (ART §6 amendment, 2026-08-07) ─────────────────
+   The retired rule required every set glyph to survive as a 1-bit silhouette
+   on a 14×14 raster. Three redraws optimised against that threshold check and
+   the owner's verdict on the result was "this SVG art is just bad". Measured
+   against the proof sheet, he was right on the specifics too:
+     • pink   thresholded into a WITCH HAT — a triangle with two lobes.
+     • red    was a fat arrow with a stub, not an aircraft.
+     • lightblue was two apex-up chevrons: crude, AND that is an enlisted rank
+       device, which 32 C.F.R. §507.9 forbids executing as a "colorable
+       imitation". It also inverts the MIL-STD-2525 UAV mark (one wide chevron,
+       apex DOWN), so it read as the wrong symbol to anyone who knows 2525.
+     • green   was the four-point sparkle that every LLM product shipped in
+       2025. It is the single most generic mark that could occupy that slot.
+     • base    read as an X / crossed swords, not as an airfield.
+     • intel   read as a pie chart with a clock hand.
+
+   The mandate is retired and replaced by TWO MARKS per set: this drawing,
+   which only has to answer from the table tier (≈25px) upward, and SET_MARK
+   below, a 3-character code that owns the ≤34px tier. That is MIL-STD-2525's
+   own split (air platform type is a Sector-1 letter) and it is what buys these
+   drawings the right to carry interior detail.
+
+   ── HOW THEY ARE DRAWN ────────────────────────────────────────────────────
+   MIL-STD-38784B / ASME Y14.2: exactly two weights at 2:1 — heavy 4 units for
+   object lines, thin 2 units for every rule, break and knockout. No rounded
+   corner anywhere (every `rx` in the previous set is gone). No gradient, no
+   blur, no soft shadow. Aircraft are TOP-DOWN PLANFORMS traced from the
+   orthographic recognition corpus (FM 44-80 Visual Aircraft Recognition,
+   PD-USGov-Military-Army; Navy Standard Aircraft Characteristics 3-views,
+   PD-USGov), never from photographs — ATC Distribution v. Whatever It Takes
+   (6th Cir. 2005). No CC BY-SA Commons 3-view was opened. */
 
 const SET_GLYPHS = {
-  /* Drone Ops — quadcopter: X frame, four rotor rings, avionics body */
+  /* Drone Ops — quadcopter: X frame, four rotor rings, avionics body. KEPT from
+     the previous round; it was the one mark the proof sheet showed working, and
+     it is structurally unlike everything else here. Square corners restored
+     (the body carried rx="3") and the body given the sensor detail that the
+     1-bit rule had forbidden. */
   brown: `
     <path d="M9.5 13 L13 9.5 L38.5 35 L35 38.5 Z"/>
     <path d="M35 9.5 L38.5 13 L13 38.5 L9.5 35 Z"/>
-    <rect x="17.5" y="17.5" width="13" height="13" rx="3"/>
+    <rect x="17.5" y="17.5" width="13" height="13"/>
+    <rect x="19.5" y="19.5" width="9" height="9" fill="var(--ca-knock)"/>
+    <rect x="21.5" y="21.5" width="5" height="5"/>
     ${[[12, 12], [36, 12], [12, 36], [36, 36]]
       .map(([x, y]) => `<path d="${ringPath(x, y, 8, 4.8)}"/>`).join('')}`,
 
-  /* Training — three chevrons (rank / instruction), NOT a winged shape */
+  /* Training — the ATTITUDE INDICATOR: a square instrument case, a round dial,
+     a solid ground below the horizon, a pitch ladder, the fixed wings symbol
+     and a bank index. It replaces the rank chevrons on three counts: chevrons
+     are service insignia (§507.9), apex-up stacked chevrons collide with the
+     2525 UAV mark, and an ADI is what a student actually stares at. A solid
+     square case is also the only rectilinear mass in the ten, so the set is
+     nameable from silhouette alone. */
   lightblue: `
-    <path d="M24 6 L42 20 L42 27 L24 13 L6 27 L6 20 Z"/>
-    <path d="M24 19 L42 33 L42 40 L24 26 L6 40 L6 33 Z"/>`,
+    <path d="M4 4 H44 V44 H4 Z M8 8 H40 V40 H8 Z"/>
+    <path d="${ringPath(24, 24, 15.5, 13.5)}"/>
+    <path d="M10.84 27 A13.5 13.5 0 0 0 37.16 27 Z"/>
+    <path d="M24 10.8 L26.4 14.4 L21.6 14.4 Z"/>
+    <rect x="18" y="17.4" width="12" height="2"/>
+    <rect x="11.5" y="22.8" width="7" height="2"/>
+    <rect x="29.5" y="22.8" width="7" height="2"/>
+    <rect x="22.7" y="21.6" width="2.6" height="4.2"/>
+    <g fill="var(--ca-knock)">
+      <rect x="20.5" y="30.4" width="7" height="2"/>
+      <rect x="18" y="33.8" width="12" height="2"/>
+    </g>`,
 
-  /* Space Force — a solid delta with the orbit passing BEHIND it. This is the
-     THIRD construction: an equal-weight ring merged with the delta into one
-     blob at 14px, a centred ring swallowed the triangle, and the "fixed" low
-     thin ring thresholded into the brim of a WITCH HAT (the 1-bit panel is
-     merciless). Now the full tilted annulus is drawn first, an expanded knock
-     delta erases its middle, and the true delta sits on top — so at 1-bit the
-     orbit survives as two chunky lobes emerging from the delta's flanks with a
-     clean gap, which can only be read as a ring passing behind. */
+  /* Space Force — MIL-STD-2525 entity 05 110700 (SATELLITE): a bus flanked by
+     two solar arrays. A previous agent derived this form independently before
+     anyone checked it against 2525, which is the strongest evidence available
+     that it is the right shape. §105 public domain; no APP-6 was consulted.
+     The array cell rules and the nadir antenna are what stop three blocks in a
+     row from reading as a battery. */
   pink: `
-    <path d="M24 18 A23.5 9 0 1 0 24 36 A23.5 9 0 1 0 24 18 Z
-             M24 24.5 A14.5 2.5 0 1 1 24 29.5 A14.5 2.5 0 1 1 24 24.5 Z"
-      transform="rotate(-10 24 27)"/>
-    <path d="M24 0 L44.5 43 L3.5 43 Z" fill="var(--ca-knock)"/>
-    <path d="M24 4 L40 39 L8 39 Z"/>`,
+    <rect x="19.5" y="10" width="9" height="18"/>
+    <rect x="15.5" y="17.5" width="4" height="3"/>
+    <rect x="28.5" y="17.5" width="4" height="3"/>
+    <rect x="1.5" y="11.5" width="14" height="15"/>
+    <rect x="32.5" y="11.5" width="14" height="15"/>
+    <rect x="22.75" y="28" width="2.5" height="6.5"/>
+    <rect x="19" y="34.5" width="10" height="3.5"/>
+    <g fill="var(--ca-knock)">
+      <rect x="6" y="11.5" width="2" height="15"/>
+      <rect x="11" y="11.5" width="2" height="15"/>
+      <rect x="37" y="11.5" width="2" height="15"/>
+      <rect x="42" y="11.5" width="2" height="15"/>
+      <rect x="1.5" y="18" width="14" height="2"/>
+      <rect x="32.5" y="18" width="14" height="2"/>
+      <rect x="21.5" y="13" width="5" height="2"/>
+      <rect x="21.5" y="23" width="5" height="2"/>
+    </g>`,
 
-  /* Test & Eval — calibration reticle: heavy ring, four spikes, centre pip */
+  /* Test & Eval — calibration reticle: heavy ring, four spikes, centre pip.
+     KEPT unchanged. It is the only mark in the ten that was already a real
+     instrument rather than a symbol, it reads at every tier on the proof
+     sheet, and it carries no rounded corners to fix. */
   orange: `
     <path d="M24 5 A19 19 0 1 0 24 43 A19 19 0 1 0 24 5 Z
              M24 11 A13 13 0 1 1 24 37 A13 13 0 1 1 24 11 Z"/>
@@ -215,53 +321,123 @@ const SET_GLYPHS = {
     <rect x="34" y="21.4" width="13" height="5.2"/>
     <circle cx="24" cy="24" r="3.6"/>`,
 
-  /* Fighters — narrow swept delta, nose up */
+  /* Fighters — a swept-delta fighter PLANFORM, nose up: chined forebody, cropped
+     delta with a ~50° leading edge, trapezoidal stabilators, twin nozzles. The
+     canopy is knocked out because in a top view it is the single feature that
+     separates an aircraft from an arrow, and the canted fins are knocked as
+     slivers because in a true top view that is all they are. Traced against the
+     generic modern-fighter planform common to FM 44-80's recognition plates and
+     the Navy SAC 3-views; matching both is evidence of copying the aircraft
+     rather than either drawing. No specific type is named on the mark — the
+     designations live on the card faces (AM General v. Activision). */
   red: `
-    <path d="M24 2.5 L28.4 15 L40.5 27.5 L40.5 31 L28.8 30 L30 38 L34.5 43.5
-             L13.5 43.5 L18 38 L19.2 30 L7.5 31 L7.5 27.5 L19.6 15 Z"/>`,
-
-  /* Mobility — heavy airlifter: wide straight wing, four pods, broad T-tail */
-  yellow: `
-    <rect x="21" y="4" width="6" height="33" rx="2.8"/>
-    <path d="M21 15.5 L1.5 24 L1.5 29 L21 24 Z"/>
-    <path d="M27 15.5 L46.5 24 L46.5 29 L27 24 Z"/>
-    <rect x="7.5" y="23" width="4.4" height="6.6" rx="2"/>
-    <rect x="14.2" y="21" width="4.4" height="6.6" rx="2"/>
-    <rect x="29.4" y="21" width="4.4" height="6.6" rx="2"/>
-    <rect x="36.1" y="23" width="4.4" height="6.6" rx="2"/>
-    <rect x="13" y="36.5" width="22" height="5.2" rx="2.4"/>`,
-
-  /* Elite Programs — the ART §6 four-point star whose hull is the diamond.
-     Two attempts at a literal four-ship Thunderbirds diamond died in the 1-bit
-     panel — even 17-unit ships threshold to scattered specks at 14px, because
-     four small triangles can never each get enough pixels. One bold sparkle
-     keeps the diamond formation's geometry and survives at any size. */
-  green: `
-    <path d="M24 2 L29.3 18.7 L46 24 L29.3 29.3 L24 46 L18.7 29.3 L2 24 L18.7 18.7 Z"/>`,
-
-  /* Command — solid pentagon with the star punched out */
-  darkblue: `
-    <path d="${ngonPath(24, 25.5, 20, 5)}" />
-    <path d="${starPath(24, 26, 11, 4.5)}" fill="var(--ca-knock)"/>`,
-
-  /* Overseas Bases — crossed runways (an X of two solid bars) */
-  base: `
-    <g transform="rotate(-34 24 24)"><rect x="1" y="19.4" width="46" height="9.2" rx="1.4"/></g>
-    <g transform="rotate(36 24 24)"><rect x="4" y="19.9" width="40" height="8.2" rx="1.4"/></g>
+    <path d="M24 2.5 L26.2 9 L27.2 15 L27.8 20 L28.6 24.5 L43 33.5 L43 36
+             L29.4 37.4 L29.4 38.6 L36.5 41.2 L36.5 43.2 L28.6 45 L26.6 46.5
+             L21.4 46.5 L19.4 45 L11.5 43.2 L11.5 41.2 L18.6 38.6 L18.6 37.4
+             L5 36 L5 33.5 L19.4 24.5 L20.2 20 L20.8 15 L21.8 9 Z"/>
     <g fill="var(--ca-knock)">
-      <g transform="rotate(-34 24 24)"><rect x="6" y="23" width="36" height="2" rx="1"/></g>
+      <path d="M24 11 L26.3 14.5 L26 19.5 L24 22 L22 19.5 L21.7 14.5 Z"/>
+      <path d="M27 32.5 L31.8 43.4 L29 43.4 L25.2 33.8 Z"/>
+      <path d="M21 32.5 L16.2 43.4 L19 43.4 L22.8 33.8 Z"/>
     </g>`,
 
-  /* Intelligence — radar scope: solid disc with the sweep wedge punched out */
+  /* Mobility — heavy airlifter planform: high straight wing with mild sweep,
+     four pylon-mounted nacelles, a T-tail stabiliser bar. Redrawn from the
+     previous version only to obey the drawing law — every rx is gone, the
+     fuselage is a drawn planform instead of a rounded rect, and it carries the
+     same knocked flight-deck lozenge as the fighter so the two aircraft read as
+     one draughtsman's hand. Same PD corpus. */
+  yellow: `
+    <path d="M2 21 L24 14 L46 21 L46 26 L24 24.5 L2 26 Z"/>
+    <path d="M24 3.5 L26.8 8.5 L28.2 14 L28.2 33 L27.2 38 L25.6 42.5 L24 44.5
+             L22.4 42.5 L20.8 38 L19.8 33 L19.8 14 L21.2 8.5 Z"/>
+    ${[[29.2, 11.6], [36.2, 13.8], [15.4, 11.6], [8.4, 13.8]]
+      .map(([x, y]) => `<path d="M${x + 0.5} ${y} H${x + 2.9} L${x + 3.4} ${y + 1.5}
+        V${y + 7.4} H${x} V${y + 1.5} Z"/>`).join('')}
+    <path d="M12.5 37.4 H35.5 L34 41.6 H14 Z"/>
+    <path d="M24 5.5 L26.2 9.5 L25.8 13.5 L24 15 L22.2 13.5 L21.8 9.5 Z"
+      fill="var(--ca-knock)"/>`,
+
+  /* Elite Programs — the FOUR-SHIP DIAMOND, drawn at last. The previous two
+     attempts died because four ships can never each get enough pixels on a
+     14×14 raster; with that gate retired the arrangement is free to be what the
+     set actually is, and it replaces a four-point sparkle that was the most
+     generic mark in the build. Geometry only: a diamond formation is geometry
+     and is not claimed, but the DAF's "Thunderbirds" trade dress includes the
+     red/white/blue livery, so the mark is monochrome in the set colour and the
+     name stays on the card face where AM General protects it. */
+  green: `
+    <path d="${shipPath(24, 10, 1.08)}"/>
+    <path d="${shipPath(11.6, 24, 1.08)}"/>
+    <path d="${shipPath(36.4, 24, 1.08)}"/>
+    <path d="${shipPath(24, 38, 1.08)}"/>`,
+
+  /* Command — THE PENTAGON IN PLAN: concentric pentagonal rings around the
+     courtyard, which is literally what the building is and what a top-down
+     orthographic of it looks like. It replaces a pentagon with a five-point
+     star punched through it — a star inside a service outline is the shape
+     §507.9 exists to keep amateurs away from, and it was doing no work the
+     pentagon was not already doing. Four nested subpaths in ONE path so the
+     svg's fill-rule="evenodd" alternates solid/void without a knock colour;
+     the voids therefore show the true card through at every tier. */
+  darkblue: `
+    <path d="${ngonPath(24, 26, 21, 5)} ${ngonPath(24, 26, 15.5, 5)}
+             ${ngonPath(24, 26, 11, 5)} ${ngonPath(24, 26, 6, 5)}"/>`,
+
+  /* Overseas Bases — a RUNWAY in plan: threshold "piano key" bars at the far
+     end, a dashed centreline running out of frame at the near end, laid at 22°
+     so it reads as pavement on a field rather than as a ruler. The threshold
+     marking is the most recognisable painted geometry on any airfield on earth
+     and it is pure square-corner drawing. The previous crossed bars read as an
+     X and said nothing about aviation. */
+  base: `
+    <g transform="rotate(-22 24 24)">
+      <rect x="14" y="4" width="20" height="40"/>
+      <g fill="var(--ca-knock)">
+        <rect x="15.8" y="7" width="2.6" height="8"/>
+        <rect x="20.4" y="7" width="2.6" height="8"/>
+        <rect x="25" y="7" width="2.6" height="8"/>
+        <rect x="29.6" y="7" width="2.6" height="8"/>
+        <rect x="22.9" y="19" width="2.2" height="6.5"/>
+        <rect x="22.9" y="28.5" width="2.2" height="6.5"/>
+        <rect x="22.9" y="38" width="2.2" height="6"/>
+      </g>
+    </g>`,
+
+  /* Intelligence — the ART §6 spec taken literally at last: a PARABOLIC DISH on
+     a mast, feed horn on its strut at the focus, panel rules across the
+     reflector, plinth at the base. The previous disc-with-a-wedge was a radar
+     PPI scope in theory and a pie chart with a clock hand in practice. A dish
+     in profile is the only curved-and-open mass in the ten. */
   intel: `
-    <path d="M24 4 A20 20 0 1 0 24 44 A20 20 0 1 0 24 4 Z"/>
-    <path d="M24 24 L24 5.4 A18.6 18.6 0 0 1 40 14.5 Z" fill="var(--ca-knock)"/>
-    <circle cx="24" cy="24" r="3.4" fill="var(--ca-knock)"/>`,
+    <path d="${bandArc(24, 19, 15, 10.6, 60, 230)}"/>
+    <path d="${bar(16.5, 9.5, 29.6, 15.6, 2.4)}"/>
+    <rect x="26.6" y="12.6" width="6" height="6"/>
+    <rect x="22.2" y="28" width="3.6" height="13"/>
+    <rect x="12.5" y="41" width="23" height="4"/>
+    <g fill="var(--ca-knock)">
+      <path d="${radialBar(24, 19, 10.2, 15.4, 100, 1.8)}"/>
+      <path d="${radialBar(24, 19, 10.2, 15.4, 160, 1.8)}"/>
+      <rect x="16" y="42.2" width="16" height="1.8"/>
+    </g>`,
 };
 
 /* ── ACTION GLYPHS ────────────────────────────────────────────────────────
    Achromatic by law (§1: "actions concern no colour, and that absence is
-   itself the signal"). Solid-first for the same silhouette reason. */
+   itself the signal"). Solid-first for the same silhouette reason.
+
+   NOT REDRAWN in the 2026-08-07 round, and that is a judgement rather than a
+   deadline: rendered at 150px against the ten new set marks, nine of these
+   eleven answer at the table tier and none of them is generic in the way the
+   green sparkle was — a shield with a bar, a banknote, a magnifier, a house
+   are the correct universal marks for what these cards do and drawing them
+   more cleverly would cost legibility. Two exceptions are recorded honestly:
+   `midnight_requisition` (the walking crate reads as a robot before it reads
+   as theft) and `tdy_orders` (two arc bands are the universal refresh icon,
+   correct but anonymous). Both are named in the round's report as still below
+   the bar. What DID change here: every `rx` is gone. The set glyphs' drawing
+   law says square corners always, and eight rounded rectangles in the action
+   family would have made that comment a lie. */
 
 const ACTION_GLYPHS = {
   /* PCS Orders — TWO order sheets, fanned. The effect is "draw 2", so the
@@ -275,8 +451,8 @@ const ACTION_GLYPHS = {
     <path d="M9 13.5 h13.5 l8.5 8.5 v18.5 h-22 z"/>
     <path d="M22.5 13.5 l8.5 8.5 h-8.5 z" fill="var(--ca-knock)"/>
     <g fill="var(--ca-knock)">
-      <rect x="13.5" y="26" width="13" height="3.6" rx="1.8"/>
-      <rect x="13.5" y="33" width="8.5" height="3.6" rx="1.8"/>
+      <rect x="13.5" y="26" width="13" height="3.6"/>
+      <rect x="13.5" y="33" width="8.5" height="3.6"/>
     </g>`,
 
   /* OPSEC — a shield with one heavy DENIED bar knocked through it. The old
@@ -284,7 +460,7 @@ const ACTION_GLYPHS = {
      horizontal slot is the universal "blocked" and survives thresholding. */
   opsec: `
     <path d="M24 3.5 L41 9.5 V22.5 C41 34.5 24 44.5 24 44.5 S7 34.5 7 22.5 V9.5 Z"/>
-    <rect x="13.5" y="18" width="21" height="7" rx="2" fill="var(--ca-knock)"/>`,
+    <rect x="13.5" y="18" width="21" height="7" fill="var(--ca-knock)"/>`,
 
   /* Midnight Requisition — the supply crate WALKING OFF on its own two legs,
      motion dashes trailing. The previous crescent-over-footlocker was two
@@ -321,8 +497,8 @@ const ACTION_GLYPHS = {
   finance_office: `
     <path d="M3.5 12 h41 v24 h-41 z"/>
     <g fill="var(--ca-knock)">
-      <rect x="9.5" y="16.5" width="4.5" height="15" rx="1.6"/>
-      <rect x="34" y="16.5" width="4.5" height="15" rx="1.6"/>
+      <rect x="9.5" y="16.5" width="4.5" height="15"/>
+      <rect x="34" y="16.5" width="4.5" height="15"/>
       <circle cx="24" cy="24" r="8.8"/>
     </g>
     <path d="M18.9 28.9 v-9.8 h3.2 l1.9 3.3 1.9 -3.3 h3.2 v9.8 h-3 v-4.4 l-2.1 3.2 -2.1 -3.2 v4.4 z"/>`,
@@ -337,7 +513,7 @@ const ACTION_GLYPHS = {
     <path d="M3.5 31.5 a7.5 8.5 0 0 1 15 0 z"/>
     <path d="M16.5 31.5 a7.5 8.5 0 0 1 15 0 z"/>
     <path d="M29.5 31.5 a7.5 8.5 0 0 1 15 0 z"/>
-    <rect x="4" y="36.5" width="40" height="4.5" rx="2.2"/>`,
+    <rect x="4" y="36.5" width="40" height="4.5"/>`,
 
   /* Upgrade (House) — a house with a plus */
   upgrade: `
@@ -358,7 +534,7 @@ const ACTION_GLYPHS = {
   inspector_general: `
     <circle cx="20" cy="20" r="16"/>
     <path d="${starPath(20, 20, 9.5, 3.8)}" fill="var(--ca-knock)"/>
-    <rect x="29.5" y="29" width="15.5" height="7" rx="3.5" transform="rotate(45 32 32)"/>`,
+    <rect x="28.5" y="29" width="16.5" height="7" transform="rotate(45 32 32)"/>`,
 
   /* Surge Ops — a bolt (the ×2 rides as a caption, not as glyph text) */
   surge_ops: `
@@ -379,13 +555,17 @@ const ACTION_GLYPHS = {
     <path d="${starPath(24, 24, 11.5, 4.6)}"/>`,
 };
 
-/* Money — a solid rosette ring the numeral sits inside. */
+/* Money — a solid rosette ring the numeral sits inside, with a guilloche-style
+   broken inner ring. The inner ring carried `stroke-dasharray="3 2.6"` on a
+   path that had a fill and no stroke, so the attribute did nothing and the
+   "dashed" ring printed solid; it is now an actual stroked, dashed circle. Only
+   the hand and peek tiers ever see it — ≤60px drops the rosette entirely so the
+   numeral can own the note. */
 const MONEY_GLYPH = `
   <path d="M24 3 A21 21 0 1 0 24 45 A21 21 0 1 0 24 3 Z
            M24 6.4 A17.6 17.6 0 1 1 24 41.6 A17.6 17.6 0 1 1 24 6.4 Z"/>
-  <path d="M24 8.5 A15.5 15.5 0 1 0 24 39.5 A15.5 15.5 0 1 0 24 8.5 Z
-           M24 10.6 A13.4 13.4 0 1 1 24 37.4 A13.4 13.4 0 1 1 24 10.6 Z"
-    stroke-dasharray="3 2.6"/>`;
+  <circle cx="24" cy="24" r="14.4" fill="none" stroke="currentColor"
+    stroke-width="1.8" stroke-dasharray="3 2.6"/>`;
 
 /* The RENT medallion mark: opposed transfer arrows, achromatic. */
 const RENT_MARK = `
@@ -481,9 +661,13 @@ function propFace(card, tier, opts) {
       <div class="ca-art">${setGlyph(key)}</div>
       ${ladderRows(key)}${rule(card, opts)}${foot(card, tier)}</div>`;
   }
+  // Both marks ship in the one markup, because table/cardnode.js builds a face
+  // ONCE and only reparents it (§0.4) — the ≤34px tier cannot ask for a rebuild.
+  // The stylesheet shows the drawing above 34px and the mark below it.
+  const mark = `<span class="ca-mark" aria-hidden="true">${SET_MARK[key]}</span>`;
   return `<div class="${cls}">${TICKS}${band}
     <div class="ca-title">${esc(name)}</div>
-    <div class="ca-art">${setGlyph(key)}${code}</div>
+    <div class="ca-art">${setGlyph(key)}${mark}${code}</div>
     ${ladderStrip(key)}${foot(card, tier)}</div>`;
 }
 
@@ -617,21 +801,53 @@ function actionFace(card, tier, opts) {
 
 /* ── The back — the ONE dark object in the whole design (§2) ───────────── */
 
+/** The deck mark: a stencil-cut ALIGNMENT TARGET.
+ *
+ *  What it replaces, and why it had to go: the back carried a five-point star
+ *  inside a circle with a bar struck through it — the US national aircraft
+ *  insignia. 32 C.F.R. §507.9 runs the opposite way to intuition. PHOTOGRAPHING
+ *  a service medal, badge, patch, seal or device is authorised; "making or
+ *  executing in any manner any engraving, impression, or COLORABLE IMITATION"
+ *  is prohibited without written approval. Hand-authored SVG is the prohibited
+ *  act, not the permitted one, and this was the most-seen surface in the game.
+ *
+ *  What it is instead: a pre-press registration target rendered in the drawing
+ *  law of the rest of the system — four heavy bars (5 units) crossing a thin
+ *  frame (2.5 units, the 2:1 pair), a square-annulus centre, four corner datum
+ *  pips, and a stencil bridge broken out of each bar. Every corner is square,
+ *  nothing is stroked, and it imitates no insignia of any service because a
+ *  registration target is a printer's mark. It is also a better fit for a deck
+ *  whose whole identity is a flight-line technical order than a roundel was.
+ *
+ *  The 45° halftone screen behind it lives in style/cardart.css as a background
+ *  with an absolute px pitch rather than as an <svg><pattern>: a pattern needs
+ *  an `id`, every card back in the DOM would declare the same one, and the
+ *  first declaration disappearing with a pooled node would break the rest. */
+const BACK_MARK = `
+  <path d="M4 4 H30 V10 H10 V30 H4 Z M96 4 V30 H90 V10 H70 V4 Z
+           M4 96 V70 H10 V90 H30 V96 Z M96 96 H70 V90 H90 V70 H96 Z"/>
+  <path d="M24 24 H76 V76 H24 Z M27 27 H73 V73 H27 Z"/>
+  <path d="M47 12 H53 V37 H47 Z M47 63 H53 V88 H47 Z
+           M12 47 H37 V53 H12 Z M63 47 H88 V53 H63 Z"/>
+  <path d="M50 40.5 L59.5 50 L50 59.5 L40.5 50 Z"/>
+  <g fill="var(--ca-knock)">
+    <rect x="47" y="19" width="6" height="3"/>
+    <rect x="47" y="78" width="6" height="3"/>
+    <rect x="19" y="47" width="3" height="6"/>
+    <rect x="78" y="47" width="3" height="6"/>
+  </g>`;
+
 function backMarkup(tier) {
-  const roundel = `<svg class="ca-back-art" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-    <circle cx="50" cy="50" r="47" fill="none" stroke="currentColor" stroke-width="1.2"
-      stroke-dasharray="1.6 3.6" opacity=".55"/>
-    <rect x="1" y="43" width="98" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
-    <circle cx="50" cy="50" r="27" fill="none" stroke="currentColor" stroke-width="2.4"/>
-    <path d="${starPath(50, 50, 18, 7.2)}" fill="currentColor"/>
-  </svg>`;
+  const mark = `<svg class="ca-back-art" viewBox="0 0 100 100"
+    fill="currentColor" fill-rule="evenodd" aria-hidden="true" focusable="false"
+    >${BACK_MARK}</svg>`;
   if (tier === 'peek') {
     return `<div class="ca ca-peek ca-back">${TICKS}
-      <div class="ca-back-word">CHUDOPOLY</div>${roundel}
+      <div class="ca-back-word">CHUDOPOLY</div>${mark}
       <div class="ca-back-sub">PROPERTY COMMAND DECK</div></div>`;
   }
   return `<div class="ca ca-hand ca-back">${TICKS}
-    <div class="ca-back-word">CHUDOPOLY</div>${roundel}</div>`;
+    <div class="ca-back-word">CHUDOPOLY</div>${mark}</div>`;
 }
 
 /* ── Materialise ──────────────────────────────────────────────────────── */
@@ -681,4 +897,4 @@ export function glyphNode(color) {
   return parse(svg(SET_GLYPHS[color] || SET_GLYPHS.base));
 }
 
-export { SET_CODE, ACTIONS, SET_GLYPHS, ACTION_GLYPHS };
+export { SET_CODE, SET_MARK, ACTIONS, SET_GLYPHS, ACTION_GLYPHS, BACK_MARK };

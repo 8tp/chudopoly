@@ -335,6 +335,73 @@ test('the win rule is sticky across a rematch', async () => {
   host.close();
 });
 
+test('a preset is resolved server-side and shipped as the whole ruleset', async () => {
+  const expected = {
+    chudopoly:  { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false },
+    mdFaithful: { winRule: 'mdFaithful',    setsToWin: 3, pureSetRequired: true,  passGoRestartsTurn: false },
+    blitz:      { winRule: 'instant',       setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true },
+    longGame:   { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false },
+  };
+  for (const [preset, rules] of Object.entries(expected)) {
+    const { host, guest, state } = await startTwoHumanRoom('RP', { preset });
+    assert.deepEqual(state.game.rules, { preset, ...rules }, preset);
+    assert.equal(state.game.setsToWin, rules.setsToWin, `${preset} legacy scalar agrees`);
+    assert.equal(state.game.winRule, rules.winRule);
+    send(host, { type: 'leave_room' }); send(guest, { type: 'leave_room' });
+    host.close(); guest.close();
+    await sleep(120);
+  }
+});
+
+test('individual toggles override a preset over the wire and the label becomes custom', async () => {
+  const { host, guest, state } = await startTwoHumanRoom('RT', { preset: 'blitz', setsToWin: 5 });
+  assert.equal(state.game.rules.preset, 'custom', 'a mixed ruleset is never labelled as a preset');
+  assert.equal(state.game.rules.winRule, 'instant');
+  assert.equal(state.game.rules.setsToWin, 5);
+  send(host, { type: 'leave_room' }); send(guest, { type: 'leave_room' });
+  host.close(); guest.close();
+});
+
+test('an invalid rule field is refused without starting the game', async () => {
+  for (const bad of [{ preset: 'nope' }, { setsToWin: 6 }, { pureSetRequired: 'yes' }, { passGoRestartsTurn: 1 }]) {
+    const host = await openClient();
+    send(host, { type: 'create_room', name: 'BadCfg' });
+    await waitFor(host, m => m.type === 'joined');
+    send(host, { type: 'add_bot', mode: 'neutral' });
+    await sleep(120);
+    send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30, ...bad });
+    const err = await waitFor(host, m => m.type === 'error', 1500);
+    assert.ok(err, `${JSON.stringify(bad)} must be refused`);
+    const started = host._messages.find(m => m.type === 'state' && m.phase === 'playing');
+    assert.equal(started, undefined, 'and the game must not start');
+    send(host, { type: 'leave_room' });
+    host.close();
+    await sleep(100);
+  }
+});
+
+test('the whole ruleset is sticky across a rematch', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'StickyR' });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  send(host, { type: 'add_bot', mode: 'neutral' });
+  await sleep(150);
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30, preset: 'longGame' });
+  const first = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  assert.deepEqual(first.game.rules.preset, 'longGame');
+
+  send(host, { type: 'scoop' });
+  assert.ok(await waitFor(host, m => m.type === 'state' && m.game?.phase === 'finished', 4000));
+  host._messages.length = 0;
+  send(host, { type: 'rematch' });
+  const again = await waitFor(host, m => m.type === 'state' && m.game?.phase === 'playing', 4000);
+  assert.ok(again, 'rematch started');
+  assert.deepEqual(again.game.rules, first.game.rules, 'the ruleset survives untouched');
+  assert.ok(joined);
+  send(host, { type: 'leave_room' });
+  host.close();
+});
+
 /* ── owner directive: automatic turn draw over the wire ──────────────── */
 
 test('a reconnecting player never draws twice and never sees a draw phase', async () => {

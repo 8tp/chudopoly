@@ -18,6 +18,10 @@ function broadcastRoom(room) {
       room.state.turnPhase = 'finished';
       G.logLine(room.state, 'Game stopped because its state failed an integrity check.');
     }
+    // Every ending — win, stalemate, scoop-out, integrity stop — is followed by a
+    // broadcast, so this is the one hook that catches all of them. It records at most once
+    // per game and can never throw into the room.
+    require('./gamelog').recordFinished(room, G);
   }
   const timerInfo = room.turnTimeout > 0 && room.turnStartedAt
     ? { timeout: room.turnTimeout, startedAt: room.turnStartedAt }

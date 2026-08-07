@@ -477,3 +477,100 @@ test('handleAbsent advances past eliminated seats without wedging', () => {
   assert.equal(G.currentPlayer(room.state).id, 'p3');
   assert.deepEqual(G.validateState(room.state), { ok: true });
 });
+
+/* ── durable game records (server/gamelog.js) ────────────────────────── */
+
+const fs = require('node:fs');
+const os = require('node:os');
+const nodePath = require('node:path');
+
+// async: the record is appended asynchronously, so the temp dir must outlive the await.
+async function withGameLog(env, fn) {
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'chudlog-'));
+  const saved = { ...process.env };
+  process.env.CHUD_GAME_LOG_DIR = dir;
+  for (const [k, v] of Object.entries(env)) process.env[k] = v;
+  delete require.cache[require.resolve('../server/gamelog')];
+  const gamelog = require('../server/gamelog');
+  try { return await fn(gamelog, dir); }
+  finally {
+    process.env = saved;
+    delete require.cache[require.resolve('../server/gamelog')];
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function finishedRoom(opts = {}) {
+  const room = {
+    code: 'LOGT', phase: 'playing', chat: [], turnTimeout: 60, responseTimeout: 30,
+    players: [
+      { id: 'a', name: 'A', ws: null, isBot: false },
+      { id: 'b', name: 'B', ws: null, isBot: true, botMode: 'chud' },
+    ],
+  };
+  room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })),
+    { seed: 'logtest', ...opts });
+  room.state.phase = 'finished';
+  room.state.winner = 'a';
+  room.state.endReason = 'sets';
+  return room;
+}
+
+test('a finished game leaves exactly one durable JSONL record', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '1' }, async (gamelog, dir) => {
+    const room = finishedRoom({ preset: 'blitz' });
+    assert.equal(gamelog.recordFinished(room, G), true);
+    assert.equal(gamelog.recordFinished(room, G), false, 'never written twice');
+    await new Promise(r => setTimeout(r, 120));
+
+    const lines = fs.readFileSync(nodePath.join(dir, 'games.jsonl'), 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+    const rec = JSON.parse(lines[0]);
+    assert.equal(rec.seed, 'logtest');
+    assert.equal(rec.replayable, true, 'a seeded game can be replayed exactly');
+    assert.equal(rec.rules.preset, 'blitz');
+    assert.equal(rec.winner, 'a');
+    assert.equal(rec.endReason, 'sets');
+    assert.deepEqual(rec.seats.map(s => s.id), ['a', 'b']);
+    assert.equal(rec.seats[1].botMode, 'chud', 'seat order and bot modes are recorded');
+    assert.ok(Array.isArray(rec.events) && rec.events.length > 0, 'the event stream is recorded');
+    assert.equal(rec.boards.length, 2, 'the final boards are recorded');
+    assert.ok(rec.log.length > 0);
+  });
+});
+
+test('game logging is opt-outable and never writes when disabled', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '0' }, async (gamelog, dir) => {
+    assert.equal(gamelog.enabled(), false);
+    assert.equal(gamelog.recordFinished(finishedRoom(), G), false);
+    await new Promise(r => setTimeout(r, 80));
+    assert.equal(fs.existsSync(nodePath.join(dir, 'games.jsonl')), false);
+  });
+});
+
+test('game logging never throws into a room, whatever the state looks like', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '1' }, (gamelog) => {
+    // Unfinished, missing, and structurally broken rooms must all be no-ops, not throws.
+    assert.doesNotThrow(() => gamelog.recordFinished(undefined, G));
+    assert.doesNotThrow(() => gamelog.recordFinished({}, G));
+    assert.doesNotThrow(() => gamelog.recordFinished({ state: { phase: 'playing' } }, G));
+    const broken = finishedRoom();
+    broken.state.players = null;              // would throw inside buildRecord
+    assert.doesNotThrow(() => gamelog.recordFinished(broken, G));
+  });
+});
+
+test('the game log is bounded: it rotates instead of growing without limit', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '1', CHUD_GAME_LOG_MAX_BYTES: '2000' }, async (gamelog, dir) => {
+    for (let i = 0; i < 6; i++) {
+      const room = finishedRoom();
+      room.code = 'LG' + i;
+      gamelog.recordFinished(room, G);
+      await new Promise(r => setTimeout(r, 20));   // let each async append land
+    }
+    await new Promise(r => setTimeout(r, 150));
+    assert.ok(fs.existsSync(nodePath.join(dir, 'games.1.jsonl')), 'it rotated');
+    const live = fs.statSync(nodePath.join(dir, 'games.jsonl')).size;
+    assert.ok(live < 20000, `the live file stays bounded (${live} bytes)`);
+  });
+});

@@ -51,10 +51,15 @@ function seedFromEnv(env = process.env) {
 const MIN_HUMAN_TURN_TIMEOUT = 30;
 const MIN_HUMAN_RESPONSE_TIMEOUT = 15;
 
-function startRoomGame(room, turnTimeout = 60, responseTimeout = 30, winRule) {
+function startRoomGame(room, turnTimeout = 60, responseTimeout = 30, ruleOpts) {
   room.phase = 'playing';
-  // Room setting, chosen in the lobby next to the timers. Sticky across rematches.
-  room.winRule = G.normalizeWinRule(winRule !== undefined ? winRule : room.winRule);
+  // Room ruleset, chosen in the lobby next to the timers. A preset supplies the base and
+  // any individual toggle overrides it; resolution happens HERE, server-side, so a preset
+  // is never a client-side illusion. Sticky across rematches (ruleOpts undefined = keep).
+  room.rules = ruleOpts === undefined
+    ? (room.rules || G.resolveRules({}))
+    : G.resolveRules(ruleOpts);
+  room.winRule = room.rules.winRule;   // legacy field, kept in sync
   room.turnTimeout = Math.max(0, Math.min(300, Number(turnTimeout) || 0));
   room.responseTimeout = Math.max(0, Math.min(120, Number(responseTimeout) || 0));
   const humans = room.players.filter(p => !p.isBot).length;
@@ -64,7 +69,7 @@ function startRoomGame(room, turnTimeout = 60, responseTimeout = 30, winRule) {
   }
   room.gameCount = (room.gameCount || 0) + 1;
   const seedBase = seedFromEnv();
-  const options = { winRule: room.winRule };
+  const options = { ...room.rules };
   if (seedBase !== null) options.seed = `${seedBase}#${room.gameCount}`;
   room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })), options);
   if (room.turnTimeout > 0) timers.startTurnTimer(room);
@@ -262,8 +267,14 @@ function handleMessage(ws, msg, state) {
       const room = rooms.get(roomCode);
       if (!room || room.hostId !== playerId) { broadcast.send(ws, { type: 'error', message: 'Only host can start' }); break; }
       if (room.players.length < 2) { broadcast.send(ws, { type: 'error', message: 'Need at least 2 players' }); break; }
-      startRoomGame(room, msg.turnTimeout, msg.responseTimeout, msg.winRule);
-      console.log(`[GAME] ${roomCode} started with ${room.players.length} players, timeout=${room.turnTimeout}s, responseTimeout=${room.responseTimeout}s, winRule=${room.winRule}`);
+      startRoomGame(room, msg.turnTimeout, msg.responseTimeout, {
+        preset: msg.preset,
+        winRule: msg.winRule,
+        setsToWin: msg.setsToWin,
+        pureSetRequired: msg.pureSetRequired,
+        passGoRestartsTurn: msg.passGoRestartsTurn,
+      });
+      console.log(`[GAME] ${roomCode} started with ${room.players.length} players, timeout=${room.turnTimeout}s, responseTimeout=${room.responseTimeout}s, rules=${JSON.stringify(room.rules)}`);
       break;
     }
 

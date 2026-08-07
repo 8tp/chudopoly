@@ -129,6 +129,20 @@ function autoPickPayment(player, amount) {
     total += c.value;
   }
 
+  // §3.1b — upgrades are payable, and are spent before properties.
+  if (total < amount) {
+    const upgrades = [];
+    for (const list of Object.values(player.upgrades || {})) {
+      for (const u of list || []) if (u && typeof u === 'object') upgrades.push(u);
+    }
+    upgrades.sort((a, b) => a.value - b.value);
+    for (const c of upgrades) {
+      if (total >= amount) break;
+      cards.push(c.id);
+      total += c.value;
+    }
+  }
+
   if (total < amount) {
     const allProps = [];
     for (const propCards of Object.values(player.properties || {})) {

@@ -68,10 +68,23 @@ function assertNoLeak(state) {
   for (const viewer of state.players) {
     const view = G.getPlayerView(state, viewer.id);
     const hidden = hiddenHandIds(state, viewer.id);
-    const exposed = collectCardIds(view);
+
+    // The SNAPSHOT must never place another player's hand card in a visible zone.
+    // `events` is scanned separately below: it is a log of things that were public WHEN
+    // THEY HAPPENED, and after a reshuffle a publicly-played card legitimately returns to
+    // somebody's hand. "p1 played PCS Orders 40 turns ago" does not say where it is now.
+    const exposed = collectCardIds({ ...view, events: [] });
     for (const id of hidden) {
       assert.equal(exposed.has(id), false,
         `card ${id} is in another player's hand but appears in ${viewer.id}'s view`);
+    }
+
+    // §4/§10 redaction rule: only the drawer's own draw/deal events may carry card ids.
+    for (const event of view.events) {
+      if ((event.t === 'draw' || event.t === 'deal') && event.to !== viewer.id) {
+        assert.equal(event.cards, undefined,
+          `${event.t} event for ${event.to} leaked card ids to ${viewer.id}`);
+      }
     }
     // own hand is visible, other hands are counts only
     for (const p of view.players) {

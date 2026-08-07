@@ -6,3 +6,6 @@ node_modules/
 tools/shots/
 tools/fixtures/session-*.json
 .claude/worktrees/
+
+# Durable per-game records (server/gamelog.js)
+logs/

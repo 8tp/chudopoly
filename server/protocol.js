@@ -8,6 +8,9 @@ const MESSAGE_TYPES = new Set([
 ]);
 const BOT_MODES = new Set(['random', 'conservative', 'neutral', 'aggressive', 'chud']);
 const WIN_RULES = new Set(['finalApproach', 'mdFaithful', 'instant']);
+const RULE_PRESETS = new Set(['chudopoly', 'mdFaithful', 'blitz', 'longGame']);
+const SETS_TO_WIN = new Set([3, 4, 5]);
+function validOptionalBool(value) { return value === undefined || typeof value === 'boolean'; }
 const COLORS = new Set(['brown', 'lightblue', 'pink', 'orange', 'red', 'yellow', 'green', 'darkblue', 'base', 'intel']);
 const ID_PATTERN = /^[a-f0-9-]{16,64}$/i;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
@@ -59,8 +62,14 @@ function validateMessage(message) {
       break;
     case 'start_game':
       if (!isInt(message.turnTimeout, 0, 300) || !isInt(message.responseTimeout, 0, 120)) return fail('Invalid timer setting');
-      // Additive and backward-compatible: an absent winRule means 'finalApproach'.
+      // Every rule field is additive and backward-compatible: absent means the Chudopoly
+      // default. A preset supplies the base; individual toggles override it. Presets are
+      // resolved server-side (game.js resolveRules), never trusted from the client.
+      if (message.preset !== undefined && !RULE_PRESETS.has(message.preset)) return fail('Invalid rule preset');
       if (message.winRule !== undefined && !WIN_RULES.has(message.winRule)) return fail('Invalid win rule');
+      if (message.setsToWin !== undefined && !SETS_TO_WIN.has(message.setsToWin)) return fail('Invalid sets to win (3, 4 or 5)');
+      if (!validOptionalBool(message.pureSetRequired)) return fail('Invalid pure-set setting');
+      if (!validOptionalBool(message.passGoRestartsTurn)) return fail('Invalid PCS Orders setting');
       break;
     case 'play_money':
       if (!isInt(message.cardIndex, 0, 110)) return fail('Invalid card index');

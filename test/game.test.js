@@ -108,7 +108,7 @@ test('PCS, Upgrade, FOC, and Surge actions preserve cards', () => {
   assert.ok(G.playAction(state, 'p1', 0, { targetColor:'brown' }).ok);
   assert.ok(G.playAction(state, 'p1', 0, {}).ok);
   assert.deepEqual(G.upgradeKinds(p1, 'brown'), ['house', 'hotel']);
-  assert.equal(state._surgeOps, true);
+  assert.equal(state._surgeOps, 1);   // §3.1c: a counter now, not a boolean
   assert.equal(events(state, 'upgrade').length, 2);
   assertHealthy(state);
 
@@ -118,41 +118,65 @@ test('PCS, Upgrade, FOC, and Surge actions preserve cards', () => {
   assertHealthy(pcsState);
 });
 
-test('Surge Operations doubles the next charge of any kind, once', () => {
-  // Finance Office 5M → 10M
+test('Surge Operations stacks and applies to RENT ONLY (§3.1c)', () => {
+  // Hasbro's Double The Rent: it never touches Finance Office.
   const finance = game();
   give(finance, finance.players[0], c => c.action === 'surge_ops');
   give(finance, finance.players[0], c => c.action === 'finance_office');
-  give(finance, finance.players[0], c => c.action === 'finance_office');
   assert.ok(G.playAction(finance, 'p1', 0, {}).ok);
   assert.ok(G.playAction(finance, 'p1', 0, { targetId:'p2' }).ok);
-  assert.equal(finance.pendingAction.amount, 10);
-  assert.equal(finance.pendingAction.doubled, true);
-  assert.equal(finance._surgeOps, undefined);
-  G.respondToAction(finance, 'p2', 'accept');
-  // second demand is back to face value
-  assert.ok(G.playAction(finance, 'p1', 0, { targetId:'p2' }).ok);
-  assert.equal(finance.pendingAction.amount, 5);
+  assert.equal(finance.pendingAction.amount, 5, 'Finance Office is never surged');
+  assert.equal(finance.pendingAction.doubled, false);
+  assert.equal(finance._surgeOps, 1, 'and the surge is NOT consumed by it');
   assertHealthy(finance);
 
-  // Roll Call 2M → 4M
+  // Nor Roll Call.
   const roll = game(3);
   give(roll, roll.players[0], c => c.action === 'surge_ops');
   give(roll, roll.players[0], c => c.action === 'roll_call');
   assert.ok(G.playAction(roll, 'p1', 0, {}).ok);
   assert.ok(G.playAction(roll, 'p1', 0, {}).ok);
-  assert.equal(roll.pendingAction.amount, 4);
+  assert.equal(roll.pendingAction.amount, 2, 'Roll Call is never surged');
   assert.equal(roll.pendingAction.targets.length, 2);
+  assertHealthy(roll);
 
-  // Rent doubles too, and Surge expires at end of turn
+  // Rent IS surged, and one surge doubles it.
   const rent = game();
   property(rent, rent.players[0], 'brown');
   give(rent, rent.players[0], c => c.action === 'surge_ops');
   give(rent, rent.players[0], c => c.type === 'rent' && c.colors.includes('brown'));
   assert.ok(G.playAction(rent, 'p1', 0, {}).ok);
   assert.ok(G.playAction(rent, 'p1', 0, { targetColor:'brown' }).ok);
-  assert.equal(rent.pendingAction.amount, 2);
+  assert.equal(rent.pendingAction.amount, 2, '1M base rent x2');
   assert.equal(events(rent, 'rent_charged')[0].doubled, true);
+  assert.equal(rent._surgeOps, undefined, 'consumed by the rent');
+  assertHealthy(rent);
+
+  // Two copies stack to x4, spending two of the three plays (MD explicitly allows it).
+  const stacked = game();
+  property(stacked, stacked.players[0], 'brown');
+  give(stacked, stacked.players[0], c => c.action === 'surge_ops');
+  give(stacked, stacked.players[0], c => c.action === 'surge_ops');
+  give(stacked, stacked.players[0], c => c.type === 'rent' && c.colors.includes('brown'));
+  assert.ok(G.playAction(stacked, 'p1', 0, {}).ok);
+  assert.ok(G.playAction(stacked, 'p1', 0, {}).ok, 'a second Surge is legal, not refused');
+  assert.equal(stacked._surgeOps, 2);
+  assert.equal(stacked.playsRemaining, 1, 'two of three plays spent');
+  assert.ok(G.playAction(stacked, 'p1', 0, { targetColor:'brown' }).ok);
+  assert.equal(stacked.pendingAction.amount, 4, '1M base rent x4');
+  assert.equal(G.getPlayerView(stacked, 'p1').surgeOps, 0);
+  assertHealthy(stacked);
+});
+
+test('a surge that is never spent expires at end of turn', () => {
+  const state = game();
+  give(state, state.players[0], c => c.action === 'surge_ops');
+  assert.ok(G.playAction(state, 'p1', 0, {}).ok);
+  assert.equal(state._surgeOps, 1);
+  assert.equal(G.getPlayerView(state, 'p1').surgeOps, 1);
+  assert.equal(G.getPlayerView(state, 'p1').surgeMultiplier, 2);
+  assert.ok(G.endTurn(state, 'p1').ok);
+  assert.equal(state._surgeOps, undefined);
 });
 
 test('Finance payment and OPSEC counter chain resolve correctly', () => {
@@ -372,20 +396,22 @@ test('short payments are rejected unless everything is surrendered', () => {
   assertHealthy(state);
 });
 
-test('upgrades are not payable but do count in net worth (§3.7)', () => {
+test('upgrades are payable and net worth equals payable value (§3.1b)', () => {
   const state = game();
   const p1 = state.players[0];
   property(state, p1, 'brown'); property(state, p1, 'brown');
   give(state, p1, c => c.action === 'upgrade');
   assert.ok(G.playAction(state, 'p1', 0, { targetColor:'brown' }).ok);
   assert.equal(G.playerUpgradeValue(p1), 3);
-  assert.equal(G.playerTotalValue(p1), 2);
+  assert.equal(G.playerTotalValue(p1), 5, 'the 2M of brown plus the 3M Upgrade');
   assert.equal(G.playerNetWorth(p1), 5);
-  assert.equal(G.payableCards(p1).some(c => c.upgradeType), false);
+  assert.equal(G.payableCards(p1).some(c => c.upgradeType === 'house'), true,
+    'the Upgrade can now actually be handed over');
   const view = G.getPlayerView(state, 'p1').players[0];
   assert.equal(view.upgradeValue, 3);
+  // The old HUD lie: netWorth counted the upgrade while payableValue did not.
+  assert.equal(view.netWorth, view.payableValue);
   assert.equal(view.netWorth, 5);
-  assert.equal(view.payableValue, 2);
   assertHealthy(state);
 });
 

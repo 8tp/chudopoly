@@ -119,8 +119,10 @@ function findArmed(players, exceptId) {
 function completeSetCards(player) {
   const out = [];
   for (const [color, cards] of Object.entries(player.properties)) {
-    const info = G.COLORS[color];
-    if (!info || cards.length !== info.size) continue;
+    // Must be isSetComplete, not "zone is full": under the pureSetRequired toggle a zone
+    // full of nothing but wilds is NOT a set, and Inspector General refuses it. Measured:
+    // 7 refused IG plays across 1,440 mdFaithful games before this.
+    if (!G.isSetComplete(player, color)) continue;
     for (const card of cards) out.push({ color, card });
   }
   return out;
@@ -153,22 +155,10 @@ function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
     return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:best.card.id };
   }
 
-  // 3. TDY Orders — a swap is not a steal, so the complete-set guard does not apply.
-  for (let i = 0; i < hand.length; i++) {
-    if (hand[i].action !== 'tdy_orders') continue;
-    let mine = null;
-    for (const [color, cards] of Object.entries(bot.properties)) {
-      for (const card of cards) {
-        if (G.isSetComplete(bot, color)) continue;
-        if (!mine || card.value < mine.value) mine = card;
-      }
-    }
-    if (!mine) continue;
-    return {
-      type:'play_action', cardIndex:i, targetId:victim.id,
-      myCardId:mine.id, targetCardId:theirSets[0].card.id,
-    };
-  }
+  // 3. TDY Orders is NOT a break tool any more. §3.1 was reversed on 2026-08-06: Hasbro
+  //    FAQ 926 bars Forced Deal from complete sets on both sides, so a swap can no longer
+  //    reach into the set that arms a final approach. Proposing one here would just burn
+  //    the turn on a move the engine refuses.
 
   // 4. Midnight Requisition still cannot touch an exact set — only an overflowed zone.
   for (let i = 0; i < hand.length; i++) {
@@ -1508,13 +1498,23 @@ function findRandomStealTarget(opponents) {
 
 /* ── Swap targets (TDY Orders) ──────────────────────────────────────── */
 
+// §3.1 (reversed 2026-08-06, Hasbro FAQ 926) — TDY Orders may not take a card OUT of a
+// complete set nor give one out of yours. Every swap finder filters both sides through
+// this; without it the bot proposes a move playAction() refuses and burns its turn.
+function swappableCards(player) {
+  const out = [];
+  for (const [color, cards] of Object.entries(player.properties || {})) {
+    if (!G.zoneRequisitionable(player, color)) continue;
+    for (const card of cards) out.push({ color, card });
+  }
+  return out;
+}
+
 function findSmartSwapTarget(bot, opponents) {
   let myWorst = null;
-  for (const [col, cards] of Object.entries(bot.properties)) {
-    if (cards.length !== 1) continue;
-    for (const c of cards) {
-      if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value, color: col };
-    }
+  for (const { color: col, card: c } of swappableCards(bot)) {
+    if ((bot.properties[col] || []).length !== 1) continue;
+    if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value, color: col };
   }
   if (!myWorst) return null;
 
@@ -1522,8 +1522,8 @@ function findSmartSwapTarget(bot, opponents) {
     const have = (bot.properties[color] || []).length;
     if (have > 0 && have < info.size && color !== myWorst.color) {
       for (const opp of opponents) {
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) {
+        if (!G.zoneRequisitionable(opp, color)) continue;
+        for (const c of (opp.properties[color] || [])) {
           return { targetPlayerId: opp.id, targetCardId: c.id, myCardId: myWorst.cardId };
         }
       }
@@ -1534,20 +1534,16 @@ function findSmartSwapTarget(bot, opponents) {
 
 function findAggressiveSwapTarget(bot, opponents) {
   let myWorst = null;
-  for (const [col, cards] of Object.entries(bot.properties)) {
-    for (const c of cards) {
-      if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value };
-    }
+  for (const { card: c } of swappableCards(bot)) {
+    if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value };
   }
   if (!myWorst) return null;
 
   let theirBest = null;
   for (const opp of opponents) {
-    for (const cards of Object.values(opp.properties)) {
-      for (const c of cards) {
-        if (c.value > myWorst.value && (!theirBest || c.value > theirBest.value)) {
-          theirBest = { targetPlayerId: opp.id, targetCardId: c.id, myCardId: myWorst.cardId, value: c.value };
-        }
+    for (const { card: c } of swappableCards(opp)) {
+      if (c.value > myWorst.value && (!theirBest || c.value > theirBest.value)) {
+        theirBest = { targetPlayerId: opp.id, targetCardId: c.id, myCardId: myWorst.cardId, value: c.value };
       }
     }
   }
@@ -1555,17 +1551,12 @@ function findAggressiveSwapTarget(bot, opponents) {
 }
 
 function findRandomSwapTarget(bot, opponents) {
-  const myCards = [];
-  for (const cards of Object.values(bot.properties)) {
-    for (const c of cards) myCards.push(c.id);
-  }
+  const myCards = swappableCards(bot).map(e => e.card.id);
   if (myCards.length === 0) return null;
 
   const theirCards = [];
   for (const opp of opponents) {
-    for (const cards of Object.values(opp.properties)) {
-      for (const c of cards) theirCards.push({ playerId: opp.id, cardId: c.id });
-    }
+    for (const { card: c } of swappableCards(opp)) theirCards.push({ playerId: opp.id, cardId: c.id });
   }
   if (theirCards.length === 0) return null;
 
@@ -1588,12 +1579,23 @@ function findUpgradeableSet(bot, type) {
 
 /* ── Payment selection ──────────────────────────────────────────────── */
 
+// Bank first, then upgrades, then properties: a House costs rent, a property can cost a set.
+const PAY_RANK = { bank: 0, upgrade: 1, prop: 2 };
+const bySource = (a, b) => PAY_RANK[a.source] - PAY_RANK[b.source];
+
 function selectPaymentCards(bot, amount, mode) {
   const cards = [];
   bot.bank.forEach(c => cards.push({ id: c.id, value: c.value, source: 'bank' }));
   for (const [color, propCards] of Object.entries(bot.properties)) {
     const setProgress = (propCards.length || 0) / (G.COLORS[color]?.size || 99);
     propCards.forEach(c => cards.push({ id: c.id, value: c.value, source: 'prop', color, setProgress }));
+  }
+  // §3.1b — upgrades are payable. Spent after the bank but before properties: handing over
+  // a House costs rent, handing over a property can cost a whole set.
+  for (const [color, ups] of Object.entries(bot.upgrades || {})) {
+    for (const u of ups) {
+      if (u && typeof u === 'object') cards.push({ id: u.id, value: u.value, source: 'upgrade', color });
+    }
   }
   if (cards.length === 0) return [];
 
@@ -1602,13 +1604,13 @@ function selectPaymentCards(bot, amount, mode) {
       // Chaotic order, but the bank goes first — feeding properties to the table while
       // sitting on cash was worth ~3 points of chud winrate.
       shuffle(cards);
-      cards.sort((a, b) => (a.source === b.source ? 0 : a.source === 'bank' ? -1 : 1));
+      cards.sort(bySource);
       break;
 
     case 'conservative':
       // Bank first (smallest), protect near-complete sets
       cards.sort((a, b) => {
-        if (a.source !== b.source) return a.source === 'bank' ? -1 : 1;
+        if (a.source !== b.source) return bySource(a, b);
         if (a.source === 'prop') return (a.setProgress || 0) - (b.setProgress || 0);
         return a.value - b.value;
       });
@@ -1628,12 +1630,12 @@ function selectPaymentCards(bot, amount, mode) {
       // Random order *within* each pool, but cash before property: paying with random
       // properties while holding cash cost random ~2 points of winrate (4.5% → 6.6%).
       shuffle(cards);
-      cards.sort((a, b) => (a.source === b.source ? 0 : a.source === 'bank' ? -1 : 1));
+      cards.sort(bySource);
       break;
 
     default: // neutral
       cards.sort((a, b) => {
-        if (a.source !== b.source) return a.source === 'bank' ? -1 : 1;
+        if (a.source !== b.source) return bySource(a, b);
         if (a.source === 'prop') return (a.setProgress || 0) - (b.setProgress || 0);
         return a.value - b.value;
       });
@@ -1656,13 +1658,12 @@ function selectPaymentCards(bot, amount, mode) {
   return selected;
 }
 
+// Must mirror G.payableCards() exactly. §3.1b made upgrades payable, and the engine only
+// accepts a short payment when EVERY payable card is surrendered — omitting the upgrades
+// here made the "pay with everything" fallback fail forever (measured: 82k refusals and
+// 7/400 games that never reached an ending).
 function getAllPayableCardIds(bot) {
-  const ids = [];
-  bot.bank.forEach(c => ids.push(c.id));
-  for (const cards of Object.values(bot.properties)) {
-    cards.forEach(c => ids.push(c.id));
-  }
-  return ids;
+  return G.payableCards(bot).map(c => c.id);
 }
 
 /* ── Discard selection ──────────────────────────────────────────────── */

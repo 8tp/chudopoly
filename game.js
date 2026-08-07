@@ -32,6 +32,57 @@ const DEFAULT_WIN_RULE = 'finalApproach';
 function normalizeWinRule(value) {
   return WIN_RULES.includes(value) ? value : DEFAULT_WIN_RULE;
 }
+
+/* ── Rule presets and toggles (§3, owner directive 2026-08-06) ────────── */
+
+const SETS_TO_WIN_CHOICES = [3, 4, 5];
+function normalizeSetsToWin(value) {
+  const n = Number(value);
+  return SETS_TO_WIN_CHOICES.includes(n) ? n : SETS_TO_WIN;
+}
+
+// Four one-tap lobby presets. Resolved SERVER-SIDE so a preset is never a client illusion.
+const RULE_PRESETS = {
+  chudopoly: { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false },
+  mdFaithful: { winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, passGoRestartsTurn: false },
+  blitz: { winRule: 'instant', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true },
+  longGame: { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false },
+};
+const PRESET_NAMES = Object.keys(RULE_PRESETS);
+const DEFAULT_PRESET = 'chudopoly';
+const RULE_KEYS = ['winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn'];
+
+// opts → the resolved ruleset. A named preset supplies the base; any individual toggle the
+// lobby also sent overrides it. `preset` in the result is the preset the resolved values
+// actually match, or 'custom' — so the client can never label a mixed ruleset as a preset.
+function resolveRules(opts = {}) {
+  const named = RULE_PRESETS[opts && opts.preset] ? opts.preset : DEFAULT_PRESET;
+  const rules = { ...RULE_PRESETS[named] };
+  if (opts && opts.winRule !== undefined) rules.winRule = normalizeWinRule(opts.winRule);
+  if (opts && opts.setsToWin !== undefined) rules.setsToWin = normalizeSetsToWin(opts.setsToWin);
+  if (opts && opts.pureSetRequired !== undefined) rules.pureSetRequired = !!opts.pureSetRequired;
+  if (opts && opts.passGoRestartsTurn !== undefined) rules.passGoRestartsTurn = !!opts.passGoRestartsTurn;
+  const match = PRESET_NAMES.find(name =>
+    RULE_KEYS.every(key => RULE_PRESETS[name][key] === rules[key]));
+  return { preset: match || 'custom', ...rules };
+}
+
+const DEFAULT_RULES = resolveRules({});
+
+// Set-completion rules are per-game, but completedSets()/isSetComplete() are called with a
+// player and nothing else from bot.js and simulate.js in ~30 places. Rather than churn every
+// signature, createGame stamps the resolved ruleset on each player as a NON-ENUMERABLE
+// property — the same trick state._rng uses, so it can never reach a broadcast or a JSON
+// snapshot.
+function rulesOf(player) {
+  return (player && player._rules) || DEFAULT_RULES;
+}
+function rulesFor(state) {
+  return (state && state.rules) || DEFAULT_RULES;
+}
+function setsToWinOf(state) {
+  return rulesFor(state).setsToWin;
+}
 const EVENT_TAIL = 120;          // broadcast tail size (ARCHITECTURE §4)
 // Attrition cap. The §3.10 grace cycle stretched 5-player bot games from p99 63 turns to
 // p99 387 (max 401) because every break scatters a finished set. Ending the game on points
@@ -91,7 +142,7 @@ function buildDeck() {
     ['inspector_general','Inspector General',5,'Steal a complete property set from any player. OPSEC can block it.',2],
     ['opsec','OPSEC',4,'Counter any action card played against you. Can itself be countered by another OPSEC.',3],
     ['midnight_requisition','Midnight Requisition',3,'Steal a single property from any player. Cannot touch a complete set.',3],
-    ['tdy_orders','TDY Orders',3,'Swap one of your properties for one of another player\'s',3],
+    ['tdy_orders','TDY Orders',3,'Swap one of your properties for one of another player\'s. Neither card may come from a complete set.',3],
     ['finance_office','Finance Office',3,'Collect 5M from any one player',3],
     ['roll_call','Roll Call',2,'All other players pay you 2M each',3],
     ['pcs_orders','PCS Orders',1,'Draw 2 extra cards from the deck',10],
@@ -221,6 +272,7 @@ function createGame(players, opts = {}) {
   const seed = opts && opts.seed !== undefined ? opts.seed : undefined;
   const rand = makeRng(seed);
   const deck = shuffle(buildDeck(), rand);
+  const rules = resolveRules(opts);
   const state = {
     phase: 'playing',
     turnPhase: 'draw',
@@ -241,7 +293,8 @@ function createGame(players, opts = {}) {
     cardTotal: deck.length,
     shuffleCount: 0,
     turnCounter: 0,
-    winRule: normalizeWinRule(opts && opts.winRule),
+    rules,
+    winRule: rules.winRule,          // alias kept: already shipped to the client agents
     seed: seed === undefined ? null : seed,
     events: [],
     eventSeq: 0,
@@ -255,12 +308,17 @@ function createGame(players, opts = {}) {
   };
   // Non-enumerable: the RNG must never end up in a broadcast or a JSON snapshot.
   Object.defineProperty(state, '_rng', { value: rand, enumerable: false, writable: true });
+  // Non-enumerable, so set-completion rules travel with the player without ever serializing.
+  for (const p of state.players) {
+    Object.defineProperty(p, '_rules', { value: rules, enumerable: false, writable: true });
+  }
 
   emit(state, 'game_start', {
     order: state.players.map(p => p.id),
     names: Object.fromEntries(state.players.map(p => [p.id, p.name])),
     winRule: state.winRule,
-    setsToWin: SETS_TO_WIN,
+    setsToWin: rules.setsToWin,
+    rules,
   });
 
   state.players.forEach(p => {
@@ -287,20 +345,24 @@ function getPlayer(state, id) {
   return state.players.find(p => p.id === id);
 }
 
+// `pureSetRequired` (lobby toggle, ON in the MD Faithful preset): a full zone only counts as
+// a SET if at least one card in it is a real property. Our 2-card zones make all-wild sets
+// otherwise trivial. It is only ever a completeness question — the zone cap is unchanged.
+function zoneIsSet(player, color, cards) {
+  const info = COLORS[color];
+  if (!info || !cards || cards.length < info.size) return false;
+  if (rulesOf(player).pureSetRequired && !cards.some(c => c.type === 'property')) return false;
+  return true;
+}
+
 function completedSets(player) {
-  let count = 0;
-  for (const [color, cards] of Object.entries(player.properties)) {
-    const info = COLORS[color];
-    if (info && cards.length >= info.size) count++;
-  }
-  return count;
+  return completedColors(player).size;
 }
 
 function completedColors(player) {
   const set = new Set();
   for (const [color, cards] of Object.entries(player.properties)) {
-    const info = COLORS[color];
-    if (info && cards.length >= info.size) set.add(color);
+    if (zoneIsSet(player, color, cards)) set.add(color);
   }
   return set;
 }
@@ -315,7 +377,7 @@ function syncSets(state, player, before, byId = null) {
   for (const color of after) {
     if (before.has(color)) continue;
     logLine(state, player.name + ' completed the ' + COLORS[color].name + ' set — '
-      + after.size + ' of ' + SETS_TO_WIN + '.');
+      + after.size + ' of ' + setsToWinOf(state) + '.');
     emit(state, 'set_completed', { actor: player.id, color, total: after.size });
   }
 
@@ -328,14 +390,14 @@ function syncSets(state, player, before, byId = null) {
   // Nothing is ever armed, so no final_approach / final_approach_broken event can be
   // emitted and no HUD countdown can be rendered.
   if (state.winRule === 'instant') {
-    if (sets >= SETS_TO_WIN && !player.eliminated) {
+    if (sets >= setsToWinOf(state) && !player.eliminated) {
       finishGame(state, player.id, 'sets',
         player.name + ' wins with ' + sets + ' complete sets!');
     }
     return;
   }
 
-  if (sets >= SETS_TO_WIN && !player.finalApproach && !player.eliminated) {
+  if (sets >= setsToWinOf(state) && !player.finalApproach && !player.eliminated) {
     player.finalApproach = true;
     player.armedAtTurn = state.turnCounter || 0;
     const onOwnTurn = currentPlayer(state).id === player.id;
@@ -351,7 +413,7 @@ function syncSets(state, player, before, byId = null) {
       opponentTurnsRemaining: opponents,
       checkpointTurn: forecast ? forecast.turn : null,
     });
-  } else if (sets < SETS_TO_WIN && player.finalApproach) {
+  } else if (sets < setsToWinOf(state) && player.finalApproach) {
     player.finalApproach = false;
     delete player.armedAtTurn;
     const by = byId && byId !== player.id ? byId : null;
@@ -441,8 +503,24 @@ function resolveFinalApproach(state, player) {
   if (state.winRule === 'instant') return false;   // nothing is ever armed under 'instant'
   if (!player || player.eliminated || !player.finalApproach) return false;
   const sets = completedSets(player);
-  if (sets < SETS_TO_WIN) { player.finalApproach = false; delete player.armedAtTurn; return false; }
-  if (!checkpointReached(state, player)) return false;   // the table has not answered yet
+  if (sets < setsToWinOf(state)) { player.finalApproach = false; delete player.armedAtTurn; return false; }
+  if (!checkpointReached(state, player)) {
+    // The table has not answered yet. This is the exact moment a real player reported as
+    // "I had 3 sets, I finished my turn, and someone else won" — an off-turn arming under
+    // the strict full-cycle rule does NOT convert at your very next own turn. Say so out
+    // loud instead of starting the turn in silence.
+    const forecast = checkpointForecast(state, player);
+    logLine(state, player.name + ' is still on FINAL APPROACH — the win locks in at the'
+      + ' start of their turn on turn ' + (forecast ? forecast.turn : '?')
+      + ', not this one.');
+    emit(state, 'final_approach_pending', {
+      actor: player.id,
+      sets,
+      checkpointTurn: forecast ? forecast.turn : null,
+      opponentTurnsRemaining: forecast ? forecast.opponents : null,
+    });
+    return false;
+  }
   return finishGame(state, player.id, 'sets',
     player.name + ' held the final approach and wins with ' + sets + ' complete sets!');
 }
@@ -496,9 +574,7 @@ function checkWin(state, playerId) {
 }
 
 function isSetComplete(player, color) {
-  const info = COLORS[color];
-  if (!info) return false;
-  return (player.properties[color] || []).length >= info.size;
+  return zoneIsSet(player, color, player.properties[color] || []);
 }
 
 // §3.5 — a color zone holds at most `set size` property cards.
@@ -508,14 +584,12 @@ function zoneFull(player, color) {
   return !info || zoneCount(player, color) >= info.size;
 }
 
-// Midnight Requisition may not touch a complete set (its own card text). Written `n < size`
-// rather than `n !== size` so that even if a zone were ever overfull it would still read as
-// complete — the old `!==` turned a 3/2 darkblue zone into a legal Requisition target.
+// Midnight Requisition and TDY Orders may not touch a complete SET (their own card text).
+// Expressed as "not a set" rather than `n < size` so it stays correct under
+// pureSetRequired, where a full zone of nothing but wilds is not a set and IS fair game.
 function zoneRequisitionable(player, color) {
-  const info = COLORS[color];
-  if (!info) return false;
-  const n = zoneCount(player, color);
-  return n > 0 && n < info.size;
+  if (!COLORS[color]) return false;
+  return zoneCount(player, color) > 0 && !isSetComplete(player, color);
 }
 
 function legalColorsFor(card) {
@@ -604,11 +678,16 @@ function calcRent(player, color) {
 }
 
 // Value a player can actually hand over. Upgrades are never payable (§3.7).
+// §3.1b (2026-08-06) — upgrades ARE payable now ("all cards except the 2 Wild Property
+// cards have cash value and may be used to pay debts"). This supersedes §3.7's "off-limits
+// as payment" half and closes the HUD lie: net worth used to count upgrade value while
+// payableCards() excluded it, so the panel showed money that could not be spent.
 function playerTotalValue(player) {
   let total = 0;
   player.bank.forEach(c => total += c.value);
   for (const cards of Object.values(player.properties))
     cards.forEach(c => total += c.value);
+  total += playerUpgradeValue(player);
   return total;
 }
 
@@ -619,15 +698,18 @@ function playerUpgradeValue(player) {
   return total;
 }
 
-// §3.7 — upgrades are off-limits as payment but must be visible in net worth.
+// Net worth and payable value are now the same number, by design.
 function playerNetWorth(player) {
-  return playerTotalValue(player) + playerUpgradeValue(player);
+  return playerTotalValue(player);
 }
 
 function payableCards(player) {
   const out = [];
   player.bank.forEach(c => out.push(c));
   for (const cards of Object.values(player.properties)) cards.forEach(c => out.push(c));
+  for (const upgrades of Object.values(player.upgrades || {})) {
+    for (const u of upgrades) if (u && typeof u === 'object') out.push(u);
+  }
   return out;
 }
 
@@ -684,7 +766,7 @@ function mergeUpgrades(state, player, color, incoming) {
   for (const upgrade of incoming || []) {
     const kind = typeof upgrade === 'string' ? upgrade : upgrade?.upgradeType;
     if (upgradeKinds(player, color).includes(kind)) {
-      if (upgrade && typeof upgrade === 'object') state.discardPile.push(upgrade);
+      bankUpgradeCard(state, player, upgrade, color);
       continue;
     }
     list.push(upgrade);
@@ -692,12 +774,45 @@ function mergeUpgrades(state, player, color, incoming) {
   if (list.length === 0) delete player.upgrades[color];
 }
 
-function discardUpgrades(state, player, color) {
+// §3.1b — an upgrade that leaves a set goes to the OWNER'S BANK, never the discard
+// (Hasbro CS: "those houses and hotels have to go into your bank").
+//
+// The trap: a banked upgrade still carries `upgradeType`, and publicCard() copies it — the
+// client would render a house sitting in a bank. Both tags are stripped on the way out, so
+// what lands in the bank is an ordinary action card worth its face value.
+function bankUpgradeCard(state, player, upgrade, color) {
+  if (!upgrade || typeof upgrade !== 'object') return null;
+  delete upgrade.upgradeType;
+  delete upgrade.placedColor;
+  player.bank.push(upgrade);
+  emit(state, 'upgrade_banked', {
+    actor: player.id, color, card: publicCard(upgrade),
+  });
+  return upgrade;
+}
+
+function bankUpgrades(state, player, color) {
   const upgrades = player.upgrades[color] || [];
-  for (const upgrade of upgrades) {
-    if (upgrade && typeof upgrade === 'object') state.discardPile.push(upgrade);
+  if (upgrades.length) {
+    for (const upgrade of upgrades) bankUpgradeCard(state, player, upgrade, color);
+    logLine(state, player.name + '\'s ' + (COLORS[color]?.name || color)
+      + ' set broke — its upgrades go to the bank.');
   }
   delete player.upgrades[color];
+}
+
+// FOC may not stand without an Upgrade beneath it. Called after anything removes an
+// upgrade from a set so a lone hotel can never keep paying +4M rent.
+function normalizeUpgrades(state, player, color) {
+  const kinds = upgradeKinds(player, color);
+  if (!kinds.includes('hotel') || kinds.includes('house')) return;
+  const list = player.upgrades[color] || [];
+  for (const upgrade of list.slice()) {
+    if ((upgrade?.upgradeType) !== 'hotel') continue;
+    list.splice(list.indexOf(upgrade), 1);
+    bankUpgradeCard(state, player, upgrade, color);
+  }
+  if (list.length === 0) delete player.upgrades[color];
 }
 
 function recordCardPlay(state, playerId) {
@@ -872,9 +987,16 @@ function startPending(state, base, targetIds) {
 }
 
 // §3.3 — Surge Ops doubles the NEXT charge of any kind this turn.
-function chargeAmount(state, base) {
-  if (state._surgeOps) { delete state._surgeOps; return { amount: base * 2, doubled: true }; }
-  return { amount: base, doubled: false };
+// §3.1c — Surge Ops follows Double The Rent: it STACKS (two copies = x4, spending two of
+// your three plays) and applies to RENT ONLY. Both were backwards: it was a single boolean
+// and it doubled Finance Office and Roll Call too. `state._surgeOps` is now a counter and
+// only the rent branch passes surgeable:true.
+function chargeAmount(state, base, { surgeable = false } = {}) {
+  const stack = state._surgeOps || 0;
+  if (!surgeable || stack <= 0) return { amount: base, doubled: false, multiplier: 1, surges: 0 };
+  delete state._surgeOps;
+  const multiplier = 2 ** stack;
+  return { amount: base * multiplier, doubled: true, multiplier, surges: stack };
 }
 
 function playAction(state, playerId, cardIndex, opts) {
@@ -911,8 +1033,14 @@ function playAction(state, playerId, cardIndex, opts) {
         const d = state.deck.pop(); p.hand.push(d); drawn.push(d);
       }
       state._handSnapshot = totalHandCards(state);
-      logLine(state, p.name + ' played PCS Orders — drew ' + drawn.length + ' cards');
+      // `passGoRestartsTurn` (lobby toggle, ON in the Blitz preset): the popular speed house
+      // rule — PCS Orders draws 2 AND hands back a full set of three plays.
+      const restart = rulesFor(state).passGoRestartsTurn;
+      if (restart) state.playsRemaining = 3;
+      logLine(state, p.name + ' played PCS Orders — drew ' + drawn.length + ' cards'
+        + (restart ? ' and restarts the turn with 3 plays!' : ''));
       emit(state, 'draw', { to: playerId, count: drawn.length, cards: drawn.map(publicCard) });
+      if (restart) emit(state, 'turn_restart', { actor: playerId, plays: state.playsRemaining });
       return { ok: true, card, drawn };
     }
 
@@ -921,7 +1049,7 @@ function playAction(state, playerId, cardIndex, opts) {
       const target = getPlayer(state, targetId);
       if (!target || target.id === p.id || target.eliminated) return { error: 'Invalid target' };
       discardAndSpend();
-      const { amount, doubled } = chargeAmount(state, 5);
+      const { amount, doubled } = chargeAmount(state, 5);   // §3.1c: never surgeable
       startPending(state, {
         type: 'payment', action: 'finance_office',
         sourceId: p.id, amount, doubled,
@@ -935,7 +1063,7 @@ function playAction(state, playerId, cardIndex, opts) {
     case 'roll_call': {
       discardAndSpend();
       const targets = state.players.filter(x => x.id !== p.id && !x.eliminated);
-      const { amount, doubled } = chargeAmount(state, 2);
+      const { amount, doubled } = chargeAmount(state, 2);   // §3.1c: never surgeable
       startPending(state, {
         type: 'payment', action: 'roll_call',
         sourceId: p.id, amount, doubled,
@@ -989,6 +1117,13 @@ function playAction(state, playerId, cardIndex, opts) {
       const mine = findProperty(p, opts.myCardId);
       const theirs = findProperty(target, targetCardId);
       if (!mine || !theirs) return { error: 'Selected property is no longer available' };
+      // §3.1 REVERSED 2026-08-06: Hasbro FAQ answer 926 bars Forced Deal (and Sly Deal)
+      // from complete sets, on BOTH sides of the trade. Leaving this unguarded gave us
+      // three set-breaking cards where MD has one.
+      if (!zoneRequisitionable(p, mine.color))
+        return { error: 'You cannot trade a card out of one of your complete sets' };
+      if (!zoneRequisitionable(target, theirs.color))
+        return { error: 'TDY Orders cannot touch a complete set' };
       discardAndSpend();
       startPending(state, {
         type: 'swap', action: 'tdy_orders',
@@ -1028,10 +1163,10 @@ function playAction(state, playerId, cardIndex, opts) {
     }
 
     case 'surge_ops': {
-      if (state._surgeOps) return { error: 'Surge Operations is already active' };
       discardAndSpend();
-      state._surgeOps = true;
-      logLine(state, p.name + ' activates Surge Operations — the next charge this turn is doubled!');
+      state._surgeOps = (state._surgeOps || 0) + 1;
+      logLine(state, p.name + ' activates Surge Operations — the next RENT this turn is x'
+        + (2 ** state._surgeOps) + '!');
       return { ok: true, card };
     }
 
@@ -1083,13 +1218,14 @@ function playAction(state, playerId, cardIndex, opts) {
     if (targets.length === 0) return { error: 'No one to charge' };
 
     discardAndSpend();
-    const { amount, doubled } = chargeAmount(state, calcRent(p, targetColor));
+    const { amount, doubled, multiplier } = chargeAmount(state, calcRent(p, targetColor), { surgeable: true });
     startPending(state, {
       type: 'payment', action: 'rent',
       sourceId: p.id, amount, color: targetColor, doubled, wild: isWildRent,
     }, targets.map(t => t.id));
     logLine(state, p.name + ' charges ' + amount + 'M rent on ' + COLORS[targetColor].name
-      + (isWildRent ? ' from ' + targets[0].name : '') + (doubled ? ' — DOUBLED' : ''));
+      + (isWildRent ? ' from ' + targets[0].name : '')
+      + (doubled ? ' — SURGED x' + multiplier : ''));
     emit(state, 'rent_charged', {
       actor: p.id, color: targetColor, amount,
       targets: targets.map(t => t.id), doubled,
@@ -1222,7 +1358,7 @@ function executeEntry(state, pa, entry, paymentCards) {
           actor: source.id, from: target.id, card: publicCard(card),
           toColor: destColor, action: pa.action,
         });
-        if (!isSetComplete(target, col)) discardUpgrades(state, target, col);
+        if (!isSetComplete(target, col)) bankUpgrades(state, target, col);
         recordStolenProperties(state, source.id, 1);
         syncSets(state, target, beforeTarget, source.id);
         syncSets(state, source, beforeSource);
@@ -1251,8 +1387,8 @@ function executeEntry(state, pa, entry, paymentCards) {
           gave: publicCard(myCard), took: publicCard(theirCard),
           gaveColor, tookColor: gotColor,
         });
-        if (!isSetComplete(source, myColor)) discardUpgrades(state, source, myColor);
-        if (!isSetComplete(target, theirColor)) discardUpgrades(state, target, theirColor);
+        if (!isSetComplete(source, myColor)) bankUpgrades(state, source, myColor);
+        if (!isSetComplete(target, theirColor)) bankUpgrades(state, target, theirColor);
         syncSets(state, source, beforeSource, target.id);
         syncSets(state, target, beforeTarget, source.id);
       } else {
@@ -1285,6 +1421,7 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
   let totalValue = 0;
   const bankCards = [];
   const propCards = [];
+  const upgradeCards = [];   // §3.1b — upgrades are payable, so this is a third lookup
 
   for (const cid of selectedCardIds) {
     let found = false;
@@ -1296,8 +1433,14 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
         if (pi >= 0) { propCards.push({ color: col, idx: pi, card: cards[pi] }); totalValue += cards[pi].value; found = true; break; }
       }
     }
+    if (!found) {
+      for (const [col, upgrades] of Object.entries(payer.upgrades || {})) {
+        const ui = upgrades.findIndex(c => c && c.id === cid);
+        if (ui >= 0) { upgradeCards.push({ color: col, card: upgrades[ui] }); totalValue += upgrades[ui].value; found = true; break; }
+      }
+    }
   }
-  if (bankCards.length + propCards.length !== selectedCardIds.length) {
+  if (bankCards.length + propCards.length + upgradeCards.length !== selectedCardIds.length) {
     return { error: 'Payment selection contains an invalid card', needPayment: true, amount: pa.amount };
   }
 
@@ -1321,6 +1464,21 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
     paid.push(card);
   });
 
+  // Upgrades leave first: they stop being upgrades the moment they change hands, so both
+  // tags are stripped and they land in the payee's bank as ordinary cards.
+  upgradeCards.forEach(({ color, card }) => {
+    const list = payer.upgrades[color] || [];
+    const ui = list.findIndex(c => c && c.id === card.id);
+    if (ui < 0) return;
+    list.splice(ui, 1);
+    if (list.length === 0) delete payer.upgrades[color];
+    delete card.upgradeType;
+    delete card.placedColor;
+    payee.bank.push(card);
+    paid.push(card);
+    normalizeUpgrades(state, payer, color);   // an FOC may not outlive its Upgrade
+  });
+
   propCards.forEach(({ color, card }) => {
     const ci = payer.properties[color].findIndex(c => c.id === card.id);
     if (ci >= 0) {
@@ -1328,7 +1486,7 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
       receiveProperty(state, payee, card, card.placedColor || card.color || color);
       paid.push(card);
     }
-    if (!isSetComplete(payer, color)) discardUpgrades(state, payer, color);
+    if (!isSetComplete(payer, color)) bankUpgrades(state, payer, color);
   });
 
   logLine(state, payer.name + ' paid ' + totalValue + 'M to ' + payee.name);
@@ -1346,6 +1504,42 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
 
 /* ── Move property (free rearrange) ─────────────────────────────────── */
 
+function findUpgrade(player, cardId) {
+  for (const [color, upgrades] of Object.entries(player.upgrades || {})) {
+    const index = (upgrades || []).findIndex(u => u && u.id === cardId);
+    if (index >= 0) return { color, index, card: upgrades[index] };
+  }
+  return null;
+}
+
+// Relocating a House/FOC between two of your own complete sets. Costs no play, like the
+// wild rearrange. Refuses anything that would leave an FOC without its Upgrade.
+function moveUpgrade(state, p, hit, toColor) {
+  const { color: fromColor, index, card } = hit;
+  const kind = card.upgradeType;
+  if (fromColor === toColor) return { error: 'Already on that set' };
+  if (!isSetComplete(p, toColor)) return { error: COLORS[toColor].name + ' is not a complete set' };
+  if (upgradeKinds(p, toColor).includes(kind))
+    return { error: COLORS[toColor].name + ' already has ' + (kind === 'hotel' ? 'an FOC' : 'an Upgrade') };
+  if (kind === 'hotel' && !upgradeKinds(p, toColor).includes('house'))
+    return { error: 'FOC needs an Upgrade on that set first' };
+  if (kind === 'house' && upgradeKinds(p, fromColor).includes('hotel'))
+    return { error: 'Move the FOC off that set first' };
+
+  const before = completedColors(p);
+  (p.upgrades[fromColor] || []).splice(index, 1);
+  if ((p.upgrades[fromColor] || []).length === 0) delete p.upgrades[fromColor];
+  if (!p.upgrades[toColor]) p.upgrades[toColor] = [];
+  p.upgrades[toColor].push(card);
+
+  logLine(state, p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
+  emit(state, 'move_upgrade', {
+    actor: p.id, card: publicCard(card), from: fromColor, to: toColor, upgradeType: kind,
+  });
+  syncSets(state, p, before);
+  return { ok: true };
+}
+
 function moveProperty(state, playerId, cardId, toColor) {
   const phaseError = ensurePlaying(state);
   if (phaseError) return phaseError;
@@ -1353,6 +1547,11 @@ function moveProperty(state, playerId, cardId, toColor) {
   if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
   if (state.turnPhase !== 'play') return { error: 'Cannot rearrange now' };
   if (!COLORS[toColor]) return { error: 'Invalid color' };
+
+  // §3.1b — upgrades may be moved between complete sets on your turn. Handled through the
+  // same free-rearrange command so the wire protocol stays unchanged.
+  const upgradeHit = findUpgrade(p, cardId);
+  if (upgradeHit) return moveUpgrade(state, p, upgradeHit, toColor);
 
   // Find the card in player's properties
   let card = null, fromColor = null, fromIdx = -1;
@@ -1379,7 +1578,7 @@ function moveProperty(state, playerId, cardId, toColor) {
   p.properties[toColor].push(card);
 
   // Clean up upgrades if the source set is no longer complete
-  if (!isSetComplete(p, fromColor)) discardUpgrades(state, p, fromColor);
+  if (!isSetComplete(p, fromColor)) bankUpgrades(state, p, fromColor);
 
   logLine(state, p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
   emit(state, 'move_property', { actor: playerId, card: publicCard(card), from: fromColor, to: toColor });
@@ -1397,14 +1596,20 @@ function scoop(state, playerId) {
   if (p.eliminated) return { error: 'Already eliminated' };
 
   const beforeScoop = completedColors(p);
+  // Scooping discards EVERYTHING, so upgrades go to the discard here rather than through
+  // bankUpgrades() — the bank has already been emptied and would resurrect them.
+  for (const upgrades of Object.values(p.upgrades || {})) {
+    for (const upgrade of upgrades) {
+      if (upgrade && typeof upgrade === 'object') state.discardPile.push(upgrade);
+    }
+  }
+  p.upgrades = {};
   while (p.hand.length > 0) state.discardPile.push(p.hand.pop());
   while (p.bank.length > 0) state.discardPile.push(p.bank.pop());
-  for (const [color, cards] of Object.entries(p.properties)) {
+  for (const cards of Object.values(p.properties)) {
     while (cards.length > 0) state.discardPile.push(cards.pop());
-    discardUpgrades(state, p, color);
   }
   p.properties = {};
-  p.upgrades = {};
   syncSets(state, p, beforeScoop);
   p.eliminated = true;
 
@@ -1600,9 +1805,14 @@ function getPlayerView(state, playerId) {
     winner: state.winner,
     endReason: state.endReason || null,
     armedIds: armedPlayers(state),
-    surgeOps: !!state._surgeOps,
+    // Now a COUNT of stacked Surge Ops (0 = none), still truthy when active.
+    surgeOps: state._surgeOps || 0,
+    surgeMultiplier: 2 ** (state._surgeOps || 0),
     handLimit: HAND_LIMIT,
-    setsToWin: SETS_TO_WIN,
+    // The whole resolved ruleset, so the client can render the lobby picker and the help
+    // can describe the ACTIVE rules rather than the defaults.
+    rules: { ...rulesFor(state) },
+    setsToWin: setsToWinOf(state),
     // 'finalApproach' (default, grace cycle) | 'instant' (third set wins immediately).
     // Under 'instant' armedIds is always [] and every per-player countdown field is null.
     winRule: state.winRule || DEFAULT_WIN_RULE,
@@ -1651,6 +1861,9 @@ module.exports = {
   pendingResponders, pendingEntryFor, publicCard, armedPlayers,
   turnsUntilCheckpoint, checkpointReached,
   WIN_RULES, DEFAULT_WIN_RULE, normalizeWinRule, checkpointThreshold,
+  RULE_PRESETS, PRESET_NAMES, DEFAULT_PRESET, DEFAULT_RULES, RULE_KEYS,
+  SETS_TO_WIN_CHOICES, normalizeSetsToWin, resolveRules, rulesOf, rulesFor, setsToWinOf,
+  bankUpgrades, findUpgrade,
   logLine, LOG_MAX, LOG_TAIL, advanceToNextActive, forceEndTurn,
   checkpointForecast, opponentTurnsRemaining, actionLabel, receiveProperty,
 };

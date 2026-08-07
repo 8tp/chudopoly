@@ -222,6 +222,34 @@ first-player advantage measured and reported).
    > checks us against the field.
 5. **Overstacking**: a color zone holds at most `set size` property cards. Extra copies must
    go to a different legal zone (wilds) or stay in hand. Kills the armor exploit.
+
+   > **OWNER RULING 2026-08-07 — §3.5 stands, and gains an atomic swap.** The rule has a
+   > consequence nobody had noticed: a **true swap is impossible**. Darkblue 2/2 holding a
+   > green/darkblue wild and green 3/3 holding a rainbow — each wild is legal in the other's
+   > zone, and the engine refuses **both directions**, because neither can transit through an
+   > overfull state. Measured, not theorised.
+   >
+   > Real Monopoly Deal has no such problem, for two reasons, and it is worth being precise
+   > about which one matters. First, it is physical: you pick both cards up and put them down,
+   > so there is no intermediate state to validate. Second, and more fundamentally, **MD has no
+   > overstacking rule at all** — extra properties of a colour *start a second set of that
+   > colour* (Hasbro FAQ a_id/924; monopolydealrules.com Property §8). §3.5 is **ours**, added
+   > to kill the armour exploit, so the blocker is a consequence of our own rule rather than a
+   > divergence from MD's.
+   >
+   > MD's actual permission we already match, and it is the thing the client was violating
+   > until `55a014f`: *"you can move wild cards and Property cards around as much as you like
+   > amongst the sets, but ONLY during your turn. Moving a card that is already on the table in
+   > front of you does not count as 'playing' a card."* (Hasbro FAQ a_id/937.)
+   >
+   > **The fix is an atomic two-card exchange, not a relaxation of §3.5.** Rejected: allowing a
+   > transient overfull state (the invariant `validateState` asserts is meant to hold
+   > continuously — that is what makes it worth having), and adopting MD's second-set rule
+   > (a cross-cutting engine rewrite that reopens the exploit).
+   >
+   > Open for the implementing agent to decide and defend: whether a swap costs **one**
+   > rearrange from the per-turn budget or **two**, and how it is initiated without adding a
+   > mode to an interaction model that already has enough.
 6. **Stalemate end**: when the deck and discard are both empty and a full round passes with no
    card leaving any hand, the game ends; most completed sets wins, net worth breaks ties.
 7. **Upgrades (FOC/hangar)** stay off-limits as payment (matches MD) but must be **shown** in

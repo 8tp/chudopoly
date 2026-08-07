@@ -22,9 +22,10 @@
    to an opponent's mini row. Every size below is therefore ONE markup degraded
    by CONTAINER queries on the card itself:
 
-     >66px   band + name + glyph + rent ladder + coin      (hand, deck, discard)
+     >82px   band + name + glyph + rent ladder + coin      (hand, deck, discard)
+     ≤82px   the ladder goes first: 7.4cqw type falls under 6px here
      ≤66px   band + name + glyph + coin                    (crowded hand, browser)
-     ≤48px   band + glyph + coin — three marks             (your board)
+     ≤60px   band + glyph + coin — three marks             (your board)
      ≤34px   the card FLOODS its set colour and the glyph  (opponent boards, ups)
              knocks out in bone. ONE MARK, and it is a
              DRAWING — seven of the ten swap to a small-tier
@@ -101,6 +102,28 @@
 }
 .card-face > .ca,
 .card-back > .ca { position: absolute; inset: 0; }
+
+/* ── One row, one tier ──────────────────────────────────────────────────────
+   table.css reserves the strip a fan neighbour stands on as padding-right on
+   every .card-face except the LAST (`.zone-hand .card:not(:last-child)`,
+   (cover + .06) of the card). That rule was written for the pre-art face,
+   whose band/name are in-flow children; on THIS face the .ca is absolute
+   (inset:0), so the padding never moved a mark. What it did instead, measured
+   on big-hand@desktop (1280×720, 8 cards, --card-w 69.6px): the face is the
+   tier container and a container's size is its CONTENT box, so every covered
+   card queried 59.8px — the three-mark ≤60px tier, band with no lettering —
+   while the uncovered last card queried 69.6px and kept its lettering, title
+   and coin. Two tiers, one row; the owner: "sometimes the cards are
+   inconsistent and dont show text when others do". A tier is a property of
+   the card's WIDTH, so the container must measure the card: zero the
+   reservation on art faces (the query returns to --card-w for the whole row)
+   and carry it inside the face as .ca padding, where it moves the type it was
+   always meant to move. cqw now equals %-of-card, so the strip is the same
+   width table.css reserved. */
+.zone-hand .card:not(:last-child) .card-face:has(> .ca) { padding-right: 0; }
+.zone-hand .card:not(:last-child) .ca-hand {
+  padding-right: calc((var(--fan-cover, 0) + .06) * 100cqw);
+}
 
 /* ── Chassis ────────────────────────────────────────────────────────────── */
 
@@ -513,9 +536,22 @@
 .ca-hand.ca-back .ca-back-word { width: 66%; }
 .ca-hand.ca-back .ca-back-art { width: 52%; }
 
-/* ── ≤66px — a crowded hand, the discard browser. Drop the ladder. ──────── */
-@container (max-width: 66px) {
+/* ── ≤82px — the ladder prints only where its type is type. ───────────────
+   The rent ladder and the money note's word-title are both 7.4cqw, which
+   crosses 6px at 81px. The hand ramp's crowded stops sit at 69.6–79.5px on a
+   720-high desktop and 75.6–81px at 800+, so every crowded hand was printing
+   its ladder at 5.0–5.9px — below the size the ≤60px band-name ruling already
+   refused as type (it is the same "measured at 5.1px" number). The coin and
+   the rosette numeral carry the value at every size; from here down the
+   ladder belongs to the peek. The old cut was 66px, which no ramp stop ever
+   actually landed between 66 and 82 — the boundary predates the hand ramp. */
+@container (max-width: 82px) {
   .ca-hand .ca-rents { display: none; }
+  .ca-hand.ca-money .ca-title { display: none; }
+}
+
+/* ── ≤66px — a crowded hand, the discard browser. ───────────────────────── */
+@container (max-width: 66px) {
   /* "TO-14 · USAF ED." is a flavour mark and it sits at the FAR RIGHT of the
      foot — which is the exact strip the hand fan's next card stands on. On
      landscape-mid it rendered as two grey letters hanging off each card. It is
@@ -529,9 +565,8 @@
   .ca-hand .ca-title { -webkit-line-clamp: 2; font-size: 12cqw; }
   .ca-hand .ca-glyph { width: 50cqw; height: 50cqw; }
   .ca-hand .ca-pips { display: none; }
-  /* MEASURED in the bank on mid-game@desktop: "FOUR MILLION" was clipped by the
-     trim on every note. The numeral already says it. */
-  .ca-hand.ca-money .ca-title { display: none; }
+  /* the word-title is already gone at ≤82 ("FOUR MILLION" also clipped on the
+     trim here, measured in the bank on mid-game@desktop) */
   .ca-hand.ca-money .ca-glyph { width: 64cqw; height: 64cqw; }
   /* The FUNDS band already says these are millions; the suffix only collided
      with the rosette. */

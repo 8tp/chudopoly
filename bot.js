@@ -1,5 +1,11 @@
-// bot.js — Bot AI engine for Chudopoly GO with 5 personality modes
+// bot.js — Bot AI engine for Chudopoly with 5 personality modes
 const G = require('./game');
+
+/* ── Randomness ─────────────────────────────────────────────────────── */
+// Injectable so simulate.js can run reproducible matrices; defaults to Math.random.
+let RND = Math.random;
+function rnd() { return RND(); }
+function setRng(fn) { RND = typeof fn === 'function' ? fn : Math.random; }
 
 /* ── Timing ─────────────────────────────────────────────────────────── */
 
@@ -14,7 +20,7 @@ const DELAYS = {
 function getDelay(mode, action) {
   const d = DELAYS[mode] || DELAYS.neutral;
   const range = d[action] || d.play;
-  return range[0] + Math.random() * (range[1] - range[0]);
+  return range[0] + rnd() * (range[1] - range[0]);
 }
 
 /* ── Scheduling ─────────────────────────────────────────────────────── */
@@ -78,22 +84,9 @@ function getBotMode(room, botId) {
 /* ── Find which bot needs to respond ────────────────────────────────── */
 
 function findRespondingBot(room, state) {
-  const pa = state.pendingAction;
-  if (!pa) return null;
-
-  if (pa.type === 'payment_all') {
-    for (const pid of (pa.pending || [])) {
-      if (room.players.find(p => p.id === pid)?.isBot) return pid;
-    }
-    for (const [pid, chain] of Object.entries(pa.opsecChains || {})) {
-      const resp = room.players.find(p => p.id === chain.responderId);
-      if (resp?.isBot) return chain.responderId;
-    }
-  } else {
-    if (pa.responderId) {
-      const resp = room.players.find(p => p.id === pa.responderId);
-      if (resp?.isBot) return pa.responderId;
-    }
+  if (!state.pendingAction) return null;
+  for (const pid of G.pendingResponders(state)) {
+    if (room.players.find(p => p.id === pid)?.isBot) return pid;
   }
   return null;
 }
@@ -113,6 +106,252 @@ function threatLevel(opponents) {
 function findThreats(opponents) {
   // Find opponents with 2+ complete sets (1 away from winning)
   return opponents.filter(opp => G.completedSets(opp) >= 2);
+}
+
+/* ── §3.10 Final approach: breaking it and defending it ─────────────── */
+
+function findArmed(players, exceptId) {
+  return players.filter(p => p.finalApproach && !p.eliminated && p.id !== exceptId);
+}
+
+// Cards sitting in a zone that is exactly a complete set — the only cards whose loss
+// actually costs the owner a set.
+function completeSetCards(player) {
+  const out = [];
+  for (const [color, cards] of Object.entries(player.properties)) {
+    // Must be isSetComplete, not "zone is full": under the pureSetRequired toggle a zone
+    // full of nothing but wilds is NOT a set, and Inspector General refuses it. Measured:
+    // 7 refused IG plays across 1,440 mdFaithful games before this.
+    if (!G.isSetComplete(player, color)) continue;
+    for (const card of cards) out.push({ color, card });
+  }
+  return out;
+}
+
+function bankValue(player) {
+  return player.bank.reduce((sum, c) => sum + c.value, 0);
+}
+
+// What an armed player can hand over WITHOUT losing a set: the bank, properties sitting in
+// zones that are not complete sets, and upgrades. Upgrades are payable (§3.1b) and a House
+// leaving a set costs its owner rent, not the set — so they are spent before a set property
+// (that is exactly the order selectPaymentCards() uses below).
+//
+// This, not the bank alone, is the number a charge has to beat. A demand the victim can
+// settle out of loose change moves money and disarms nobody, and during a grace cycle there
+// is no later turn in which that money would have mattered. Measured on the pre-fix bot:
+// 51.9% of every charge aimed at an armed player was payable without touching a set.
+function disposableValue(player) {
+  let total = bankValue(player);
+  for (const [color, cards] of Object.entries(player.properties)) {
+    if (G.isSetComplete(player, color)) continue;
+    for (const c of cards) total += c.value;
+  }
+  for (const ups of Object.values(player.upgrades || {})) {
+    for (const u of ups) if (u && typeof u === 'object') total += u.value || 0;
+  }
+  return total;
+}
+
+// The four cards in a 106-card deck that can actually pull a card out of a complete set.
+// Banking one of these while somebody is armed is never a trade worth making.
+function isHardBreaker(card) {
+  return card && (card.action === 'inspector_general' || card.action === 'chud');
+}
+
+// How hard each personality tries to shoot down a final approach — the gate on firing a
+// counter that we know will land if it is not OPSEC'd.
+const BREAK_URGENCY = { aggressive: 1, chud: 1, neutral: 0.9, conservative: 0.85, random: 0.2 };
+
+// How far each personality will OVERPAY for the attempt: burning a play on a speculative
+// draw to dig for a counter, or on attrition that cannot disarm by itself. This is the axis
+// the personalities are allowed to differ on — none of them may ignore an armed player, but
+// an aggressive bot will spend its whole turn hunting and a conservative one will not.
+const BREAK_OVERPAY = { aggressive: 0.95, chud: 0.85, neutral: 0.75, conservative: 0.55, random: 0.15 };
+
+// The absolute turn number at which a player converts. checkpointForecast() is the engine's
+// own forecast, so this cannot drift from resolveFinalApproach() the way a reimplementation
+// would. Use `.turn`, NOT `.opponents`: two players armed on the same tick have the same
+// number of opponent turns left but still convert in seat order, and `.opponents` reports
+// them as tied while `.turn` orders them correctly.
+function checkpointTurn(state, player) {
+  const f = G.checkpointForecast(state, player);
+  return f ? f.turn : null;
+}
+
+// Which armed opponent do we shoot at? Not the one with the most sets — the one whose
+// checkpoint arrives FIRST, because that is the one who actually wins. Sets break the tie
+// only in the degenerate case where the engine cannot forecast either.
+function pickArmedVictim(state, armed) {
+  return armed.reduce((best, p) => {
+    const a = checkpointTurn(state, p);
+    const b = checkpointTurn(state, best);
+    if (a == null) return best;
+    if (b == null) return p;
+    if (a !== b) return a < b ? p : best;
+    return G.completedSets(p) > G.completedSets(best) ? p : best;
+  });
+}
+
+function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
+  // If we are armed too, the only question is who converts first. When our own checkpoint
+  // arrives before theirs we have already won the race and spending our counter on them is
+  // pure loss — hold it and defend. When theirs arrives first, they win before we do and the
+  // counter has to be spent now, armed or not.
+  if (bot.finalApproach) {
+    const mine = checkpointTurn(state, bot);
+    if (mine != null) {
+      armed = armed.filter(p => {
+        const theirs = checkpointTurn(state, p);
+        return theirs == null || theirs < mine;
+      });
+    }
+  }
+  if (armed.length === 0) return null;
+
+  const victim = pickArmedVictim(state, armed);
+  const theirSets = completeSetCards(victim);
+  if (theirSets.length === 0) return null;
+  const overpay = BREAK_OVERPAY[mode] ?? 0.75;
+
+  // 1. Inspector General — takes the WHOLE set, permanently, and it lands on our board, so
+  //    it swings two sets at once. Strictly the best counter whenever it is in hand.
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action !== 'inspector_general') continue;
+    const color = theirSets[0].color;
+    return { type:'play_action', cardIndex:i, targetId:victim.id, targetColor:color };
+  }
+
+  // 2. THE CHUD CARD — the only card in the deck that reaches into a complete set for a
+  //    single property. Permanent, and one card is all it takes to disarm.
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action !== 'chud') continue;
+    const best = theirSets.reduce((a, b) => (b.card.value > a.card.value ? b : a));
+    return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:best.card.id };
+  }
+
+  // 3. TDY Orders is NOT a break tool. §3.1 was reversed on 2026-08-06: Hasbro FAQ 926 bars
+  //    Forced Deal from complete sets on BOTH sides of the swap, and game.js enforces it
+  //    (playAction case 'tdy_orders'). Proposing one here would burn a play on a move the
+  //    engine refuses. Midnight Requisition is barred the same way and appears far below,
+  //    as attrition only — `zoneRequisitionable` confines it to zones that are NOT complete
+  //    sets, so it can never reduce anybody's completedSets() count.
+
+  // 4. Charge them past what they can pay from loose change, and a set card has to come out.
+  //    §3.1c: Surge Ops doubles RENT ONLY — never Finance Office, never Roll Call — so it is
+  //    only ever worth a play ahead of a rent, and only when doubling is what pushes the
+  //    charge over the line. (The old code surged before Finance Office and threw the play
+  //    away, at the one moment in the game when plays are worth the most.)
+  const spare = disposableValue(victim);
+  const surges = state._surgeOps || 0;
+  const rentMult = 2 ** surges;
+  const financeIdx = hand.findIndex(c => c.action === 'finance_office');
+  const rollCallIdx = hand.findIndex(c => c.action === 'roll_call');
+  const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
+
+  let bestRent = null;
+  for (let i = 0; i < hand.length; i++) {
+    const card = hand[i];
+    if (card.type !== 'rent') continue;
+    const color = chooseBestRentColor(bot, card);
+    if (!color) continue;
+    const base = G.calcRent(bot, color);
+    if (bestRent === null || base > bestRent.base) bestRent = { i, color, base, card };
+  }
+
+  // Surge first only if the doubled rent clears the bar and the bare rent does not, and only
+  // if we will still have the play to fire the rent afterwards.
+  if (bestRent && surgeIdx >= 0 && state.playsRemaining >= 2
+    && bestRent.base * rentMult <= spare && bestRent.base * rentMult * 2 > spare) {
+    return { type:'play_action', cardIndex:surgeIdx };
+  }
+  if (bestRent && bestRent.base * rentMult > spare) {
+    if (bestRent.card.colors[0] === 'any') {
+      return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color, targetId:victim.id };
+    }
+    return { type:'play_action', cardIndex:bestRent.i, targetColor:bestRent.color };
+  }
+  if (financeIdx >= 0 && spare < 5) {
+    return { type:'play_action', cardIndex:financeIdx, targetId:victim.id };
+  }
+  // Roll Call is only 2M and hits the whole table, but 2M is all it takes against a player
+  // who has already spent down to nothing. Cheap, and previously never considered at all.
+  if (rollCallIdx >= 0 && spare < 2) {
+    return { type:'play_action', cardIndex:rollCallIdx };
+  }
+
+  // 5. Nothing in hand can disarm them. There is no next turn to draw into — so a
+  //    speculative dig beats every ordinary play we could make instead. PCS Orders is the
+  //    only card that turns an empty hand into a chance, and both drawn cards are live
+  //    immediately because this branch runs again on the next play.
+  if (rnd() < overpay) {
+    for (let i = 0; i < hand.length; i++) {
+      if (hand[i].action !== 'pcs_orders') continue;
+      if (state.playsRemaining < 2) break;   // no play left to fire what we draw
+      return { type:'play_action', cardIndex:i };
+    }
+  }
+
+  // 6. Denial, and only denial. Midnight Requisition cannot touch a complete set (§3.1), so
+  //    it never disarms by itself — but it takes a card off the victim permanently, and the
+  //    zone it comes out of is the one they would rebuild from if we do break a set later in
+  //    the cycle. Only the personalities willing to overpay spend a play on it.
+  //
+  //    Deliberately NOT here: a blanket "charge them anyway" fallback. A demand they can
+  //    afford cannot disarm anybody, the personality planner below already makes exactly
+  //    that play when it is the right one, and forcing it through this branch would override
+  //    the holdback that stops bots attacking on every single play. Measured over 1,500
+  //    games per table size: including it moved conversion by 0.4–1.5 points (inside run
+  //    noise) while pushing 5-player games decided on points from 8.3% to 8.9%. It bought
+  //    nothing and cost variety.
+  if (rnd() >= overpay) return null;
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action !== 'midnight_requisition') continue;
+    for (const [color, cards] of Object.entries(victim.properties)) {
+      if (!G.zoneRequisitionable(victim, color) || cards.length === 0) continue;
+      return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:cards[0].id };
+    }
+  }
+  return null;
+}
+
+// Even the gremlin should not waste the only card that reaches into a complete set on a
+// player with nothing to lose. Armed first, then whoever is closest to arming.
+function biggestThreat(opponents) {
+  const armed = opponents.filter(o => o.finalApproach);
+  if (armed.length > 0) return armed[0];
+  const ranked = opponents.filter(o => G.completedSets(o) >= 2);
+  if (ranked.length === 0) return null;
+  return ranked.reduce((a, b) => (G.completedSets(b) > G.completedSets(a) ? b : a));
+}
+
+function chudTargetOn(player) {
+  const sets = completeSetCards(player);
+  if (sets.length > 0) return { playerId: player.id, cardId: sets[0].card.id };
+  for (const cards of Object.values(player.properties)) {
+    if (cards.length > 0) return { playerId: player.id, cardId: cards[0].id };
+  }
+  return null;
+}
+
+// Armed bots stop building (they cannot win by having more sets) and start hoarding cash
+// so an incoming charge does not have to be paid out of a completed set.
+const ARMED_BANK_BIAS = { conservative: 0.9, neutral: 0.85, aggressive: 0.7, chud: 0.4, random: 0.2 };
+
+function tryDefendFinalApproach(bot, hand, mode, othersArmed) {
+  if (rnd() > (ARMED_BANK_BIAS[mode] ?? 0.8)) return null;
+  let best = -1, bestIdx = -1;
+  for (let i = 0; i < hand.length; i++) {
+    const card = hand[i];
+    if (card.type === 'property' || card.type === 'wild_property') continue;
+    if (card.action === 'opsec') continue;              // the shield is worth more than the cash
+    // Inspector General is the highest-value card in the deck (5M), so "bank the biggest
+    // thing" used to reach for it first and quietly bury the best counter in the game under
+    // a pile of cash. While anyone else is armed it is a weapon, not currency.
+    if (othersArmed && isHardBreaker(card)) continue;
+    if (card.value > best) { best = card.value; bestIdx = i; }
+  }
+  return bestIdx >= 0 ? { type:'play_money', cardIndex:bestIdx } : null;
 }
 
 function myProgress(bot) {
@@ -160,7 +399,7 @@ function botTakeTurn(room, botId, callbacks) {
   // PLAY PHASE
   if (state.turnPhase === 'play') {
     // Chud mode: random chance to end turn early (reduced from 40% to 20%)
-    if (mode === 'chud' && state.playsRemaining > 0 && state.playsRemaining < 3 && Math.random() < 0.2) {
+    if (mode === 'chud' && state.playsRemaining > 0 && state.playsRemaining < 3 && rnd() < 0.2) {
       botEndTurn(state, room, botId, mode, callbacks);
       return;
     }
@@ -210,13 +449,18 @@ function botRespond(room, botId, callbacks) {
   scheduleBotAction(room, callbacks);
 }
 
-function acceptAction(state, bot, botId, pa, mode) {
-  const needsPayment = pa.type === 'payment' || pa.type === 'payment_all' ||
-    pa.type === 'chud' || pa.action === 'chud_payment' ||
-    pa.action === 'finance_office' || pa.action === 'roll_call' || pa.action === 'rent';
+function amountOwed(state, pa, botId) {
+  const entry = G.pendingEntryFor(state, botId);
+  if (!entry || pa.type !== 'payment') return 0;
+  if (botId === pa.sourceId || entry.depth % 2 === 1) return 0;  // conceding a block, not paying
+  return pa.amount || 0;
+}
 
-  if (needsPayment && pa.amount > 0) {
-    const payCards = selectPaymentCards(bot, pa.amount, mode);
+function acceptAction(state, bot, botId, pa, mode) {
+  const owed = amountOwed(state, pa, botId);
+
+  if (owed > 0) {
+    const payCards = selectPaymentCards(bot, owed, mode);
     const result = G.respondToAction(state, botId, 'accept', payCards.length > 0 ? payCards : undefined);
     if (result?.needPayment) {
       const allCards = getAllPayableCardIds(bot);
@@ -232,17 +476,26 @@ function acceptAction(state, bot, botId, pa, mode) {
 function shouldPlayOpsecDecision(state, pa, mode, botId) {
   const bot = G.getPlayer(state, botId);
   const opsecCount = bot ? bot.hand.filter(c => c.action === 'opsec').length : 0;
-  const isChainResponse = pa._opsecChain > 0 ||
-    (pa.opsecChains && Object.values(pa.opsecChains).some(c => c.responderId === botId));
+  const entry = G.pendingEntryFor(state, botId);
+  const isChainResponse = !!entry && entry.depth > 0;
+
+  // §3.10 — an armed bot is one turn from winning: anything that could cost it a set is
+  // worth an OPSEC. Random keeps a coin-flip's worth of incompetence.
+  if (bot?.finalApproach && pa.sourceId !== botId) {
+    const forcedOutOfSets = pa.type === 'payment' && bankValue(bot) < (pa.amount || 0);
+    if (pa.type !== 'payment' || forcedOutOfSets) {
+      return mode === 'random' ? rnd() < 0.6 : true;
+    }
+  }
 
   switch (mode) {
     case 'random':
       // Even random mode should have some survival instinct
       if (pa.action === 'inspector_general') return true;
-      if (pa.action === 'chud') return Math.random() > 0.3;
-      if (pa.action === 'roll_call') return Math.random() > 0.8; // rarely block small stuff
-      if (pa.action === 'rent' && pa.amount <= 2) return Math.random() > 0.8;
-      return Math.random() > 0.5;
+      if (pa.action === 'chud') return rnd() > 0.3;
+      if (pa.action === 'roll_call') return rnd() > 0.8; // rarely block small stuff
+      if (pa.action === 'rent' && pa.amount <= 2) return rnd() > 0.8;
+      return rnd() > 0.5;
 
     case 'conservative':
       // Smart defense: save OPSEC for high-value threats
@@ -258,7 +511,6 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       if (pa.action === 'rent' && pa.amount >= 4) return true;
       if (pa.action === 'rent' && pa.amount >= 2 && opsecCount > 1) return true;
       if (pa.action === 'roll_call') return opsecCount > 1; // save for bigger threats
-      if (pa.action === 'chud_payment') return false;
       if (isChainResponse) return true;
       return false;
 
@@ -267,8 +519,7 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       if (pa.action === 'chud') return true;
       if (pa.action === 'finance_office') return true;
       if (pa.action === 'rent' && pa.amount >= 4) return true;
-      if (pa.action === 'midnight_requisition') return Math.random() > 0.3;
-      if (pa.action === 'chud_payment') return false;
+      if (pa.action === 'midnight_requisition') return rnd() > 0.3;
       if (isChainResponse) return true;
       return false;
 
@@ -278,7 +529,7 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       if (pa.action === 'chud') {
         // Check if the targeted card is from a near-complete set
         const mySets = G.completedSets(bot);
-        return mySets >= 2 || Math.random() > 0.3;
+        return mySets >= 2 || rnd() > 0.3;
       }
       if (isChainResponse) return true;
       // Don't waste OPSEC on money demands — save for property theft
@@ -286,13 +537,13 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
 
     case 'chud':
       // Chaotic OPSEC: block small stuff, let big stuff through
-      if (pa.action === 'roll_call') return Math.random() > 0.3;
-      if (pa.action === 'rent' && pa.amount <= 3) return Math.random() > 0.4;
-      if (pa.action === 'inspector_general') return Math.random() > 0.6; // 40% chance to block
-      if (pa.action === 'chud') return Math.random() > 0.7; // 30% chance to block
-      if (pa.action === 'finance_office') return Math.random() > 0.5;
-      if (pa.action === 'midnight_requisition') return Math.random() > 0.5;
-      return Math.random() > 0.6;
+      if (pa.action === 'roll_call') return rnd() > 0.3;
+      if (pa.action === 'rent' && pa.amount <= 3) return rnd() > 0.4;
+      if (pa.action === 'inspector_general') return rnd() > 0.6; // 40% chance to block
+      if (pa.action === 'chud') return rnd() > 0.7; // 30% chance to block
+      if (pa.action === 'finance_office') return rnd() > 0.5;
+      if (pa.action === 'midnight_requisition') return rnd() > 0.5;
+      return rnd() > 0.6;
 
     default:
       return false;
@@ -306,6 +557,18 @@ function decideBotPlay(state, botId, mode) {
   if (!bot || state.playsRemaining <= 0) return null;
   if (bot.hand.length === 0) return null;
 
+  // §3.10 — a live final approach outranks every personality quirk, including the
+  // human-like holdback below: there may be no next turn to use the card on.
+  const armed = findArmed(state.players, botId);
+  if (armed.length > 0 && rnd() < (BREAK_URGENCY[mode] ?? 0.8)) {
+    const shot = tryBreakFinalApproach(state, bot, botId, bot.hand, armed, mode);
+    if (shot) return shot;
+  }
+  if (bot.finalApproach) {
+    const shield = tryDefendFinalApproach(bot, bot.hand, mode, armed.length > 0);
+    if (shield) return shield;
+  }
+
   // Human-like holdback: sometimes don't use all 3 plays
   // Conservative: 20% chance to stop after 2 plays (save cards for defense)
   // Neutral: 10% chance to stop after 2 plays
@@ -316,11 +579,11 @@ function decideBotPlay(state, botId, mode) {
   if (played >= 1) {
     // After 1 play: small chance to stop. After 2 plays: bigger chance.
     const holdChance = played === 1
-      ? (mode === 'conservative' ? 0.08 : mode === 'random' ? 0.12 : mode === 'neutral' ? 0.05 : 0)
+      ? (mode === 'conservative' ? 0.08 : mode === 'random' ? 0.08 : mode === 'neutral' ? 0.05 : 0)
       : (mode === 'conservative' ? 0.25 : mode === 'neutral' ? 0.15
-        : mode === 'random' ? 0.25 : mode === 'aggressive' ? 0.08 : 0);
+        : mode === 'random' ? 0.15 : mode === 'aggressive' ? 0.08 : 0);
     // Don't hold back if we have 8+ cards (need to discard anyway)
-    if (holdChance > 0 && bot.hand.length <= 7 && Math.random() < holdChance) return null;
+    if (holdChance > 0 && bot.hand.length <= 7 && rnd() < holdChance) return null;
   }
   // Also: if only OPSEC cards remain in hand, conservative/neutral hold them
   if ((mode === 'conservative' || mode === 'neutral') && played >= 1) {
@@ -328,21 +591,39 @@ function decideBotPlay(state, botId, mode) {
     if (nonOpsec.length === 0) return null; // only OPSEC in hand — hold it
   }
 
-  switch (mode) {
-    case 'random':       return decideRandom(state, bot, botId);
-    case 'conservative': return decideConservative(state, bot, botId);
-    case 'neutral':      return decideNeutral(state, bot, botId);
-    case 'aggressive':   return decideAggressive(state, bot, botId);
-    case 'chud':         return decideChud(state, bot, botId);
-    default:             return decideNeutral(state, bot, botId);
+  const plan = (() => {
+    switch (mode) {
+      case 'random':       return decideRandom(state, bot, botId);
+      case 'conservative': return decideConservative(state, bot, botId);
+      case 'neutral':      return decideNeutral(state, bot, botId);
+      case 'aggressive':   return decideAggressive(state, bot, botId);
+      case 'chud':         return decideChud(state, bot, botId);
+      default:             return decideNeutral(state, bot, botId);
+    }
+  })();
+
+  // §3.10 last line of defence. Every personality has its own banking rules and every one of
+  // them values a card by its face value, so five separate code paths could each decide to
+  // bank a 5M Inspector General for cash while the player across the table is one turn from
+  // winning. Vetoing it once, here, covers all five (and anything added later) instead of
+  // patching the same mistake in five places. We only reach this line when the break branch
+  // above already declined to fire — either the urgency roll failed or the card had no legal
+  // target this instant — and in both cases holding the card is strictly better than
+  // converting the only counter in the deck into money we will never get to spend.
+  if (armed.length > 0 && plan && plan.type === 'play_money' && isHardBreaker(bot.hand[plan.cardIndex])) {
+    const alt = bot.hand.findIndex((c, i) => i !== plan.cardIndex && !isHardBreaker(c)
+      && c.type !== 'property' && c.type !== 'wild_property' && c.action !== 'opsec');
+    return alt >= 0 ? { type:'play_money', cardIndex:alt } : null;
   }
+  return plan;
 }
 
 /* ── RANDOM MODE — unpredictable but slightly smarter ──────────────── */
 
 function decideRandom(state, bot, botId) {
-  // Lower early-end chance: 15% instead of 30%
-  if (Math.random() < 0.15) return null;
+  // A 15% per-decision pass compounded with decideBotPlay's holdback into a 2.5%
+  // mixed winrate (§3 floor is 8%). 5% → 8.6%/10.0% on two seeds, 2% → 11.8%/14.1%.
+  if (rnd() < 0.02) return null;
 
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
@@ -352,40 +633,54 @@ function decideRandom(state, bot, botId) {
   shuffle(indices);
 
   // Slight bias: if we have properties, 60% chance to play them first
-  if (Math.random() < 0.6) {
+  if (rnd() < 0.6) {
     for (const i of indices) {
-      const c = hand[i];
-      if (c.type === 'property') return { type: 'play_property', cardIndex: i };
-      if (c.type === 'wild_property') {
-        const validColors = c.colors[0] === 'any' ? Object.keys(G.COLORS) : c.colors;
-        const color = validColors[Math.floor(Math.random() * validColors.length)];
-        return { type: 'play_property', cardIndex: i, targetColor: color };
-      }
+      const play = randomPropertyPlay(bot, hand[i], i);
+      if (play) return play;
     }
   }
 
   for (const i of indices) {
     const c = hand[i];
 
-    if (c.type === 'property') {
-      return { type: 'play_property', cardIndex: i };
-    }
-    if (c.type === 'wild_property') {
-      const validColors = c.colors[0] === 'any' ? Object.keys(G.COLORS) : c.colors;
-      const color = validColors[Math.floor(Math.random() * validColors.length)];
-      return { type: 'play_property', cardIndex: i, targetColor: color };
-    }
+    const propPlay = randomPropertyPlay(bot, c, i);
+    if (propPlay) return propPlay;
     if (c.type === 'money') {
       return { type: 'play_money', cardIndex: i };
     }
     if (c.type === 'rent') {
       const color = randomRentColor(bot, c);
-      if (color) return { type: 'play_action', cardIndex: i, targetColor: color };
+      const play = makeRentPlay(bot, hand, i, color, opponents, 'random');
+      if (play) return play;
     }
     if (c.type === 'action') {
       const action = tryRandomAction(state, bot, botId, c, i, opponents);
       if (action) return action;
     }
+  }
+  return null;
+}
+
+// Random/chud placement still has to respect the zone cap (§3.5).
+// Uniform-random colors scattered wilds across all ten sets and random never finished
+// one (1.2% winrate); a 70% pull toward a colour already started keeps the personality
+// unpredictable but lets it actually win.
+function randomWildColor(bot, card) {
+  const open = openColorsForWild(bot, card);
+  if (open.length === 0) return null;
+  const started = open.filter(color => (bot.properties[color] || []).length > 0);
+  const pool = started.length > 0 && rnd() < 0.7 ? started : open;
+  return pool[Math.floor(rnd() * pool.length)];
+}
+
+function randomPropertyPlay(bot, card, idx) {
+  if (card.type === 'property') {
+    return G.zoneFull(bot, card.color) ? null : { type: 'play_property', cardIndex: idx };
+  }
+  if (card.type === 'wild_property') {
+    const color = randomWildColor(bot, card);
+    if (!color) return null;
+    return { type: 'play_property', cardIndex: idx, targetColor: color };
   }
   return null;
 }
@@ -401,9 +696,9 @@ function tryRandomAction(state, bot, botId, card, idx, opponents) {
       if (bot.hand.some(c => c.type === 'rent') && state.playsRemaining >= 2) {
         return { type: 'play_action', cardIndex: idx };
       }
-      return Math.random() > 0.5 ? { type: 'play_action', cardIndex: idx } : null;
+      return rnd() > 0.5 ? { type: 'play_action', cardIndex: idx } : null;
     case 'finance_office': {
-      const t = opponents.length > 0 ? opponents[Math.floor(Math.random() * opponents.length)] : null;
+      const t = opponents.length > 0 ? opponents[Math.floor(rnd() * opponents.length)] : null;
       return t ? { type: 'play_action', cardIndex: idx, targetId: t.id } : null;
     }
     case 'midnight_requisition': {
@@ -440,6 +735,7 @@ function tryRandomAction(state, bot, botId, card, idx, opponents) {
 /* ── CONSERVATIVE MODE — defensive but not passive ─────────────────── */
 
 function decideConservative(state, bot, botId) {
+  const mode = 'conservative';
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
   const mySets = G.completedSets(bot);
@@ -453,21 +749,20 @@ function decideConservative(state, bot, botId) {
     if (offensive) return offensive;
   }
 
-  // 1. Surge + Rent combo — play surge first when we have rent queued
+  // 1. Surge before the biggest charge we can follow it with (§3.3: any charge, not just rent)
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const rentOnComplete = findRentOnCompleteSet(bot, hand);
-  if (surgeIdx >= 0 && rentOnComplete && !state._surgeOps && state.playsRemaining >= 2) {
+  const rentOnComplete = findRentOnCompleteSet(bot, hand, opponents, mode);
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && (rentOnComplete || hasChargeFollowUp(bot, hand, opponents))) {
     return { type: 'play_action', cardIndex: surgeIdx };
   }
 
   // 2. Rent on complete sets — good income, low risk
-  if (rentOnComplete) {
-    return { type: 'play_action', cardIndex: rentOnComplete.cardIndex, targetColor: rentOnComplete.color };
-  }
+  if (rentOnComplete) return rentOnComplete;
 
   // 3. PCS Orders — draw more cards (sometimes first, sometimes after property)
   const pcsIdx = hand.findIndex(c => c.action === 'pcs_orders');
-  if (pcsIdx >= 0 && (played === 0 || Math.random() < 0.5)) {
+  if (pcsIdx >= 0 && (played === 0 || rnd() < 0.5)) {
     return { type: 'play_action', cardIndex: pcsIdx };
   }
 
@@ -491,7 +786,7 @@ function decideConservative(state, bot, botId) {
   }
 
   // 7. Rent — any color with rent >= 2
-  const decentRent = findBestRent(bot, hand, 2);
+  const decentRent = findBestRent(bot, hand, 2, opponents, mode);
   if (decentRent) return decentRent;
 
   // 8. If WE are close to winning (2 sets), get offensive
@@ -532,6 +827,7 @@ function decideConservative(state, bot, botId) {
 /* ── NEUTRAL MODE — balanced with threat awareness ─────────────────── */
 
 function decideNeutral(state, bot, botId) {
+  const mode = 'neutral';
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
   const threat = threatLevel(opponents);
@@ -545,25 +841,25 @@ function decideNeutral(state, bot, botId) {
     if (defensive) return defensive;
   }
 
-  // 1. Surge Ops → Rent combo (play surge first)
+  // 1. Surge Ops → charge combo (rent, Finance Office or Roll Call — §3.3)
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const hasRent = hand.some(c => c.type === 'rent');
-  if (surgeIdx >= 0 && hasRent && !state._surgeOps && state.playsRemaining >= 2) {
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && hasChargeFollowUp(bot, hand, opponents)) {
     return { type: 'play_action', cardIndex: surgeIdx };
   }
 
   // 2. Rent if surged, or high-value rent (>= 3)
   if (state._surgeOps) {
-    const rentPlay = findBestRent(bot, hand, 0);
+    const rentPlay = findBestRent(bot, hand, 0, opponents, mode);
     if (rentPlay) return rentPlay;
   }
 
   // 3. Vary opening play — don't always lead with property
-  const roll = Math.random();
+  const roll = rnd();
   if (played === 0) {
     if (roll < 0.35) {
       // 35% chance: lead with rent if decent
-      const highRent = findBestRent(bot, hand, 2);
+      const highRent = findBestRent(bot, hand, 2, opponents, mode);
       if (highRent) return highRent;
     } else if (roll < 0.50) {
       // 15% chance: lead with PCS Orders
@@ -582,7 +878,7 @@ function decideNeutral(state, bot, botId) {
   if (pcsIdx >= 0) return { type: 'play_action', cardIndex: pcsIdx };
 
   // 5. Medium rent (>= 2)
-  const rentPlay = findBestRent(bot, hand, 2);
+  const rentPlay = findBestRent(bot, hand, 2, opponents, mode);
   if (rentPlay) return rentPlay;
 
   // 6. Offensive actions
@@ -602,7 +898,7 @@ function decideNeutral(state, bot, botId) {
   }
 
   // 8. Any rent (>= 1)
-  const lowRent = findBestRent(bot, hand, 1);
+  const lowRent = findBestRent(bot, hand, 1, opponents, mode);
   if (lowRent) return lowRent;
 
   // 9. Bank money
@@ -623,6 +919,7 @@ function decideNeutral(state, bot, botId) {
 /* ── AGGRESSIVE MODE — attack-first but not suicidal ───────────────── */
 
 function decideAggressive(state, bot, botId) {
+  const mode = 'aggressive';
   const hand = bot.hand;
   const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
   const mySets = G.completedSets(bot);
@@ -634,15 +931,15 @@ function decideAggressive(state, bot, botId) {
     if (propPlay) return propPlay;
   }
 
-  // 1. Surge Ops first (before rent)
+  // 1. Surge Ops first (before any charge — §3.3)
   const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
-  const hasRent = hand.some(c => c.type === 'rent');
-  if (surgeIdx >= 0 && hasRent && !state._surgeOps && state.playsRemaining >= 2) {
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && hasChargeFollowUp(bot, hand, opponents)) {
     return { type: 'play_action', cardIndex: surgeIdx };
   }
 
   // 2. Rent — any color with properties, maximize damage
-  const rentPlay = findBestRent(bot, hand, 0);
+  const rentPlay = findBestRent(bot, hand, 0, opponents, mode);
   if (rentPlay) return rentPlay;
 
   // 3. CHUD — target strategically
@@ -730,10 +1027,22 @@ function decideChud(state, bot, botId) {
   // Chud still plays chaotically, but now actually builds sets
   // Priority: harass opponents > build own empire > bank
 
+  // 0. Coin-flip: sometimes slam a property down before the harassment starts.
+  //    Pure harass-first left chud with 1.4 sets at game end (5.2% vs 3 neutral).
+  if (rnd() < 0.45) {
+    for (let i = 0; i < hand.length; i++) {
+      const play = randomPropertyPlay(bot, hand[i], i);
+      if (play) return play;
+    }
+  }
+
   // 1. CHUD card — play it immediately for maximum chaos
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'chud') {
-      const target = findChudChudTarget(opponents);
+      // Spraying CHUD at whoever left chud unable to answer a final approach later:
+      // 53.8% of approaches converted against an all-chud field vs 47.6% vs aggressive.
+      const threat = biggestThreat(opponents);
+      const target = (threat && chudTargetOn(threat)) || findChudChudTarget(opponents);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.playerId, targetCardId: target.cardId };
     }
   }
@@ -741,9 +1050,13 @@ function decideChud(state, bot, botId) {
   // 2. Inspector General — seize sets chaotically (target random complete set)
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'inspector_general') {
-      const target = findRandomIGTarget(opponents);
-      if (!target) { const best = findBestIGTarget(opponents); if (best) return { type: 'play_action', cardIndex: i, targetId: best.id, targetColor: best.color }; }
-      else return { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color };
+      const threat = biggestThreat(opponents);
+      if (threat) {
+        const sets = completeSetCards(threat);
+        if (sets.length > 0) return { type: 'play_action', cardIndex: i, targetId: threat.id, targetColor: sets[0].color };
+      }
+      const target = findRandomIGTarget(opponents) || findBestIGTarget(opponents);
+      if (target) return { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color };
     }
   }
 
@@ -758,7 +1071,7 @@ function decideChud(state, bot, botId) {
   // 4. Finance Office — target random player (not always poorest)
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = opponents.length > 0 ? opponents[Math.floor(Math.random() * opponents.length)] : null;
+      const target = opponents.length > 0 ? opponents[Math.floor(rnd() * opponents.length)] : null;
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
@@ -786,21 +1099,26 @@ function decideChud(state, bot, botId) {
     const c = hand[i];
     if (c.type === 'rent') {
       const color = randomRentColor(bot, c);
-      if (color) return { type: 'play_action', cardIndex: i, targetColor: color };
+      const play = makeRentPlay(bot, hand, i, color, opponents, 'chud');
+      if (play) return play;
     }
   }
 
   // 9. Properties — play them but on random/suboptimal colors
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
-    if (c.type === 'property') return { type: 'play_property', cardIndex: i };
+    if (c.type === 'property') {
+      if (G.zoneFull(bot, c.color)) continue;
+      return { type: 'play_property', cardIndex: i };
+    }
     if (c.type === 'wild_property') {
-      const validColors = c.colors[0] === 'any' ? Object.keys(G.COLORS) : c.colors;
+      const open = openColorsForWild(bot, c);
+      if (open.length === 0) continue;
       // 50% chance to pick worst color, 50% chance random
-      const color = Math.random() > 0.5
+      const color = rnd() > 0.5
         ? chooseBestColorForWild(bot, c)
-        : validColors[Math.floor(Math.random() * validColors.length)];
-      return { type: 'play_property', cardIndex: i, targetColor: color };
+        : open[Math.floor(rnd() * open.length)];
+      if (color) return { type: 'play_property', cardIndex: i, targetColor: color };
     }
   }
 
@@ -832,6 +1150,7 @@ function findBestPropertyPlay(bot, hand) {
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
     if (c.type === 'property') {
+      if (G.zoneFull(bot, c.color)) continue;
       const pct = progress[c.color]?.pct || 0;
       // Prefer colors we're already building + smaller sets (easier to complete)
       const sizeBonus = (5 - G.COLORS[c.color].size) * 0.1;
@@ -840,6 +1159,7 @@ function findBestPropertyPlay(bot, hand) {
     }
     if (c.type === 'wild_property') {
       const color = chooseBestColorForWild(bot, c);
+      if (!color) continue;
       const pct = progress[color]?.pct || 0;
       const score = pct + 0.3; // bonus for flexibility
       if (score > bestScore) { bestScore = score; bestPlay = { type: 'play_property', cardIndex: i, targetColor: color }; }
@@ -994,11 +1314,9 @@ function botEndTurn(state, room, botId, mode, callbacks) {
   }
 
   const result = G.endTurn(state, botId, discardIds);
-  if (result.error) {
-    state.currentPlayerIndex = (state.currentPlayerIndex + 1) % state.players.length;
-    state.turnPhase = 'draw';
-    state.playsRemaining = 3;
-  }
+  // Blind `(idx+1) % len` skipped beginTurn() and could hand the turn to an eliminated
+  // seat; forceEndTurn() advances to the next ACTIVE seat and runs the turn-start hooks.
+  if (result.error) G.forceEndTurn(state);
   callbacks.startTimer(room);
   callbacks.broadcast(room);
   scheduleBotAction(room, callbacks);
@@ -1045,8 +1363,15 @@ function totalProps(player) {
 
 /* ── Wild card color selection ──────────────────────────────────────── */
 
+// §3.5 — a zone that already holds a full set is not a legal destination.
+function openColorsForWild(bot, card) {
+  const all = card.colors[0] === 'any' ? Object.keys(G.COLORS) : card.colors;
+  return all.filter(color => G.COLORS[color] && !G.zoneFull(bot, color));
+}
+
 function chooseBestColorForWild(bot, card) {
-  const validColors = card.colors[0] === 'any' ? Object.keys(G.COLORS) : card.colors;
+  const validColors = openColorsForWild(bot, card);
+  if (validColors.length === 0) return null;
   let best = validColors[0];
   let bestScore = -1;
   for (const color of validColors) {
@@ -1062,7 +1387,36 @@ function chooseBestColorForWild(bot, card) {
 
 /* ── Rent helpers ───────────────────────────────────────────────────── */
 
-function findBestRent(bot, hand, minRent) {
+// §3.2 — the wild ("any") rent card must name a single victim.
+function isWildRent(card) { return card.type === 'rent' && card.colors[0] === 'any'; }
+
+function chooseRentTarget(opponents, mode) {
+  const live = opponents.filter(o => !o.eliminated);
+  if (live.length === 0) return null;
+  const armed = live.filter(o => o.finalApproach);
+  if (armed.length > 0) return armed[0];            // §3.10 — bleed the armed player first
+  if (mode === 'chud' || mode === 'random') return live[Math.floor(rnd() * live.length)];
+  // Hit the leader; break ties on who can actually pay.
+  return live.reduce((best, p) => {
+    const bs = G.completedSets(best), ps = G.completedSets(p);
+    if (ps !== bs) return ps > bs ? p : best;
+    return G.playerTotalValue(p) > G.playerTotalValue(best) ? p : best;
+  });
+}
+
+function makeRentPlay(bot, hand, cardIndex, color, opponents, mode) {
+  const card = hand[cardIndex];
+  if (!card || !color) return null;
+  const play = { type: 'play_action', cardIndex, targetColor: color };
+  if (isWildRent(card)) {
+    const target = chooseRentTarget(opponents, mode);
+    if (!target) return null;
+    play.targetId = target.id;
+  }
+  return play;
+}
+
+function findBestRent(bot, hand, minRent, opponents, mode) {
   let bestRent = null;
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
@@ -1076,7 +1430,7 @@ function findBestRent(bot, hand, minRent) {
     }
   }
   if (!bestRent) return null;
-  return { type: 'play_action', cardIndex: bestRent.cardIndex, targetColor: bestRent.color };
+  return makeRentPlay(bot, hand, bestRent.cardIndex, bestRent.color, opponents, mode);
 }
 
 function chooseBestRentColor(bot, card) {
@@ -1092,21 +1446,32 @@ function randomRentColor(bot, card) {
   const validColors = card.colors[0] === 'any'
     ? Object.keys(bot.properties).filter(c => (bot.properties[c] || []).length > 0)
     : card.colors.filter(c => (bot.properties[c] || []).length > 0);
-  return validColors.length > 0 ? validColors[Math.floor(Math.random() * validColors.length)] : null;
+  return validColors.length > 0 ? validColors[Math.floor(rnd() * validColors.length)] : null;
 }
 
-function findRentOnCompleteSet(bot, hand) {
+function findRentOnCompleteSet(bot, hand, opponents, mode) {
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
     if (c.type !== 'rent') continue;
     const validColors = c.colors[0] === 'any' ? Object.keys(bot.properties) : c.colors;
     for (const color of validColors) {
       if (G.isSetComplete(bot, color)) {
-        return { cardIndex: i, color };
+        const play = makeRentPlay(bot, hand, i, color, opponents, mode);
+        if (play) return play;
       }
     }
   }
   return null;
+}
+
+// Surge Ops is only worth a play if a charge can follow it this turn (§3.3).
+function hasChargeFollowUp(bot, hand, opponents) {
+  if (opponents.length === 0) return false;
+  for (const c of hand) {
+    if (c.type === 'rent' && chooseBestRentColor(bot, c)) return true;
+    if (c.action === 'finance_office' || c.action === 'roll_call') return true;
+  }
+  return false;
 }
 
 /* ── Inspector General targets ──────────────────────────────────────── */
@@ -1131,7 +1496,7 @@ function findRandomIGTarget(opponents) {
       if (G.isSetComplete(opp, color)) targets.push({ id: opp.id, color });
     }
   }
-  return targets.length > 0 ? targets[Math.floor(Math.random() * targets.length)] : null;
+  return targets.length > 0 ? targets[Math.floor(rnd() * targets.length)] : null;
 }
 
 function findCheapestIGTarget(opponents) {
@@ -1204,7 +1569,7 @@ function findChudChudTarget(opponents) {
       for (const c of cards) all.push({ playerId: opp.id, cardId: c.id });
     }
   }
-  return all.length > 0 ? all[Math.floor(Math.random() * all.length)] : null;
+  return all.length > 0 ? all[Math.floor(rnd() * all.length)] : null;
 }
 
 function findRandomChudTarget(opponents) {
@@ -1214,7 +1579,7 @@ function findRandomChudTarget(opponents) {
       for (const c of cards) all.push({ playerId: opp.id, cardId: c.id });
     }
   }
-  return all.length > 0 ? all[Math.floor(Math.random() * all.length)] : null;
+  return all.length > 0 ? all[Math.floor(rnd() * all.length)] : null;
 }
 
 /* ── Steal targets (Midnight Requisition) ───────────────────────────── */
@@ -1267,18 +1632,28 @@ function findRandomStealTarget(opponents) {
       for (const c of cards) all.push({ playerId: opp.id, cardId: c.id });
     }
   }
-  return all.length > 0 ? all[Math.floor(Math.random() * all.length)] : null;
+  return all.length > 0 ? all[Math.floor(rnd() * all.length)] : null;
 }
 
 /* ── Swap targets (TDY Orders) ──────────────────────────────────────── */
 
+// §3.1 (reversed 2026-08-06, Hasbro FAQ 926) — TDY Orders may not take a card OUT of a
+// complete set nor give one out of yours. Every swap finder filters both sides through
+// this; without it the bot proposes a move playAction() refuses and burns its turn.
+function swappableCards(player) {
+  const out = [];
+  for (const [color, cards] of Object.entries(player.properties || {})) {
+    if (!G.zoneRequisitionable(player, color)) continue;
+    for (const card of cards) out.push({ color, card });
+  }
+  return out;
+}
+
 function findSmartSwapTarget(bot, opponents) {
   let myWorst = null;
-  for (const [col, cards] of Object.entries(bot.properties)) {
-    if (cards.length !== 1) continue;
-    for (const c of cards) {
-      if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value, color: col };
-    }
+  for (const { color: col, card: c } of swappableCards(bot)) {
+    if ((bot.properties[col] || []).length !== 1) continue;
+    if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value, color: col };
   }
   if (!myWorst) return null;
 
@@ -1286,8 +1661,8 @@ function findSmartSwapTarget(bot, opponents) {
     const have = (bot.properties[color] || []).length;
     if (have > 0 && have < info.size && color !== myWorst.color) {
       for (const opp of opponents) {
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) {
+        if (!G.zoneRequisitionable(opp, color)) continue;
+        for (const c of (opp.properties[color] || [])) {
           return { targetPlayerId: opp.id, targetCardId: c.id, myCardId: myWorst.cardId };
         }
       }
@@ -1298,20 +1673,16 @@ function findSmartSwapTarget(bot, opponents) {
 
 function findAggressiveSwapTarget(bot, opponents) {
   let myWorst = null;
-  for (const [col, cards] of Object.entries(bot.properties)) {
-    for (const c of cards) {
-      if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value };
-    }
+  for (const { card: c } of swappableCards(bot)) {
+    if (!myWorst || c.value < myWorst.value) myWorst = { cardId: c.id, value: c.value };
   }
   if (!myWorst) return null;
 
   let theirBest = null;
   for (const opp of opponents) {
-    for (const cards of Object.values(opp.properties)) {
-      for (const c of cards) {
-        if (c.value > myWorst.value && (!theirBest || c.value > theirBest.value)) {
-          theirBest = { targetPlayerId: opp.id, targetCardId: c.id, myCardId: myWorst.cardId, value: c.value };
-        }
+    for (const { card: c } of swappableCards(opp)) {
+      if (c.value > myWorst.value && (!theirBest || c.value > theirBest.value)) {
+        theirBest = { targetPlayerId: opp.id, targetCardId: c.id, myCardId: myWorst.cardId, value: c.value };
       }
     }
   }
@@ -1319,22 +1690,17 @@ function findAggressiveSwapTarget(bot, opponents) {
 }
 
 function findRandomSwapTarget(bot, opponents) {
-  const myCards = [];
-  for (const cards of Object.values(bot.properties)) {
-    for (const c of cards) myCards.push(c.id);
-  }
+  const myCards = swappableCards(bot).map(e => e.card.id);
   if (myCards.length === 0) return null;
 
   const theirCards = [];
   for (const opp of opponents) {
-    for (const cards of Object.values(opp.properties)) {
-      for (const c of cards) theirCards.push({ playerId: opp.id, cardId: c.id });
-    }
+    for (const { card: c } of swappableCards(opp)) theirCards.push({ playerId: opp.id, cardId: c.id });
   }
   if (theirCards.length === 0) return null;
 
-  const my = myCards[Math.floor(Math.random() * myCards.length)];
-  const their = theirCards[Math.floor(Math.random() * theirCards.length)];
+  const my = myCards[Math.floor(rnd() * myCards.length)];
+  const their = theirCards[Math.floor(rnd() * theirCards.length)];
   return { targetPlayerId: their.playerId, targetCardId: their.cardId, myCardId: my };
 }
 
@@ -1352,6 +1718,10 @@ function findUpgradeableSet(bot, type) {
 
 /* ── Payment selection ──────────────────────────────────────────────── */
 
+// Bank first, then upgrades, then properties: a House costs rent, a property can cost a set.
+const PAY_RANK = { bank: 0, upgrade: 1, prop: 2 };
+const bySource = (a, b) => PAY_RANK[a.source] - PAY_RANK[b.source];
+
 function selectPaymentCards(bot, amount, mode) {
   const cards = [];
   bot.bank.forEach(c => cards.push({ id: c.id, value: c.value, source: 'bank' }));
@@ -1359,18 +1729,27 @@ function selectPaymentCards(bot, amount, mode) {
     const setProgress = (propCards.length || 0) / (G.COLORS[color]?.size || 99);
     propCards.forEach(c => cards.push({ id: c.id, value: c.value, source: 'prop', color, setProgress }));
   }
+  // §3.1b — upgrades are payable. Spent after the bank but before properties: handing over
+  // a House costs rent, handing over a property can cost a whole set.
+  for (const [color, ups] of Object.entries(bot.upgrades || {})) {
+    for (const u of ups) {
+      if (u && typeof u === 'object') cards.push({ id: u.id, value: u.value, source: 'upgrade', color });
+    }
+  }
   if (cards.length === 0) return [];
 
   switch (mode) {
     case 'chud':
-      // Pay chaotically — random order
+      // Chaotic order, but the bank goes first — feeding properties to the table while
+      // sitting on cash was worth ~3 points of chud winrate.
       shuffle(cards);
+      cards.sort(bySource);
       break;
 
     case 'conservative':
       // Bank first (smallest), protect near-complete sets
       cards.sort((a, b) => {
-        if (a.source !== b.source) return a.source === 'bank' ? -1 : 1;
+        if (a.source !== b.source) return bySource(a, b);
         if (a.source === 'prop') return (a.setProgress || 0) - (b.setProgress || 0);
         return a.value - b.value;
       });
@@ -1387,16 +1766,25 @@ function selectPaymentCards(bot, amount, mode) {
       break;
 
     case 'random':
+      // Random order *within* each pool, but cash before property: paying with random
+      // properties while holding cash cost random ~2 points of winrate (4.5% → 6.6%).
       shuffle(cards);
+      cards.sort(bySource);
       break;
 
     default: // neutral
       cards.sort((a, b) => {
-        if (a.source !== b.source) return a.source === 'bank' ? -1 : 1;
+        if (a.source !== b.source) return bySource(a, b);
         if (a.source === 'prop') return (a.setProgress || 0) - (b.setProgress || 0);
         return a.value - b.value;
       });
       break;
+  }
+
+  // §3.10 — never volunteer a card out of a completed set while armed; it disarms us.
+  if (bot.finalApproach) {
+    const complete = new Set(completeSetCards(bot).map(entry => entry.card.id));
+    cards.sort((a, b) => (complete.has(a.id) ? 1 : 0) - (complete.has(b.id) ? 1 : 0));
   }
 
   const selected = [];
@@ -1409,13 +1797,12 @@ function selectPaymentCards(bot, amount, mode) {
   return selected;
 }
 
+// Must mirror G.payableCards() exactly. §3.1b made upgrades payable, and the engine only
+// accepts a short payment when EVERY payable card is surrendered — omitting the upgrades
+// here made the "pay with everything" fallback fail forever (measured: 82k refusals and
+// 7/400 games that never reached an ending).
 function getAllPayableCardIds(bot) {
-  const ids = [];
-  bot.bank.forEach(c => ids.push(c.id));
-  for (const cards of Object.values(bot.properties)) {
-    cards.forEach(c => ids.push(c.id));
-  }
-  return ids;
+  return G.payableCards(bot).map(c => c.id);
 }
 
 /* ── Discard selection ──────────────────────────────────────────────── */
@@ -1477,7 +1864,7 @@ function chooseDiscards(bot, excess, mode) {
 
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rnd() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
@@ -1487,17 +1874,10 @@ module.exports = {
   scheduleBotAction, cancelBotTimeout,
   // Exported for simulation harness
   _internal: {
-    decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards,
+    decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards, setRng, rnd,
+    BREAK_URGENCY, BREAK_OVERPAY, disposableValue, tryBreakFinalApproach,
     getAllPayableCardIds, chooseDiscards, findResponder: function(state) {
-      const pa = state.pendingAction;
-      if (!pa) return null;
-      if (pa.type === 'payment_all') {
-        if (pa.pending && pa.pending.length > 0) return pa.pending[0];
-        for (const [pid, chain] of Object.entries(pa.opsecChains || {})) return chain.responderId;
-      } else {
-        return pa.responderId || null;
-      }
-      return null;
+      return G.pendingResponders(state)[0] || null;
     },
     botRespondSync: function(state, botId, mode) {
       const pa = state.pendingAction;
@@ -1509,19 +1889,7 @@ module.exports = {
         const result = G.respondToAction(state, botId, 'opsec');
         if (!result.error) return;
       }
-      const needsPayment = pa.type === 'payment' || pa.type === 'payment_all' ||
-        pa.type === 'chud' || pa.action === 'chud_payment' ||
-        pa.action === 'finance_office' || pa.action === 'roll_call' || pa.action === 'rent';
-      if (needsPayment && pa.amount > 0) {
-        const payCards = selectPaymentCards(bot, pa.amount, mode);
-        const result = G.respondToAction(state, botId, 'accept', payCards.length > 0 ? payCards : undefined);
-        if (result?.needPayment) {
-          const allCards = getAllPayableCardIds(bot);
-          G.respondToAction(state, botId, 'accept', allCards.length > 0 ? allCards : undefined);
-        }
-      } else {
-        G.respondToAction(state, botId, 'accept');
-      }
+      acceptAction(state, bot, botId, pa, mode);
     },
   },
 };

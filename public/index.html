@@ -1,226 +1,404 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>CHUDOPOLY GO — Air Force Card Game</title>
-<link rel="stylesheet" href="style/variables.css?v=20260806.2">
-<link rel="stylesheet" href="style/lobby.css?v=20260806.2">
-<link rel="stylesheet" href="style/game-layout.css?v=20260806.2">
-<link rel="stylesheet" href="style/cards.css?v=20260806.2">
-<link rel="stylesheet" href="style/components.css?v=20260806.2">
-<link rel="stylesheet" href="style/bot.css?v=20260806.2">
-<link rel="stylesheet" href="style/responsive.css?v=20260806.2">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- ART §2: the apron at night is a NEUTRAL near-black, not the retired navy. -->
+<meta name="theme-color" content="#15171C" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#DFD7C5" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="light dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Chudopoly — an Air Force card table. Monopoly Deal, tactical edition.">
+<meta name="application-name" content="CHUDOPOLY">
+<meta name="apple-mobile-web-app-title" content="CHUDOPOLY">
+<title>CHUDOPOLY</title>
+<!-- The app icon is the DECK MARK — the pre-press alignment target from the
+     card back (844f99e) — reversed out of a solid --card-back tile, so the tab
+     carries an object rather than an outline. Every one of these is generated
+     by server/icon.js and served from a route: §0.3 bans .svg and .png files
+     in the repo, so nothing binary exists to commit. The SVG is a redraw for
+     16px, not a scale of the back; the PNGs carry the full mark. -->
+<link rel="icon" type="image/svg+xml" sizes="any" href="/icon.svg?v=1">
+<link rel="alternate icon" type="image/png" sizes="32x32" href="/icon-32.png?v=1">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?v=1">
+<link rel="manifest" href="/manifest.webmanifest?v=1">
+<link rel="stylesheet" href="/style/variables.css?v=1">
+<link rel="stylesheet" href="/style/base.css?v=1">
+<link rel="stylesheet" href="/style/table.css?v=1">
+<link rel="stylesheet" href="/style/ui.css?v=1">
+<link rel="stylesheet" href="/style/motion.css?v=1">
+<link rel="stylesheet" href="/style/interact.css?v=1">
+<link rel="stylesheet" href="/style/content.css?v=1">
+<link rel="stylesheet" href="/style/lobby.css?v=1">
+<!-- last: cardart owns what is PRINTED ON a card and hands the host .card off -->
+<link rel="stylesheet" href="/style/cardart.css?v=1">
 </head>
 <body>
+<div id="app">
 
-<!-- ── Title / Lobby Screen ─────────────────────────────────────────── -->
-<div id="lobby-screen">
-  <div class="logo">
-    <div class="logo-star">&#9733;</div>
-    <h1>CHUDOPOLY GO</h1>
-    <p class="subtitle">AIR FORCE CARD GAME</p>
-    <p class="tagline">Monopoly Deal — Tactical Edition</p>
-  </div>
+  <!-- ── HOME ───────────────────────────────────────────────────────────
+       ART §3.3: "the home screen IS the table, seen from above, with the deck
+       sitting on it and the actions painted into the apron as markings."
 
-  <div id="lobby-join" class="lobby-panel">
-    <label class="input-label" for="player-name">CALL SIGN</label>
-    <input type="text" id="player-name" placeholder="Enter your name" maxlength="16" autocomplete="off">
-    <div class="divider"></div>
-    <button id="btn-create" data-action="create-room">Create Room</button>
-    <button id="btn-quick-play" data-action="quick-play">Quick Play vs Bots</button>
-    <div class="divider">— OR —</div>
-    <input type="text" id="room-code-input" placeholder="Room Code" maxlength="4" autocomplete="off"
-           style="text-transform:uppercase">
-    <button id="btn-join" data-action="join-room">Join Room</button>
-  </div>
+       COMPOSITION, round 6. Measured on the previous build at 1440x900: the ink
+       occupied 55.6% of the viewport height with 22.2% dead apron above it and
+       22.2% below, and the two masses sat at 30% and 66% of the width with
+       nothing between them. The bounding box was dead-centre; the WEIGHT was
+       not, and a menu made of two half-weight objects floating in a hole is
+       what "unfinished" looks like.
 
-  <div id="lobby-waiting" class="lobby-panel" style="display:none">
-    <h2>Room: <span id="room-code-display"></span></h2>
-    <p class="hint">Share this code with your squad</p>
-    <button id="btn-share-room" class="btn-share-room" data-action="share-room">Share Invite Link</button>
-    <div id="player-list"></div>
-    <div id="room-settings" class="room-settings" style="display:none">
-      <label class="input-label" for="turn-timeout">TURN TIMER (seconds, 0 = off)</label>
-      <input type="number" id="turn-timeout" value="60" min="0" max="300" step="10" style="text-align:center;width:100px;margin:0 auto">
-      <label class="input-label" for="response-timeout" style="margin-top:6px">RESPONSE TIMER (seconds, 0 = off)</label>
-      <input type="number" id="response-timeout" value="30" min="0" max="120" step="5" style="text-align:center;width:100px;margin:0 auto">
-    </div>
-    <div id="bot-controls" style="display:none">
-      <button id="btn-add-bot" class="btn-add-bot" data-action="show-bot-picker">+ Add Bot</button>
-    </div>
-    <button id="btn-start" data-action="start-game" style="display:none">Launch Mission</button>
-    <p id="waiting-msg" class="hint">Waiting for host to start...</p>
-    <button id="btn-leave-lobby" class="btn-leave-lobby" data-action="leave-lobby">Leave Room</button>
-    <div id="lobby-chat" class="chat-box" style="display:none">
-      <div class="chat-tabs">
-        <button class="chat-tab active" data-action="switch-chat" data-scope="room">Room</button>
-        <button class="chat-tab" data-action="switch-chat" data-scope="global">Global <span id="lobby-unread-global" class="chat-unread" style="display:none">0</span></button>
+       The fix is not to centre the wordmark and hope. It is that MARKINGS RUN
+       TO THE EDGE OF THE FRAME AND OBJECTS DO NOT. A painted apron is anchored
+       by its lines, not by its furniture, so this screen is three registers:
+
+         head   the wordmark plate, painted on the concrete, with a rule under
+                it that reaches both edges of the viewport
+         table  the deck — the largest object on screen, because the deck IS
+                the subject and a card game's menu should show cards
+         rail   the hold-short line, edge to edge, with the marshalling area
+                painted along it: call sign, the ink slab, the alternates, and
+                the two edge marks (how to play; sound)
+
+       Every edge of the frame now carries a marking, the wordmark is centred
+       WITHOUT floating (the rule under it is what holds it down), and the deck
+       is the hero it was always supposed to be. Same three registers at every
+       width — only the rail's internal arrangement changes. -->
+  <section id="screen-home" class="screen screen-home">
+    <div class="home">
+
+      <header class="home-head">
+        <h1 class="brand-title">
+          <svg class="brand-mark" viewBox="0 0 724 220" fill-rule="evenodd"
+               role="img" aria-label="Chudopoly"><title>Chudopoly</title>
+            <rect width="724" height="220" fill="var(--card-stock)"/>
+            <path fill="var(--ink)" d="M13 13 H711 V207 H13 Z M20 20 H704 V200 H20 Z"/>
+            <g fill="var(--ink)">
+              <path d="M5 5 H84 V12 H12 V60 H5 Z"/>
+              <path d="M719 5 V60 H712 V12 H640 V5 Z"/>
+              <path d="M5 215 V160 H12 V208 H84 V215 Z"/>
+              <path d="M719 215 H640 V208 H712 V160 Z"/>
+            </g>
+            <g transform="translate(73 53)">
+              <path fill="var(--ca-drop, #A2977E)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
+             V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
+             M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100
+             H298.0 L282.0 84 V16 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100 H350.0 Z M429.0 0
+             H459.0 L475.0 16 V84 L459.0 100 H429.0 L413.0 84 V16 Z M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z
+             M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48 V100 H555.0 V48 Z"/>
+            </g>
+            <g transform="translate(64 44)">
+              <path fill="var(--ink)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
+             V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
+             M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M236.0 20 H254.0 L258.0 24 V76 L254.0 80
+             H236.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100 H298.0 L282.0 84 V16 Z M306.0 20 H320.0 L324.0
+             24 V76 L320.0 80 H306.0 L302.0 76 V24 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100
+             H350.0 Z M370.0 20 H388.0 L392.0 24 V36 L388.0 40 H370.0 Z M429.0 0 H459.0 L475.0 16 V84 L459.0
+             100 H429.0 L413.0 84 V16 Z M437.0 20 H451.0 L455.0 24 V76 L451.0 80 H437.0 L433.0 76 V24 Z
+             M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48
+             V100 H555.0 V48 Z"/>
+            </g>
+            <!-- The GO chip lived here — a reversed revision-block bottom right.
+                 OWNER RULING 2026-08-07: the game is CHUDOPOLY. The suffix was
+                 inherited from the one-night build and never earned anything, and
+                 the card back had already been saying CHUDOPOLY on its own. -->
+          </svg>
+        </h1>
+        <p class="brand-sub">Monopoly Deal, flight-line edition. Three complete sets and you are wheels up.</p>
+      </header>
+
+      <!-- THE DECK IS BUILT, NOT WRITTEN.
+           This element was 11 hand-authored spans: two copies of the Fighters
+           and Space Force glyphs, a bespoke value coin at left:8%/bottom:7%
+           that matched nothing on a real card, and a back carrying only the
+           alignment target. The card art has been redrawn three times since
+           those copies were made and they were stale on arrival — the owner's
+           read was "tacky / not well made", and the reason is that they are not
+           the cards. src/ui/home.js now fills this from table/cardart.js's own
+           faceNode()/backNode(), so the menu shows the ACTUAL printed card, the
+           coin sits where the card design puts it, and every future art change
+           lands here for free. Decorative: aria-hidden, no [data-card-id], and
+           nowhere near a .cardzone, so nothing that reconciles the table can
+           mistake these for cards in play (§0.4). -->
+      <div class="home-table">
+        <div id="home-deck" class="home-deck" aria-hidden="true"></div>
+        <!-- 106, not 104: buildDeck() returns 106 and has for some time. The
+             literal was written by hand and then never re-read, which is the
+             whole argument for the deck above it now being built from
+             cardart.js rather than copied. A number nobody derives is a number
+             that drifts. -->
+        <p class="home-deck-tag">106 cards &middot; 2&ndash;5 seats</p>
       </div>
-      <div id="lobby-chat-msgs" class="chat-msgs"></div>
-      <div class="chat-input-row">
-        <input type="text" id="lobby-chat-input" data-chat-from="lobby" placeholder="Message..." maxlength="500" autocomplete="off">
-        <button class="btn-gif" data-action="show-gif" data-from="lobby" title="GIF" style="display:none">GIF</button>
-        <button data-action="send-chat" data-from="lobby">Send</button>
-      </div>
-    </div>
-  </div>
 
-  <div id="lobby-error" class="error-msg"></div>
-</div>
-
-<!-- ── Game Screen ──────────────────────────────────────────────────── -->
-<div id="game-screen" style="display:none">
-  <div class="game-header">
-    <div class="hdr-left">
-      <span class="hdr-title">CHUDOPOLY GO</span>
-      <span id="hdr-room" class="hdr-badge"></span>
-      <span id="conn-status" class="conn-dot connected" title="Connected"></span>
-      <button id="btn-leave-game" class="hdr-btn btn-leave" data-action="leave-game" title="Leave Game">&#10005;</button>
-    </div>
-    <div class="hdr-center">
-      <span id="hdr-turn"></span>
-      <span id="hdr-phase" class="hdr-badge"></span>
-      <span id="hdr-plays"></span>
-      <span id="hdr-timer" class="hdr-timer" style="display:none"></span>
-    </div>
-    <div class="hdr-right">
-      <span id="hdr-deck"></span>
-      <button id="btn-help" class="hdr-btn" data-action="show-help" title="Rules">?</button>
-      <button id="btn-sound" class="hdr-btn" data-action="toggle-sound" title="Toggle Sound">&#9835;</button>
-    </div>
-  </div>
-
-  <!-- Targeting banner (steal/swap mode) -->
-  <div id="targeting-banner" class="targeting-banner" style="display:none">
-    <span id="targeting-msg"></span>
-    <button data-action="cancel-targeting">Cancel</button>
-  </div>
-  <div id="waiting-status" class="waiting-status" style="display:none" aria-live="polite"></div>
-
-  <div class="game-body">
-    <!-- Other players -->
-    <div id="opponents" class="opponents-area"></div>
-
-    <!-- Center: your bank + properties + log -->
-    <div class="center-area">
-      <div class="center-cols">
-        <div class="my-assets">
-          <div id="my-net-worth" class="my-net-worth"></div>
-          <h3>Your Bank <span id="my-bank-total"></span></h3>
-          <div id="my-bank" class="card-row"></div>
-          <h3>Your Properties</h3>
-          <div id="my-properties" class="prop-area"></div>
-        </div>
-        <div class="side-panel">
-          <div class="discard-panel">
-            <h3>Discard Pile <span id="discard-count" class="discard-count"></span></h3>
-            <div id="discard-pile"></div>
+      <!-- the hold-short line and everything painted along it -->
+      <div class="home-rail">
+        <div class="home-actions">
+          <p id="home-greet" class="home-greet" hidden></p>
+          <div class="home-slot">
+            <label class="field-label" for="name-input">Call sign</label>
+            <input id="name-input" class="field" type="text" maxlength="16" autocomplete="off"
+                   autocapitalize="characters" placeholder="Who is flying?">
           </div>
-          <div class="game-log-panel">
-            <h3>Mission Log</h3>
-            <div id="game-log"></div>
-          </div>
-          <div class="chat-panel">
-            <div class="chat-tabs">
-              <button class="chat-tab active" data-action="switch-chat" data-scope="room">Room <span id="game-unread-room" class="chat-unread" style="display:none">0</span></button>
-              <button class="chat-tab" data-action="switch-chat" data-scope="global">Global <span id="game-unread-global" class="chat-unread" style="display:none">0</span></button>
-            </div>
-            <div id="game-chat-msgs" class="chat-msgs"></div>
-            <div class="chat-input-row">
-              <input type="text" id="game-chat-input" data-chat-from="game" placeholder="Message..." maxlength="500" autocomplete="off">
-              <button class="btn-gif" data-action="show-gif" data-from="game" title="GIF" style="display:none">GIF</button>
-              <button data-action="send-chat" data-from="game">Send</button>
+          <button id="btn-quick-play" class="btn btn-primary home-go" data-action="quick-play">Quick play vs bots</button>
+          <div class="home-alt">
+            <button id="btn-create-room" class="btn" data-action="create-room">Create room</button>
+            <div class="home-join">
+              <input id="code-input" class="field field-code" type="text" maxlength="4" autocomplete="off"
+                     placeholder="CODE" aria-label="Room code">
+              <button id="btn-join-room" class="btn" data-action="join-room">Join</button>
             </div>
           </div>
+          <p id="home-error" class="error" role="alert" aria-live="polite"></p>
+        </div>
+
+        <button class="btn btn-ghost home-help" data-action="help">How to play</button>
+
+        <!-- THE SOUND MARK FOLDED INTO THIS ONE, and the fold is the point.
+             This corner used to carry a music toggle, added because §7's bed
+             starts on the first pointerdown anywhere and the only switch lived
+             inside the game screen's HUD — so tapping Quick Play bought a bed
+             you could not silence until the table loaded. That control was a
+             MITIGATION for a missing surface, and its own comment said so.
+             The surface exists now, on all three screens, so keeping both would
+             leave two adjacent marks in the same rail that both mean "audio",
+             one of them a subset of the other — which is the redundancy ART
+             §3.2 exists to stop, and it would also cost the rail a third corner
+             it has no room for on a phone.
+
+             The one thing the mark uniquely bought is kept and MEASURED, not
+             assumed: pointer.js dispatches on window CAPTURE while main.js's
+             audio unlock is a bubble-phase listener on the same window, so a
+             press here runs first. ui/settings.js is imported for its side
+             effect at module scope and opens the sheet from that capture-phase
+             dispatch; the Sound and Music switches are the first two rows of
+             it. Measured cold, mute-as-the-first-gesture: see ui/settings.js. -->
+        <button id="btn-home-settings" class="btn btn-ghost home-settings mark-dial" data-action="settings">
+          <span>Settings</span>
+        </button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── LOBBY ──────────────────────────────────────────────────────────
+       THE SAME THREE REGISTERS AS THE HOME SCREEN (see the comment above it,
+       and commit 5c0bdc7). This screen was the one nobody had looked at — the
+       owner has only ever played bot games — and the measurement says so.
+       Measured in a REAL host lobby at 1280x720, host + 3 bots, the advanced
+       disclosure CLOSED (tools cannot reach this state: a lobby broadcast
+       carries no `game`, so store.self.id is never set and every shot on disk
+       named `lobby@*` is the GUEST view with the host controls hidden):
+
+         .lobby-panel     431 x 720, content 1138 -> 418px unreachable
+         panel top        y -197   (the room code was ABOVE the viewport)
+         Copy invite      y -124..-80   entirely off the top
+         Launch Mission   y  805..849   85px past the bottom
+         off-viewport     54 controls
+         ink box          431 x 2531 = 33.6% x 351.5% of the viewport
+         dead apron       33.2% either side
+
+       `.screen-lobby` is `overflow: hidden` and the ONLY scroller was the
+       58px seat list, so none of that was reachable by scrolling: on a
+       1280x720 desktop with four seats the host could not press the one
+       button the screen exists for. That is not a design complaint.
+
+       So: head / body / rail, markings to the frame edge, objects inside it.
+
+         head   ROOM + code + the invite, with a full-bleed rule under it —
+                the same plate-and-rule the home screen opens with
+         body   the 1fr row and the ONLY scroll container: two columns on a
+                pointer screen (THE ROOM against THE RULES), one on a phone
+         rail   the hold-short line, edge to edge, with Launch Mission painted
+                in the marshalling area and the two secondary marks at the
+                frame's corners — Leave room, and Settings
+
+       Nothing in the rail can be pushed off the bottom by anything in the
+       body, which is the invariant the old single column had no way to hold.
+       The rail's corner marks are the SAME vocabulary as the home rail's, so
+       Settings sits in the same place on both screens. -->
+  <section id="screen-lobby" class="screen screen-lobby" hidden>
+    <div class="lobby">
+
+      <header class="lobby-head">
+        <h2 class="lobby-title">ROOM <span id="lobby-code" class="lobby-code"></span></h2>
+        <button id="btn-invite" class="btn btn-ghost lobby-invite" data-action="copy-invite">Copy invite link</button>
+      </header>
+
+      <!-- THE ONLY SCROLLER ON THIS SCREEN. No env(safe-area-inset-*) here or
+           on anything inside it: `.screen` is the single inset owner and
+           tools/checkClient.mjs fails a second one. -->
+      <div id="lobby-body" class="lobby-body">
+
+        <section class="lobby-col lobby-col-room" aria-labelledby="lobby-seats-head">
+          <h3 id="lobby-seats-head" class="lobby-legend">The room</h3>
+          <div id="lobby-players" class="lobby-players"></div>
+
+          <div id="lobby-host" class="lobby-host" hidden>
+            <div class="row">
+              <label class="field-label" for="bot-mode">BOT</label>
+              <select id="bot-mode" class="field">
+                <option value="random">Random</option>
+                <option value="conservative">Conservative</option>
+                <option value="neutral" selected>Neutral</option>
+                <option value="aggressive">Aggressive</option>
+                <option value="chud">CHUD</option>
+              </select>
+              <button id="btn-add-bot" class="btn" data-action="add-bot">Add bot</button>
+            </div>
+            <div class="row">
+              <label class="field-label" for="turn-timeout">TURN</label>
+              <select id="turn-timeout" class="field">
+                <option value="0">off</option>
+                <option value="30">30s</option>
+                <option value="60" selected>60s</option>
+                <option value="120">120s</option>
+              </select>
+              <label class="field-label" for="response-timeout">REPLY</label>
+              <select id="response-timeout" class="field">
+                <option value="0">off</option>
+                <option value="15">15s</option>
+                <option value="30" selected>30s</option>
+                <option value="60">60s</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- ui/lobby.js builds the ruleset picker into this column (host), or
+             the "the host is choosing" note into it (guest). -->
+        <section id="lobby-rules" class="lobby-col lobby-col-rules"></section>
+      </div>
+
+      <!-- the hold-short line and everything painted along it -->
+      <div class="lobby-rail">
+        <button class="btn btn-ghost lobby-mark lobby-leave" data-action="leave-room">Leave room</button>
+        <div class="lobby-actions">
+          <!-- The hint is ABOVE the slab, not under it. Under it, the last line
+               of the screen was a sentence rather than the action, and at 1280×720
+               it was the thing the viewport's bottom edge cut. It also reads in
+               the right order now: the state, then the control that acts on it. -->
+          <p id="lobby-hint" class="hint" aria-live="polite">Waiting for the host to launch&hellip;</p>
+          <!-- MOVED OUT OF #lobby-host (P9). It used to be the last child of the
+               host block, under ~850px of bot picker, clocks and presets, which
+               is exactly how it ended up 85px below a 720px fold. It is pinned
+               in the rail now and no amount of content above it can move it. -->
+          <button id="btn-start" class="btn btn-primary lobby-go" data-action="start-game" hidden>Launch Mission</button>
+        </div>
+        <button class="btn btn-ghost lobby-mark lobby-settings mark-dial" data-action="settings">
+          <span>Settings</span>
+        </button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── GAME ───────────────────────────────────────────────────────── -->
+  <section id="screen-game" class="screen screen-game" hidden>
+    <header id="hud" class="hud">
+      <div class="hud-left">
+        <span id="hud-room" class="chip"></span>
+        <span id="hud-conn" class="conn" title="Connection"></span>
+      </div>
+      <div class="hud-mid">
+        <span id="hud-turn" class="hud-turn" aria-live="polite"></span>
+        <span id="hud-plays" class="chip"></span>
+        <span id="hud-timer" class="timer" hidden><span id="hud-timer-text" class="timer-text"></span></span>
+      </div>
+      <div class="hud-right">
+        <!-- The glyphs are drawn in ui.css as masks (one per data-action), in the
+             same solid-silhouette family as the card glyphs. The buttons ship
+             empty: a Unicode dingbat here was the last generic mark in the app. -->
+        <button id="btn-side" class="btn btn-icon" data-action="toggle-side" aria-label="Mission log and comms"></button>
+        <button class="btn btn-icon" data-action="help" aria-label="Rules"></button>
+        <button class="btn btn-icon" data-action="leave-room" aria-label="Leave game"></button>
+      </div>
+    </header>
+
+    <main id="table" class="table">
+      <div id="opponents" class="opponents"></div>
+
+      <div id="table-center" class="table-center">
+        <div class="pile">
+          <div class="cardzone zone-deck" data-zone="deck"></div>
+          <span class="pile-label">Deck <span id="deck-count">0</span></span>
+        </div>
+        <div class="pile">
+          <div class="cardzone zone-discard" data-zone="discard"></div>
+          <span class="pile-label">Discard <span id="discard-count">0</span></span>
         </div>
       </div>
-    </div>
 
-    <!-- Your hand -->
-    <div class="hand-area" id="hand-area">
+      <div id="self-board" class="self-board"></div>
+    </main>
+
+    <div id="prompt" class="prompt" hidden aria-live="polite"></div>
+
+    <footer id="hand-dock" class="hand-dock">
       <div class="hand-bar">
-        <span class="hand-label">YOUR HAND <span id="hand-count" class="hand-count"></span></span>
+        <span class="hand-label">Hand <span id="hand-count">0</span></span>
         <div class="hand-actions">
-          <button id="btn-chat-toggle" class="btn-chat-toggle" data-action="toggle-chat">&#9993;<span id="chat-badge" class="chat-badge" style="display:none">0</span></button>
-          <button id="btn-emote" class="btn-emote" data-action="show-emotes">&#9786;</button>
-          <button id="btn-draw" data-action="draw" style="display:none">Draw Cards</button>
-          <button id="btn-end-turn" data-action="end-turn">End Turn</button>
-          <button id="btn-scoop" class="btn-scoop" data-action="confirm-scoop">Scoop</button>
+          <button id="btn-draw" class="btn" data-action="draw">Draw</button>
+          <button id="btn-end-turn" class="btn" data-action="end-turn">End turn</button>
+          <button id="btn-emote" class="btn btn-icon" data-action="emote" aria-label="Emote"></button>
+          <!-- NOT .btn-danger: ART §1 reserves hazard material for danger, and a
+               permanently-striped button in the dock of every table shot spends
+               the material before the final-approach rails ever rise. -->
+          <button id="btn-scoop" class="btn btn-icon" data-action="scoop" aria-label="Scoop out"></button>
         </div>
       </div>
-      <div id="my-hand" class="card-row hand-cards"></div>
+      <div id="zone-hand" class="cardzone zone-hand" data-zone="hand"></div>
+    </footer>
+
+    <aside id="side" class="side" hidden>
+      <div class="side-head">
+        <span>Mission log</span>
+        <button class="btn btn-icon is-close" data-action="toggle-side" aria-label="Close panel"></button>
+      </div>
+      <div id="log" class="log" aria-live="polite"></div>
+      <div class="chat-tabs">
+        <button class="btn chat-tab is-on" data-action="chat-scope" data-scope="room">Room</button>
+        <button class="btn chat-tab" data-action="chat-scope" data-scope="global">Global</button>
+      </div>
+      <div id="chat-msgs" class="chat-msgs"></div>
+      <div class="chat-row">
+        <input id="chat-input" class="field" type="text" maxlength="500" placeholder="Message&hellip;"
+               autocomplete="off" aria-label="Chat message">
+        <button class="btn" data-action="send-chat">Send</button>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ── OVERLAYS ───────────────────────────────────────────────────── -->
+  <div id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h3 id="sheet-title"></h3>
+        <button class="btn btn-icon is-close" data-action="close-sheet" aria-label="Close"></button>
+      </div>
+      <div id="sheet-body" class="sheet-body"></div>
     </div>
   </div>
 
-  <!-- Floating emotes -->
-  <div id="emote-container"></div>
-
-  <!-- Mobile chat drawer -->
-  <div id="chat-drawer" class="chat-drawer" style="display:none">
-    <div class="chat-drawer-header">
-      <span>COMMS</span>
-      <button data-action="toggle-chat">&times;</button>
-    </div>
-    <div class="chat-tabs">
-      <button class="chat-tab active" data-action="switch-chat" data-scope="room">Room <span id="drawer-unread-room" class="chat-unread" style="display:none">0</span></button>
-      <button class="chat-tab" data-action="switch-chat" data-scope="global">Global <span id="drawer-unread-global" class="chat-unread" style="display:none">0</span></button>
-    </div>
-    <div id="drawer-chat-msgs" class="chat-msgs"></div>
-    <div class="chat-input-row">
-      <input type="text" id="drawer-chat-input" data-chat-from="drawer" placeholder="Message..." maxlength="500" autocomplete="off">
-      <button class="btn-gif" data-action="show-gif" data-from="drawer" title="GIF" style="display:none">GIF</button>
-      <button data-action="send-chat" data-from="drawer">Send</button>
+  <div id="win-overlay" class="win-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="win-title">
+    <div class="win-box">
+      <div class="win-star" aria-hidden="true">
+        <svg viewBox="0 0 100 100" focusable="false">
+          <path d="M50 12 61.4 41.3 92.5 43.2 68.4 62.9 76.3 93 50 76.3 23.7 93 31.6 62.9 7.5 43.2 38.6 41.3Z"/>
+        </svg>
+      </div>
+      <h1 id="win-title"></h1>
+      <p id="win-reason" class="hint"></p>
+      <div id="win-summary" class="win-summary"></div>
+      <button id="btn-rematch" class="btn btn-primary" data-action="rematch">Rematch</button>
+      <button id="btn-win-leave" class="btn btn-ghost" data-action="leave-room">Leave room</button>
     </div>
   </div>
 
-  <!-- Turn popup -->
-  <div id="turn-popup" class="turn-popup" style="display:none">
-    <div class="turn-popup-star">&#9733;</div>
-    <div class="turn-popup-text">YOUR TURN</div>
-    <div class="turn-popup-sub" id="turn-popup-sub"></div>
-  </div>
-
-  <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="emotes" class="emotes" aria-hidden="true"></div>
 </div>
 
-<!-- ── Action modal (global, accessible from lobby + game) ──────────── -->
-<div id="modal-overlay" class="modal-overlay" style="display:none" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <button class="modal-close" data-action="close-modal" aria-label="Close">&times;</button>
-    <h3 id="modal-title"></h3>
-    <div id="modal-body"></div>
-    <div id="modal-actions" class="modal-actions"></div>
-  </div>
-</div>
-
-<!-- ── Winner Overlay ───────────────────────────────────────────────── -->
-<div id="winner-overlay" class="winner-overlay" style="display:none">
-  <div class="winner-box">
-    <div class="winner-star">&#9733;</div>
-    <h1 id="winner-name"></h1>
-    <p>MISSION ACCOMPLISHED</p>
-    <p class="hint">3 Complete Property Sets</p>
-    <div id="winner-summary" class="winner-summary"></div>
-    <button id="btn-rematch" data-action="rematch">Rematch</button>
-    <button id="btn-winner-home" class="btn-winner-home" data-action="leave-now">Leave Room</button>
-  </div>
-</div>
-
-<!-- Confetti -->
-<div id="confetti"></div>
-
-<script src="js/utils.js?v=20260806.2"></script>
-<script src="js/sound.js?v=20260806.2"></script>
-<script src="js/state.js?v=20260806.2"></script>
-<script src="js/timers.js?v=20260806.2"></script>
-<script src="js/modals.js?v=20260806.2"></script>
-<script src="js/chat.js?v=20260806.2"></script>
-<script src="js/network.js?v=20260806.2"></script>
-<script src="js/lobby.js?v=20260806.2"></script>
-<script src="js/game-render.js?v=20260806.2"></script>
-<script src="js/game-actions.js?v=20260806.2"></script>
-<script src="js/init.js?v=20260806.2"></script>
+<script type="module" src="/src/main.js?v=1"></script>
 </body>
 </html>

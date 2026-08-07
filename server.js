@@ -15,6 +15,7 @@ const timers = require('./server/timers');
 const absent = require('./server/absent');
 const handlers = require('./server/handlers');
 const protocol = require('./server/protocol');
+const icon = require('./server/icon');
 
 /* ── App setup ─────────────────────────────────────────────────────── */
 
@@ -49,6 +50,22 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
 });
+/* ── App icon ──────────────────────────────────────────────────────────
+   Served, not stored. §0.3 bans .svg and .png files in the repo, so the tab
+   favicon and every install raster are generated from one shape list in
+   server/icon.js — SVG as text, PNG through node:zlib. Registered ABOVE the
+   static mount so these paths never touch the filesystem. Cache-Control
+   matches the rest of the tree (revalidate; the ?v= in index.html is what
+   actually busts), and express adds the ETag off the buffer. */
+app.get('/icon.svg', (req, res) => {
+  res.type('image/svg+xml').set('Cache-Control', 'no-cache').send(icon.tabSVG());
+});
+app.get('/icon-:key.png', (req, res, next) => {
+  const png = icon.pngFor(req.params.key);
+  if (!png) return next();
+  res.type('image/png').set('Cache-Control', 'no-cache').send(png);
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
     // HTML must always revalidate so its cache-busted asset URLs stay in sync.
@@ -288,6 +305,10 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
+  // Build every icon raster before the first request rather than making the
+  // first tab paint pay for it. Measured: 29ms for the SVG + all five PNGs.
+  const iconMs = icon.warm();
   console.log(`\n  CHUDOPOLY GO — Air Force Card Game`);
-  console.log(`  Server running on http://localhost:${PORT}\n`);
+  console.log(`  Server running on http://localhost:${PORT}`);
+  console.log(`  icons generated in ${iconMs}ms (no binary in the tree — §0.3)\n`);
 });

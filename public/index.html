@@ -11,7 +11,19 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="description" content="Chudopoly GO — an Air Force card table. Monopoly Deal, tactical edition.">
+<meta name="application-name" content="CHUDOPOLY">
+<meta name="apple-mobile-web-app-title" content="CHUDOPOLY">
 <title>CHUDOPOLY GO</title>
+<!-- The app icon is the DECK MARK — the pre-press alignment target from the
+     card back (844f99e) — reversed out of a solid --card-back tile, so the tab
+     carries an object rather than an outline. Every one of these is generated
+     by server/icon.js and served from a route: §0.3 bans .svg and .png files
+     in the repo, so nothing binary exists to commit. The SVG is a redraw for
+     16px, not a scale of the back; the PNGs carry the full mark. -->
+<link rel="icon" type="image/svg+xml" sizes="any" href="/icon.svg?v=1">
+<link rel="alternate icon" type="image/png" sizes="32x32" href="/icon-32.png?v=1">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png?v=1">
+<link rel="manifest" href="/manifest.webmanifest?v=1">
 <link rel="stylesheet" href="/style/variables.css?v=1">
 <link rel="stylesheet" href="/style/base.css?v=1">
 <link rel="stylesheet" href="/style/table.css?v=1">

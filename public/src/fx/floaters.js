@@ -23,6 +23,7 @@ const RISE = 46;          // px travelled over LIFE
 // 44, not 30: at 1.5rem the glyphs are 24px tall and 30px of separation still
 // let a rising float clip the one above it.
 const STACK = 44;
+const EDGE = 8;           // px kept between a float's glyphs and the viewport
 const LIFE = 0.9;         // §7's 900ms
 const TONE = {
   gold: '#ffeab4',
@@ -86,6 +87,17 @@ export function spawn(text, x, y, tone, scale = 1) {
   band(_band);
   const w = overlay.width();
   const rise = reduced ? 0 : RISE;
+  // 62px was a guess at half the widest float, and it was wrong for the two
+  // that are WORDS rather than numbers. MEASURED: "OPSEC!" is anchored on the
+  // discard pile at x≈88, is centred with translateX(-50%), and at 1.35 scale
+  // (2.02rem) measures ~124px — so its first glyph rendered at x = 88 − 62 =
+  // 26px … minus the 62px the clamp thought was enough, i.e. off the left edge
+  // of the viewport at the single most dramatic beat in the game.
+  //
+  // The half-width is now MEASURED off the node, not assumed. One layout read
+  // per spawn, and a spawn is a beat (§0.8) — floaters peak at 3 live on the
+  // seeded playtest. The text is written below, so the measurement is taken
+  // there and the x is clamped after it.
   rec.x = clamp(x, 62, Math.max(64, w - 62));
   // Start low enough that the whole RISE stays inside the band.
   let ty = clamp(y - 10, _band[0] + rise, _band[1]);
@@ -109,6 +121,15 @@ export function spawn(text, x, y, tone, scale = 1) {
   node.textContent = text;                         // text as text (§0.4)
   node.style.setProperty('color', TONE[tone] || TONE.steel);
   node.style.setProperty('font-size', scale === 1 ? '' : `${(1.5 * scale).toFixed(2)}rem`);
+  // A scaled float is one of the two SHOUTS, and a shout lands on an opponent
+  // board rather than on felt — see .fx-text.is-label in fx/overlay.js.
+  node.classList.toggle('is-label', scale !== 1);
+  // Now that the glyphs are in, clamp against what they actually measure. The
+  // node is already positioned off-screen from its last life, so this reads a
+  // width, never a position — and a float that has to move to stay on screen is
+  // still a float that says the right thing in the right half of the table.
+  const half = Math.ceil(node.offsetWidth / 2) + EDGE;
+  if (half > 62) rec.x = clamp(rec.x, half, Math.max(half, w - half));
   live.push(rec);
   return true;
 }

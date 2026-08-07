@@ -69,8 +69,13 @@
 //  final_approach    any             ring 24→62% of the viewport diagonal   amber .22   .34     —
 //                                    lw4.4, 800ms
 //  final_approach    AGAINST YOU     + 6 amber glints ø32                   amber .26   .34     3×60ms
-//  approach_broken   any             ring 18→34% of the diagonal, 550ms     steel .12   .28     —
-//  win               yours           380 confetti, 3.2s                     gold .30    .60     win
+//  approach_broken   any             DOUBLE SNAP: ring 14→42% white lw5.0   steel .20   .28     —
+//                                    420ms + ring 10→22% steel 280ms +
+//                                    a 4-arm spark cross. Was a 3.0px steel
+//                                    ring at α.8 that read as a grey hairline
+//                                    against the arming's gold sweep.
+//  win               yours           380 confetti 3.2s + a 130-piece second gold .30    .60     win
+//                                    fall at +1.5s (the peak must not freeze)
 //  win               someone else's  150 confetti, 2.6s                     gold .12    .26     —
 //  stalemate         any             42 grey settle puffs, 1.0–1.8s         steel .14   0       —
 //  card_pickup       yours           —                                      —           0       pickup 6ms
@@ -261,6 +266,8 @@ export function stats() {
 }
 
 export function reset() {
+  clearTimeout(secondFall);
+  secondFall = 0;
   P.clear();
   P.resetJitter();
   floaters.reset();
@@ -272,6 +279,24 @@ export function reset() {
   if (pumping) { pumping = false; unsubscribe(tick); }
   overlay.clear();
   overlay.setActive(false);
+}
+
+/* ── the second fall ────────────────────────────────────────────────────── */
+
+let secondFall = 0;
+
+/** A lighter confetti wave 1.5s after the win, so the celebration overlaps the
+ *  overlay's own entrance instead of ending under it. Cleared by reset() — a
+ *  rematch started inside the window must not rain on the new deal. */
+function armSecondFall() {
+  clearTimeout(secondFall);
+  secondFall = setTimeout(() => {
+    secondFall = 0;
+    if (reduced) return;
+    overlay.ensure();
+    B.confetti(overlay.width(), overlay.height(), 130, { life: 2.9 });
+    pump();
+  }, 1500);
 }
 
 /* ── the held beat ──────────────────────────────────────────────────────── */
@@ -521,8 +546,23 @@ function onCue(payload) {
     }
 
     case CUE.APPROACH_BROKEN:
-      if (!reduced) B.ring(x, y, 18, diag() * 0.34, COL.STEEL, 0.55, 3.0, 0.8);
-      flash(at(x, y), 'steel', 0.12, 0.34);
+      // §P9 FEEL round 3. MEASURED against the arming it answers: arming throws
+      // a gold ring 4.4px wide across 62% of the diagonal at α.8; the BREAK
+      // threw a 3.0px steel one across 34% at α.55, and on the capture it was a
+      // faint 1px grey hairline — the single most relieving beat in the game
+      // rendered as less than a card landing.
+      //
+      // It is not made louder by copying the arming. It is made DIFFERENT: the
+      // arming is one slow sweep outward (a siren), the break is a hard double
+      // snap — a fast bright shock, a second ring chasing it, and a spark cross
+      // at the epicentre, all over in 420ms. A thing being broken is short.
+      if (!reduced) {
+        // ring(x, y, r0, r1, col, LIFE, lineW, alpha) — life is the 6th arg.
+        B.ring(x, y, 14, diag() * 0.42, COL.WHITE, 0.42, 5.0, 0.85);
+        B.ring(x, y, 10, diag() * 0.22, COL.STEEL, 0.28, 3.2, 0.70);
+        B.sparkCross(x, y, 4, COL.STEEL, { speed: 320, size: 8, alpha: 0.9 });
+      }
+      flash(at(x, y), 'steel', 0.20, 0.30);
       shake(0.28);                         // was 0.08 = 0.10px for 53ms: nothing
       break;
 
@@ -531,6 +571,15 @@ function onCue(payload) {
       flash(null, 'gold', mine ? 0.30 : 0.12, mine ? 0.8 : 0.6);
       shake(mine ? 0.60 : 0.26);           // others' was 0.12 = 0.22px
       if (mine) hap.haptic('win');
+      // THE PEAK MUST NOT FREEZE (§P9 FEEL round 3). MEASURED: the overlay
+      // arrived, ~2.1s of confetti ran out, and then the screen was
+      // BYTE-IDENTICAL for 1.8s — the stillest the game ever gets is the
+      // moment it is trying to be loudest. motion.css deals the result rows in
+      // for the first ~1.3s; this is the second half, a sparser fall that
+      // starts as the first one thins and runs to ~4.4s. Sparser on purpose:
+      // a repeat of the same 380 reads as a bug, a lighter fall reads as the
+      // last of it coming down.
+      if (mine && !reduced) armSecondFall();
       break;
 
     case CUE.STALEMATE:

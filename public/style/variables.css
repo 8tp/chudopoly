@@ -343,8 +343,15 @@
      distance halved. 32% restores the separation the number was buying.
      Dark keeps a lower figure because the night plate (L*30) is far from every
      set hue already; 26% is one step for parity, not a rescue. */
+     ROUND-6, DARK ONLY, 26% → 34%: with the mat rail replaced by a full
+     nameplate plate (table.css), the grayscale gate's worst adjacent pair
+     became the mat against the seat it is cut into — 25.3 vs 30.0 L*, a 4.7 L*
+     field step carried by a 9.6 edge, under §10's 12. The night plate is L*30
+     and a 26% wash of a mid-value hue lands within 5 of it; 34% puts the cut
+     back where a cut belongs. Light is untouched: it measured 29.4 field / 32.4
+     edge at 32% and is the pair this figure was derived for. */
   --mat-alpha: 32%;
 }
-@media (prefers-color-scheme: dark) { :root { --mat-alpha: 26%; } }
+@media (prefers-color-scheme: dark) { :root { --mat-alpha: 34%; } }
 :root[data-theme="light"] { --mat-alpha: 32%; }
-:root[data-theme="dark"]  { --mat-alpha: 26%; }
+:root[data-theme="dark"]  { --mat-alpha: 34%; }

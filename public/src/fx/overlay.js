@@ -50,6 +50,19 @@ const CSS = `
   letter-spacing:.02em;white-space:nowrap;
   text-shadow:0 1px 2px rgba(0,0,0,.92),0 0 12px rgba(0,0,0,.7);
   will-change:transform,opacity;transform:translate3d(0,0,0)}
+/* THE TWO SHOUTS ("CHUD!", "OPSEC!") — §P9 FEEL round 3. A money delta lands on
+   felt; a label lands wherever the crime was, which is usually ON an opponent
+   board, and the drop-shadow above is tuned for dark navy. MEASURED: "CHUD!"
+   rendered low-contrast against the opponent boards behind it. A solid 3px dark
+   ring (four offsets + a tight glow) makes the glyphs legible against any
+   surface the table can put under them, which is what a once-a-game shout has
+   to be. Same colour, same size — only the separation from its background. */
+.fx-text.is-label{
+  text-shadow:
+    0 0 3px rgba(0,0,0,1),0 0 3px rgba(0,0,0,1),
+    2px 0 2px rgba(0,0,0,.95),-2px 0 2px rgba(0,0,0,.95),
+    0 2px 2px rgba(0,0,0,.95),0 -2px 2px rgba(0,0,0,.95),
+    0 0 16px rgba(0,0,0,.85)}
 `;
 
 /** Build the substrate. Called on the first effect and never again. */

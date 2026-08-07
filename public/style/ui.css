@@ -685,6 +685,29 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 /* ══ VICTORY — the ONE place foil is allowed to flood (§1) ═════════════════ */
 
 .win-overlay {
+  /* ── THE CEREMONY IS ALWAYS AT NIGHT ──────────────────────────────────────
+     The gold display type the owner ruling restores is 1.57:1 on the daylight
+     plate (#E3C079 on #B1AB9B, measured) — brass and warm concrete are the same
+     value, which is why the daylight win screen had to be flat to be legible.
+     There is no palette in which "gold type on the light theme's surface"
+     works, so the room changes instead of the medal: the whole overlay adopts
+     the NIGHT tokens in both themes, which is the same physics as the backdrop
+     above it (the house lights go down for the ceremony) and the same rule §0
+     already applies to card stock — some objects do not change with the room.
+     Every ratio inside the modal is therefore the dark theme's, and the dark
+     theme is the one checkContrast has always passed here.
+     Copied from variables.css :root[data-theme="dark"]; if that block moves,
+     this moves with it. */
+  color-scheme: dark;
+  --ground: #15171C; --ground-deep: #0B0D10; --surface: #404753;
+  --fg: #F2EEE4; --fg-mute: #ACB7C5;
+  --act: #F2EEE4; --act-fg: #14161A;
+  --accent: #84B9FF; --danger: #FF8C53; --danger-ink: #FF9F5E;
+  --foil: #C9A253; --foil-ink: #DAB05B;
+  --shade: rgba(0, 0, 0, .45); --shade-2: rgba(0, 0, 0, .68);
+  --sheen: rgba(255, 255, 255, .07); --press-ink: #000000;
+  --stencil: rgba(242, 238, 228, .11); --stencil-hi: rgba(242, 238, 228, .22);
+
   position: fixed;
   inset: 0;
   z-index: 95;
@@ -692,20 +715,29 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   align-items: center;
   justify-content: center;
   padding: 1em;
-  background: var(--scrim);
+  /* ── THE HOUSE LIGHTS GO DOWN (OWNER RULING 2026-08-07) ──────────────────
+     ROUND-5 deleted the gold rays on a critic's word ("the most AI-generated-
+     looking element in the build") and took the atmosphere with them. The owner
+     compared the two screens: "yesterday just looked so much better, higher res
+     etc — it's almost too bland now." ART §1 now carries the ruling in full:
+     restraint outside the modal, CEREMONY inside it.
+
+     What comes back is not the rays. Rays were a glow pretending to be a light
+     source. This is the light source: one soft key from above the modal, a deep
+     near-black floor under it, and a vignette. Both themes go dark here, in both
+     themes, because the ceremony is the one moment the room dims — daylight on
+     the apron is the TABLE's rule, and this is not the table.
+     It restores the thing the owner actually named ("higher res"): tonal range.
+     The flat mid-grey frame had ~25 L* of excursion; this has the full stop. */
+  background:
+    radial-gradient(120% 78% at 50% -12%, color-mix(in oklab, var(--foil) 26%, transparent), rgba(0, 0, 0, 0) 62%),
+    radial-gradient(150% 120% at 50% 34%, rgba(16, 18, 22, .82), rgba(4, 5, 7, .96) 68%),
+    rgba(6, 7, 9, .9);
   /* dimmed but not blurred left a full ACTION card perfectly legible behind
      the ceremony, so the table competed with the win */
   backdrop-filter: blur(7px) saturate(.85);
   -webkit-backdrop-filter: blur(7px) saturate(.85);
 }
-/* ROUND-5 REVIEW — THE GOLD LIGHT-RAYS ARE DELETED, and the critic's word for
-   them is the reason: "the single most AI-generated-looking element in the
-   build". They were also two rule violations standing on each other. §3.5:
-   there is no glow anywhere, and a conic fan of brass beams radiating from a
-   point behind a modal is a glow with hard edges. §1: foil is the VICTORY
-   MODAL — the modal, not the backdrop, not the apron behind it. The ceremony
-   is carried by the thing that earned it: the foil rim, the struck star and
-   the brass title, on a blurred, dimmed table. Nothing replaces the rays. */
 /* MEASURED (checkContrast, win@desktop-light): #btn-rematch's rect was
    y 701 → 745 in a 720px viewport — the ceremony's primary action was below
    the fold, reachable only by scrolling a box nobody knows scrolls. The recap
@@ -727,14 +759,27 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   flex-direction: column;
   gap: .5em;
   text-align: center;
-  background: var(--surface);
+  /* the panel is lit from the same key as the roundel: a warm wash at the top
+     falling to the plate. Without it the box was one flat mid-grey, which is
+     what "lower res" was describing — a frame with no tonal range in it. */
+  background:
+    radial-gradient(120% 60% at 50% 0%, color-mix(in oklab, var(--foil) 13%, transparent), rgba(0, 0, 0, 0) 70%),
+    var(--surface);
   border-radius: var(--radius-lg);
-  box-shadow: inset 0 0 0 3px var(--foil), var(--card-drop-air);
+  box-shadow:
+    inset 0 0 0 3px var(--foil),
+    inset 0 1px 0 1px color-mix(in oklab, var(--foil) 30%, transparent),
+    var(--card-drop-air),
+    0 0 80px rgba(201, 162, 83, .16);
 }
 .win-box > .win-star,
 .win-box > #win-title,
 .win-box > #win-reason,
 .win-box > .btn { flex: 0 0 auto; }
+/* THE ROUNDEL IS LIT. §3.5's "no glow anywhere" governs the table, where a glow
+   is decoration competing with the cards; here the medal is struck brass under
+   a light and the light is the point. Two rings of brass, a warm key inside the
+   disc, and one soft halo — one light source, not a bloom filter. */
 .win-star {
   position: relative;
   align-self: center;
@@ -743,34 +788,105 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   justify-content: center;
   width: 2.1em;
   height: 2.1em;
-  font-size: 2em;
+  font-size: 2.3em;
   line-height: 1;
   border-radius: 50%;
-  color: var(--foil-ink);
-  background: var(--ground-deep);
-  box-shadow: inset 0 3px 5px var(--shade-2), 0 0 0 3px var(--surface), 0 0 0 5px var(--foil);
+  color: #E9CE8C;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(233, 206, 140, .42), rgba(0, 0, 0, 0) 64%),
+    #0B0D10;
+  box-shadow:
+    inset 0 3px 6px rgba(0, 0, 0, .7),
+    inset 0 0 14px rgba(233, 206, 140, .22),
+    0 0 0 3px var(--surface),
+    0 0 0 5px var(--foil),
+    0 0 26px rgba(201, 162, 83, .5);
 }
 .win-star svg { width: 58%; height: 58%; fill: currentColor; }
+/* Gold display type, 800, with the same one-light logic: a warm lift along the
+   top of the letterforms and a shadow under them, so the word is struck rather
+   than filled. This is the single biggest thing the flattening cost. */
 #win-title {
   font-family: var(--font-display);
-  font-size: 2em;
+  font-size: 2.2em;
+  font-weight: 800;
+  line-height: 1.02;
   letter-spacing: var(--track-display);
-  margin: .1em 0 0;
-  color: var(--foil-ink);
+  margin: .12em 0 0;
+  color: #E3C079;
+  text-shadow: 0 1px 0 rgba(255, 240, 205, .28), 0 2px 6px rgba(0, 0, 0, .55);
 }
-.win-summary { display: flex; flex-direction: column; gap: .14em; font-size: var(--t-small); margin-top: .4em; }
+/* the boards sit in a well cut into the panel, not on it */
+.win-summary {
+  display: flex;
+  flex-direction: column;
+  gap: .18em;
+  font-size: var(--t-small);
+  margin-top: .4em;
+  /* no BOTTOM padding: content.css sticks "Open the full log" to bottom:0 of
+     this scroller, and 5px of padding under it is 5px in which the next recap
+     row shows through beneath an opaque footer — measured on win@desktop, it
+     reads as the z-index accident the footer was added to remove. */
+  padding: .3em .3em 0;
+  border-radius: var(--radius);
+  background: var(--ground-deep);
+  box-shadow: var(--deboss-deep);
+}
 .win-row {
   display: flex;
   justify-content: space-between;
   gap: .5em;
   padding: .3em .55em;
   border-radius: 2px;
-  background: var(--ground);
+  background: var(--surface);
   color: var(--fg-mute);
   box-shadow: var(--deboss);
 }
 .win-name { font-weight: 700; }
 .win-stats { color: var(--fg-mute); margin-top: .5em; font-size: .95em; }
+
+/* ── THE PRIMARY ACTION IS BRASS (OWNER RULING) ───────────────────────────
+   §3.4's "flat ink slab, no gradients" is a rule for the table's chrome, and
+   the reason it exists is that a metallic button there is a web app pretending
+   to be a game. In the victory modal the hierarchy inverted without it: REMATCH
+   became a bone slab identical to LEAVE ROOM, so the secondary action read as
+   loud as the primary.
+   The brass is LITERAL, not tokenised: --foil is #8A6320 in daylight and
+   #C9A253 at night, and the medal on this screen is one object that does not
+   change with the room (the same argument §0 makes for card stock). Measured
+   ink-on-brass at the three stops: 12.0 : 8.4 : 5.6, so the label clears §0.9
+   anywhere the gate samples it. The §4 press mechanic is untouched — hard
+   offset, zero blur, collapses to 0 on :active — because that is what makes it
+   a pressable rather than a picture of one. */
+#btn-rematch {
+  --btn-ink: #14161A;
+  --btn-edge: transparent;
+  /* longhands, not the `background` shorthand: with only a gradient the CSS
+     background-COLOR stays transparent and checkContrast falls through to the
+     panel behind it (measured: it read ink on --surface, 1.94:1, and reported
+     the button as illegal while the frame showed 8.4:1). The mid stop is
+     declared as the colour so the stylesheet states the same thing the pixels
+     do. */
+  background-color: #D9AE5C;
+  background-image: linear-gradient(180deg, #F0D89B 0%, #D9AE5C 42%, #B98B33 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 250, 235, .72),
+    inset 0 0 0 1px rgba(90, 62, 16, .45),
+    var(--btn-drop) var(--btn-drop) 0 var(--press-ink);
+}
+#btn-rematch:active:not(:disabled) {
+  transform: translate(var(--btn-drop), var(--btn-drop));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 250, 235, .5),
+    inset 0 0 0 1px rgba(90, 62, 16, .45),
+    0 0 0 var(--press-ink);
+}
+@media (hover: hover) {
+  #btn-rematch:hover:not(:disabled) {
+    background-color: #E2BA6A;
+    background-image: linear-gradient(180deg, #F6E3B0 0%, #E2BA6A 42%, #C4963A 100%);
+  }
+}
 
 /* ── toast + emotes ───────────────────────────────────────────────────── */
 

@@ -318,9 +318,35 @@ function peekId(node) {
   return Number(node.getAttribute('data-card-id') ?? node.getAttribute('data-peek-card'));
 }
 
+/* ── THE FINGER IS BUSY (§P9 FEEL round 3) ─────────────────────────────────
+ *
+ * MEASURED with `.card.is-dragging` on the page: the peek was hidden on
+ * pointerdown and back up ~0ms later, then open for the WHOLE gesture —
+ * 28.2% of a 1440×900 viewport, parked on top of the drop targets the drag is
+ * aiming at, still there 400ms in.
+ *
+ * Two things conspired. Pointer capture retargets every pointermove to the
+ * dragged node, so the browser fires `pointerover` on it again the instant the
+ * drag starts; and the delay group (correctly) opens second-and-later peeks at
+ * 0ms, so that re-arm went STRAIGHT to show() with no intent delay to survive.
+ * The hide on pointerdown was therefore undone within a frame, every time.
+ *
+ * A pointer that is DOWN is not pointing, it is acting. So the hover path is
+ * closed for the whole press and only the hover path — the touch-and-hold peek
+ * (UI_PEEK, which is a press by definition) still calls show() directly, and
+ * the delay group's timings are untouched.
+ */
+let pressed = false;
+
+/** True while a press/drag owns the pointer, or while a card is mid-drag. */
+function busy() {
+  return pressed || !!document.querySelector('.card.is-dragging');
+}
+
 function armHover(node) {
   const id = peekId(node);
   if (!Number.isInteger(id)) return;
+  if (busy()) { clearTimeout(inTimer); inTimer = 0; return; }
   cancelHide();                                   // arriving cancels leaving
   if (showing === id) return;
   clearTimeout(inTimer);
@@ -360,7 +386,17 @@ export function mount() {
 
   // Anything that means "I am doing something now" ends the peek immediately:
   // a press starts a drag or a tap, a scroll moves the anchor out from under it.
-  window.addEventListener('pointerdown', () => { if (showing !== null || inTimer) hide(); }, true);
+  window.addEventListener('pointerdown', () => {
+    pressed = true;
+    if (showing !== null || inTimer) hide();
+  }, true);
+  // The press ends where the gesture ends — including the cancel a drag that is
+  // torn down by a state broadcast produces, or the release would leave the
+  // hover path closed for the rest of the game.
+  const endPress = () => { pressed = false; };
+  window.addEventListener('pointerup', endPress, true);
+  window.addEventListener('pointercancel', endPress, true);
+  window.addEventListener('blur', endPress);
   window.addEventListener('wheel', () => { if (showing !== null) hide(); }, { passive: true });
   window.addEventListener('scroll', () => { if (showing !== null) hide(); }, true);
   window.addEventListener('blur', () => hide());

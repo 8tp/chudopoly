@@ -215,6 +215,80 @@
   pointer-events: none;
 }
 
+/* ── the two screen changes (ART §4; §P9 FEEL round 3) ───────────────────
+   MEASURED: the win overlay appeared between two consecutive frames with no
+   transition of any kind, and lobby → table was a 33ms cut. §4 asks for a view
+   transition on exactly these, and `grep startViewTransition public/` returned
+   nothing. anim/transition.js now wraps ui/screens.js's screen swap; this is
+   the LOOK of it, and it is deliberately short — a screen change the player
+   asked for must never feel like waiting.
+
+   Card motion is NOT in here and must never be: a view transition freezes a
+   snapshot of the old page and swallows input for its duration, which is the
+   opposite of §10's interruptible flights. */
+::view-transition-old(root) {
+  animation: vt-out 170ms cubic-bezier(.4, 0, 1, 1) both;
+}
+::view-transition-new(root) {
+  animation: vt-in 260ms cubic-bezier(.22, 1, .36, 1) both;
+}
+@keyframes vt-out { to { opacity: 0; transform: scale(.985); } }
+@keyframes vt-in { from { opacity: 0; transform: scale(1.012); } }
+
+/* Arriving AT the table is the one screen change that should feel like sitting
+   down: the felt comes up from under, the lobby lifts away. */
+html.vt-screen-game::view-transition-old(root) {
+  animation: vt-lift 190ms cubic-bezier(.4, 0, 1, 1) both;
+}
+html.vt-screen-game::view-transition-new(root) {
+  animation: vt-seat 320ms cubic-bezier(.22, 1, .36, 1) both;
+}
+@keyframes vt-lift { to { opacity: 0; transform: translateY(-1.4%) scale(.99); } }
+@keyframes vt-seat { from { opacity: 0; transform: translateY(2.2%) scale(1.008); } }
+
+/* ── the ending arrives, and then it KEEPS MOVING (§P9 FEEL round 3) ──────
+   MEASURED: the victory overlay hard-cut in, ~2.1s of confetti ran, and then
+   the screen was BYTE-IDENTICAL for 1.8s — a frozen PDF at the emotional peak
+   of the game.
+
+   Two halves. The arrival is a scrim that fades and a panel that rises into
+   place under it (300ms — the fanfare's held fifth is still ringing). The
+   second half is the part that fixes the freeze: the result rows deal
+   themselves in, one every 70ms, so a 5-player table is still resolving 1.2s
+   after the panel lands, right through the dead window the capture found. It
+   is the same gesture as the cards being turned over at the end of a hand.
+
+   #win-overlay's colour, layout and z-index belong to the design agent — this
+   touches transform and opacity only. */
+#win-overlay:not([hidden]) { animation: win-scrim 260ms ease-out both; }
+#win-overlay:not([hidden]) > * { animation: win-panel 320ms cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes win-scrim { from { opacity: 0; } }
+@keyframes win-panel {
+  from { opacity: 0; transform: translateY(16px) scale(.972); }
+}
+
+/* The stagger is counted with sibling combinators rather than an index the
+   markup would have to carry: ui/overlays.js builds these rows and is owned by
+   the clarity agent, so the choreography may not ask it for a --row-i. */
+#win-overlay:not([hidden]) .win-row {
+  animation: win-row 420ms cubic-bezier(.22, 1, .36, 1) both;
+  animation-delay: 320ms;
+}
+#win-overlay:not([hidden]) .win-row + .win-row { animation-delay: 390ms; }
+#win-overlay:not([hidden]) .win-row + .win-row + .win-row { animation-delay: 460ms; }
+#win-overlay:not([hidden]) .win-row + .win-row + .win-row + .win-row { animation-delay: 530ms; }
+#win-overlay:not([hidden]) .win-row + .win-row + .win-row + .win-row + .win-row { animation-delay: 600ms; }
+#win-overlay:not([hidden]) .win-row + .win-row + .win-row + .win-row + .win-row + .win-row { animation-delay: 670ms; }
+@keyframes win-row {
+  from { opacity: 0; transform: translateX(-14px); }
+}
+/* The recap and the one-line stats close the sequence out, after the boards. */
+#win-overlay:not([hidden]) .win-stats,
+#win-overlay:not([hidden]) .win-recap {
+  animation: win-row 420ms cubic-bezier(.22, 1, .36, 1) both;
+  animation-delay: 900ms;
+}
+
 /* ── reduced motion (§0.9) ───────────────────────────────────────────────
    Flights are already collapsed to a ≤120ms in-place fade in JS
    (table/moveCard), and the FX cue vocabulary is unchanged — sound and
@@ -235,4 +309,13 @@
   .card[data-facing="down"] .card-inner > .card-face { visibility: hidden; }
   .card[data-facing="down"] .card-inner > .card-back { transform: none; }
   .card[data-facing="up"] .card-inner > .card-back { visibility: hidden; }
+  /* anim/transition.js already refuses to start a view transition under reduce,
+     so these are belt and braces for a browser that starts one anyway. The
+     ending's entrance collapses to a plain fade — the ARRIVAL is information
+     ("this screen is new"), the travel is not. */
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+  #win-overlay:not([hidden]) > * { animation: win-scrim 200ms ease-out both; }
+  #win-overlay:not([hidden]) .win-row,
+  #win-overlay:not([hidden]) .win-stats,
+  #win-overlay:not([hidden]) .win-recap { animation: none; }
 }

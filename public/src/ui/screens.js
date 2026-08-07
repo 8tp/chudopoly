@@ -10,13 +10,32 @@ import { EVENTS } from '../core/bus.js';
 import * as socket from '../net/socket.js';
 import * as store from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
+import * as transition from '../anim/transition.js';
 
 const SCREENS = ['home', 'lobby', 'game'];
 let toastTimer = 0;
 let sheetReturnFocus = null;
 
+/**
+ * ART §4 asks for a view transition on screen changes; MEASURED, lobby → table
+ * was a 33ms hard cut and `grep startViewTransition public/` found nothing in
+ * the build. anim/transition.js owns the capability and reduced-motion guards —
+ * the mutation below always runs, transition or not.
+ *
+ * Only when the screen actually changes: showScreen() is called on every
+ * STATE_SCREEN, and STATE_SCREEN repeats the current screen on a great many
+ * broadcasts. Transitioning to where you already are would freeze a snapshot of
+ * the table over the live one several times a turn.
+ */
+let shownScreen = '';
+
 export function showScreen(name) {
-  for (const screen of SCREENS) setHidden($(`screen-${screen}`), screen !== name);
+  const paint = () => {
+    for (const screen of SCREENS) setHidden($(`screen-${screen}`), screen !== name);
+  };
+  if (name === shownScreen) { paint(); return; }
+  shownScreen = name;
+  transition.screenChange(paint, `screen-${name}`);
 }
 
 export function toast(message) {

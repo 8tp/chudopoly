@@ -42,6 +42,30 @@ const REFLOW_TILT_MIN = 0.8;      // deg — the flatten has to survive this flo
 // takes 9.6px of tilt overhang off the top of every outer card.
 const RETRACT_PX = 24;
 
+/* ── …AND THE CLAMP HAD EATEN IT (§P9 FEEL round 3) ────────────────────────
+ *
+ * The 18px above was measured against a layout that has since moved. RE-
+ * MEASURED on the current build, mid-drag with the finger well clear of the
+ * fan: desktop 1440×900 fy 2.5px → 6.6px, phone 390×844 fy 2.0px → 5.3px —
+ * i.e. FOUR pixels of a ratified twenty-four, because handRoom() now finds only
+ * ~4px of viewport under the fan's lowest corner. The flatten was doing its
+ * whole job (12° → 0° on every card, measured) and the retract was doing 17% of
+ * its own, which is why §5.5's lane read as "nothing happened".
+ *
+ * A drag is not the resting state, and the clamp was written for the resting
+ * state. During a drag the fan may go this much PAST the viewport edge: the
+ * bottom 14px of a 130px hand card is blank stock below the art, every card is
+ * already overlapped at -28%, the whole thing is restored on release
+ * (table.releaseCard → reset()), and §10's ship-gate question ("is the hand
+ * fully on-screen?") is about the hand you are reading, not the hand you have
+ * one card out of. tools/touchtest.mjs measures the hand-strip tap targets cold,
+ * so this cannot move them.
+ *
+ * 14 + the ~4 that exists = 18px, which is the number this file was already
+ * documented as producing.
+ */
+const DRAG_CLIP_PX = 14;
+
 // Preallocated: reflow runs on every reconcile and must not allocate (§0.8).
 let lx = new Float64Array(32);
 let ly = new Float64Array(32);
@@ -92,7 +116,9 @@ export function setOpenness(v) {
  */
 export function setRetracted(on, roomPx) {
   const v = !!on;
-  const r = roomPx == null ? retractRoom : Math.max(0, Math.min(RETRACT_PX, roomPx));
+  const r = roomPx == null
+    ? retractRoom
+    : Math.max(0, Math.min(RETRACT_PX, roomPx + DRAG_CLIP_PX));
   if (v === retracted && r === retractRoom) return false;
   retracted = v;
   retractRoom = r;

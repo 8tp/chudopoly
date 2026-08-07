@@ -29,6 +29,10 @@ const FX_CUE = EVENTS.FX_CUE || 'fx:cue';
 const CUE_PICKUP = 'card_pickup';
 const CUE_DENIED = 'denied';        // the §P4 brief names this one
 const CUE_DETAILS = 'card_details';
+// The two travel beats. anim/cues.js owns both names; audio maps them to
+// card_slide and card_snap, which is the second half of §P4's refusal chain.
+const CUE_FLIGHT_START = 'card_flight_start';
+const CUE_LANDED = 'card_landed';
 // ui/peek.js listens on these. core/bus.js is architect-owned, so they follow
 // the same "string literal until the constant exists" pattern as FX_CUE.
 const UI_PEEK = EVENTS.UI_PEEK || 'ui:peek';
@@ -301,8 +305,12 @@ function dragEnd(x, y) {
     holdRelease(node, cardId);
     return;                                    // the landing cue belongs to the flight
   }
-  springBack(node, cardId, plan.source);
+  // The ANSWER first, then the card going home. Under reduced motion the spring
+  // cues synchronously, so cueing the refusal after it put the game's "no"
+  // third in its own chain — measured ["card_pickup","card_flight_start",
+  // "card_landed","denied"]. The refusal is the reason the card is travelling.
   cue(CUE_DENIED, x, y);
+  springBack(node, cardId, plan.source);
   if (plan.reason) bus.emit(EVENTS.TOAST, plan.reason);
 }
 
@@ -483,8 +491,44 @@ function holdRelease(node, cardId) {
   }, COMMIT_HOLD_MS);
 }
 
+/* ── §0.9: MOTION COLLAPSES, CUES DO NOT (§P9 FEEL round 3) ────────────────
+ *
+ * MEASURED: a refused drop normally cues `card_pickup, denied, card_slide,
+ * card_snap` — the press, the refusal, the card travelling home, the card
+ * arriving. Under prefers-reduced-motion only the first two fired. The travel
+ * and the arrival were not "collapsed", they were DELETED, so the one player
+ * who asked for less motion was also the one player with no evidence the card
+ * had gone anywhere.
+ *
+ * table/index.js:238-253 already does this correctly for its own reduced-motion
+ * FADE path. The spring-back does not go through it: moveCard's `springBack`
+ * branch (table/index.js:204-213) short-circuits at
+ * `if (reduceMotion || isDragging) { writeRest(node); return true; }` — it
+ * writes the rest pose, reports success, and emits nothing. flight.springHome()
+ * on the normal path is what cues the other 100% of the time, and under reduced
+ * motion it is never reached. The CSS-spring branch below (every board→board
+ * refusal) never cued at all, in either mode.
+ *
+ * So both beats are supplied here, exactly once, and only where nobody else is
+ * already supplying them.
+ *
+ * @param {boolean} instant §0.9 collapses motion, it does not DELAY signal —
+ *        table/moveCard's own reduced path fires LANDED in the same tick as
+ *        FLIGHT_START for that reason, and this matches it.
+ */
+function cueSpring(node, instant) {
+  cueAt(CUE_FLIGHT_START, node);
+  clearTimeout(node.__springCue);
+  if (instant) { cueAt(CUE_LANDED, node); return; }
+  node.__springCue = setTimeout(() => {
+    node.__springCue = 0;
+    cueAt(CUE_LANDED, node);
+  }, SPRING_MS);
+}
+
 function springBack(node, cardId, source) {
   if (!node) return;
+  const reduced = prefersReducedMotion();
   // §P4 contract: the motion agent's table.moveCard(id,'hand',{springBack:true})
   // reads the --fx/--fy this file left on the node and springs it to the card's
   // rest pose in the fan. A wild dragged around my own board never left its
@@ -493,8 +537,15 @@ function springBack(node, cardId, source) {
   if (source === 'hand') {
     try { handled = table.moveCard(cardId, 'hand', { springBack: true }) === true; } catch { handled = false; }
   }
-  if (handled) { watchdog(node); return; }
+  if (handled) {
+    // Taken by flight.springHome, which cues for itself — unless it was the
+    // reduced-motion short-circuit, which cues for nobody.
+    if (reduced) cueSpring(node, true);
+    watchdog(node);
+    return;
+  }
 
+  cueSpring(node, reduced);
   node.style.transition = `transform ${SPRING_MS}ms ${SPRING_EASE}`;
   setStyle(node, '--fx', `${homeX(node)}px`);
   setStyle(node, '--fy', `${homeY(node)}px`);

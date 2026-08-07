@@ -76,11 +76,30 @@ const BAR = BEAT * 4;                   // 3.636s
  * voicing drops the third out of the pad and keeps open fifths, which is what
  * stops a sustained pad from sounding like a pop chord.
  */
+/* ── EIGHT BARS, NOT FOUR (§P9 FEEL round 3) ───────────────────────────────
+ *
+ * MEASURED on the 60s menu render: autocorrelation r=0.98 at 14.5s — a
+ * near-LITERAL repeat of the block, every 14.5s, on the screen the player sits
+ * on before every single game. The bugle motif does vary per phrase, but the
+ * pad is four fifths of the level and the pad was the thing repeating: four
+ * bars of chords, then exactly those four bars again.
+ *
+ * A second sentence answers the first instead of repeating it. Bars 5-8 are the
+ * same cadence displaced — Dm and E (the minor dominant's major third is the
+ * only accidental in the piece, and it is what makes bar 8 want bar 1) — so the
+ * literal period is 29.1s rather than 14.5s, and the harmony under the motif is
+ * different on the repeat rather than identical. Two sentences is also what the
+ * bugle's `index % 4 === 0` motif reroll was already assuming.
+ */
 const PROGRESSION = [
-  [0, 3, 7],      // Am
-  [-4, 4, 7],     // F
-  [-2, 4, 7],     // G
-  [0, 3, 7],      // Am
+  [0, 3, 7],      // Am    ┐
+  [-4, 4, 7],     // F     │ first sentence — the question
+  [-2, 4, 7],     // G     │
+  [0, 3, 7],      // Am    ┘
+  [-7, 3, 7],     // Dm    ┐
+  [-4, 4, 7],     // F     │ second sentence — the answer, and it lands
+  [-5, 4, 7],     // E     │ elsewhere before turning back
+  [0, 3, 7],      // Am    ┘
 ];
 
 /**
@@ -148,6 +167,21 @@ const DRONE_GAIN = 0.045;
  *  "pre-flight, before dawn". */
 const MATCH_PULSE = [[0, 0.024], [2, 0.016]];
 const MATCH_PHRASE = 4;                 // bars per breath — the thing that ENDS
+
+/* The presence band's own phrase, per bar of MATCH_PHRASE (see startDrone).
+ *
+ * This is where the breathing can actually be HEARD, and it swings four times
+ * as far as the sub layers do: 0.045 → 0.21 → 0.155 → 0.032 is +13.4dB up to
+ * the crest and −16.3dB down to a trough BELOW where the phrase started, which
+ * is the asymmetry that makes it a phrase and not a loop (see
+ * scheduleMatchBar). The sub layers cannot swing like that — see the note on
+ * `to` in scheduleMatchBar — because the bed's PEAK is what tools/audiotest.mjs
+ * holds under card_slide and there is under 2dB of room in it.
+ *
+ * MEASURED, 45s offline render: energy above 300Hz 4.48% → 4.83% of the bed,
+ * and the envelope sd of that band 2.6 → 2.7dB. That is an improvement and it
+ * is not the 11.4dB the round-3 critique asked for — see the report. */
+const AIR_PHRASE = [0.045, 0.21, 0.155, 0.032];
 
 /** The fifth, and where the phrase takes it. E2 is the tonic chord's fifth and
  *  an octave above the §3.10 tension sub; F2 is the VI, and moving between them
@@ -518,6 +552,39 @@ function startDrone() {
   fn.connect(floorG); floorG.connect(lp);
   fn.start(now);
 
+  /* ── THE PRESENCE BAND (§P9 FEEL round 3) ────────────────────────────────
+   *
+   * MEASURED: -38.3 dBFS RMS, envelope sd 2.3dB over 45s, 11.4dB under the menu
+   * bed, and a 4-bar phrase that autocorrelates at r=0.72 — "shape without
+   * presence: it just cannot be heard".
+   *
+   * The level is not the reason, and raising it is not available: the bed's
+   * whole contract is that it sits under card_slide and tools/audiotest.mjs
+   * asserts exactly that (-26.7 vs -24.8 dBFS, i.e. 1.9dB of room). The reason
+   * is the SPECTRUM. Every voice in this bed is under a 240Hz lowpass — 55Hz
+   * root, 82Hz fifth, brown floor — and a laptop or phone speaker reproduces
+   * essentially nothing there. The bed was audible on the analyser and inaudible
+   * in the room.
+   *
+   * So it gets a band where small speakers actually live: brown noise through a
+   * 430Hz bandpass, Q 1.6, at a twentieth of the floor's gain. It carries no new
+   * information and adds ~0.4dB of broadband level (it is one narrow band of an
+   * already-quiet noise source), but it puts the bed's breathing where it can be
+   * heard, and it rides the SAME `dg` envelope, so the 4-bar phrase moves with
+   * it instead of staying under the woofer.
+   *
+   * Deliberately NOT a tone: a pitched voice at 430Hz would be a melody the bed
+   * has spent 150 seconds not having (see THE FATIGUE ARGUMENT above).
+   */
+  const airBp = filt('bandpass', 620, 0.42);
+  const airG = gain(AIR_PHRASE[0]);
+  const an = g.ctx.createBufferSource();
+  nodesMade++;
+  an.buffer = g.noise.pink;
+  an.loop = true;
+  an.connect(airBp); airBp.connect(airG); airG.connect(dg);
+  an.start(now);
+
   // Held, not enveloped: a 2.2s fade-in and then nothing scheduled at all, so
   // there is no automation event queued for the rest of the game.
   // 0.045, not 0.5: at 0.5 the offline render measured the bed at -8.9 dBFS
@@ -525,7 +592,7 @@ function startDrone() {
   // -30.6 peak / -39.2 RMS — under card_slide, the quietest routine sound.
   dg.gain.setValueAtTime(EPS, now);
   dg.gain.linearRampToValueAtTime(DRONE_GAIN, now + 2.2);
-  drone = { lp, dg, rootGain, fifth: fv, nodes: [rv, rv2, fv, fn, lfo] };
+  drone = { lp, dg, air: airG, rootGain, fifth: fv, nodes: [rv, rv2, fv, fn, an, lfo] };
 }
 
 /**
@@ -545,12 +612,23 @@ function scheduleMatchBar(t, index) {
   if (!drone) return;
   for (const [b, amp] of MATCH_PULSE) pulse(t + b * BEAT, amp);
 
+  // §P9 FEEL round 3: the breath measured 2.3dB of envelope sd over 45s, which
+  // is a phrase you can autocorrelate and not one you can hear. The trough is
+  // deepened rather than the crest raised — the crest is what audiotest holds
+  // against card_slide, and there is 1.9dB of room there and none to spare.
+  // 1.26 → 0.52 is 7.7dB of travel a bar, against the old 2.3.
   const phase = index % MATCH_PHRASE;
   const to = phase === 1 ? DRONE_GAIN * 1.26
-    : phase === 2 ? DRONE_GAIN * 1.12
-      : phase === 3 ? DRONE_GAIN * 0.74
-        : DRONE_GAIN;
+    : phase === 2 ? DRONE_GAIN * 1.10
+      : phase === 3 ? DRONE_GAIN * 0.52
+        : DRONE_GAIN * 0.86;
   try { drone.dg.gain.linearRampToValueAtTime(to, t + BAR); } catch { /* stopped */ }
+  // …and the presence band swings four times as far, in the band that carries.
+  if (drone.air) {
+    try {
+      drone.air.gain.linearRampToValueAtTime(AIR_PHRASE[phase], t + BAR * 0.9);
+    } catch { /* stopped */ }
+  }
 
   // §3.10: while the final approach is armed the fifth IS the pedal the tension
   // bed's 41.2Hz sub reinforces, and a pedal that wanders is not a pedal.

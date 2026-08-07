@@ -38,6 +38,18 @@ with usable separation — measured collisions today: `--go` 152° vs Elite gree
 | Danger / final approach | **hazard material** — 45° caution stripes + vermillion | being a plain coloured chip |
 | Foil / brass | **victory modal only** | anywhere else |
 
+> **OWNER RULING 2026-08-07 — the victory modal is a CEREMONY, and the anti-slop
+> rules do not apply inside it.** A critic called the win screen's gold rays "the
+> most AI-generated-looking element in the build" and the fix stripped it back to
+> a flat grey panel with plain type. The owner compared the two directly: *"yesterday
+> just looked so much better, higher res etc — it's almost too bland now."* They are
+> right, and the over-correction was mine. Inside `#win-overlay` the following are
+> **sanctioned, not violations**: gold display type for the title, a foil-gradient
+> primary CTA, a lit roundel, and depth/atmosphere behind the panel. "No glow" and
+> "no gradient CTA" are rules for the *table and its chrome*, where they stop the
+> UI shouting over the cards. The victory screen is the one place the game is
+> allowed to shout. Restraint outside the modal, ceremony inside it.
+
 Sets own colour-as-fill; signals own material. They cannot be confused even at 4° of hue
 separation, and the system survives colourblindness — which the current build does not.
 

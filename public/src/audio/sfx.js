@@ -257,15 +257,36 @@ export const BANK = Object.freeze({
     }
   },
 
-  /** Card lifted under a finger. Half a slide, no landing. */
+  /**
+   * Card lifted under a finger. Half a slide, no landing.
+   *
+   * ── IT HAS TO CLEAR THE MUSIC (§P9 FEEL round 3) ──────────────────────────
+   * MEASURED through the real chain: peak -36.5 dBFS, RMS -65.1 — 18.4dB under
+   * card_snap and sitting AT the match bed's own RMS. The most-repeated
+   * interaction in the game (~200 presses a session, and §P7.2 made it the
+   * ≤1-frame acknowledgement of every press) was being masked by its own
+   * soundtrack. A press that cannot be heard is a press that has not been
+   * answered.
+   *
+   * Two changes, and the first one matters more than the level:
+   *   • a 2ms stock TICK. Pure filtered breath has no onset, so it had nothing
+   *     to punch through a bed with; the click is what makes card stock read as
+   *     card stock (it is the same primitive every landing and flip uses).
+   *   • MIX_DB.card_pickup lifts the whole thing — see the trim table. It stays
+   *     tier 4: still well under card_snap, which is the ANSWER to this
+   *     question and must remain the louder of the two.
+   */
   card_pickup(g, t0, o) {
     const h = head(g, o, 0.06);
     const bg = gain(g, 0);
     const bp = filt(g, 'bandpass', 1200, 1.1);
-    const n = noise(g, 'pink', t0, 0.08, 1.2);
+    const n = noise(g, 'pink', t0, 0.09, 1.2);
     n.connect(bp); bp.connect(bg); bg.connect(h);
     glide(bp.frequency, t0, f(o, 1100), f(o, 2300), 0.06);
-    swell(bg.gain, t0, 0.075, 0.008, 0.008, 0.055);
+    swell(bg.gain, t0, 0.11, 0.006, 0.010, 0.062);
+    // The onset. Quiet in absolute terms and the whole reason the sound has an
+    // edge to hear: 3.4kHz, 9ms, gone before the breath is at peak.
+    tick(g, h, t0, 0.055, 3400, 0.009);
     autoFree(n, bp);
   },
 
@@ -967,6 +988,81 @@ export const BANK = Object.freeze({
       burst(g, cg, t, 0.012, 3200 + g.rng() * 3600, 7, 0.05 * fade * fade);
       t += 0.008 + g.rng() * 0.038;
     }
+  },
+
+  /**
+   * DEFEAT — somebody else took it (§P9 FEEL round 3).
+   *
+   * MEASURED before this existed: the bank had `fanfare` and `stalemate` and
+   * nothing else, and `win` carries `{actor: winnerId}`, so losing played the
+   * WINNER'S FANFARE at the generic somebody-else's-event treatment: -6dB,
+   * ±0.34 of pan, -10 cents. Blindfolded, winning and losing were the same
+   * sound at two levels — on a game the harness lost, `fanfare mine=0 theirs=1`.
+   *
+   * The rest of the sour half already passes this test by having a different
+   * TIMBRE, not a different level: a theft against you is `sour` (peak 0.415,
+   * centred) where a theft you merely witness is `steal` (0.157, panned and
+   * detuned). The ending gets the same treatment, and engine.js routes it
+   * through SELF_VOICE so it arrives centred and unfiltered — it happened to
+   * you, whoever caused it.
+   *
+   * The construction is fanfare's, inverted at every joint, which is why the
+   * two can never be confused:
+   *
+   *   fanfare                        defeat
+   *   ─────────────────────────────  ────────────────────────────────────────
+   *   G3 C4 E4 G4, rising major      G4 Eb4 C4 G3, falling MINOR
+   *   sawtooth, bright and buzzing   square through a 620Hz lowpass, muted
+   *   filter OPENS on each attack    filter CLOSES through each note
+   *   notes 90ms apart, urgent       notes 150ms apart, slowing (150/170/210)
+   *   a fifth ringing over the end   the last note SAGS a semitone flat
+   *   timpani accents, confetti      one dead thud and a long breath of air
+   *
+   * The sag is the thing that reads as loss: a held pitch that will not stay
+   * up. Two detuned squares beat against each other at ~1.4Hz through it, so
+   * the tail wavers instead of ringing.
+   */
+  defeat(g, t0, o) {
+    const h = head(g, o, 0.5);
+    // G4 Eb4 C4 G3 — the fanfare's own arrival note, walked back down a minor
+    // triad to below where the fanfare started.
+    const notes = [
+      [392.00, 0.00, 0.30],
+      [311.13, 0.15, 0.30],
+      [261.63, 0.32, 0.34],
+      [196.00, 0.53, 1.05],
+    ];
+    for (let i = 0; i < notes.length; i++) {
+      const [hz, at, dur] = notes[i];
+      const t = t0 + at;
+      const last = i === notes.length - 1;
+      const lp = filt(g, 'lowpass', 620, 1.4);
+      const env = gain(g, 0);
+      lp.connect(env); env.connect(h);
+      // Closing, not opening: every note is duller at its end than at its start.
+      lp.frequency.setValueAtTime(1500, t);
+      lp.frequency.exponentialRampToValueAtTime(320, t + dur * 0.8);
+      for (const [amp, det] of [[0.30, 1], [0.22, 1.0035]]) {
+        const vg = gain(g, amp);
+        const ov = osc(g, 'square', f(o, hz) * det, t, t + dur + 0.05);
+        // THE SAG. The final note cannot hold its pitch — a semitone flat over
+        // its own length, which is the whole sentence in one gesture.
+        if (last) glide(ov.frequency, t + 0.18, f(o, hz) * det, f(o, hz) * det * 0.944, dur * 0.7);
+        ov.connect(vg); vg.connect(lp);
+      }
+      swell(env.gain, t, 0.30, 0.03, dur * 0.35, dur * 0.62);
+    }
+    // One dead thud under the first note — a timpani with the head damped.
+    thump(g, h, t0, f(o, 98), f(o, 46), 0.30, 0.34);
+    // …and a long breath of air where the confetti would have been. Filtered
+    // brown noise, no grains, decaying to nothing over 1.3s.
+    const ag = gain(g, 0);
+    const alp = filt(g, 'lowpass', 700, 0.6);
+    const an = noise(g, 'brown', t0 + 0.5, 1.3, 0.8);
+    an.connect(alp); alp.connect(ag); ag.connect(h);
+    glide(alp.frequency, t0 + 0.5, 700, 220, 1.1);
+    swell(ag.gain, t0 + 0.5, 0.22, 0.18, 0.2, 0.9);
+    autoFree(an, alp);
   },
 
   /**

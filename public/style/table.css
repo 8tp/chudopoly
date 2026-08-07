@@ -92,10 +92,34 @@
      ROUND-4: 1.6em of fade held a whole line of mat captions at ~30% alpha,
      which reads as a rendering fault rather than as "more below" (the DRONE /
      FIGH bleed on five-player@phone). Shortened to .9em with .3em of clear
-     padding under the content, so what the fade eats is the top of a card. */
+     padding under the content, so what the fade eats is the top of a card.
+     ROUND-6: .9em is still 14px of ALPHA over the mat nameplates, and a
+     nameplate composited at the ramp's own alpha stops clearing 4.5:1 (the
+     arithmetic is on .opponents .board-props). It drops to .3em — a feather,
+     not a curtain — and the cue moves to the two `local` shades below, which
+     travel with the content and so can only appear at an end that has
+     something behind it. That also fixes the mobile review's other half: the
+     old fade was bottom-only and STATIC, so it said "more below" while resting
+     at the bottom and never said "more above" at all. */
   padding-bottom: .3em;
-  -webkit-mask-image: linear-gradient(#000 calc(100% - .9em), transparent);
-  mask-image: linear-gradient(#000 calc(100% - .9em), transparent);
+  -webkit-mask-image: linear-gradient(#000 calc(100% - .3em), transparent);
+  mask-image: linear-gradient(#000 calc(100% - .3em), transparent);
+  background:
+    linear-gradient(180deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 0 / 100% 1.2em no-repeat local,
+    linear-gradient(0deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 100% / 100% 1.2em no-repeat local,
+    linear-gradient(180deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 100% .9em no-repeat,
+    linear-gradient(0deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 100% / 100% .9em no-repeat;
+}
+/* MOBILE REVIEW round 5: "the seat header is the first thing to leave the
+   window, so a scrolled rail shows unattributed property columns." It rides the
+   top of its own seat inside the strip, so whatever row of mats you have
+   scrolled to, the name, the set tally and the bank total above them are the
+   ones that own it. */
+.opponents .board-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
 }
 .opponents::-webkit-scrollbar { width: 5px; }
 .opponents::-webkit-scrollbar-thumb { background: var(--fg-mute); border-radius: 999px; }
@@ -407,6 +431,13 @@
   font-size: .58em;
   line-height: 1.3;
   white-space: nowrap;
+  /* the printed rule along the bottom of a placard. It is also the mat's
+     strongest EDGE in grayscale: bone against a set colour is a ~60 L* step on
+     all ten, where the plate-against-seat step is 5-10 (see the §10 note on
+     --mat-alpha). */
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--band-ink) 42%, transparent),
+    inset 0 -1px 0 color-mix(in oklab, var(--band-ink) 60%, transparent);
 }
 .propcol-count { font-weight: 700; flex: 0 0 auto; }
 /* ── §3.6, THE CAPS BUDGET — AND WHAT IT COST (round-5 correction) ─────────
@@ -509,56 +540,46 @@
 .zone-ups .card:first-child { margin-left: 0; }
 .board-opponent .propcol[data-empty="1"] { display: none; }
 
-/* ── AN OPPONENT'S PROPERTY LINE IS ONE ROW, AT EVERY VIEWPORT ────────────
-   These mats used to WRAP, on the principle that nothing about an opponent's
-   board may be invisible. The principle was right and the mechanism was wrong,
-   because the seats strip is height-capped at every viewport and a wrapped
-   seat simply grew past the cap: MEASURED, five-player@desktop 236px of seat in
-   a 189px strip, mid-game@phone 242px of seats in 112. Wrapping did not keep
-   the mats visible, it guillotined them mid-card — and a clipped .propcol still
-   lays out under whatever is below the strip, which is where the screenshot
-   gate's buried-text runs were coming from.
+/* ── AN OPPONENT'S PROPERTY LINE WRAPS. IT DOES NOT SCROLL SIDEWAYS ───────
+   ROUND-6, and this reverses the previous round's own decision on the strength
+   of what the reversal was measured to cost.
 
-   One row, scrolled sideways, is the honest version of the same principle: the
-   seat is a constant height, nothing is ever cut across a card, and the end of
-   the line says so with an edge shade built out of `background-attachment:
-   local` — the two cover layers travel with the content, so a shade can only
-   appear at an end that has something behind it. No JS, no scroll listener, and
-   it cannot lie. */
+   The sideways scroller was chosen so a seat would be a constant height and
+   nothing would ever be cut across a card. What it actually did was move every
+   mat past the seat's width OUT OF THE BOX ENTIRELY, at scrollLeft 0, with no
+   affordance a still frame can show. MEASURED on the review fixtures at 1280×720
+   (probe against tools/lib/audit + pixels, the gate's own code):
+
+       mid-game·light        seat scroller box x 649→895, scrollWidth 303
+                             BASES 3/4 laid out at x 888→902 — outside it
+       final-approach·light  scrollWidth 425 in a 247px box
+                             BASES  x 923→1009   INTEL x 1017→1059  — outside it
+
+   Those runs are painted nowhere, so checkContrast sampled the APRON behind
+   them and read 1.44:1 on four of them; touchtest counted the same mats as 38
+   controls "clipped by a scrolling ancestor"; and the mobile review measured 38
+   of 40 opponent mats under 50% visible on five-player portrait. Three
+   independent instruments, one cause. A one-row seat is a constant height
+   because it throws away whatever does not fit.
+
+   Wrapping brings the guillotine the previous note names — a seat taller than
+   the strip is cut at the strip's edge — but that cut is on the OUTER scroller,
+   which is a real scroller with `scroll-snap-align: start` on every seat, so a
+   flick lands on a seat boundary and the whole seat is reachable. Hidden-until-
+   scrolled beats absent. */
 .opponents .board-props {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-content: flex-start;
   margin-top: .28em;
-  gap: .2em;
+  /* .2em → .35em: MEASURED (grayscale, mid-game@desktop dark) the mat/seat pair
+     came back T10 R9 B13 L59 — the right side scored 9 because a 3px gutter puts
+     the edge band mostly inside the NEXT mat, which is the same material. A 5px
+     gutter is enough seat plate for the boundary to be a boundary. */
+  gap: .35em;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  /* ── WHY THE FEATHER IS 4px AND NOT 10 ──────────────────────────────────
-     MEASURED (checkContrast round 6, mid-game·light, payment·light,
-     final-approach·light): a mask ramp is alpha, and alpha over the apron is a
-     contrast reduction applied to the TEXT as well as to the plate under it.
-     The nameplate's own worst pair is 5.07:1 (bone on Mobility), and composited
-     at the ramp's own alpha it computes 4.37:1 at α=.95, 4.14 at α=.90 and
-     3.34 at α=.75 — i.e. there is no useful ramp width at which a label caught
-     under the feather is still legal. It bit exactly the mats the fade exists
-     for: BASES 3/4 and INTEL 1/2, the two at the right-hand end.
-     The feather stays, at .28em — narrower than a glyph, so a clipped label's
-     modal background is still its own plate and the reading is still the
-     reading — and the SIGNAL moves to the shade in the gutter, which is what
-     was carrying it anyway (see the `local` layers below: they can only appear
-     at an end that has content behind it). The gutter widens to .7em so the
-     shade has room to be a shade rather than a hairline. */
-  padding: 0 .7em;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .28em, #000 calc(100% - .28em), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 .28em, #000 calc(100% - .28em), transparent 100%);
-  background:
-    linear-gradient(90deg, var(--surface) 46%, rgba(0, 0, 0, 0)) 0 0 / 1.4em 100% no-repeat local,
-    linear-gradient(-90deg, var(--surface) 46%, rgba(0, 0, 0, 0)) 100% 0 / 1.4em 100% no-repeat local,
-    linear-gradient(90deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 1.1em 100% no-repeat,
-    linear-gradient(-90deg, var(--shade-2), rgba(0, 0, 0, 0)) 100% 0 / 1.1em 100% no-repeat;
+  padding: 0 .25em;
 }
-.opponents .board-props::-webkit-scrollbar { height: 0; }
 .opponents .propcol { flex: 0 0 auto; }
 /* An opponent's mat is a targeting surface too (Inspector General takes a whole
    set), so it owes the same 44px — MEASURED at 36×50 portrait and 30×42
@@ -1084,6 +1105,28 @@
   .zone-hand:has(> .card:nth-child(6)),
   .zone-hand:has(> .card:nth-child(7)),
   .zone-hand:has(> .card:nth-child(8)) { --fan-cover: .08; }
+}
+
+/* ── A TALL DESKTOP: SPEND THE SLACK ON THE CARDS ────────────────────────
+   OWNER, 2026-08-07 (with the hand-ramp fix): "a large empty band between the
+   bank and the dock". The review set is 1280×720, where the table has no slack
+   at all, so every measurement in this file was taken at the one height where
+   the defect cannot appear. Above ~820px the self board's own content is a
+   fixed 291px and the rest of the scrollport is apron — the band.
+
+   The fix is not to redistribute the emptiness, it is to stop having it: the
+   mats and the cards standing on them grow. 3.4s is a 61px property card
+   against 47 at the review size, and the grid rows grow with it. Nothing here
+   can reach 1280×720, which is the height every other number was solved at. */
+@media (min-width: 1024px) and (min-height: 820px) {
+  .board-self { --card-w: max(var(--card-tap), calc(var(--s) * 3.4)); }
+  .board-self .board-props { grid-auto-rows: minmax(106px, auto); gap: 10px; }
+  .board-self .zone-bank { --card-w: 58px; }
+  .board-self .propcol-head { font-size: .62em; }
+}
+@media (min-width: 1024px) and (min-height: 960px) {
+  .board-self { --card-w: max(var(--card-tap), calc(var(--s) * 3.9)); }
+  .board-self .board-props { grid-auto-rows: minmax(122px, auto); }
 }
 
 /* Between 900 and 1024 the log still docks (ui.css) but there is no room for
@@ -1894,6 +1937,28 @@
       repeating-linear-gradient(90deg, var(--stencil) 0 12px, transparent 12px 22px)
       0 100% / 100% 2px no-repeat;
   }
+  /* THE CONTINUATION MARK. The row is 785px of mats in a 591px port (measured),
+     so four mats are past the right edge and the LOOK review's word for the
+     result was "terminates at x=1688 with no fade and no scroll cue". A fade
+     cannot be the cue — a mask ramp is alpha over the nameplates and takes them
+     under 4.5:1 (the arithmetic is on .opponents .board-props) — so the cue is a
+     MARKING, the same vocabulary the apron uses everywhere else: a dashed rule
+     standing at the end of the line, pinned to the scrollport by `position:
+     sticky` on a flex item. With nothing to scroll to it comes to rest against
+     the last mat and reads as the end of the row; with something behind it, it
+     stands over the cut. Opaque, so it never touches a contrast ratio. */
+  .board-self .board-props::after {
+    content: "";
+    flex: 0 0 auto;
+    position: sticky;
+    right: 0;
+    align-self: stretch;
+    width: 5px;
+    margin-left: -5px;
+    background:
+      linear-gradient(var(--ground), var(--ground)) 0 0 / 100% 100% no-repeat,
+      repeating-linear-gradient(180deg, var(--stencil-hi) 0 6px, transparent 6px 11px) 1px 0 / 3px 100% no-repeat;
+  }
   /* 50px of mat is narrow even for the tag */
   .board-self .propcol-name::after { font-size: 8px; }
   .board-self .board-props::-webkit-scrollbar { height: 0; }
@@ -1933,7 +1998,7 @@
   /* ── the dock, lying down ───────────────────────────────────────────────
      One row of controls, never two: at 114px wide the bar wrapped SCOOP onto a
      third line and it hung out of the dock in every landscape shot. */
-  .hand-dock { display: flex; align-items: center; gap: .5em; padding: .25em .4em; }
+  .hand-dock { display: flex; align-items: center; gap: .5em; padding: .25em .4em .4em; }
   .hand-bar {
     flex: 0 0 auto;
     width: auto;
@@ -1963,8 +2028,16 @@
        so a min-height derived from --card-w under-reserves by ~20%. 2.0 is that
        ratio folded in — measured 101px of zone around a 59 × 83 card, and the
        card stops being squeezed to 76 and clipped by the viewport edge. */
-    min-height: calc(var(--card-w) * 1.78 + .5em);
-    padding: .25em .3em .3em;
+    /* ROUND-6, MEASURED at 844×390 after the hand ramp landed: zone 96px around
+       a 59 × 76 card. A 5:7 card 59 wide is 82.6 tall, so the fan was squeezed
+       6.6px — the art distorts — and its bottom edge sat at y388 of a 390px
+       viewport, which reads as cut whether or not the last two pixels are
+       there. table/hand.js renders 1.17× the declared --card-w, so the factor
+       has to carry that: 1.95 gives 104px of zone and 6px of apron under the
+       fan. It costs the table 8px, taken from a seats rail that is a scroller
+       either way. */
+    min-height: calc(var(--card-w) * 1.95 + .6em);
+    padding: .25em .3em .4em;
     /* ~600px of dock for at most eight cards: the fan never has to overlap, so
        every name sets whole at the biggest card the height allows. */
     --card-w: calc(var(--s) * 4.2);

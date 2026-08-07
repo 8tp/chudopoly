@@ -125,6 +125,7 @@ const VOICE = {
   tension_tick: [0.08, 1, false],
   approach_broken: [0.44, 3, true],
   fanfare: [1.25, 8, true],
+  defeat: [1.60, 8, true],
   stalemate: [1.10, 4, true],
 };
 
@@ -159,6 +160,7 @@ const VOICE = {
 const MIX_DB = {
   // tier 0 — the game turned
   fanfare: 1.0,
+  defeat: 4.0,
   klaxon: -0.5,
   chud: 8.0,
   scoop: 12.5,
@@ -198,6 +200,11 @@ const MIX_DB = {
   timer_critical: -5.5,
   timer_warn: -6.0,
   denied: -1.0,
+  // …except the press, which is chrome only in the sense that it is constant.
+  // It was 18.4dB under card_snap and level with the match bed's RMS, i.e.
+  // inaudible under the game's own music. +7 puts it about 4dB under the snap:
+  // the question is quieter than its answer, and both are now above the score.
+  card_pickup: 7.0,
 };
 
 function mixGain(name) {
@@ -581,7 +588,13 @@ export function play(name, opts = {}) {
  * "somebody else" treatment. ui/hud.js:55 plays the timer cues with no options
  * at all, and a -6dB off-centre "your turn ends in 5 seconds" is a bug.
  */
-const SELF_VOICE = new Set(['timer_warn', 'timer_critical', 'ui_tick', 'card_pickup', 'denied']);
+const SELF_VOICE = new Set([
+  'timer_warn', 'timer_critical', 'ui_tick', 'card_pickup', 'denied',
+  // Losing is not somebody else's event. `mineFor` would call it theirs
+  // (ev.actor is the WINNER) and hand it the -6dB/panned/detuned treatment,
+  // which is the exact bug `defeat` exists to fix.
+  'defeat',
+]);
 
 /**
  * The three losses. `mineFor` is too generous for these: it returns true for
@@ -788,7 +801,7 @@ export const SFX_FOR_EVENT = Object.freeze({
   discard: null,                 // cue
   turn_end: null,                // turn_start of the next player is the beat
   scoop: 'scoop',
-  win: 'fanfare',
+  win: 'ending',                 // virtual → fanfare when I took it, defeat when I did not
   stalemate: 'stalemate',
   final_approach: 'klaxon',
   final_approach_broken: 'approach_broken',
@@ -882,6 +895,17 @@ function resolve(name) {
       return victimOf(ev) === selfId() ? 'sour_pay' : 'chip_pay';
     case 'steal':
       return victimOf(ev) === selfId() ? 'sour' : 'steal';
+    // The ending is not one sound at two levels (§P9 FEEL round 3). `win`
+    // carries {actor: winnerId}, so this is the same question `steal` asks —
+    // did it happen FOR me or TO me — and it gets the same answer: a different
+    // voice, not a quieter one. A snapshot with no event behind it (a reconnect
+    // into a finished game) falls back to the winner on the view.
+    case 'ending': {
+      const me = selfId();
+      const winner = ev && ev.actor != null ? ev.actor
+        : (ev && ev.winner != null ? ev.winner : store.snapshot?.winner);
+      return me != null && winner === me ? 'fanfare' : 'defeat';
+    }
     case 'set_progress': {
       // The rung is the actor's set count AFTER this completion. store.snapshot
       // is already the new one when the choreographer runs (state/store.js

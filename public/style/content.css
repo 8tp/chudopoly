@@ -784,6 +784,23 @@ body:has(#prompt:not([hidden])) .hints {
   letter-spacing: 0;
 }
 #chud-feed .feed-stack .feed-mark { opacity: 1; color: var(--fg-mute); }
+/* ── ON A PHONE THE FEED IS A ONE-LINE TICKER ─────────────────────────────
+   PLACE, part two. Desktop got the empty dock column (below); portrait has no
+   such column, so a three-row stack simply stood on the board — MEASURED on
+   five-player@phone, the stack covered the whole second row of the player's own
+   mats and the screenshot gate's buried-run count for that one shot was 22.
+   §3.7 is about material AND place, and there is no place on a 390px phone for
+   three lines of running commentary over the one region the player is reading.
+   One line is a ticker: it says what just happened, it is 20px tall, and the
+   Mission Log has the rest. The rows are still built and still animate, so
+   nothing in ui/feed.js changes; only the last one is shown. */
+@media (max-width: 759px) {
+  #chud-feed .feed-stack .feed-row:not(:last-child) { display: none; }
+  #chud-feed .feed-stack .feed-row { font-size: .8em; padding: .18em .5em; }
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  #chud-feed .feed-stack .feed-row:not(:last-child) { display: none; }
+}
 @media (min-width: 1024px) {
   /* fixed, not absolute: the host is a height:0 div pinned above #prompt, and
      the dock is the box this belongs in. Bottom-anchored so the newest line is
@@ -952,11 +969,21 @@ body:has(#prompt:not([hidden])) .hints {
   text-align: left;
   padding: .34em .55em;
 }
-.win-summary .win-row:first-child { background: var(--ground); color: var(--fg-mute); }
+.win-summary .win-row:first-child { background: var(--surface); color: var(--fg-mute); }
+/* OWNER RULING 2026-08-07: the rows had all flattened to one grey and the
+   winner's line was distinguishable only by a hairline. It is the row the
+   screen exists for, so it is LIFTED off the well the others are cut into —
+   raised plate, brass rim, warm key along its top edge — while every other row
+   stays debossed. Material, not just colour, so it survives grayscale. */
 .win-summary .win-row.is-winner {
-  background: var(--ground);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--foil) 16%, var(--surface)), var(--surface) 62%);
   color: var(--fg);
-  box-shadow: inset 0 0 0 2px var(--foil);
+  box-shadow:
+    inset 0 0 0 2px var(--foil),
+    inset 0 1px 0 color-mix(in oklab, var(--foil) 45%, transparent),
+    0 2px 0 var(--shade-2),
+    0 6px 14px rgba(0, 0, 0, .35);
 }
 .win-summary .win-row.is-out { opacity: .55; }
 .win-name { grid-area: name; }

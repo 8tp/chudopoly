@@ -5,7 +5,7 @@
 // placed by table/index.js. Rebuilding is keyed on the seat list, so a normal
 // turn never touches this code and never orphans a card node mid-FLIP.
 
-import { el, clear, setText, setAttr, setClass } from '../core/dom.js';
+import { el, clear, setText, setAttr, setClass, setHidden } from '../core/dom.js';
 import { COLORS, COLOR_KEYS, isComplete } from '../core/cards.js';
 import { botLabel } from '../core/bots.js';
 import { store } from '../state/store.js';
@@ -17,6 +17,52 @@ const boards = new Map();         // playerId -> board element
 let seatKey = '';
 let selfId = null;
 let root = null;
+
+/* ══ THE COLLAPSED SEAT ════════════════════════════════════════════════════
+   MEASURED on five-player@phone (390×844, ui-scale 1, the fixture the review
+   set photographs), before this:
+
+     strip port 376×254   scrollHeight 416    →  162px of seat below the fold
+     Bolt   185×166  1 mat   3 property cards, 3 visible
+     Cobra  185×166  1 mat   1 property card, 1 visible
+     Jester 185×240  4 mats  4 property cards, 0 FULLY VISIBLE
+     Shadow 185×240  4 mats  6 property cards, 0 FULLY VISIBLE
+
+   Two of four opponents showed no properties at all; 10 of 14 property cards
+   and 8 of 10 mats on the table were below the scrollport. The interface-scale
+   slider does not fix it — at 0.80 the strip is 379×314 around scrollHeight
+   466 and Shadow still shows 0 of 6. Four opponent boards do not fit a phone at
+   the 44px floor and no scale factor makes them.
+
+   So a seat has two states, and the split is Hearthstone Battlegrounds' (8 live
+   opponents on one screen): APPROXIMATE WHEN COLLAPSED, exact on expand. A
+   collapsed seat answers "how threatening is this player" — which colours, how
+   close, how much they are worth, how many cards they are holding, whether they
+   are armed — from a 44px row that never scrolls out of view. The expanded seat
+   answers "exactly what do they hold", with mats twice the size the strip could
+   ever afford to give four of them at once.
+
+   §0.4: collapse creates, destroys and reparents NOTHING. Every card node stays
+   exactly where reconcile put it; the seat's three detail children are
+   `display:none`, and table/index.js's moveCard already has the guard for that
+   case by name ("The destination is not rendered (a hidden zone, a collapsed
+   board)") — it places the card and skips the flight rather than inverting
+   against a 0×0 rect. `display:none` and not a clip, deliberately: moveCard's
+   unclip() walks a flying card's ancestors and sets `overflow: visible` on
+   every one of them, so a concealment built on `overflow:hidden` would tear
+   itself open for ~400ms every time a card landed on a seat.
+
+   THE COST, stated: a card landing on a collapsed seat does not fly. Against
+   what it replaces — a beat that is already invisible for two of four seats
+   because they are below the fold, with the OUTCOME invisible too — the trade
+   is a beat nobody could see for a result everybody can. */
+
+/** The one expanded seat, or null. An accordion: the strip never spends more
+ *  than one seat's worth of height on detail. */
+let expandedId = null;
+/** Is collapse the mode at this viewport? Written by the media listener below. */
+let collapsing = false;
+let strip = null;
 
 export function zoneEl(key) { return zones.get(key) || null; }
 export function boardEl(playerId) { return boards.get(playerId) || null; }
@@ -93,6 +139,92 @@ export function mount(rootEl, mySeatId) {
   zones.set('deck', document.querySelector('[data-zone="deck"]'));
   zones.set('discard', document.querySelector('[data-zone="discard"]'));
   zones.set('hand', document.querySelector('[data-zone="hand"]'));
+  mountSeatMode();
+}
+
+/* ── WHEN COLLAPSE IS THE MODE ─────────────────────────────────────────────
+ * ≤1023px, which is every phone in both orientations plus the tablet band that
+ * already uses the portrait stack. NOT desktop: measured at 1280×720 with four
+ * opponents a seat is 257×147 and the strip's scrollHeight is 165 in a 165px
+ * port — nothing scrolls and nothing is cut, so there is no problem to collapse
+ * away, and a mode that only exists on phones is the honest shape of a defect
+ * that only exists on phones.
+ *
+ * The breakpoint is read in JS as well as CSS because the TOGGLE is a real
+ * <button>: tools/lib/audit.mjs measures every button against the 44px floor,
+ * and a desktop seat cannot fund a 44px header (the seats track is
+ * fit-content(11.4em) = 189px against a 147px seat, and the 24px of slack is
+ * already spent closing the payment overlap on .board-self). So above the
+ * breakpoint the button is `display:contents` — no box, invisible to the audit
+ * — and `disabled`, so it is not a dead tab stop either.
+ */
+function mountSeatMode() {
+  strip = document.getElementById('opponents');
+  if (!strip) return;
+  const mq = typeof matchMedia === 'function' ? matchMedia('(max-width: 1023px)') : null;
+  const apply = () => {
+    collapsing = mq ? mq.matches : false;
+    setAttr(strip, 'data-seatmode', collapsing ? 'collapse' : 'full');
+    if (!collapsing) expandedId = null;
+    paintSeatStates();
+  };
+  if (mq) {
+    if (mq.addEventListener) mq.addEventListener('change', apply);
+    else if (mq.addListener) mq.addListener(apply);
+  }
+  apply();
+
+  /* THE TAP, and how it does not fight targeting.
+   *
+   * interact/pointer.js's router tests `closest('[data-targetable="1"]')`
+   * BEFORE `[data-action]`, so at the seat level targeting already outranks
+   * every control in the client. This listener sits on the strip — a
+   * descendant of `document`, so it bubbles FIRST — and therefore has to make
+   * the same ruling itself, explicitly: while a seat is a live target, a tap on
+   * it means CHOOSE THIS TARGET and never EXPAND.
+   *
+   * The other half of the answer is in table.css, not here: a seat that
+   * CONTAINS a live target (the `theirCard` and `theirSet` steps mark card
+   * nodes and .propcols inside a seat, not the seat) expands from a `:has()`
+   * rule. That cannot fall out of sync with interact/, because the thing it
+   * keys on IS interact/'s mark.
+   */
+  strip.addEventListener('click', (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t || t.closest('[data-targetable="1"]')) return;
+    const btn = t.closest('[data-seat-toggle]');
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    const board = btn.closest('.board');
+    const id = board?.getAttribute('data-player');
+    if (!id) return;
+    expandedId = expandedId === id ? null : id;
+    paintSeatStates();
+    if (expandedId) board.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  });
+
+  /* Escape closes the seat — but only when nothing on the table is a live
+   * target. interact/'s own Escape handler cancels targeting/payment, and a key
+   * that did both at once would answer a question the player did not ask. */
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || expandedId == null) return;
+    if (document.querySelector('[data-targetable="1"], [data-payable="1"]')) return;
+    expandedId = null;
+    paintSeatStates();
+  });
+}
+
+/** Push `expandedId` + the mode onto every seat. Guarded; safe to call often. */
+function paintSeatStates() {
+  for (const [id, board] of boards) {
+    if (board.classList.contains('board-self')) continue;
+    const open = !collapsing || expandedId === id;
+    setAttr(board, 'data-collapsed', open ? '0' : '1');
+    const btn = board.querySelector('[data-seat-toggle]');
+    if (!btn) continue;
+    btn.disabled = !collapsing;
+    setAttr(btn, 'aria-expanded', open ? 'true' : 'false');
+  }
 }
 
 /**
@@ -142,13 +274,89 @@ export function syncSeats(snapshot, mySeatId) {
   clear(opponents);
   clear(selfSlot);
 
+  // A seat that no longer exists cannot stay expanded, and a new table opens
+  // resting: collapsed everywhere collapse is the mode.
+  expandedId = null;
+
   for (const player of players) {
     const isSelf = player.id === selfId;
     const board = buildBoard(player, isSelf);
     boards.set(player.id, board);
     (isSelf ? selfSlot : opponents).appendChild(board);
   }
+  paintSeatStates();
   return true;
+}
+
+/* ── THE GIST: what survives collapse, and what each thing bought ──────────
+ *
+ *   SET METERS, one per colour held — the whole trick, and the only thing here
+ *     that is deliberately APPROXIMATE. A segmented bar in the set's own hue
+ *     says WHICH colours and HOW CLOSE without a single card face: "Fighters
+ *     2 of 3, Command complete, Bases 1 of 4" is the entire decision input for
+ *     "who do I hit and what do I deny". At this size a rendered bar beats
+ *     digits — five bars read in one saccade where five "2/3"s do not, and the
+ *     hue carries the colour identity the exact digits would still need a label
+ *     to carry. Colours the player does not hold are not rendered, exactly as
+ *     their empty mats are not (table.css `.board-opponent .propcol[data-empty]`).
+ *   COMPLETE + UPGRADED are marked ON the meter. A complete set is the win
+ *     condition and an upgraded one doubles what their rent costs you; both
+ *     change what you do this turn, and neither is derivable from the bar's
+ *     fill (an Upgrade is not a property, so 3/3 with a House looks identical
+ *     to 3/3 without one).
+ *   HAND COUNT survives because a hand is what can happen TO you: a seat
+ *     holding 0 cards cannot Chud your rent, cannot steal and cannot charge.
+ *     It costs one digit here against the ~90px fan of card backs it replaces —
+ *     measured on five-player@phone, that fan was the single tallest thing in
+ *     Bolt's seat and said nothing the digit does not.
+ *   ARMED survives because §3.10's Final Approach is the state a player who
+ *     cannot see it will misplay, and the brief makes it non-negotiable. It is
+ *     belt AND braces: the seat's own hazard treatment (stripes inside the box,
+ *     klaxon on its shadow, name in danger ink) is on `.board` and survives
+ *     collapse untouched — this is the word, for a 44px row read at a glance.
+ *
+ * NOT here, and why: the bank's exact denominations (that is "exactly what do
+ * they hold", i.e. the expand); a second money figure beside `.board-worth` —
+ * netWorth already answers "can they pay, and will it hurt", and two totals six
+ * pixels apart that can disagree is the exact defect the `is-complete` note
+ * below records; the bot's personality (owner directive, paintBoard).
+ *
+ * Built ONCE per seat, ten meters and all, and painted by attribute afterwards
+ * (§0.8 guarded writes): the gist re-renders on every broadcast and must not
+ * churn nodes to do it.
+ */
+function buildGist() {
+  const gist = el('div', { class: 'seat-gist' });
+  gist.appendChild(el('span', { class: 'gist-armed', text: 'ARMED', attrs: { hidden: true } }));
+  for (const color of COLOR_KEYS) {
+    const meter = el('span', {
+      class: 'gist-meter',
+      attrs: { 'data-color': color, 'data-size': COLORS[color].size, 'data-have': '0', hidden: true },
+    });
+    for (let i = 0; i < COLORS[color].size; i++) meter.appendChild(el('i', { class: 'gm-seg' }));
+    gist.appendChild(meter);
+  }
+  gist.appendChild(el('span', { class: 'gist-hand', text: '0' }));
+  return gist;
+}
+
+/** Repaint one seat's gist from the snapshot. All writes guarded. */
+function paintGist(board, player, rules) {
+  const gist = board.querySelector('.seat-gist');
+  if (!gist) return;
+  for (const color of COLOR_KEYS) {
+    const meter = gist.querySelector(`.gist-meter[data-color="${color}"]`);
+    if (!meter) continue;
+    const have = player.properties?.[color]?.length || 0;
+    setHidden(meter, have === 0);
+    // Clamped to the set size: a wild can be counted into a zone the engine
+    // already considers full, and a meter cannot show 4 of 3.
+    setAttr(meter, 'data-have', String(Math.min(have, COLORS[color].size)));
+    setAttr(meter, 'data-complete', isComplete(player, color, rules) ? '1' : null);
+    setAttr(meter, 'data-up', (player.upgrades?.[color]?.length || 0) > 0 ? '1' : null);
+  }
+  setText(gist.querySelector('.gist-hand'), String(player.handCount ?? 0));
+  setHidden(gist.querySelector('.gist-armed'), board.getAttribute('data-final-approach') !== '1');
 }
 
 function buildBoard(player, isSelf) {
@@ -171,9 +379,18 @@ function buildBoard(player, isSelf) {
     el('span', { class: 'board-sets', text: '0/3' }),
     el('span', { class: 'board-worth', text: '0M' }),
   ]);
-  board.appendChild(head);
 
-  if (!isSelf) {
+  if (isSelf) {
+    board.appendChild(head);
+  } else {
+    // The nameplate and the gist ride INSIDE the toggle, so the whole collapsed
+    // seat is one control and the 44px floor lands on the box a thumb aims at
+    // rather than on a 17px strip of text. Everything inside is already
+    // `pointer-events: none` (.board-head), so nothing under it loses a tap.
+    board.appendChild(el('button', {
+      class: 'seat-toggle',
+      attrs: { type: 'button', 'data-seat-toggle': '', 'aria-expanded': 'false' },
+    }, [head, buildGist()]));
     board.appendChild(el('div', {
       class: 'cardzone zone-hand-oppo',
       attrs: { 'data-zone': zoneKeyFor('hand', player.id) },
@@ -281,4 +498,8 @@ export function paintBoard(player, snapshot) {
     setClass(col, 'is-fullnotset', cards.length >= size && !isComplete(player, color, rules));
     setText(col.querySelector('.propcol-count'), `${cards.length}/${size}`);
   }
+  // After data-final-approach is written above: the gist's ARMED word reads the
+  // seat's own flag rather than recomputing it, so the word and the hazard
+  // stripes can never disagree.
+  if (!board.classList.contains('board-self')) paintGist(board, player, rules);
 }

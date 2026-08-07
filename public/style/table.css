@@ -627,14 +627,30 @@
    board cannot fund it at 720p — see the payment note on .board-self, which is
    spending the 24px this block just freed) or an exemption from the zone floor.
    Both are real; neither is mine to take alone. Recorded, not forgotten. */
+/* ROUND-8: `repeat(auto-fill, …)`, and it retires --seat-cols as a tuning
+   constant. A FIXED column count is a promise about the seat's WIDTH, and the
+   interface-scale setting (variables.css --ui-scale, landed 2026-08-07) broke
+   that promise the day it shipped: --ui-scale multiplies --s but deliberately
+   NOT --tap, so at 0.80 the strip's `minmax(9.5em, 1fr)` reflows from 2 seats
+   across to 3 — MEASURED, a 124px seat — while `repeat(3, minmax(44px, 1fr))`
+   still demanded 3×44 + 2×4 + 7 = 147px inside it. That 23px is the third
+   seat's rightmost column, cut off, and no number written by hand in this file
+   can be right at every scale the player can now choose.
+
+   auto-fill asks the opposite question — how many ≥floor columns FIT — so it
+   cannot overflow at any width or any scale, and seats in one strip row are the
+   same width and therefore still get the same column count. The floor is now
+   the only tuned number, and it is a real one: at desktop it is bare --tap and
+   auto-fill answers 5 columns in a 239px grid ((239+4)/48 = 5.06), which is the
+   count round 7 measured and wrote down. */
 .opponents .board-props {
   display: grid;
-  grid-template-columns: repeat(var(--seat-cols), minmax(var(--tap), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--seat-col-min, var(--tap)), 1fr));
   /* One row is the resting shape and `grid-auto-rows` earns the second: a player
      holding more colours than a row has slots gets another IDENTICAL row, never
      a taller one. See the block comment for why two rows cannot be the resting
      shape at 1280×720. */
-  grid-template-rows: repeat(var(--seat-rows), var(--mat-row));
+  grid-template-rows: var(--mat-row);
   grid-auto-rows: var(--mat-row);
   justify-content: stretch;
   align-content: start;
@@ -668,7 +684,21 @@
    .opponents .board below): a seat whose bank happens to hold a note was 5px
    taller than the seat beside it before this, which is the same raggedness one
    row up. */
-.opponents .board-bank .cardzone:not(:empty) { min-height: min(var(--tap), calc(var(--card-w) * 1.4)); }
+/* REQUEST FROM THE MOBILE AGENT, taken in the half that is true. The ask was a
+   `--tap` floor on `.opponents .zone-bank`, and it splits in two:
+     · THE ZONE owes 44px and this line was capping it BELOW that — measured
+       42px at phone, 36.4 at desktop — because the fan/bank track is a fixed
+       44px and a bank that was taller made one seat taller than its neighbour.
+       The cap was solving that with the wrong instrument: `min-height` on the
+       zone cannot exceed a fixed grid track anyway, so the floor is free. It is
+       `var(--tap)` now and the track still pins the row.
+     · THE CARD does not, and this is where the request has to be refused with a
+       number: `.opponents .zone-bank` mini notes are 30px, an opponent's bank is
+       never hit-tested (the note four rules up), and floating them to 46px puts
+       a card wider than the 45px mat beside it into a 44px row. tools/lib/audit
+       files board card nodes as advisory zoom affordances for exactly this
+       reason; the ZONE is the control, and the zone now clears the floor. */
+.opponents .board-bank .cardzone:not(:empty) { min-height: var(--tap); }
 .opponents .board-bank:has(> .zone-bank:empty) { background: none; box-shadow: none; padding: 0; }
 /* An opponent's mat is a targeting surface (Inspector General takes a whole
    set), so it owes the same 44px — MEASURED at 36×50 portrait and 30×42
@@ -740,29 +770,402 @@
   align-items: flex-start;
   --mini-step: var(--card-w);
 }
-.opponents .zone-props:has(> .card:nth-child(2)) { --mini-step: min(var(--card-w), calc(var(--mat-in) - var(--card-w))); }
-.opponents .zone-props:has(> .card:nth-child(3)) { --mini-step: min(var(--card-w), calc((var(--mat-in) - var(--card-w)) / 2)); }
-.opponents .zone-props:has(> .card:nth-child(4)) { --mini-step: min(var(--card-w), calc((var(--mat-in) - var(--card-w)) / 3)); }
+/* ROUND-8: 100%, not --mat-in, and that retires the second hand-written seat
+   constant. --mat-in was "the usable width inside a mat", re-derived per
+   breakpoint from a seat width that is itself a function of the viewport — so
+   it was wrong at every width nobody had measured, and with auto-fill columns
+   above and an interface-scale slider below it there is no longer one number to
+   write. A percentage in `margin-left` resolves against the card's containing
+   block, which IS the mat's card zone, so the step now measures the mat it is
+   dividing instead of quoting a number about it. */
+.opponents .zone-props:has(> .card:nth-child(2)) { --mini-step: min(var(--card-w), calc(100% - var(--card-w))); }
+.opponents .zone-props:has(> .card:nth-child(3)) { --mini-step: min(var(--card-w), calc((100% - var(--card-w)) / 2)); }
+.opponents .zone-props:has(> .card:nth-child(4)) { --mini-step: min(var(--card-w), calc((100% - var(--card-w)) / 3)); }
 .opponents .zone-props .card:not(:first-child) { margin-left: calc(var(--mini-step) - var(--card-w)); }
 /* a buried card in a stack shows its cut EDGE, exactly as the bank's does */
 .opponents .zone-props .card:not(:last-child) { box-shadow: 1px 0 0 var(--card-edge), inset -2px 0 3px -1px var(--shade-2); }
 .opponents .board { scroll-snap-align: start; }
-/* The seat's own constants. Every number below was measured out of a specific
-   box at a specific viewport; they are re-stated per breakpoint, never derived
-   from a guess.
-     --seat-cols  columns in the mat grid; chosen so a cell clears 44px
-     --mat-row    the fixed row height: nameplate + a 44px zone + 2px
-     --mat-in     the usable width inside a mat, which the card step divides */
+/* The seat's own constants — two left of the five this block used to carry.
+     --seat-col-min  the mat grid's column FLOOR; auto-fill answers the count
+     --mat-row       the fixed row height: a card zone + the nameplate
+     --card-w        the mini card, which now rides --s so the interface-scale
+                     setting reaches the seats
+
+   --mat-row is deliberately NOT an --s multiple and that is not an oversight:
+   it is a 44px zone the thumb owns (--tap, which --ui-scale is defined not to
+   touch — variables.css says so) plus a nameplate whose type is FLOORED at 8px
+   two lines up (`a 6px label is not a label`). Neither term scales, so a --s
+   expression here would under-provision the row at 0.80 and print a caption
+   into a card. It is derived from the two things it is actually made of. */
 .opponents .board {
-  --card-w: 30px;
-  --seat-cols: 3;
-  --seat-rows: 1;
-  --mat-row: 70px;
-  --mat-in: 51px;
+  --card-w: max(26px, calc(var(--s) * 2.1));
+  --seat-col-min: var(--tap);
+  --mat-row: calc(var(--tap) + 26px);
 }
 /* Opponent money stacks 88% deep — the denomination is unreadable there and the
    worth plate in the nameplate already carries the total. */
 .opponents .card[data-type="money"] .card-name { display: none !important; }
+
+/* ══ ROUND-8: THE SUMMARY-AND-EXPAND SEAT ══════════════════════════════════
+   The measurements this exists for, and the §0.4 mechanism, are in
+   table/layout.js's block comment — that file builds the summary and owns the
+   accordion, this one owns what the two states look like. In short: four
+   opponent boards do not fit a phone at the 44px floor, five-player@phone puts
+   162px of seat below the fold, and two of four opponents show no properties at
+   any interface scale.
+
+   The vocabulary is the seat's own, one tier down: the nameplate stays where it
+   was, the gist row is a strip of MATS reduced to their fill — the same set hue
+   on the same surface with the same deboss — and nothing here is a new colour,
+   a new material or a new shape. A collapsed seat should read as the seat with
+   the cards taken off it, not as a different widget.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* THE TOGGLE — the seat's own header, promoted to a control. Above the collapse
+   breakpoint layout.js `disabled`s it and this makes it boxless, so it is
+   neither measured by tools/lib/audit.mjs (a display:contents element has no
+   rect) nor a dead tab stop, and a desktop seat's geometry is byte-identical to
+   what round 7 measured. */
+.seat-toggle {
+  display: contents;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+}
+.opponents[data-seatmode="collapse"] .seat-toggle {
+  display: block;
+  width: 100%;
+  /* the seat is a GRID ("head head" / "fan bank" / "props props", the round-7
+     block below), and with the nameplate now nested inside this button the
+     button is the grid item — without the area it auto-places into the head
+     row's FIRST CELL and comes out 135px wide inside a 376px seat (measured) */
+  grid-area: head;
+  padding: 2px .1em 1px;
+  /* §0.9. The floor lands on the WHOLE summary row, not on a 17px strip of
+     text, and on phone that row is the full width of the strip — see the
+     one-seat-per-line rule below for what that buys a thumb. */
+  min-height: var(--tap);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: none;
+  cursor: pointer;
+  /* the seat's own nameplate rule, moved up one level: whatever mat row you
+     have scrolled to, the name above it is the one that owns it */
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
+}
+/* the nameplate is inside the button now, so the sticky belongs to the button */
+.opponents[data-seatmode="collapse"] .board-head { position: static; margin-bottom: .1em; }
+.seat-toggle:focus-visible { outline: var(--ring); outline-offset: -2px; }
+
+/* A COLLAPSED SEAT IS THE HEAD ROW AND NOTHING ELSE. The fan/bank track is a
+   FIXED `var(--tap)` (round 7 pinned it so a note in the bank could not make one
+   seat taller than its neighbour) and a fixed track does not collapse just
+   because its items are `display:none` — measured, a collapsed seat came out
+   376×97 with 44px of empty track in the middle of it. The track is zeroed
+   here and restored by the auto-expand rule below.
+   The vertical padding goes too: the toggle is sticky and painted in --surface,
+   the same plate the seat is, so the inset it was drawing was invisible. 44px
+   exactly, four of them, is a 191px strip against the 416 this replaces. */
+.opponents .board[data-collapsed="1"] {
+  grid-template-rows: auto 0 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* except when armed: the hazard rail is a 6px bar painted INSIDE the top of the
+   seat and the nameplate cannot be under it. An armed seat is 8px taller than
+   the three beside it, which is the correct direction for that state to err. */
+.opponents .board[data-collapsed="1"][data-final-approach="1"] .seat-toggle { padding-top: 8px; }
+
+/* WHAT COLLAPSE HIDES. Three children, `display:none`, no card node touched —
+   see layout.js on why this is display and not a clip (moveCard's unclip()
+   opens `overflow` on every clipping ancestor of a card in flight, so a clipped
+   concealment tears open for the length of every landing). */
+.opponents .board[data-collapsed="1"] > .zone-hand-oppo,
+.opponents .board[data-collapsed="1"] > .board-bank,
+.opponents .board[data-collapsed="1"] > .board-props { display: none; }
+
+/* A SEAT THAT CONTAINS A LIVE TARGET IS OPEN, whatever the accordion says.
+   interact/ marks the SEAT for a `player` step but marks card nodes for
+   `theirCard` and `.propcol`s for `theirSet` — targets that live inside the
+   seat, which a collapsed seat would hide. Keying on the mark itself means this
+   cannot drift out of step with interact/index.js: the rule and the machine
+   read the same attribute. Payment marks only your own cards, and is included
+   because a fixture or a reconnect can land mid-selection.
+   A seat that IS the target stays collapsed on purpose — you are choosing a
+   PLAYER there, and a full-width 44px row is a better answer to that than a
+   180px box in the far top corner. */
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) > .zone-hand-oppo { display: flex; }
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) > .board-bank { display: flex; }
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) > .board-props { display: grid; }
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) {
+  grid-template-rows: auto var(--tap) auto;
+  padding-top: .3em;
+  padding-bottom: .35em;
+}
+
+/* ── THE GIST ROW ────────────────────────────────────────────────────────── */
+.seat-gist {
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px .3em;
+  min-width: 0;
+  padding: 2px .1em 1px;
+  font-size: var(--t-micro);
+}
+/* Shown in BOTH states, and that is the point: the summary is the seat's
+   headline, not a placeholder for the seat. Expanding adds the exact answer
+   under it; it does not take the approximate one away, so the row a player
+   learned to read at a glance is in the same place either way. */
+.opponents[data-seatmode="collapse"] .seat-gist { display: flex; }
+
+/* A METER IS A MAT WITH THE CARDS TAKEN OFF IT — same wash, same deboss, same
+   `--band` the mat and the card band publish ([data-color] below), so the
+   colour a player learns from a set column is the colour they read here.
+   Segments, not a continuous bar: the denominator is the information (2 of 4 is
+   a different position from 2 of 3 and a percentage hides that), and a set is
+   two, three or four discrete cards, never a proportion. */
+/* `hidden` on an element whose own rule sets `display` is a no-op — the UA
+   sheet's `[hidden]{display:none}` loses to any author display. Stated here
+   because layout.js hides an unheld colour's meter with setHidden(). */
+.gist-meter[hidden], .seat-gist[hidden] { display: none; }
+.gist-meter {
+  display: inline-flex;
+  gap: 1px;
+  padding: 1px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) / 2), var(--surface));
+  box-shadow: inset 0 1px 2px var(--shade);
+}
+.gm-seg {
+  display: block;
+  /* 9×13 at a 5:7 ratio: a segment is a CARD seen from far enough away, which is
+     the whole claim the row makes. Sized from the worst case rather than from
+     taste — all ten colours held is 28 segments, which at 9px plus gutters and
+     meter padding is 312px inside the 366px a full-width phone seat has. At the
+     7px this started at the hue was legible but the STEP between a filled and
+     an unfilled segment was not, on a 390px capture at 3×. */
+  width: 9px;
+  height: 13px;
+  border-radius: 1px;
+  background: var(--shade);
+  box-shadow: inset 0 0 0 1px var(--shade-2);
+}
+.gist-meter[data-have="1"] .gm-seg:nth-child(-n+1),
+.gist-meter[data-have="2"] .gm-seg:nth-child(-n+2),
+.gist-meter[data-have="3"] .gm-seg:nth-child(-n+3),
+.gist-meter[data-have="4"] .gm-seg:nth-child(-n+4) {
+  background: var(--band, var(--fg-mute));
+  box-shadow: none;
+}
+/* COMPLETE is the win condition, so it gets the mat's own completed treatment
+   (a foil rail, table.css `.propcol.is-complete`) rather than a fifth shade of
+   the set hue — one more filled segment would be indistinguishable from a
+   nearly-full set at 7px. */
+.gist-meter[data-complete="1"] {
+  box-shadow: inset 0 0 0 1px var(--foil);
+  background: color-mix(in oklab, var(--band, var(--fg-mute)) var(--mat-alpha), var(--surface));
+}
+/* UPGRADED — a House or Hotel doubles what this set's rent costs you, and it is
+   NOT derivable from the fill: an Upgrade is not a property, so 3/3 with a
+   House and 3/3 without are the same three segments. A raised notch on the
+   right end, the same corner the mat reserves for the upgrade lane. */
+.gist-meter[data-up="1"] { position: relative; }
+.gist-meter[data-up="1"]::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: -2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--foil);
+}
+
+/* THE HAND. A number, not a fan: measured on five-player@phone the fan of seven
+   card backs was ~90px of a 166px seat and said exactly what this digit says.
+   The card glyph keeps it from reading as another money figure. */
+.gist-hand {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: .2em;
+  font-weight: 700;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.gist-hand::before {
+  content: "";
+  width: 7px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--card-back);
+  box-shadow: 1px 1px 0 var(--shade-2), inset 0 0 0 1px var(--fg-mute);
+}
+
+/* ARMED — §3.10 Final Approach, and the brief's one non-negotiable: it must be
+   visible collapsed or not. The seat's whole hazard treatment already survives
+   collapse untouched (it is on `.board`: stripes inside the box, klaxon on the
+   shadow, name in danger ink), so this is the word beside it, in the hazard
+   material, for a 44px row read at a glance. */
+.gist-armed {
+  order: -1;
+  font-weight: 800;
+  letter-spacing: .04em;
+  color: var(--danger-ink);
+  padding: 0 .3em;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+/* ── COLLAPSE MODE: ONE SEAT PER LINE ────────────────────────────────────────
+   The strip's `repeat(auto-fit, minmax(9.5em, 1fr))` puts two 185px seats on a
+   phone line. A collapsed seat is a ROW, and full width is not tidiness:
+
+   Bergström-Lehtovirta & Oulasvirta (CHI 2014, N=20, R²=0.958) puts the
+   comfortable one-handed reach ceiling on a 390×844 phone at ~350–490px above
+   the bottom, and — the part that matters here — that ceiling DROPS 150–190px
+   as the target moves across to the far side of the screen. A 185×166 seat in
+   the far top corner therefore has to be hit at a specific x AND a specific y,
+   both of them worst-case. A full-width row fixes only the y: the player picks
+   whatever x their thumb arc is already over, which is the near side, which is
+   where the ceiling is highest. Same target, one degree of freedom returned.
+
+   It also buys the nameplate back its line — the ≤899px two-line rule below
+   exists for an 88px seat, and at 376px the name, the tally and the worth plate
+   sit on one 17px line instead of two. */
+.opponents[data-seatmode="collapse"] { grid-template-columns: 1fr; }
+.opponents[data-seatmode="collapse"] .board-name { flex: 1 1 auto; font-size: 1em; }
+/* min-height was 12.5s = 179px, sized so ONE 166px seat was always whole — the
+   strip's `flex: 0 4 auto` gives ground to your own board first, so without a
+   floor the strip is whatever is left. Four collapsed seats are 191px and the
+   thing that gets the rest back is your own board.
+   A RESTING STRIP DOES NOT SHRINK. MEASURED on final-approach@phone with the
+   floor simply removed: the strip came out 51px around 97px of content and one
+   of the two opponents was entirely below the fold — a summary you cannot see
+   is worse than the board it replaced. `flex: 0 0 auto` makes 44px per opponent
+   the floor of the game's legibility, which is what this whole block is for.
+   AN EXPANDED SEAT IS ALSO A FLOOR, and the first draft got this wrong: it let
+   the strip go back to `flex: 0 4 auto` while a seat was open, on the theory
+   that detail is a request rather than a right. MEASURED on final-approach@
+   phone with a seat expanded — the strip shrank to 72px around a 172px seat,
+   because your own board's 431px of content out-argued it. The player had just
+   asked to see that seat. `max-height: 56%` is the only thing that caps it, and
+   the strip is a snap scroller inside whatever that gives. */
+.opponents[data-seatmode="collapse"] { min-height: 0; flex: 0 0 auto; }
+
+/* THE EXPANDED SEAT, when it is the only one. It has the whole strip width, so
+   the mats are ~70px against the ~56px two-across ever allowed and the card
+   standing on one is bigger than the seat could previously fit — this is the
+   "exactly what do they hold" half, and it has to actually be readable or the
+   collapse bought nothing.
+     --seat-col-min at 4.6s: auto-fill answers 5 columns at ~70px (scale 1.0),
+       6 at ~58px (0.80) and 4 at ~89px (1.30) — the setting now changes how the
+       seat is CUT, not just how small it is.
+     --mat-row is derived from the card it has to hold: a 5:7 card at --card-w
+       is 1.4×--card-w tall, plus the 26px nameplate.
+     --card-w at 2.2s = 32px, not the 2.5s (36px) this started at. MEASURED on
+       the six-colour seat in final-approach: at 36px the mat row is 76 and a
+       two-row seat comes out 268 against the 246 the strip's 56% cap gives it,
+       so the thing the player just asked to open was itself cut. At 32px the
+       row is 70 and the same seat is 247 — and a 4px card is a bad trade for a
+       70px row. */
+.opponents[data-seatmode="collapse"] .board[data-collapsed="0"] {
+  --card-w: max(28px, calc(var(--s) * 2.2));
+  --seat-col-min: max(var(--tap), calc(var(--s) * 4.6));
+  --mat-row: calc(var(--card-w) * 1.4 + 26px);
+}
+
+/* ── THE BANK STOPS BEING A BARCODE WHEN THE SEAT IS OPEN ─────────────────
+   OWNER, 2026-08-07: "we need a better way to inspect and see what players have
+   (especially with all of the layered cards in their bankroll)".
+
+   MEASURED, and the number is the whole finding: `.opponents .zone-bank .card`
+   overlaps by 88% of a card's width, so on a phone seat every note but the last
+   exposes 30 × 0.12 = 3.6px. A seven-card bank is one readable card and six
+   3.6px edges. The rule that does it is four rules up and it is RIGHT for what
+   it was written for — a seat 88px wide where the bank is a texture beside a
+   total nobody reads a denomination off. It is wrong for a seat the player has
+   just asked to open.
+
+   THE READER ALREADY EXISTS AND NEEDS NO CHANGES. ui/peek.js hovers (desktop)
+   or holds (phone, via interact/pointer.js's long-press → UI_PEEK) any
+   `[data-card-id]`, and every opponent bank card is one — the reason it could
+   not be used on a bank was that there was nothing 3.6px wide to point at, not
+   that peek refused. So the fix is to give the cards their width back, and the
+   whole existing reading vocabulary arrives with it. ART §3.2 asks for no
+   second panel and this needs none.
+
+   WHY NOT A DENOMINATION CENSUS ("3M ×2, 2M ×1, 1M ×4"), which was on the
+   table: it is a second rendering of the same cards six pixels from the cards
+   themselves, and this file already records what that costs (the `is-complete`
+   note in layout.js — a count and the swatch it labels, disagreeing). The total
+   is on the nameplate; the granularity is what the un-stacked cards ARE; and a
+   census cannot show the face of an action card banked as money, which peek
+   can. One truth, one reader.
+
+   The overlap is the DERIVED one every other zone in this file uses — each card
+   starts exactly --tap after the one before, so at these sizes they do not
+   overlap at all and each is whole. */
+.opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank,
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank {
+  --card-w: max(30px, calc(var(--s) * 2.5));
+  flex-wrap: wrap;
+  overflow: visible;
+  row-gap: 2px;
+}
+.opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank .card,
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank .card {
+  margin-left: calc(-1 * max(0px, var(--card-w) - var(--tap)));
+}
+/* a whole card shows its whole face: the cut-edge shadow and the suppressed
+   corner are STACK treatments and there is no stack any more */
+.opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank .card:not(:last-child),
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank .card:not(:last-child) {
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop);
+}
+.opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank .card:not(:last-child)::before,
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank .card:not(:last-child)::before {
+  display: revert;
+}
+/* THE FAN/BANK ROW STOPS BEING A FIXED TRACK, and only here. Round 7 pinned it
+   at `var(--tap)` so a seat holding a note could not be 5px taller than the
+   seat beside it — an evenness argument, and evenness is a claim about seats
+   STANDING SIDE BY SIDE. In collapse mode exactly one seat is open and the rest
+   are 44px rows, so there is nothing for it to be uneven with, and a bank that
+   wraps to a second line needs the height or the wrap is a guillotine. */
+.opponents[data-seatmode="collapse"] .board[data-collapsed="0"],
+.opponents .board:has([data-targetable="1"], [data-payable="1"]) {
+  grid-template-rows: auto minmax(var(--tap), auto) auto;
+}
+
+/* THE AFFORDANCE. A row that opens has to say so, and it says so in this app's
+   own marking vocabulary rather than with an icon of an eye: a chevron drawn
+   from two rules, which turns a quarter when the seat is open. `aria-expanded`
+   on the button carries the same fact to a screen reader, and the whole 44px
+   row is the target — the mark is a legend, not a hit area. */
+.opponents[data-seatmode="collapse"] .board-head::after {
+  content: "";
+  flex: 0 0 auto;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  margin: 0 1px 0 .35em;
+  border-right: 1.5px solid var(--fg-mute);
+  border-bottom: 1.5px solid var(--fg-mute);
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+.opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .board-head::after {
+  transform: rotate(-135deg) translate(-2px, -2px);
+}
+.opponents .board[data-final-approach="1"] .board-head::after {
+  border-color: var(--danger-ink);
+}
 /* Your own mat: the tap floor is a floor for the CARD too, because your own
    property cards are payment targets and ui/ gates keyboard focus on a
    measured 44px box. */
@@ -785,8 +1188,12 @@
   /* 6.8s = 98px, which is a 78px pile (a 56px card at 5:7) plus its painted
      caption and the gap between them — i.e. exactly the content, with the
      ~20px of air above it given to the seats strip (see .opponents). */
-  min-height: calc(var(--s) * 6.2);
-  max-height: calc(var(--s) * 6.6);
+  /* both bounds carry the pile's own floor now (see .zone-deck): a 46px card at
+     5:7 is 64px tall, plus its painted caption, and a box capped under that
+     draws the deck outside its own inlay — the defect this note already
+     records, arriving from the --ui-scale side instead of the --s side. */
+  min-height: max(calc(var(--card-tap) * 1.4 + 1.2em), calc(var(--s) * 6.2));
+  max-height: max(calc(var(--card-tap) * 1.4 + 1.6em), calc(var(--s) * 6.6));
   display: flex;
   gap: 1.4em;
   justify-content: center;
@@ -838,9 +1245,18 @@
 }
 .pile-label span { color: var(--fg); }
 
+/* REQUEST FROM THE MOBILE AGENT, taken: the piles had no tap floor. Both are
+   controls — the discard opens the browser sheet (ui/discard.js) and the deck
+   is the draw affordance — and `calc(var(--s) * 3.9)` is a pure --s expression,
+   so the interface-scale setting shrinks them past 44px with nothing to stop
+   it. MEASURED: at --ui-scale 0.80 a 390×844 phone puts --s at 11.48 and the
+   pile at 44.8px, i.e. 0.8px of margin, and short landscape (where --s clamps
+   to its 12px floor first) puts it at 37.4 — which is why the landscape block
+   below already had to hard-code `--card-w: var(--card-tap)` as a one-off. The
+   floor belongs here, once, for every viewport. */
 .zone-deck, .zone-discard {
   position: relative;
-  --card-w: calc(var(--s) * 3.9);
+  --card-w: max(var(--card-tap), calc(var(--s) * 3.9));
   width: var(--card-w);
   aspect-ratio: var(--card-ratio);
   border-radius: var(--card-r);
@@ -1079,11 +1495,11 @@
      148 and 235 in a 189px port with 64px hidden. The 24px the track gives back
      is what closes the payment overlap on .board-self. */
   .opponents .board {
-    --card-w: 26px;
-    --seat-cols: 5;
-    --seat-rows: 1;
-    --mat-row: 70px;
-    --mat-in: 44px;
+    --card-w: max(22px, calc(var(--s) * 1.57));
+    /* the bare floor: auto-fill answers 5 columns in a 239px grid, which is the
+       count the arithmetic above solved for by hand */
+    --seat-col-min: var(--tap);
+    --mat-row: calc(var(--tap) + 26px);
     padding: .2em .3em .28em;
   }
   .opponents .board-head { font-size: .82em; padding-bottom: .06em; margin-bottom: .1em; }
@@ -2115,13 +2531,12 @@
   .opponents .board {
     flex: 0 0 auto;
     scroll-margin: .4em 0 1.6em;
-    --card-w: 30px;
     /* the 236px rail less the seat's and the grid's padding is 221, so four
-       4px-gutter columns are 52px — the widest count that clears the floor */
-    --seat-cols: 4;
-    --seat-rows: 1;
-    --mat-row: 70px;
-    --mat-in: 50px;
+       4px-gutter columns are 52px — the widest count that clears the floor, and
+       what auto-fill answers on its own from the bare --tap floor */
+    --card-w: max(26px, calc(var(--s) * 2.5));
+    --seat-col-min: var(--tap);
+    --mat-row: calc(var(--tap) + 26px);
   }
   .opponents .zone-hand-oppo { --card-w: 22px; }
   /* the rail is 236px wide, so the nameplate does not need the two lines the

@@ -212,6 +212,69 @@ export function moveColors(card, fromColor) {
   return legalColorsFor(card).filter(color => color !== fromColor && !zoneFull(me, color));
 }
 
+/* ── the atomic swap (§3.5 owner ruling, 2026-08-07) ───────────────────────
+ *
+ * §3.5's zone cap makes a TRUE swap impossible through moveProperty(): with
+ * darkblue 2/2 holding a green/darkblue wild and green 3/3 holding a rainbow,
+ * each card is legal in the other's zone and the engine refuses BOTH directions,
+ * because neither can transit through an overfull zone. game.js swapProperties()
+ * is the missing move; these are its client mirror.
+ *
+ * The predicate is the engine's, verbatim (game.js swapProperties `fits`): the
+ * card must be a wild, and the destination must be one of its legal colours.
+ * Occupancy is deliberately NOT tested — that is the whole point of the command,
+ * since neither zone's count changes.
+ */
+function swapFits(card, color) {
+  return card?.type === 'wild_property' && legalColorsFor(card).includes(color);
+}
+
+/** Cards in my `color` zone that `cardId` could trade places with. */
+export function swapPartners(cardId, color) {
+  const me = selfPlayer();
+  const mine = myPropertyCard(cardId);
+  if (!mine || !color || color === mine.color) return [];
+  if (!swapFits(mine.card, color)) return [];
+  return (me?.properties?.[color] || []).filter(c => swapFits(c, mine.color));
+}
+
+/**
+ * Colours a wild on my board could swap INTO — and only where a plain move
+ * cannot already get there.
+ *
+ * The engine accepts a swap into a zone with room to spare (nothing in
+ * swapProperties() looks at occupancy). The client does not OFFER one, and the
+ * asymmetry is deliberate rather than an oversight: a mat must mean one thing.
+ * Where a zone has room, the move is the right command — it costs one rearrange
+ * instead of two and moves one card instead of two — so a swap there would be a
+ * strictly worse reading of the same gesture. Offer ⊆ accept, which is the
+ * direction §0.1 requires.
+ */
+export function swapColors(cardId) {
+  const me = selfPlayer();
+  const mine = myPropertyCard(cardId);
+  if (!mine || !swapFits(mine.card, mine.color)) return [];
+  return COLOR_KEYS.filter(color => color !== mine.color
+    && zoneFull(me, color)
+    && swapPartners(cardId, color).length > 0);
+}
+
+/** Mirror of game.js swapProperties()'s budget check — a swap draws TWO. */
+export const SWAP_COST = 2;
+
+export function canSwap() {
+  return rearrangeWindowOpen() && rearrangesLeft() >= SWAP_COST;
+}
+
+/** Why not, in the engine's own words — swapProperties() rejects in this order. */
+export function cannotSwapReason() {
+  const left = rearrangesLeft();
+  if (rearrangeWindowOpen() && left > 0 && left < SWAP_COST) {
+    return 'A swap costs two free rearranges and you have one left — end your turn to reset them';
+  }
+  return cannotRearrangeReason();
+}
+
 /** Colours a rent card can charge on: card-legal AND I own at least one. */
 export function rentColors(card) {
   const me = selfPlayer();
@@ -247,11 +310,16 @@ export function rentColors(card) {
  *            gains the +3/+4 rider and no card
  *   rent     a rent card choosing which colour to charge — nothing moves; the
  *            question is what the column is worth right now
+ *   swap     §3.5's atomic exchange — the column is FULL and gives a card back,
+ *            so its count, its rung and its rent are all unchanged. Per-COLUMN,
+ *            not per-step: one `myColor` step can offer plain-move mats and swap
+ *            mats at the same time, so `swap` names the subset rather than
+ *            `kind` naming the whole.
  *
  * @returns {Array<{color,size,kind,count,next,ladder,landing,rentNow,rentNext,
  *                  gain,completes,best}>} one row per column, caller's order
  */
-export function placementAdvice(card, colors, kind = 'place') {
+export function placementAdvice(card, colors, kind = 'place', swap = []) {
   const me = selfPlayer();
   if (!me || !Array.isArray(colors) || !colors.length) return [];
   const rules = activeRuleFlags();
@@ -269,12 +337,15 @@ export function placementAdvice(card, colors, kind = 'place') {
     upgrades: me.upgrades || {},
   });
 
+  const swapping = new Set(swap);
+
   const rows = colors.map((color) => {
+    const rowKind = swapping.has(color) ? 'swap' : kind;
     const size = setSize(color);
     const held = zoneOf(color);
     const rentNow = rentFor(me, color) * surge;
 
-    if (kind === 'upgrade') {
+    if (rowKind === 'upgrade') {
       // upgradeMoveColors() only ever offers COMPLETE sets, so the column's
       // card count does not move and the ladder is not the story: the two
       // figures are what it charges now and what it would charge with this
@@ -288,19 +359,22 @@ export function placementAdvice(card, colors, kind = 'place') {
       };
       const rentNext = rentFor(proj, color);
       return {
-        color, size, kind, count: held.length, next: held.length,
+        color, size, kind: rowKind, count: held.length, next: held.length,
         ladder: [rentNow, rentNext], landing: 2,
         rentNow, rentNext, gain: rentNext - rentNow, completes: false, best: false,
       };
     }
 
-    const after = kind === 'rent' ? held : held.concat([card]);
+    // A swap gives a card back for the one it takes, so the column's count is
+    // fixed and `after` is what is already there — the same shape `rent` uses,
+    // for the same reason (nothing lands).
+    const after = (rowKind === 'rent' || rowKind === 'swap') ? held : held.concat([card]);
     // `new Array(n)` is a length and nothing else — see the rentFor() note above.
     const ladder = [];
     for (let n = 1; n <= size; n++) ladder.push(rentFor(withZone(color, new Array(n)), color) * surge);
     const landing = Math.max(1, Math.min(after.length, size));
     return {
-      color, size, kind,
+      color, size, kind: rowKind,
       count: held.length, next: after.length,
       ladder, landing,
       rentNow, rentNext: ladder[landing - 1] ?? 0,
@@ -309,7 +383,7 @@ export function placementAdvice(card, colors, kind = 'place') {
       // of nothing but wilds is not a set (core/cards.js), and promising SET on
       // a placement the engine will not count as one is the exact lie
       // table/layout.js already had to fix on the mat's own tally.
-      completes: kind !== 'rent'
+      completes: rowKind !== 'rent' && rowKind !== 'swap'
         && isComplete(withZone(color, after), color, rules)
         && !isComplete(me, color, rules),
       best: false,
@@ -335,9 +409,17 @@ export function placementAdvice(card, colors, kind = 'place') {
    *
    * One option needs no recommendation (and interact/index.js never asks —
    * a one-answer choice is skipped, not prompted).
+   *
+   * SWAP ROWS ARE NOT ELIGIBLE. This mark is defined as the best RENT GAIN, and
+   * a swap's gain is 0 by construction (§3.5's exchange never changes a zone's
+   * count), so on a board where every plain move also gains 0 the mark would
+   * land on a trade purely by tie-break order. A swap's value is flexibility —
+   * freeing a two-colour wild, unsticking a rainbow — which this row cannot
+   * measure, and BEST must not claim to have measured it.
    */
-  if (rows.length > 1) {
-    rows.slice().sort((a, b) =>
+  const rankable = rows.filter(r => r.kind !== 'swap');
+  if (rankable.length > 1) {
+    rankable.slice().sort((a, b) =>
       b.gain - a.gain
       || (b.completes ? 1 : 0) - (a.completes ? 1 : 0)
       || b.rentNext - a.rentNext
@@ -354,6 +436,9 @@ export function adviceSentence(row) {
   const name = COLORS[row.color]?.name || row.color;
   const best = row.best ? ' Best rent gain.' : '';
   if (row.kind === 'rent') return `${name} — charge ${row.rentNext}M.${best}`;
+  if (row.kind === 'swap') {
+    return `${name}, full at ${row.size} — trade places with a card in it. Rent stays ${row.rentNow}M.`;
+  }
   if (row.kind === 'upgrade') {
     return `${name} — rent ${row.rentNext}M, up from ${row.rentNow}M.${best}`;
   }
@@ -409,18 +494,64 @@ export function upgradeMoveColors(cardId) {
  * board — where may it go, for no play?" Both answers route through the same
  * `move_property` command (game.js moveProperty():1543-1548 checks findUpgrade()
  * first), so the client has one route too.
- * @returns {{card:object, from:string, colors:string[], isUpgrade:boolean}|null}
+ *
+ * `colors` stays exactly what it always was — the colours moveProperty() will
+ * accept — because that is what the engine comparison in test/wild-rearrange
+ * pins it against. `swap` is the SECOND command's destinations (full zones
+ * holding a card this one can trade places with), and `targets` is the union,
+ * which is what the mats are marked from. A caller that only marks uses
+ * `targets`; a caller that has to choose a command must look at both.
+ *
+ * @returns {{card:object, from:string, colors:string[], swap:string[],
+ *            targets:string[], isUpgrade:boolean}|null}
  */
 export function boardMoveTarget(cardId) {
   const up = myUpgradeCard(cardId);
   if (up) {
-    return { card: up.card, from: up.color, colors: upgradeMoveColors(cardId), isUpgrade: true };
+    const colors = upgradeMoveColors(cardId);
+    // §3.1b upgrades are OUT of the swap's scope and game.js swapProperties()
+    // refuses them by card id. Nothing to relieve: two Upgrades of the same kind
+    // are interchangeable, so trading them changes nothing observable, and
+    // House↔FOC is refused on its own merits either way.
+    return { card: up.card, from: up.color, colors, swap: [], targets: colors, isUpgrade: true };
   }
   const mine = myPropertyCard(cardId);
   if (mine && mine.card.type === 'wild_property') {
-    return { card: mine.card, from: mine.color, colors: moveColors(mine.card, mine.color), isUpgrade: false };
+    const colors = moveColors(mine.card, mine.color);
+    const swap = swapColors(cardId);
+    return {
+      card: mine.card, from: mine.color, colors, swap,
+      targets: COLOR_KEYS.filter(c => colors.includes(c) || swap.includes(c)),
+      isUpgrade: false,
+    };
   }
   return null;
+}
+
+/**
+ * Cards on my board that have somewhere legal to go RIGHT NOW — wilds under
+ * §3.8, Upgrades under §3.1b, trades under §3.5.
+ *
+ * It exists for one sentence. ui/prompt.js said "No plays left — end your turn"
+ * at `playsRemaining 0`, which is the exact false claim 55a014f spent a commit
+ * disproving: a rearrange costs no play, so at zero plays the board is still
+ * fully live. Saying "rearranging is free" unconditionally would be the opposite
+ * error — a nudge toward a move that does not exist on a board with no wild on
+ * it — so the bar asks for the COUNT and only speaks when it is non-zero.
+ */
+export function rearrangeableCards() {
+  const me = selfPlayer();
+  const out = [];
+  const live = (card) => {
+    const found = boardMoveTarget(card.id);
+    if (!found) return false;
+    return found.colors.length > 0 || (found.swap.length > 0 && canSwap());
+  };
+  for (const color of COLOR_KEYS) {
+    for (const card of me?.properties?.[color] || []) if (live(card)) out.push(card);
+  }
+  for (const card of upgradeCards(me)) if (live(card)) out.push(card);
+  return out;
 }
 
 /** An Upgrade/FOC of mine, by card id — game.js findUpgrade(). */

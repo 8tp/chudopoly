@@ -10,7 +10,7 @@ const G = require('../game');
 const MESSAGE_TYPES = new Set([
   'create_room', 'quick_play', 'join_room', 'reconnect', 'kick', 'add_bot',
   'remove_bot', 'leave_room', 'set_rules', 'start_game', 'rematch', 'draw', 'play_money',
-  'play_property', 'move_property', 'play_action', 'respond', 'emote', 'chat',
+  'play_property', 'move_property', 'swap_property', 'play_action', 'respond', 'emote', 'chat',
   'chat_history', 'scoop', 'end_turn',
 ]);
 const BOT_MODES = new Set(['random', 'conservative', 'neutral', 'aggressive', 'chud']);
@@ -125,6 +125,20 @@ function validateMessage(message) {
       break;
     case 'move_property':
       if (!isInt(message.cardId, 0, 1000) || !COLORS.has(message.toColor)) return fail('Invalid property move');
+      break;
+    // §3.5's atomic swap. Two card ids and NOTHING ELSE — no colour rides on the
+    // wire, because the destinations are entirely determined by where the two
+    // cards already are. A client that could name the colours could name a pair
+    // that disagrees with the board, and the engine would then have to decide
+    // which of the two it believed. This layer validates SHAPE (two distinct
+    // integer card ids in range); every question that needs the board — do you
+    // own them, are they in different zones, is each legal in the other's zone,
+    // can you afford two rearranges — is game.js swapProperties()'s, per §0.1.
+    case 'swap_property':
+      if (!isInt(message.cardId, 0, 1000) || !isInt(message.withCardId, 0, 1000)) {
+        return fail('Invalid property swap');
+      }
+      if (message.cardId === message.withCardId) return fail('Pick two different cards');
       break;
     case 'play_action':
       if (!isInt(message.cardIndex, 0, 110) || !validOptionalId(message.targetId)

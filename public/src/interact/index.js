@@ -44,6 +44,7 @@ const HINTS = {
   myCard: 'Tap one of your properties to offer',
   mySet: 'Tap one of your complete sets',
   myColor: 'Tap the set column to place it on',
+  swapCard: 'Tap the card to trade places with',
 };
 
 function changed() {
@@ -185,7 +186,15 @@ export function beginMove(cardId) {
   // every wild on the board dead for the rest of any turn whose three plays
   // were spent — see the note over canRearrange() in state/selectors.js.
   if (!sel.canRearrange()) { refuse(sel.cannotRearrangeReason(), getNode(cardId)); return; }
-  if (!found.colors.length) {
+  const targets = offeredColors(found);
+  if (!targets.length) {
+    // A wild whose only destinations are TRADES it cannot afford gets the
+    // budget's sentence, not "every other set is full" — the second is a claim
+    // about the board and it would be false.
+    if (!found.isUpgrade && found.swap.length && !sel.canSwap()) {
+      refuse(sel.cannotSwapReason(), getNode(cardId));
+      return;
+    }
     refuse(found.isUpgrade
       ? 'Nowhere legal to move it — you need a second complete set that has room for it'
       : 'Nowhere legal to move it — every other set is full', getNode(cardId));
@@ -199,8 +208,45 @@ export function beginMove(cardId) {
   mode.picks = {};
   mode.hint = found.isUpgrade
     ? 'Tap the complete set to move it onto'
-    : `Tap the set column to move it to${leavingCost(found)}`;
+    : `Tap the set column to move it to${leavingCost(found)}${swapOffer(found)}`;
   changed();
+}
+
+/* ── §3.5's atomic swap, carried by the gesture that already exists ─────────
+ *
+ * A full mat used to be a dead end: markIllegal() painted it refused and
+ * dropRefusal() said "Command already holds a full set (2)". That is exactly the
+ * mat a swap is for, so a full mat holding a card this wild can trade places
+ * with becomes a LIVE TARGET instead — the same mat, the same tap, the same
+ * drop, one more meaning. No new mode (ART §3.2), no confirmation sheet, no
+ * "swap mode" toggle to discover: the offer appears on the surface the player
+ * is already aiming at, and only while it is real.
+ *
+ * The mats are still the only colour picker in the game, so the choice of
+ * DESTINATION is made exactly as it always was. The choice of PARTNER is a
+ * second `needs` step — and only when there is a second answer. One partner is
+ * dispatched without asking, which is this file's own standing rule for a
+ * one-answer choice (see playSelected's note on the single-colour rent).
+ */
+function offeredColors(found) {
+  if (!found) return [];
+  if (!found.swap.length || !sel.canSwap()) return found.colors;
+  return found.targets;
+}
+
+/**
+ * The clause that announces the move exists, at the moment it does — §3.5's
+ * discoverability requirement, paid for in eleven words rather than a tutorial.
+ *
+ * It is a clause and not a sentence deliberately: this string lands in the
+ * prompt bar (ui/prompt.js `mode.hint`), and that file carries a measurement —
+ * a two-clause sentence on a 390×844 phone wraps to three lines and makes the
+ * bar 109px tall. So the WHAT lives here, once, and the WHICH MATS lives on the
+ * mats themselves as the TRADE chit, where it costs no height at all.
+ */
+function swapOffer(found) {
+  if (found.isUpgrade || !found.swap.length || !sel.canSwap()) return '';
+  return '. A full set TRADES cards';
 }
 
 /**
@@ -363,7 +409,11 @@ function advance() {
 function dispatch() {
   const index = sel.handIndexOf(mode.cardId);
   if (mode.intent === 'move') {
-    send.moveProperty(mode.cardId, mode.picks.targetColor);
+    // Two commands, one intent. `withCardId` is set only by the swapCard step
+    // (or by pick() skipping it when there was one answer), so the choice of
+    // command is a fact about what the player answered, never a guess.
+    if (mode.picks.withCardId != null) send.swapProperty(mode.cardId, mode.picks.withCardId);
+    else send.moveProperty(mode.cardId, mode.picks.targetColor);
   } else if (index < 0) {
     refuse('That card left your hand before the play landed');
   } else if (mode.intent === 'property') {
@@ -392,6 +442,24 @@ export function pick(step, value) {
     case 'theirSet':
       if (!value) return false;
       mode.picks.targetColor = value;
+      // A FULL mat answered a rearrange: this is §3.5's swap, not a move. One
+      // partner is taken without asking (the same rule playSelected() states for
+      // a one-colour rent — never prompt for a decision with one answer); two or
+      // more is a real choice between two real cards, so it gets a step of its
+      // own rather than a silent pick. 55a014f's finding is the reason: a board
+      // change the player never chose is worse than any refusal.
+      if (mode.intent === 'move' && step === 'myColor') {
+        const partners = sel.swapPartners(mode.cardId, value);
+        if (partners.length === 1) mode.picks.withCardId = partners[0].id;
+        else if (partners.length > 1) mode.needs.splice(1, 0, 'swapCard');
+      }
+      break;
+    case 'swapCard':
+      if (!Number.isInteger(value)) return false;
+      // Re-checked against the board rather than trusted from the tap: the mark
+      // could be one broadcast stale, and the engine's refusal costs a round trip.
+      if (!sel.swapPartners(mode.cardId, mode.picks.targetColor).some(c => c.id === value)) return false;
+      mode.picks.withCardId = value;
       break;
     case 'theirCard':
       if (!Number.isInteger(value)) return false;
@@ -440,7 +508,7 @@ export function dragCandidate(cardId) {
   // A board card is picked up under the REARRANGE window, not the play window
   // (sel.canRearrange()) — a spent play must not weld a wild to its mat.
   const mine = sel.boardMoveTarget(cardId);
-  if (mine && sel.canRearrange() && mine.colors.length) {
+  if (mine && sel.canRearrange() && offeredColors(mine).length) {
     return { source: 'board', card: mine.card, from: mine.from };
   }
   return null;
@@ -478,7 +546,11 @@ export function dragPlan(cardId) {
   const card = cand.card;
 
   if (cand.source === 'board') {
-    for (const color of sel.boardMoveTarget(cardId)?.colors || []) {
+    // A swap column ships the SAME drop kind as a move column. dropCommit's
+    // 'move' branch runs beginMove() → pick('myColor'), and pick() is where the
+    // move/swap fork lives — so the drag route cannot disagree with the tap
+    // route about which command a mat means, because it does not decide.
+    for (const color of offeredColors(sel.boardMoveTarget(cardId))) {
       push(col(color), { kind: 'move', value: color });
     }
     return { source: 'board', card, targets, reason: '', myBoard };
@@ -595,7 +667,16 @@ export function dropRefusal(cardId, color) {
     if (!coreLegalColors(board.card).includes(color)) {
       return `That wild cannot go on ${name}`;
     }
-    if (held >= size) return `${name} already holds a full set (${size})`;
+    if (held >= size) {
+      // §3.5's swap. A full mat holding a legal partner is a TARGET, not a
+      // refusal, so the only thing left to say here is that the budget cannot
+      // pay for it — and that must be said, because "already holds a full set"
+      // would be true, unhelpful, and the wrong reason.
+      if (sel.swapPartners(cardId, color).length) {
+        return sel.canSwap() ? '' : sel.cannotSwapReason();
+      }
+      return `${name} already holds a full set (${size})`;
+    }
     return '';
   }
 
@@ -725,11 +806,11 @@ function zoneTally(ownerId, color) {
  * It exists only while the step does: applyMarks() builds it, clearMarks()
  * removes it, and clearMarks() runs first on every single pass.
  */
-function paintAdvice(colors) {
+function paintAdvice(colors, swap = []) {
   const board = table.boardEl(store.self.id);
   if (!board) return;
   const kind = adviceKind();
-  const rows = sel.placementAdvice(mode.card, colors, kind);
+  const rows = sel.placementAdvice(mode.card, colors, kind, swap);
   for (const row of rows) {
     const col = board.querySelector(`.propcol[data-color="${row.color}"]`);
     if (!col) continue;
@@ -748,7 +829,16 @@ function adviceKind() {
 }
 
 function buildChit(row) {
-  const marks = (row.completes ? 1 : 0) + (row.best ? 1 : 0);
+  // §3.5's trade is the THIRD mark, and it is the one that makes the move
+  // discoverable: a full mat that used to be painted refused now carries a word
+  // saying what it would do instead. It is exclusive with the other two by
+  // construction — a swap changes no count, so it can never complete a set, and
+  // it gains no rent, so it can never be BEST (state/selectors.js excludes it
+  // from the ranking rather than letting a tie-break put it there). `data-marks`
+  // is what collapses the ladder to its landing rung on a 48px phone mat, and a
+  // trade wants exactly that: the rung it stays on, plus the word.
+  const trade = row.kind === 'swap';
+  const marks = trade ? 1 : (row.completes ? 1 : 0) + (row.best ? 1 : 0);
   const chit = el('div', {
     class: 'mat-advice',
     // NOT aria-hidden. The mat carries `role="button"` + `aria-label`, and an
@@ -771,6 +861,7 @@ function buildChit(row) {
       text: String(row.ladder[i]),
     }));
   }
+  if (trade) chit.appendChild(el('span', { class: 'mat-mark', text: 'TRADE' }));
   if (row.completes) chit.appendChild(el('span', { class: 'mat-mark', text: 'SET' }));
   if (row.best) chit.appendChild(el('span', { class: 'mat-mark', text: 'BEST' }));
   return chit;
@@ -854,12 +945,18 @@ export function applyMarks() {
     } else if (step === 'mySet') {
       const needsHouse = mode.card?.action === 'foc';
       markPropColumns(store.self.id, sel.myCompleteSets({ needsHouse, needsNoHouse: !needsHouse }));
+    } else if (step === 'swapCard') {
+      // §3.5. The candidates are the cards INSIDE the full mat just chosen —
+      // the same on-the-table targeting §5 uses for a steal, aimed at my own
+      // board. No sheet, no list, no new surface.
+      for (const card of sel.swapPartners(mode.cardId, mode.picks.targetColor)) mark(getNode(card.id));
     } else if (step === 'myColor') {
-      const colors = mode.intent === 'move'
-        ? (sel.boardMoveTarget(mode.cardId)?.colors || [])
+      const found = mode.intent === 'move' ? sel.boardMoveTarget(mode.cardId) : null;
+      const colors = found
+        ? offeredColors(found)
         : (mode.card?.type === 'rent' ? sel.rentColors(mode.card) : sel.placementColors(mode.card));
       markPropColumns(store.self.id, colors);
-      paintAdvice(colors);
+      paintAdvice(colors, found && sel.canSwap() ? found.swap : []);
     }
   }
 

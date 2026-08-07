@@ -152,3 +152,58 @@ test('CHUD_SEED makes the served shuffle reproducible', async () => {
   }
   assert.equal(hands[0], hands[1]);
 });
+
+/* ── §3.5's atomic swap, over a real socket ─────────────────────────────────
+ *
+ * The engine, the protocol validator and the handler each have their own tests;
+ * this is the only one that proves the three are WIRED. §0.1 says the server
+ * decides, and the two things that has to mean on the wire are that a malformed
+ * frame never reaches the engine and that an illegal one never changes the
+ * board — both answered with an error frame and NO state broadcast, exactly like
+ * `move_property` next to it.
+ *
+ * The refusals are the testable half over a live socket: reaching an actual
+ * §3.5 deadlock requires a specific board, and a real game deals what it deals.
+ * The accepting path is measured against the engine directly
+ * (test/property-swap.test.js) and end to end through the client with real CDP
+ * input, which is where a board can be staged.
+ */
+test('swap_property is refused by shape and by rule, and never rebroadcasts', async () => {
+  const ws = await openClient();
+  send(ws, { type:'quick_play', name:'Swapper' });
+  const joined = await waitMessage(ws, msg => msg.type === 'joined');
+  const state = await waitMessage(ws, msg => msg.type === 'state' && msg.phase === 'playing');
+  const seq = state.game.eventSeq;
+
+  // 1. SHAPE — server/protocol.js, before the engine is ever called.
+  send(ws, { type:'swap_property', cardId:'3', withCardId:7 });
+  assert.match((await waitMessage(ws, m => m.type === 'error')).message, /Invalid property swap/);
+  send(ws, { type:'swap_property', cardId:3 });
+  assert.match((await waitMessage(ws, m => m.type === 'error')).message, /Invalid property swap/);
+  send(ws, { type:'swap_property', cardId:5, withCardId:5 });
+  assert.match((await waitMessage(ws, m => m.type === 'error')).message, /Pick two different cards/);
+
+  // 2. RULE — well-formed, routed to game.js, refused there. A fresh game has
+  //    no property on any board, so neither id can be found.
+  send(ws, { type:'swap_property', cardId:0, withCardId:1 });
+  assert.match((await waitMessage(ws, m => m.type === 'error')).message,
+    /not found in your properties/);
+
+  // 3. NO FAN-OUT. Four refused commands must cost four ~60-byte error frames
+  //    and not one ~13KB state — the same bound test/engine-hardening.test.js
+  //    puts on a rearrange spam burst, checked here over the wire. The human
+  //    holds the turn, so no bot can broadcast underneath this measurement.
+  ws._messages.length = 0;
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const broadcasts = ws._messages.filter(m => m.type === 'state');
+  assert.equal(broadcasts.length, 0,
+    `an illegal swap rebroadcast the room ${broadcasts.length} time(s)`);
+
+  // And the game is still exactly where it was. `end_turn` is the next legal
+  // command and it DOES broadcast, so the first state to arrive after it carries
+  // the whole event tail those four refusals were supposed to have left in it.
+  send(ws, { type:'end_turn' });
+  const live = await waitMessage(ws, m => m.type === 'state' && m.game?.eventSeq > seq, 6000);
+  assert.equal(live.game.events.some(e => e.t === 'move_property'), false,
+    'a refused swap appended a card movement to the stream');
+});

@@ -346,6 +346,11 @@ const LOG_TAIL = 40;             // sent in getPlayerView; 20 lost a 5-player Ro
 // their turn (or run out their turn clock) to get more.
 const REARRANGE_BUDGET = 12;
 
+// §3.5's atomic swap moves TWO cards, so it draws TWO from the same budget — see the long
+// note over swapProperties(). Named rather than inlined because the client mirrors it
+// (state/selectors.js canSwap) and test/property-swap.test.js pins the two against each other.
+const SWAP_COST = 2;
+
 /* ── Card definitions ────────────────────────────────────────────────── */
 
 /**
@@ -1964,8 +1969,8 @@ function rearrangesLeft(state) {
   return Number.isFinite(left) ? left : REARRANGE_BUDGET;
 }
 
-function spendRearrange(state) {
-  state.rearrangesRemaining = rearrangesLeft(state) - 1;
+function spendRearrange(state, n = 1) {
+  state.rearrangesRemaining = rearrangesLeft(state) - n;
 }
 
 function moveProperty(state, playerId, cardId, toColor) {
@@ -2022,6 +2027,143 @@ function moveProperty(state, playerId, cardId, toColor) {
   spendRearrange(state);
   logLine(state, p.name + ' moved ' + card.name + ' to ' + COLORS[toColor].name);
   emit(state, 'move_property', { actor: playerId, card: publicCard(card), from: fromColor, to: toColor });
+  syncSets(state, p, before);
+  return { ok: true };
+}
+
+/* ── Swap two of your own properties (§3.5 owner ruling, 2026-08-07) ──────────
+ *
+ * §3.5 caps a colour zone at `set size`, and that cap makes a TRUE SWAP
+ * IMPOSSIBLE — not hard, impossible, in both directions. Darkblue 2/2 holding a
+ * green/darkblue wild and green 3/3 holding a rainbow: each card is legal in the
+ * other's zone and neither can go first, because the first move would have to
+ * transit through a 3/2 or 4/3 zone that validateState() rejects outright.
+ * Measured against the engine before this function existed, both orderings:
+ *   moveProperty(p1, rainbow, 'darkblue') → 'Command already holds a full set (2)'
+ *   moveProperty(p1, pairWild, 'green')   → 'Drone Ops already holds a full set (3)'
+ *
+ * The owner's ruling rejected the two cheaper fixes — a transient overfull state
+ * (the invariant is worth having precisely because it holds CONTINUOUSLY) and
+ * MD's second-set rule (a cross-cutting rewrite that reopens the armour exploit
+ * §3.5 was added to kill) — in favour of adding the missing move: one command,
+ * two cards, applied together or not at all.
+ *
+ * TWO PROPERTIES OF THIS OPERATION ARE WORTH STATING, because both of them are
+ * why it is safe rather than why it is convenient:
+ *
+ *   1. NO ZONE'S COUNT CHANGES. Each zone loses one card and gains one, so the
+ *      §3.5 cap is preserved BY CONSTRUCTION — there is no ordering, no
+ *      intermediate, and no snapshot in which a zone is over cap, because the
+ *      only state that ever exists is before and after.
+ *   2. NO SET'S COMPLETION CHANGES. A swap is necessarily wild-for-wild (see
+ *      below), counts are fixed, and swapping a wild for a wild cannot turn an
+ *      all-wild zone into a mixed one, so `pureSetRequired` cannot flip either.
+ *      syncSets() and bankUpgrades() are still called — they are the contract
+ *      every board mutation honours, and a rule change that broke property 2
+ *      must not silently strand an FOC — but on today's rules they are no-ops.
+ *      test/property-swap.test.js asserts both properties over a matrix rather
+ *      than trusting this comment.
+ *
+ * WILDS-ONLY, AND NOT BY FIAT. The rule below is the general one — each card
+ * must be legal in the other's destination — and it COLLAPSES to wilds-only,
+ * because legalColorsFor() gives a fixed property exactly one colour and that
+ * colour is the zone it is already sitting in. So a fixed property is never
+ * legal in another zone and can never be either half of a swap. Checked, not
+ * assumed: the general predicate is what runs, and the test suite proves the
+ * collapse over every fixed property in the deck.
+ *
+ * UPGRADES ARE OUT OF SCOPE and refused explicitly. They move under §3.1b's
+ * separate rules (moveUpgrade), and no deadlock exists for them to relieve: two
+ * Upgrades of the same kind are interchangeable, so trading them changes nothing
+ * observable, and House↔FOC is refused on its own merits (a destination that
+ * already has that kind, or an FOC left with no Upgrade beneath it).
+ *
+ * COST: TWO rearranges, not one. See the note over REARRANGE_BUDGET — the budget
+ * bounds ACCEPTED BOARD CHANGES per turn, and this command makes two of them. At
+ * one, a swap would be a half-price way to do what two moveProperty() calls do
+ * whenever both orderings happen to be legal, which doubles the ceiling the
+ * budget exists to impose. At two, the swap is never cheaper and never more
+ * permissive than doing it in two steps — it only adds the case where NO
+ * ordering exists, which is the entire reason it was ruled in.
+ */
+function swapProperties(state, playerId, cardIdA, cardIdB) {
+  const phaseError = ensurePlaying(state);
+  if (phaseError) return phaseError;
+  const p = getPlayer(state, playerId);
+  if (!p || p.id !== currentPlayer(state).id) return { error: 'Not your turn' };
+  if (state.turnPhase !== 'play') return { error: 'Cannot rearrange now' };
+  // Checked BEFORE anything is inspected and spent only when the board actually
+  // changed, exactly like moveProperty(): a refused swap costs nothing.
+  const left = rearrangesLeft(state);
+  if (left < SWAP_COST) {
+    return left <= 0
+      ? { error: 'No free rearranges left this turn — end your turn to reset them' }
+      : { error: 'A swap costs two free rearranges and you have one left — end your turn to reset them' };
+  }
+
+  if (cardIdA === cardIdB) return { error: 'Pick two different cards' };
+  if (findUpgrade(p, cardIdA) || findUpgrade(p, cardIdB)) {
+    return { error: 'An Upgrade moves on its own — it cannot trade places with a property' };
+  }
+
+  const a = findProperty(p, cardIdA);
+  const b = findProperty(p, cardIdB);
+  if (!a || !b) return { error: 'Card not found in your properties' };
+  if (a.color === b.color) return { error: 'Those cards are already in the same set' };
+
+  const fits = (hit, color) => {
+    const card = hit.card;
+    if (card.type !== 'wild_property') {
+      return 'Only wild properties can move between sets';
+    }
+    if (!legalColorsFor(card).includes(color)) {
+      return card.name + ' cannot go on ' + COLORS[color].name;
+    }
+    return null;
+  };
+  // BOTH halves are checked before EITHER is applied. That is the whole of
+  // "atomic": there is no path through this function that moves one card.
+  const whyA = fits(a, b.color);
+  if (whyA) return { error: whyA };
+  const whyB = fits(b, a.color);
+  if (whyB) return { error: whyB };
+
+  const before = completedColors(p);
+  p.properties[a.color].splice(a.index, 1);
+  // b's index was read before a was spliced out, and a splice in a DIFFERENT
+  // array cannot move it — a.color !== b.color is guaranteed above. Re-finding
+  // it here anyway would be the same answer at the cost of hiding that fact.
+  p.properties[b.color].splice(b.index, 1);
+  a.card.placedColor = b.color;
+  b.card.placedColor = a.color;
+  p.properties[b.color].push(a.card);
+  p.properties[a.color].push(b.card);
+
+  // Belt and braces (property 2 above): completion cannot change under today's
+  // rules, so neither of these can fire. They are here so a future rule that
+  // breaks that assumption cannot strand an FOC on a broken set in silence.
+  if (!isSetComplete(p, a.color)) bankUpgrades(state, p, a.color);
+  if (!isSetComplete(p, b.color)) bankUpgrades(state, p, b.color);
+
+  spendRearrange(state, SWAP_COST);
+  logLine(state, p.name + ' swapped ' + a.card.name + ' and ' + b.card.name
+    + ' between ' + COLORS[a.color].name + ' and ' + COLORS[b.color].name);
+
+  // §4: TWO `move_property` events, not a new verb — the choreographer, the sfx
+  // map, the journal and the feed all already render that row, and a swap really
+  // is two cards moving. `swapWith` and `swapHalf` tag them as ONE BEAT so a
+  // consumer that cares can fly them together (opposite arcs, the way the `swap`
+  // TDY case already does) instead of as two unrelated moves; a consumer that
+  // does not care renders exactly what it rendered before, which is why both
+  // cards fly under FLIP (§0.4) with no motion-agent change required.
+  emit(state, 'move_property', {
+    actor: playerId, card: publicCard(a.card), from: a.color, to: b.color,
+    swapWith: b.card.id, swapHalf: 0,
+  });
+  emit(state, 'move_property', {
+    actor: playerId, card: publicCard(b.card), from: b.color, to: a.color,
+    swapWith: a.card.id, swapHalf: 1,
+  });
   syncSets(state, p, before);
   return { ok: true };
 }
@@ -2312,12 +2454,12 @@ function getPlayerView(state, playerId) {
 }
 
 module.exports = {
-  COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL, DECK_CYCLE_LIMIT, REARRANGE_BUDGET,
+  COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL, DECK_CYCLE_LIMIT, REARRANGE_BUDGET, SWAP_COST,
   buildDeck, shuffle, makeRng, createGame, currentPlayer, getPlayer,
   completedSets, checkWin, isSetComplete, calcRent, playerTotalValue, playerNetWorth,
   playerUpgradeValue, payableCards, zoneFull, zoneCount, zoneRequisitionable, legalColorsFor,
   drawCards, playAsMoney, playProperty, playAction, respondToAction,
-  moveProperty, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
+  moveProperty, swapProperties, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
   pendingResponders, pendingEntryFor, publicCard, armedPlayers,
   turnsUntilCheckpoint, checkpointReached,
   WIN_RULES, DEFAULT_WIN_RULE, normalizeWinRule, checkpointThreshold,

@@ -615,6 +615,19 @@ function handleMessage(ws, msg, state) {
       break;
     }
 
+    // §3.5's atomic two-card exchange. Same discipline as its neighbour above:
+    // the engine is the only thing that decides, an illegal request costs one
+    // error frame and NO rebroadcast, and a legal one fans out exactly one state.
+    // The seat is the SOCKET's `playerId`, never the message's.
+    case 'swap_property': {
+      const room = rooms.get(roomCode);
+      if (!room?.state) break;
+      const res = G.swapProperties(room.state, playerId, msg.cardId, msg.withCardId);
+      if (res.error) { broadcast.send(ws, { type: 'error', message: res.error }); break; }
+      broadcast.broadcastAndScheduleBot(room);
+      break;
+    }
+
     case 'play_action': {
       const room = rooms.get(roomCode);
       if (!room?.state) break;

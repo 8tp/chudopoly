@@ -51,6 +51,15 @@ export const playProperty = (cardIndex, targetColor) => send({
 export const moveProperty = (cardId, toColor) => send({ type: 'move_property', cardId, toColor });
 
 /**
+ * §3.5's atomic two-card exchange (game.js swapProperties). No colour on the
+ * wire: both destinations are fully determined by where the two cards already
+ * are, and a client that could name them could name a pair that disagrees with
+ * the board.
+ */
+export const swapProperty = (cardId, withCardId) =>
+  send({ type: 'swap_property', cardId, withCardId });
+
+/**
  * opts: {targetId, targetColor, targetCardId, myCardId} — only the keys the
  * action needs. Sending an undefined key fails protocol validation, so they are
  * spread in conditionally.

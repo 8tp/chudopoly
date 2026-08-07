@@ -304,7 +304,22 @@ function myTurnItems(snap, items) {
     return;
   }
   if (plays <= 0) {
-    items.push(text('why', 'No plays left — end your turn.'));
+    // 55a014f left this line as a known lie and this is the note it asked for.
+    // §3.8: a rearrange costs NO play — game.js moveProperty() does not look at
+    // `playsRemaining` at all — so "end your turn" was the client telling the
+    // player their board was finished on the exact turn where the only free move
+    // in the game is still available. The count is asked for rather than assumed
+    // (state/selectors.js rearrangeableCards): on a board with no wild and no
+    // Upgrade there really is nothing left, and inventing an option is the same
+    // class of error as deleting one.
+    const movable = sel.canRearrange() ? sel.rearrangeableCards().length : 0;
+    items.push(text('why', movable
+      ? 'No plays left — but rearranging your board is still free.'
+      : 'No plays left — end your turn.'));
+    if (movable) {
+      items.push(chip('rearrange', `${movable} card${movable === 1 ? '' : 's'} can still move`,
+        'chip prompt-count'));
+    }
     return;
   }
   if (opts.playable > 0) {

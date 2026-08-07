@@ -20,12 +20,16 @@
  *                          generated in code is just a worse font, and
  *                          self-hosting is what finally makes screenshot.mjs
  *                          machine-independent.
- *   public/audio/*.opus    recorded MUSIC, at most FOUR tracks (one lobby, two
- *                          match, one Final Approach). The count is part of the
- *                          amendment, not a rule of thumb: a 3-minute bed is
- *                          ~1.5MB against a 381KB gzipped client, so a fifth
- *                          track is another whole game's worth of payload. It
- *                          is checked below.
+ *   public/audio/*.opus    recorded MUSIC, at most SIX tracks (one lobby, two
+ *                          match, one Final Approach, and a victory/defeat
+ *                          pair). The count is part of the amendment, not a rule
+ *                          of thumb: a 3-minute bed is ~1.5MB against a 381KB
+ *                          gzipped client, so one more BED is another whole
+ *                          game's worth of payload. The cap moved four → six on
+ *                          2026-08-07 (c) for the endgame pair specifically,
+ *                          which is cheap in a way the beds are not — 40s
+ *                          rather than 3 minutes, 322KB + 317KB against 1.5MB
+ *                          each. It is checked below.
  *
  * What is NOT licensed: every sound EFFECT stays procedural (a synthesised
  * click fires at zero latency and jitters per call, which is what stops a cue
@@ -62,7 +66,7 @@ const BANNED_EXT = new RegExp(
  */
 const ALLOW = [
   { dir: ['public', 'fonts'], ext: '.woff2', cap: null, why: '§0.3 amendment (b): self-hosted webfonts' },
-  { dir: ['public', 'audio'], ext: '.opus', cap: 4, why: '§0.3 amendment: recorded music, at most four tracks' },
+  { dir: ['public', 'audio'], ext: '.opus', cap: 6, why: '§0.3 amendment: recorded music, at most six tracks' },
 ];
 
 function allowedFor(rel) {

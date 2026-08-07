@@ -217,6 +217,7 @@ let motif = 0;
 let nextSwell = 0;                      // next hangar-air swell
 let synthLive = true;                   // is the synth layer the bed right now?
 let synthOffAt = 0;                     // …and when a handoff finishes taking it
+let synthUpAt = 0;                      // …and when it is first due to be HEARD
 
 // Persistent nodes of the match drone, so arming can fade one voice out without
 // rebuilding anything.
@@ -239,6 +240,11 @@ let pendingArm = false;                 // armed before the climax buffer landed
 let busyUntil = 0;                       // no new transition lands before this
 
 const LOOKAHEAD = 0.45;                 // schedule this far ahead of the clock
+/* How long the synthesised fallback waits before it makes itself heard. See
+ * raiseBed(): a warm localhost fetch+decode measured 176ms, so this is the
+ * difference between "the fallback never sounds" and "the fallback sounds every
+ * single time" on any connection worth the name. */
+const SYNTH_GRACE = 0.45;
 const FADE = 0.7;                       // bed crossfades
 
 /* ── levels ──────────────────────────────────────────────────────────────
@@ -541,6 +547,10 @@ export function stats() {
     loading: loading.size,
     failed: [...failed],
     fileVoices: voices.length,
+    // The synth layer's transition envelope, so "is the synth still under the
+    // recorded bed" is answerable from __CHUD without a render.
+    synthEnv: mix ? mix.synthEnv.gain.value : 0,
+    synthTrim: mix ? mix.synth.gain.value : 0,
   };
 }
 
@@ -972,8 +982,17 @@ function fromFinalApproach() {
  * The synth layer's own answer to §3.10: the match drone's root goes, the fifth
  * (E) stays and becomes the pedal the tension bed's 41.2Hz sub reinforces an
  * octave down, and the filter closes so what is left is darker as well as
- * unresolved. Runs whether or not a recorded bed is playing — under the climax
- * track it is inaudible, and it is the whole gesture when one is not.
+ * unresolved.
+ *
+ * It used to say "runs whether or not a recorded bed is playing — under the
+ * climax track it is inaudible", which was an assumption and is now a
+ * measurement, and the measurement changed the code rather than the comment: a
+ * recorded bed that owns the bed has already retired the drone (raiseBed →
+ * silenceSynth → stopDrone), so `drone` is null and this is a no-op. Synth bus
+ * soloed under final-approach.opus at full: −180 dBFS. Not "inaudible" — ABSENT.
+ * It is the whole gesture when no recording is playing, which is the only time
+ * it now runs at all: fallback climax, synth soloed, −37.2 dBFS and 100% of the
+ * output.
  */
 function applySynthTension(on) {
   if (!g || !drone) return;
@@ -1052,10 +1071,14 @@ function start(which) {
     release([matchTrack, 'final']);
     if (from === 'menu') { enterMatch(); return; }
     // A cold start straight into a game (reconnect, or a fixture): no lobby bed
-    // to leave, so there is nothing for a stinger to be a transition FROM.
+    // to leave, so there is nothing for a stinger to be a transition FROM — and
+    // nothing to be aligned TO either. MEASURED: waiting for the next downbeat
+    // here put 1.9s of silence in front of the bed, which is a bar of the synth
+    // transport spent on a grid no listener has heard a single beat of. The menu
+    // branch below has always started at once for the same reason.
     stopFiles(now, 0.6, 'out');
     setSynthTrim(now);
-    scheduleBed(atDownbeat(now + 0.2, null), 1.2);
+    scheduleBed(now + 0.05, 1.2);
     return;
   }
 
@@ -1070,12 +1093,8 @@ function start(which) {
   stopDrone(t + X + 0.1);
   bedWant = 'lobby';
   busyUntil = t + X;
-  synthLive = true;
-  rebase(t);
-  setSynthTrim(t);
   glide(mix.synthLp.frequency, t, mix.synthLp.frequency.value, 18000, 0.4);
-  fadeParam(mix.synthEnv.gain, t, X, from === 'off' ? 0.0001 : mix.synthEnv.gain.value, 1, 'in');
-  handoff(t + X);
+  raiseBed(t, X, 'lobby');
 }
 
 /**
@@ -1118,20 +1137,72 @@ function pickMatchTrack() {
 }
 
 /**
- * Put the right bed under the match at `D`. If the file is resident it starts
- * there; if it is not, the synth drone does, and handoff() crossfades to the
- * file the moment it lands. That IS the amendment's "cover the gap before a
- * file has loaded — no dead air, no spinner".
+ * Put the right bed on at `D`.
+ *
+ * ── THE SYNTH LAYER IS A GAP-FILLER, NOT AN UNDERLAY (§P10 round 3) ────────
+ * Owner: "when switching to the game and also on the main menu I think the
+ * synthesized music tracks are still audible slightly". They were, and not
+ * because anything leaked: this function used to raise the synth bed
+ * UNCONDITIONALLY and only then ask handoff() to cross to the recording, so the
+ * synthesised bed played a full phrase on every entrance whether or not the
+ * file was already sitting in memory.
+ *
+ * MEASURED on an offline transition render with every buffer resident — i.e.
+ * with no gap to cover at all: entering a match started the recorded bed at
+ * 3.806s and did not finish crossing to it until 5.206s; the menu was 1.888s +
+ * a 1.4s crossfade. Five seconds of a bed whose whole documented job is to
+ * cover "0.4-2.0s before a file has been fetched and decoded". At the levels
+ * this round shipped, that is simply audible, which is what the owner heard.
+ *
+ * So the question is asked first: if the recording is here, it IS the bed and
+ * the synth never sounds. If it is not, the synth starts instantly and
+ * handoff() crosses to the file the moment it lands — the amendment's "no dead
+ * air, no spinner" — and that path is unchanged and still measured.
  */
 function scheduleBed(D, fadeIn) {
-  bedWant = tension ? 'final' : matchTrack;
-  synthLive = true;
+  raiseBed(D, fadeIn, tension ? 'final' : matchTrack);
+}
+
+function raiseBed(D, fadeIn, key) {
+  bedWant = key;
   rebase(D);
+  if (key && buffers.has(key) && startFile(key, D, { fade: fadeIn })) {
+    silenceSynth(D);
+    synthUpAt = 0;
+    return;
+  }
+  // The recording is not here yet, so the synth has a gap to cover — but hold
+  // it back by SYNTH_GRACE before it becomes audible. MEASURED: a warm
+  // localhost fetch + decode of lobby.opus is 176ms, so on any connection that
+  // quick the fallback is never heard at all, and on a slow one it arrives
+  // 450ms late rather than never. 450ms after a click is a beat, not dead air.
+  const S = D + SYNTH_GRACE;
+  synthLive = true;
+  synthOffAt = 0;
+  synthUpAt = S;
   ensureSynth();
-  setSynthTrim(D);
-  glide(mix.synthLp.frequency, D, mix.synthLp.frequency.value, 18000, 0.3);
-  fadeParam(mix.synthEnv.gain, D, fadeIn, 0.0001, 1, 'in');
-  handoff(D + fadeIn);
+  setSynthTrim(S);
+  glide(mix.synthLp.frequency, S, mix.synthLp.frequency.value, 18000, 0.3);
+  fadeParam(mix.synthEnv.gain, S, fadeIn, 0.0001, 1, 'in');
+  handoff(D);
+}
+
+/**
+ * Take the synth layer out of the room at `at`. Not "turn it down": the
+ * envelope goes to its floor, the scheduler stops building bars, and the drone
+ * is retired, so the bus has no nodes on it at all.
+ *
+ * MEASURED after this, synth bus soloed through the real chain while each
+ * recorded bed is at full: −180 dBFS in every case — digital zero, not a small
+ * number. There is no EPS residue to be revealed by a louder mix later, because
+ * there is no signal.
+ */
+function silenceSynth(at) {
+  synthLive = false;
+  synthOffAt = 0;
+  if (!mix) return;
+  fadeParam(mix.synthEnv.gain, at, 0.08, mix.synthEnv.gain.value, 0.0001, 'out');
+  stopDrone(at + 0.12);
 }
 
 /** Bring the synth layer up as the bed, whatever mode we are in. */
@@ -1162,16 +1233,25 @@ function crossToFile(key, notBefore) {
   if (bedWant !== key || mode === 'off' || !enabled) return;
   const lead = leadVoice();
   if (lead && lead.key === key) return;
-  const X = 1.4;
-  const D = atDownbeat(Math.max(ctxNow() + 0.3, notBefore), 1.9);
+  // Has the fallback actually been HEARD yet? If the buffer landed inside its
+  // grace there is nothing to cross FROM and nothing to align TO — no music is
+  // sounding — so the recording is simply the bed, from the moment the bed was
+  // due. Waiting for a bar here is what put 3.3s of synthesised menu music in
+  // front of a file that had been ready since 176ms.
+  const early = synthUpAt > 0 && ctxNow() < synthUpAt;
+  const X = early ? 0.5 : 1.4;
+  const D = early ? Math.max(ctxNow() + 0.05, notBefore)
+    : atDownbeat(Math.max(ctxNow() + 0.3, notBefore), 1.9);
   const v = startFile(key, D, { fade: X });
   if (!v) return;
   for (const other of voices) if (other !== v) stopVoice(other, D, X, 'out');
+  if (early) { silenceSynth(D); synthUpAt = 0; return; }
   // …and the SYNTH steps down, over the complementary curve. It keeps
   // scheduling bars until the crossfade is over so a source that fails to
   // start cannot leave a hole.
   fadeParam(mix.synthEnv.gain, D, X, mix.synthEnv.gain.value, 0.0001, 'out');
   synthOffAt = D + X;
+  synthUpAt = 0;
   stopDrone(D + X + 0.2);
 }
 
@@ -1183,6 +1263,7 @@ function stopAll(fade) {
   pendingArm = false;
   synthLive = true;
   synthOffAt = 0;
+  synthUpAt = 0;
   busyUntil = 0;
   if (!g || !mix) { drone = null; voices = []; return; }
   mix.synthEnv.gain.cancelScheduledValues(0);
@@ -1810,9 +1891,9 @@ export function tracks() { return Object.keys(TRACKS); }
  *
  * @param {Array<{at:number, do:'menu'|'match'|'arm'|'break'|'lobby'|'off'}>} steps
  */
-export function offlineTransition(graph, seconds, steps, bufs) {
+export function offlineTransition(graph, seconds, steps, bufs, opts) {
   const save = {
-    g, mix, mode, want, rng, drone, nextSwell, bar, motif, synthLive, synthOffAt,
+    g, mix, mode, want, rng, drone, nextSwell, bar, motif, synthLive, synthOffAt, synthUpAt,
     nextBar, tension, bedWant, matchTrack, matchKey, voices, pendingArm, busyUntil,
     clockOffset, level, buffers: new Map(buffers),
   };
@@ -1822,6 +1903,15 @@ export function offlineTransition(graph, seconds, steps, bufs) {
   level = 1;
   g = graph;
   mix = buildMix(graph, 1);
+  /* SOLO, for the harness only. 'synth' mutes the recorded layer and the
+   * stinger/riser bus so what is left is exactly the synthesised BED — which is
+   * how "what level is the synth layer at while a recorded bed is at full"
+   * becomes a number instead of an argument. It mutes buses; it changes no
+   * automation, so the thing measured is the thing that plays. */
+  // Disconnected, not zeroed: setSynthTrim() re-ramps mix.synth.gain on every
+  // mode change, so a muted GAIN does not stay muted. A missing edge does.
+  if (opts && opts.solo === 'synth') { mix.file.disconnect(); mix.fx.disconnect(); }
+  if (opts && opts.solo === 'file') { mix.synthEnv.disconnect(); mix.fx.disconnect(); }
   buffers.clear();
   for (const [k, v] of Object.entries(bufs || {})) if (v) buffers.set(k, v);
   voices = [];
@@ -1835,6 +1925,7 @@ export function offlineTransition(graph, seconds, steps, bufs) {
   busyUntil = 0;
   synthLive = true;
   synthOffAt = 0;
+  synthUpAt = 0;
   bar = 0;
   motif = 0;
   nextBar = 0;
@@ -1870,7 +1961,8 @@ export function offlineTransition(graph, seconds, steps, bufs) {
     g = save.g; mix = save.mix; mode = save.mode; want = save.want;
     rng = save.rng; drone = save.drone; nextSwell = save.nextSwell;
     bar = save.bar; motif = save.motif; synthLive = save.synthLive;
-    synthOffAt = save.synthOffAt; nextBar = save.nextBar; tension = save.tension;
+    synthOffAt = save.synthOffAt; synthUpAt = save.synthUpAt;
+    nextBar = save.nextBar; tension = save.tension;
     bedWant = save.bedWant; matchTrack = save.matchTrack; matchKey = save.matchKey;
     voices = save.voices; pendingArm = save.pendingArm; busyUntil = save.busyUntil;
     clockOffset = save.clockOffset; level = save.level;

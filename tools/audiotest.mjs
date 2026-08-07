@@ -21,6 +21,9 @@
  *     crossfade into each other
  *   • the four bed TRANSITIONS contain no click at any scheduled seam and no
  *     dead air (8). Both real bugs found in the P10 round were found here.
+ *   • the synthesised layer is ABSENT under a recorded bed, and is the WHOLE
+ *     score when the recording is withheld (9) — both halves, because a fix
+ *     that silences the fallback is worse than the bug it fixes
  *
  * Needs the audio engine (P5) to expose a render hook. Exits 2 until then.
  */
@@ -509,6 +512,90 @@ try {
       for (const b of bad) r.info(b);
     } else {
       r.pass(`all ${PLANS.length} bed transitions are clean ${dim(`(seam |dx| / dead air: ${good.join(', ')})`)}`);
+    }
+  }
+
+  /* ---- 9. THE SYNTH LAYER IS A GAP-FILLER, NOT AN UNDERLAY ----------------
+   * Owner, on 2cc5a4a: "when switching to the game and also on the main menu I
+   * think the synthesized music tracks are still audible slightly". They were.
+   * Not a leak — raiseBed() used to bring the synthesised bed up
+   * UNCONDITIONALLY and only then cross to the recording, so it played a full
+   * phrase on every entrance even with the file already in memory (measured:
+   * 5.2s entering a match, 3.3s on the menu, with nothing to cover).
+   *
+   * TWO assertions, and the second is why this is not one. A fix that silences
+   * the synth permanently is worse than the bug — it is the offline path, the
+   * failed-fetch path and the whole score for a player with no network — so the
+   * gate holds BOTH directions:
+   *
+   *   a) with the recording resident, the synth bus is ≥60dB under the file bus
+   *   b) with the recording withheld, the synth bus IS the output
+   *
+   * Each bus is soloed by DISCONNECTING the others inside offlineTransition(),
+   * not by zeroing a gain — setSynthTrim() re-ramps mix.synth.gain on every mode
+   * change, so a muted gain does not stay muted. A missing edge does.          */
+  if (!hasTrans) {
+    r.warn('__CHUD.audio.renderTransition absent — the synth/file handoff is not measured');
+  } else {
+    const SOLO_FLOOR = 60;
+    const SCENES = [
+      ['menu', [{ at: 0, do: 'menu' }], 26, ['lobby']],
+      ['match', [{ at: 0, do: 'match' }], 26, ['lobby', 'match1', 'match2', 'final']],
+      ['climax', [{ at: 0, do: 'match' }, { at: 12, do: 'arm' }], 30, ['lobby', 'match1', 'match2', 'final']],
+    ];
+    /* The WHOLE render, deliberately. A window that starts after the handoff has
+     * settled is vacuous against the bug this exists for: the shipped defect was
+     * five seconds of synthesised bed at the ENTRANCE, after which the layer
+     * genuinely did fall silent. Measured over 0..end, a resident recording must
+     * mean the synth bus never produced a sample. */
+    const level = (steps, secs, solo, withhold) => h.page.evaluate(async ([st, sec, so, wh]) => {
+      const o = await window.__CHUD.audio.renderTransition(st, sec, { solo: so || undefined, withhold: wh });
+      const L = o.channels[0], R = o.channels[1];
+      let s = 0;
+      for (let i = 0; i < L.length; i++) { const x = (L[i] + R[i]) * 0.5; s += x * x; }
+      const rms = Math.sqrt(s / L.length);
+      return rms > 0 ? 20 * Math.log10(rms) : -200;
+    }, [steps, secs, solo, withhold || []]);
+
+    const bleeding = [];
+    const quiet = [];
+    const dead = [];
+    const alive = [];
+    for (const [name, steps, secs, withhold] of SCENES) {
+      const fileSolo = await level(steps, secs, 'file', []);
+      const synthSolo = await level(steps, secs, 'synth', []);
+      const margin = fileSolo - synthSolo;
+      if (margin < SOLO_FLOOR) {
+        bleeding.push(`${name}: synth ${synthSolo.toFixed(1)} dBFS under a recorded bed at `
+          + `${fileSolo.toFixed(1)} — only ${margin.toFixed(1)}dB down, floor ${SOLO_FLOOR}`);
+      } else {
+        quiet.push(`${name} ${margin > 100 ? 'silent' : `−${margin.toFixed(0)}dB`}`);
+      }
+      // …and with the recording withheld, the synth must BE the score.
+      const fullBack = await level(steps, secs, null, withhold);
+      const synthBack = await level(steps, secs, 'synth', withhold);
+      if (synthBack < -100) {
+        dead.push(`${name}: with the recording withheld the synth renders silence — the fallback is gone`);
+      } else if (Math.abs(fullBack - synthBack) > 1) {
+        dead.push(`${name}: fallback mix ${fullBack.toFixed(1)} but synth solo ${synthBack.toFixed(1)} dBFS — `
+          + 'something other than the synth is carrying the fallback');
+      } else {
+        alive.push(`${name} ${synthBack.toFixed(1)}dBFS`);
+      }
+    }
+    if (bleeding.length) {
+      r.fail(`${bleeding.length} scene(s) play the synthesised bed under a recorded one — `
+        + 'the synth layer covers a gap, it is not an underlay');
+      for (const x of bleeding) r.info(x);
+    } else {
+      r.pass(`the synth layer is absent under every recorded bed ${dim(`(${quiet.join(', ')})`)}`);
+    }
+    if (dead.length) {
+      r.fail(`${dead.length} scene(s) lost the procedural fallback — §0.3's amendment requires it to `
+        + 'be the whole score when a fetch fails');
+      for (const x of dead) r.info(x);
+    } else {
+      r.pass(`the procedural fallback still carries every scene alone ${dim(`(${alive.join(', ')})`)}`);
     }
   }
 

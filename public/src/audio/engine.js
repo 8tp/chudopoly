@@ -1259,15 +1259,30 @@ export async function renderMusic(which = 'menu', seconds = 16) {
  * music.offlineTransition(). Every recorded bed is decoded first so the render
  * exercises the file path and not the fallback.
  */
-export async function renderTransition(steps, seconds = 20) {
+const transitionBufs = new Map();
+
+export async function renderTransition(steps, seconds = 20, opts = null) {
   const Ctor = typeof window !== 'undefined'
     ? window.OfflineAudioContext || window.webkitOfflineAudioContext : null;
   if (!Ctor) throw new Error('OfflineAudioContext unavailable');
-  const scratch = new Ctor(2, 128, 48000);
   const bufs = {};
-  for (const k of music.tracks()) bufs[k] = await music.decodeTrack(scratch, k);
+  const withhold = new Set((opts && opts.withhold) || []);
+  // Withholding a track is how the FALLBACK path gets measured: the module sees
+  // exactly what it sees when a fetch has not landed (or never will).
+  //
+  // Decoded once per page rather than once per render: tools/audiotest.mjs
+  // renders ten transitions and four 3-minute Opus decodes apiece is the whole
+  // cost of the gate.
+  for (const k of music.tracks()) {
+    if (withhold.has(k)) continue;
+    if (!transitionBufs.has(k)) {
+      const scratch = new Ctor(2, 128, 48000);
+      transitionBufs.set(k, await music.decodeTrack(scratch, k));
+    }
+    bufs[k] = transitionBufs.get(k);
+  }
   let log = null;
-  const out = await renderInto(seconds, (gr) => { log = music.offlineTransition(gr, seconds, steps, bufs); });
+  const out = await renderInto(seconds, (gr) => { log = music.offlineTransition(gr, seconds, steps, bufs, opts); });
   out.log = log;
   return out;
 }

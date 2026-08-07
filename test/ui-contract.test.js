@@ -43,7 +43,13 @@ test('the page ships no inline handlers and no classic scripts', () => {
 });
 
 test('every local stylesheet is cache-busted', () => {
-  const sheets = [...html.matchAll(/<link[^>]+href="([^"]+)"/g)].map(m => m[1]);
+  // rel="canonical" is exempt BY NAME: it is a URL identity, not a fetched
+  // asset — a ?v= on it would split the page's identity per deploy, which is
+  // the opposite of what a canonical is for. Everything else in the head that
+  // points at a local resource must carry the buster.
+  const links = [...html.matchAll(/<link[^>]+>/g)].map(m => m[0])
+    .filter(l => !/rel="canonical"/.test(l));
+  const sheets = links.map(l => /href="([^"]+)"/.exec(l)?.[1]).filter(Boolean);
   assert.ok(sheets.length > 0);
   for (const href of sheets) assert.match(href, /\?v=/, href);
 });
@@ -1019,12 +1025,22 @@ test('the peek layer never intercepts input and reuses the card renderer', () =>
   assert.match(css, /\.peek \{[^}]*pointer-events:\s*none/s,
     'the peek must never take a click, a drag or a hit-test');
   const peek = read('public/src/ui/peek.js');
-  assert.match(peek, /cloneNode\(true\)|faceRenderer/,
+  assert.match(peek, /faceNode\(card, 'peek'/,
     'the peek must reuse the shipped card face, not draw a second one');
   assert.match(peek, /export function setFaceRenderer/,
     'the SVG card-art system needs a seam to swap the face in');
-  assert.match(peek, /removeAttribute\('data-card-id'\)/,
-    'a cloned face must not duplicate a card id in the document (§0.4)');
+  /* This used to assert `removeAttribute('data-card-id')`, guarding a
+   * clone-the-live-node path that had been unreachable since the cardart peek
+   * tier landed (faceRenderer defaults to it, so faceOf() returned on its first
+   * line and both clone branches were dead — tools/coverage.mjs listed the
+   * `class:is-peek` those branches produced among its uncovered markers). The
+   * clone is gone, so the §0.4 hazard it guarded against is gone with it: the
+   * peek face is BUILT from card data and never carries an id to duplicate.
+   * That is now the assertion. */
+  assert.doesNotMatch(peek, /cloneNode/,
+    'the peek builds its face from card data; a cloned table node would duplicate a card id (§0.4)');
+  assert.doesNotMatch(peek, /faceRenderer\s*=\s*typeof fn === 'function' \? fn : null/,
+    'a non-function must restore the shipped renderer, not the deleted clone path');
 });
 
 test('the help sheet is a keyboard-operable tablist (§0.9)', () => {

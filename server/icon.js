@@ -55,7 +55,10 @@
 
 'use strict';
 
-const zlib = require('node:zlib');
+// The rasteriser and PNG encoder lived here until server/og.js became their
+// second consumer; they are server/raster.js now, unchanged in behaviour. The
+// geometry, the tiers and the route allowlist stay here — one mark, one owner.
+const raster = require('./raster');
 
 /* ── Palette (ART §2, shared card tokens — identical in both themes) ─────── */
 
@@ -68,9 +71,7 @@ const CREAM = [0xfb, 0xf8, 0xf1];  // --card-stock
    pixel-square overlap), which is what keeps the micro tier crisp; polygons
    and the halftone dots get 4×4 supersampling. */
 
-const rect = (x, y, w, h) => ({ t: 'r', x, y, w, h });
-const poly = (pts) => ({ t: 'p', pts });
-const circle = (cx, cy, r) => ({ t: 'c', cx, cy, r });
+const { rect, poly, circle } = raster;
 
 /** An L-shaped corner bracket: arm `len`, stroke `w`, at (x,y), pointing
  *  `sx`/`sy` (+1 right/down, -1 left/up). Two rects, square corners. */
@@ -224,88 +225,10 @@ function iconSVG(o = {}) {
     + `</svg>`;
 }
 
-/* ── Rasteriser ──────────────────────────────────────────────────────────
-   No SVG parser: the SVG and the bitmap are generated from the SAME shape
-   list, so they cannot drift. Rects use exact area coverage (the micro tier is
-   all rects, so 16px and 32px come out pixel-crisp with no AA on any edge);
-   polygons and dots use 4×4 supersampling, which is enough for two 45° edges. */
-
-const SS = 4;
-
-function coverRect(cov, N, s, m) {
-  const x0 = s.x * m.k + m.o, y0 = s.y * m.k + m.o;
-  const x1 = (s.x + s.w) * m.k + m.o, y1 = (s.y + s.h) * m.k + m.o;
-  const px0 = Math.max(0, Math.floor(x0)), px1 = Math.min(N, Math.ceil(x1));
-  const py0 = Math.max(0, Math.floor(y0)), py1 = Math.min(N, Math.ceil(y1));
-  for (let py = py0; py < py1; py++) {
-    const cy = Math.min(y1, py + 1) - Math.max(y0, py);
-    if (cy <= 0) continue;
-    for (let px = px0; px < px1; px++) {
-      const cx = Math.min(x1, px + 1) - Math.max(x0, px);
-      if (cx <= 0) continue;
-      const i = py * N + px, c = cx * cy;
-      if (c > cov[i]) cov[i] = c;
-    }
-  }
-}
-
-function coverSampled(cov, N, s, m, hit) {
-  const b = bboxOf(s, m);
-  const px0 = Math.max(0, Math.floor(b[0])), px1 = Math.min(N, Math.ceil(b[2]));
-  const py0 = Math.max(0, Math.floor(b[1])), py1 = Math.min(N, Math.ceil(b[3]));
-  const step = 1 / SS, half = step / 2;
-  for (let py = py0; py < py1; py++) {
-    for (let px = px0; px < px1; px++) {
-      let hits = 0;
-      for (let sy = 0; sy < SS; sy++) {
-        const y = ((py + half + sy * step) - m.o) / m.k;
-        for (let sx = 0; sx < SS; sx++) {
-          const x = ((px + half + sx * step) - m.o) / m.k;
-          if (hit(x, y)) hits++;
-        }
-      }
-      if (!hits) continue;
-      const i = py * N + px, c = hits / (SS * SS);
-      if (c > cov[i]) cov[i] = c;
-    }
-  }
-}
-
-function bboxOf(s, m) {
-  let x0, y0, x1, y1;
-  if (s.t === 'c') { x0 = s.cx - s.r; y0 = s.cy - s.r; x1 = s.cx + s.r; y1 = s.cy + s.r; }
-  else {
-    x0 = y0 = Infinity; x1 = y1 = -Infinity;
-    for (const [x, y] of s.pts) {
-      if (x < x0) x0 = x; if (x > x1) x1 = x;
-      if (y < y0) y0 = y; if (y > y1) y1 = y;
-    }
-  }
-  return [x0 * m.k + m.o - 1, y0 * m.k + m.o - 1, x1 * m.k + m.o + 1, y1 * m.k + m.o + 1];
-}
-
-/** Even-odd crossing test. The only polygon in the corpus is a diamond, but
- *  the general test costs four lines more than the special case. */
-function inPoly(pts, x, y) {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const [xi, yi] = pts[i], [xj, yj] = pts[j];
-    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-function coverage(shapes, N, m) {
-  const cov = new Float32Array(N * N);
-  for (const s of shapes) {
-    if (s.t === 'r') coverRect(cov, N, s, m);
-    else if (s.t === 'c') {
-      const r2 = s.r * s.r;
-      coverSampled(cov, N, s, m, (x, y) => (x - s.cx) ** 2 + (y - s.cy) ** 2 <= r2);
-    } else coverSampled(cov, N, s, m, (x, y) => inPoly(s.pts, x, y));
-  }
-  return cov;
-}
+/* ── Rasteriser — server/raster.js ───────────────────────────────────────
+   Rects get exact analytic coverage (the micro tier is all rects, so 16px and
+   32px come out pixel-crisp with no AA on any edge); polygons and dots get
+   4×4 supersampling, which is enough for two 45° edges. */
 
 /**
  * The icon as raw RGB bytes.
@@ -319,56 +242,14 @@ function iconRGB(size, o = {}) {
   const mark = o.invert ? DARK : CREAM;
 
   const k = size * inset / grid;          // grid units → device px
-  const m = { k, o: (size - grid * k) / 2 };
+  const off = (size - grid * k) / 2;
+  const m = { k, ox: off, oy: off };
 
-  const data = Buffer.alloc(size * size * 3);
-  for (let i = 0; i < size * size; i++) {
-    data[i * 3] = ground[0]; data[i * 3 + 1] = ground[1]; data[i * 3 + 2] = ground[2];
-  }
-  const paint = (cov, colour, alpha) => {
-    for (let i = 0; i < cov.length; i++) {
-      const a = cov[i] * alpha;
-      if (a <= 0) continue;
-      for (let c = 0; c < 3; c++) {
-        const j = i * 3 + c;
-        data[j] = Math.round(data[j] + (colour[c] - data[j]) * Math.min(1, a));
-      }
-    }
-  };
-
-  if (dots && dots.length) paint(coverage(dots, size, m), mark, 0.34);
-  paint(coverage(ink, size, m), mark, 1);
-  if (knock.length) paint(coverage(knock, size, m), ground, 1);
+  const data = raster.canvas(size, size, ground);
+  if (dots && dots.length) raster.paint(data, raster.coverage(dots, size, size, m), mark, 0.34);
+  raster.paint(data, raster.coverage(ink, size, size, m), mark, 1);
+  if (knock.length) raster.paint(data, raster.coverage(knock, size, size, m), ground, 1);
   return { data, size };
-}
-
-/* ── PNG encoder ─────────────────────────────────────────────────────────
-   Truecolour 8-bit, one IDAT, filter 0 on every scanline. zlib is built in, so
-   this adds no dependency and no binary to the tree. */
-
-const CRC_TABLE = (() => {
-  const t = new Int32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
-    t[i] = c;
-  }
-  return t;
-})();
-
-function crc32(buf) {
-  let c = -1;
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ -1) >>> 0;
-}
-
-function chunk(type, payload) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(payload.length, 0);
-  const body = Buffer.concat([Buffer.from(type, 'latin1'), payload]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body), 0);
-  return Buffer.concat([len, body, crc]);
 }
 
 /**
@@ -377,23 +258,7 @@ function chunk(type, payload) {
  */
 function iconPNG(size, o = {}) {
   const { data } = iconRGB(size, o);
-  const stride = size * 3;
-  const raw = Buffer.alloc((stride + 1) * size);
-  for (let y = 0; y < size; y++) {
-    raw[y * (stride + 1)] = 0;                                   // filter: None
-    data.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8;    // bit depth
-  ihdr[9] = 2;    // colour type: truecolour
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
+  return raster.encodePNG(data, size, size);
 }
 
 /* ── What the server serves ──────────────────────────────────────────────

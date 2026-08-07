@@ -500,22 +500,67 @@
   visibility: hidden;
   pointer-events: none;
 }
-/* LANDSCAPE PHONE TAKES THE JUMP, DELIBERATELY. 844×390 is the one viewport
-   with no vertical slack at all: at HEAD `.self-board` is 77px there, and
-   reserving even a single 17px row took it to 54 and dragged the property
-   cards to 31px — under §0.9's 44px floor, which tools/touchtest.mjs failed on.
-   So in landscape ONLY the strip floats over the top of the felt instead of
-   reserving a row: the arming beat still shifts what is UNDER it there, and
-   that is the stated trade. Same query table.css uses for its landscape pass. */
-/* ROUND-5: the same trade is now taken in PORTRAIT, for the same reason and
-   with a bigger number behind it. MEASURED at 390×844, the reserved row is
-   24px of an 82px HUD, and #self-board is a 228px scrollport around 353px of
-   your own board — four of your thirteen property mats at 0% visible. A
-   permanently reserved band that is empty in most frames cannot outrank the
-   player being able to see their own properties. Floating, the arming beat
-   still does not GROW the header (which is what the reserve was protecting
-   against); what it does instead is overlay the top of the seats strip for the
-   ~3s it is up. Landscape has taken exactly this trade since round 4. */
+/* ══ THE ARMED STRIP FLOATS OVER THE PILES, NOT OVER A SEAT (ROUND-8) ══════
+   HISTORY. Round 4 reserved this row and landscape floated it, because at
+   844×390 reserving even a 17px row took `.self-board` 77→54 and the property
+   cards to 31px, under §0.9's 44px floor, which tools/touchtest.mjs failed on.
+   Round 5 floated portrait too: "the reserved row is 24px of an 82px HUD, and
+   #self-board is a 228px scrollport around 353px of your own board — four of
+   your thirteen property mats at 0% visible."
+
+   WHAT THE FLOAT ACTUALLY COST, which round 5 priced as "the top of the seats
+   strip for the ~3s it is up". Neither half survived bfe8b42. A collapsed seat
+   is now 44px of nameplate-over-meters; the float is 25px tall and starts 6px
+   above it, so it does not clip the top of a seat, it ERASES THE FIRST SEAT'S
+   ENTIRE NAMEPLATE — 43% of the box, and on final-approach@phone the opponent's
+   name is simply not in the frame. And it is up for the whole Final Approach,
+   not ~3s, so the game's loudest moment is the one that photographs a nameless
+   opponent. Landscape had the same collision unremarked: the strip at y51 over
+   a seat at y54.
+
+   PUTTING THE ROW BACK WAS TRIED AND MEASURED, AND IT LOSES. The reserve is
+   affordable in isolation — five-player@phone goes 254/254 → 230/230, still
+   nothing hidden — but 23px off every #self-board port pushes the bottom row of
+   your own mats under the fold, and the two gates that count that both got
+   worse in the same run: tools/screenshot.mjs buried runs 41 → 58 across 5 → 8
+   shots, and tools/touchtest.mjs clipped controls across 4 → 5 surfaces. The
+   band is not free after all; it is just billed somewhere the HUD cannot see.
+
+   SO THE STRIP MOVES INSTEAD OF THE FELT. It stays out of flow — the reserve's
+   whole point was that arming must never GROW the header, and it still cannot —
+   but it anchors to the top edge of `#table-center` rather than to the bottom of
+   the HUD. That band is the deck and discard, and after bfe8b42 it is the one
+   piece of a phone frame with nothing to read in its top 21px: the pile captions
+   are painted under the cards, not over them. Cost, stated and counted: the top
+   ~21px of the two pile faces while the strip is up, which is one `.ca-val`
+   coin on a stacked discard card and takes tools/screenshot.mjs's buried total
+   41 → 42 on final-approach@phone. Against a named opponent that is the trade,
+   and it costs the felt nothing at all — self-board, seats and piles measure
+   byte-identical to bfe8b42 on all nine staged surfaces.
+
+   Same anchor `#table-center` the toast uses (ui.css declares `anchor-name`),
+   and the same reason: an offset from the HUD is a claim about everything
+   between the HUD and the felt, and nothing tells this rule when that expires.
+
+   THE POSITION SCHEME IS PART OF THE FIX, NOT A DETAIL. `position: absolute`
+   inside the HUD was tried first and silently did nothing — an anchor is only
+   acceptable when it is a descendant of the positioned element's containing
+   block (or the containing block is the initial one), and `#table-center` is not
+   inside `#hud`. The rule parsed, the fallback took over, and the strip stayed
+   exactly where it was: the measurement is what caught it, not the stylesheet.
+   `fixed` moves the containing block to the initial one, which every box on the
+   page is inside. It stays inside `.hud`'s z-5 stacking context, so it still
+   paints over the z-1 felt and under nothing that matters.
+
+   The `@supports` gate is the degradation: without anchor positioning all three
+   offsets would be invalid at once and the strip would land wherever `auto`
+   put it. Gated, a browser without it keeps the round-5 float verbatim.
+
+   The height stays the base rule's fixed box (NOT `height: auto`, which the
+   float used): three armed players plus the attrition chip once measured a
+   589px strip inside a 651px #hud, and a constant box with `overflow: hidden`
+   is what makes that unrepresentable — out of flow it could not move the felt,
+   but it could bury the table it is reporting on. */
 @media (max-width: 1023px) {
   .hud { position: relative; }
   .hud-strip {
@@ -523,9 +568,25 @@
     left: .5em;
     right: .5em;
     top: 100%;
-    height: auto;
     margin-top: 0;
     z-index: 8;
+  }
+  /* PORTRAIT ONLY, and that is measured, not caution. At 844×390 the felt is
+     two COLUMNS: #table-center is the 236px left one, so anchoring to it takes
+     the strip from 832px wide to 236 and clamps "You win at your next turn
+     start" to nothing. Every full-width band at that height is somebody's
+     cards. Landscape keeps the round-4 float and keeps its cost — the first
+     seat's nameplate — which is stated in the report, not hidden here. */
+  @supports (anchor-name: --a) {
+    @media (orientation: portrait) {
+      .hud-strip {
+        position: fixed;
+        position-anchor: --table-centre;
+        top: anchor(top);
+        left: anchor(left);
+        right: anchor(right);
+      }
+    }
   }
 }
 /* ── DESKTOP: THE STRIP RIDES THE HUD ROW, IT IS NOT A SECOND BAND ────────
@@ -1506,6 +1567,23 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   pointer-events: none;
 }
 .announce.is-in { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* THE SAME BUG AS THE TOAST, FOUND WHILE FIXING IT (round 8). `5.6em` is a
+   distance from the top of the screen, so it inherited the same defect from the
+   same cause. MEASURED at five players with a real disarm sentence, coverage of
+   each 44px collapsed seat:
+     390×844   y80, 46px tall   seat 1  51%   seat 2  42%
+     844×390   y67, 38px tall   seat 1  70%   seat 2  11%
+   It announces that a FINAL APPROACH has been broken — a fact about a SEAT —
+   across the seats it is about. Anchored to the foot of the shared table like
+   `.toast` (ui.css declares the anchor-name and the fallback reasoning), every
+   one of those goes to 0%. No shot drives a disarm, so nothing photographs this
+   state: it had to be measured, not looked at. */
+@media (max-width: 1023px) {
+  .announce {
+    position-anchor: --table-centre;
+    top: anchor(bottom, calc(env(safe-area-inset-top) + 5.6em));
+  }
+}
 .announce-flag {
   flex: 0 0 auto;
   padding: .28em .55em;

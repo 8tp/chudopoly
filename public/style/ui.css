@@ -1126,7 +1126,9 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   /* NOT the bottom. #toast is a sibling of .screen, so a bottom-anchored toast
      lands squarely on the hand — the cards the player is touching while the
      toast is telling them something about them. 7em clears a two-row HUD
-     (measured 96px at 390×844, 93px at 1280×720). */
+     (measured 96px at 390×844, 93px at 1280×720). Still the desktop answer and
+     still the fallback everywhere; the phone answer is the anchored block
+     below. */
   top: calc(7em + env(safe-area-inset-top));
   transform: translateX(-50%) translateY(-1em);
   max-width: 88vw;
@@ -1148,6 +1150,63 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 /* #toast and #sheet/#win-overlay are #app-level siblings of .screen, so
    .screen's env() padding never reaches them — their own insets are required
    and must not be "de-duplicated". */
+
+/* ══ THE TOAST RIDES THE TABLE, NOT THE TOP OF THE SCREEN (ROUND-8) ════════
+   `top: 7em` was measured against the HUD and it is still right about the HUD.
+   It was never a statement about what is UNDER the HUD, and that is what moved.
+   MEASURED at 390×844 after bfe8b42: #opponents starts at y59 and a collapsed
+   seat is 44px, so a toast at y85 lands 18px into the first seat — 41% of it,
+   55% of the first seat in landscape, and 28% of the seat tools/touchtest.mjs
+   happened to stage. The overlap did not change when the seats did. The seat
+   got shorter, so the measurement got honest: a 240px seat hid the same
+   collision under §D's 25% threshold.
+
+   THE MECHANISM IS THE FIX, NOT THE NUMBER. A distance from the top of the
+   screen is a claim about everything above it, and nothing tells the toast when
+   that claim expires — which is precisely how this bug arrived. So on a phone
+   the toast stops counting from the top and anchors to the FOOT OF THE SHARED
+   TABLE: `#table-center`'s bottom edge, the seam where the deck and discard end
+   and your own board begins. That edge is a real box in the same flex column as
+   everything that moved, so it tracks a fifth seat joining (y256 → y354
+   measured), the strip reserving its row (+29px), and any future re-partition
+   of the felt, with no offset to re-derive.
+
+   MEASURED, toast forced up over nine staged surfaces × three viewports, worst
+   coverage of any single §D CTA (>25% is the defect):
+     top: 7em                       first collapsed seat 41% / 55% landscape
+     centred on .table-center       discard pile 47%  ← the obvious move, and it
+                                    only changes which CTA is buried
+     anchored to the seam           discard pile 5%, every other CTA 0%
+   The row the toast does land on in portrait is `.board-self .board-head`,
+   which table.css already names as the first chrome to give ground because the
+   HUD repeats it. In landscape the felt is two columns and the seam sits just
+   above `#prompt`, so the cost there is the prompt's narration line for 2.6s —
+   message over message, which is the cheapest thing on that viewport to cover
+   and a great deal cheaper than the 55% of an opponent's seat it was covering.
+
+   DESKTOP IS DELIBERATELY UNTOUCHED. At 1280×720 the toast at y99 measures 0%
+   over every CTA on every one of those surfaces, and the seam there is y536 —
+   the felt is a different shape and there is nothing to fix. A change that
+   exists only where the failure is, is the whole change.
+
+   WHY `anchor-name` IS DECLARED IN THIS FILE: it belongs beside the box it
+   names, in table.css, and that is a standing request. Here it is inert to
+   everything except the two rules that reference it (this one and content.css's
+   `.hud-strip`, which anchors to the same box's TOP edge for the same reason).
+   If `#table-center` is ever renamed or unmounted the `anchor()` fallback
+   returns the toast to 7em rather than to `auto` — which is also the correct
+   answer on the home and lobby screens, where #table-center is inside a hidden
+   .screen and generates no box at all. That path is exercised on every "Invite
+   link copied": MEASURED on the home screen at 390×844, #table-center's box is
+   0px and the toast's computed `top` is 85.38px, i.e. exactly the declaration
+   above it. */
+@media (max-width: 1023px) {
+  #table-center { anchor-name: --table-centre; }
+  .toast {
+    position-anchor: --table-centre;
+    top: anchor(bottom, calc(7em + env(safe-area-inset-top)));
+  }
+}
 
 /* ══ SHORT LANDSCAPE — the two overlays that had no route out ══════════════
    MOBILE REVIEW, round 4, measured at 844×390: .win-box was 366px tall with

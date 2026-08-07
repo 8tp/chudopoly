@@ -213,13 +213,19 @@
   overflow: hidden;
   margin-left: auto;
 }
+/* ART §6: "value coin: filled ink disc with bone numerals". It was outlined ink
+   ON the set colour, which measured 2.64:1 — §2's ink-on-set column is verified
+   against card STOCK, not against a colour fill. Filling the coin makes the
+   contrast a property of the coin itself (ink vs bone, 17:1) rather than of
+   whatever the coin happens to be sitting on. */
 .ca-val {
   font-family: var(--ca-mono);
   font-weight: 700;
   white-space: nowrap;
-  color: var(--ca-ink);
+  color: var(--ca-paper);
+  background: var(--ca-ink);
   border: 1px solid var(--ca-ink);
-  border-radius: 2px;
+  border-radius: 999px;
 }
 
 .ca-rents { flex: none; display: flex; gap: .25em; font-family: var(--ca-mono); font-weight: 400; }
@@ -293,8 +299,9 @@
   position: absolute;
   left: 5cqw; top: 5cqw;
   z-index: 2;
-  background: var(--ca-paper);
-  padding: 0 .3em;
+  /* Inherits the filled ink coin from .ca-val. It used to repaint itself paper,
+     which after the coin was filled left bone numerals on bone (1.00:1). */
+  padding: 0 .4em;
 }
 
 /* ── WILD PROPERTY — the same colours, CONTAINED on the property chassis ─── */

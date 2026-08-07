@@ -183,6 +183,11 @@ function dragStart(cardId, node, press) {
     snap: press.pointerType === 'touch' ? SNAP_TOUCH : SNAP_MOUSE,
     hover: null,
     ghost: null,
+    // WHERE THE CARD CAME FROM. Read before liftCard() reparents the node.
+    // A drag that ends where it began is a CANCEL — see resolve() step 0.
+    home: plan.source === 'hand'
+      ? document.getElementById('hand-dock')
+      : node.closest?.('.propcol') || null,
   };
 
   clearTimeout(node.__dragTimer);
@@ -391,6 +396,30 @@ function nearestPrecise(x, y, within) {
 
 function resolve(x, y) {
   if (!live) return null;
+
+  // 0 — PUT IT BACK. A drag that ends where it started is a change of mind, and
+  // this has to be decided before anything else because the rule that follows
+  // it actively defeats it.
+  //
+  // Owner, live: "I was considering playing a card dragged it up then back down
+  // but then it still played it to my bankroll." Reproduced: lifting a hand
+  // card toward the bank latches it as `live.hover`, and step 1b then holds
+  // that target for `snap + HOLD_SLACK` — 138px on touch, 168px on a mouse.
+  // The hand sits well inside that of the bank, so dragging home never cleared
+  // the commitment and the release banked a card the player had visibly
+  // returned. Hysteresis is right for a thumb wobbling BETWEEN targets and
+  // wrong for a pointer that has gone back to where it came from.
+  //
+  // The origin is never a drop: a hand card cannot be played to the hand, and a
+  // board card dropped in the column it left is a no-op. So returning null here
+  // is the cancel, and dragEnd() already springs the card home over 260ms.
+  if (live.home) {
+    const h = live.home.getBoundingClientRect();
+    if ((h.width || h.height) && x >= h.left && x <= h.right && y >= h.top && y <= h.bottom) {
+      return null;
+    }
+  }
+
   const { best, dist } = nearestPrecise(x, y);
 
   // 1 — standing inside a precise target.

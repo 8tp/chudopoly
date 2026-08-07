@@ -81,11 +81,16 @@
      made to land ON seat boundaries — a flick reveals a WHOLE seat, nameplate
      and bank total included, rather than the bottom two thirds of one. */
   scroll-snap-type: y proximity;
-  /* start, not stretch: a stretched seat is shorter than its own content when
-     the strip is capped, and the rows inside then get squeezed — which sliced
-     every opponent's cards at ~40% height (measured .board-props
-     scrollHeight−clientHeight: 46px on arc-3@desktop, 57px on payment). */
-  align-items: start;
+  /* ROUND-7: stretch, and the note it replaces was right at the time. `start`
+     was chosen because a stretched seat whose rows were CONTENT-sized got its
+     rows squeezed when the strip was capped (measured .board-props
+     scrollHeight−clientHeight: 46px on arc-3@desktop, 57px on payment). The mat
+     grid now has a FIXED row height and `align-content: start` on the seat, so
+     there is nothing left to squeeze — the spare height lands as apron under
+     the last mat row. What stretch buys is the thing the owner asked for: every
+     seat in a strip row is the height of the tallest, so two seats holding two
+     and five colours are one box size instead of two. */
+  align-items: stretch;
   overflow-y: auto;
   overscroll-behavior: contain;
   min-width: 0;
@@ -539,10 +544,12 @@
    not overlap at all — they sit side by side like a real tableau. */
 .zone-props .card:not(:first-child) { margin-left: calc(-1 * max(0px, var(--card-w) - var(--tap))); }
 .zone-ups { margin-top: .12em; }
-/* An Upgrade/FOC on an opponent's mat is a BADGE, not a card you read. */
-.opponents .zone-ups { --card-w: calc(var(--s) * 1.3); margin-top: .06em; }
 .zone-ups .card { margin-left: calc(var(--card-w) * -0.5); }
 .zone-ups .card:first-child { margin-left: 0; }
+/* An opponent's empty mat is not rendered, and that is no longer what makes a
+   seat ragged — see the seat-grid block below, where the SLOT WIDTH and the ROW
+   HEIGHT are fixed, so hiding a mat leaves a gap in a matrix rather than
+   resizing the matrix. */
 .board-opponent .propcol[data-empty="1"] { display: none; }
 
 /* ── AN OPPONENT'S PROPERTY LINE WRAPS. IT DOES NOT SCROLL SIDEWAYS ───────
@@ -572,41 +579,187 @@
    which is a real scroller with `scroll-snap-align: start` on every seat, so a
    flick lands on a seat boundary and the whole seat is reachable. Hidden-until-
    scrolled beats absent. */
+
+/* ── ROUND-7: A SEAT IS THE SELF BOARD AT SEAT SCALE ──────────────────────
+   OWNER, 2026-08-07, on the live build: "the top players and their card
+   layouts in terms of how they are organized should be more even."
+
+   They were describing one cause with three faces, and the cause was that the
+   same information was laid out by two different systems. Your own board is a
+   GRID — fixed columns, equal cells, `grid-area: ups` reserving a lane for an
+   upgrade. A seat was an ad-hoc FLEX FLOW: empty mats `display:none`, every
+   surviving mat `flex: 0 0 auto` (i.e. sized to whatever it happened to hold),
+   and `zone-ups` simply appended under its column. MEASURED on the review
+   fixtures, before this block:
+
+     five-player@desktop   Bolt 148 tall / 1 mat / mats 91 wide
+                           Jester 148 / 4 mats / 47-63 wide
+                           Shadow 235 (cut at 189 by the strip) / 4 mats, one
+                           of them wrapped onto a second line
+     five-player@landscape seats 122, 127, 227 and 236 px WIDE in one rail —
+                           `.opponents{align-items:start}` from the portrait
+                           rule survives into the landscape column flex, where
+                           `start` is the CROSS axis and so means "shrink-wrap".
+
+   So: the same vocabulary, scaled down. A fixed number of equal columns, a
+   fixed row height, a reserved corner lane for upgrades, and a bank that is the
+   size of the money in it. Hiding an empty mat is KEPT — what changed is that
+   it no longer costs anything, because what it leaves behind are cells in a
+   matrix rather than items in a flow.
+
+   THE ROW HEIGHT IS FIXED AND THE STRIP STRETCHES, and between them that is
+   the whole trick. A mat row is `var(--mat-row)` whatever stands on it, so a
+   House cannot make one mat taller than the nine beside it and a four-card set
+   cannot make one row taller than the row above; `align-items: stretch` on the
+   strip then makes every seat in a row the height of the tallest. Two seats or
+   four, the strip is a row of identical boxes.
+
+   WHAT IS NOT HERE, and why. All ten mats always on — so that column 3 is Space
+   Force in every seat and the strip reads DOWN as well as across — was built,
+   measured and rejected. Ten mats at five columns is two rows; a two-row seat
+   measured 221px against the 171px a 1280×720 strip has once the fade padding
+   is paid, so every seat rested with its second mat row cut to 31 of 70 visible
+   — five mats per seat that `tools/lib/audit` reports as clipped by a scrolling
+   ancestor. A uniform guillotine is not the trade that was asked for. The
+   arithmetic that blocks it: 171 − 21 head − 44 fan/bank − 12 padding = 94px
+   for two rows, and a row is a nameplate plus a card zone that owes 44px on
+   both axes. Ten-always therefore needs either a taller seats track (the self
+   board cannot fund it at 720p — see the payment note on .board-self, which is
+   spending the 24px this block just freed) or an exemption from the zone floor.
+   Both are real; neither is mine to take alone. Recorded, not forgotten. */
 .opponents .board-props {
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  align-content: flex-start;
+  display: grid;
+  grid-template-columns: repeat(var(--seat-cols), minmax(var(--tap), 1fr));
+  /* One row is the resting shape and `grid-auto-rows` earns the second: a player
+     holding more colours than a row has slots gets another IDENTICAL row, never
+     a taller one. See the block comment for why two rows cannot be the resting
+     shape at 1280×720. */
+  grid-template-rows: repeat(var(--seat-rows), var(--mat-row));
+  grid-auto-rows: var(--mat-row);
+  justify-content: stretch;
+  align-content: start;
+  /* the base .board-props is a flex line with `align-items: flex-start`, and it
+     carries straight into this grid — measured, a mat came out 50px tall beside
+     a 70px one in the same fixed row, which is the ragged edge this block exists
+     to remove. Every cell fills its row. */
+  align-items: stretch;
   margin-top: .28em;
-  /* .2em → .35em: MEASURED (grayscale, mid-game@desktop dark) the mat/seat pair
-     came back T10 R9 B13 L59 — the right side scored 9 because a 3px gutter puts
-     the edge band mostly inside the NEXT mat, which is the same material. A 5px
-     gutter is enough seat plate for the boundary to be a boundary. */
-  gap: .35em;
+  /* 4px, and in px because it is now a GRID gutter that has to be subtracted
+     from a seat's width to size a cell (see --mat-in). The .35em it replaces
+     computed to 5px at desktop; grayscale wanted ≥5 for the mat/seat boundary to
+     read as a boundary (measured T10 R9 B13 L59 at a 3px gutter). At 4px the
+     same pair is carried by the nameplate's own bone rule, a ~60 L* step.
+     Re-check here if the mat wash ever changes. */
+  gap: 4px;
   min-width: 0;
   padding: 0 .25em;
 }
-.opponents .propcol { flex: 0 0 auto; }
 /* A seat's fan-and-bank row was ~90px of a 390px phone seat around 30px cards,
    most of it an empty drawn box. Halving it is 50px per seat back to the mats,
-   which are the part of an opponent's board anyone reads. */
-.opponents .board-bank { min-height: 0; }
-.opponents .board-bank .cardzone:not(:empty) { min-height: calc(var(--card-w) * 1.4); }
-/* An opponent's mat is a targeting surface too (Inspector General takes a whole
+   which are the part of an opponent's board anyone reads.
+   ROUND-7: and the rest of that empty box goes too. The owner's third symptom
+   was "the bank strip is a wide filled slab with cards at the left and a large
+   empty remainder, which reads as something missing". It was `flex: 1 1 auto`
+   into whatever the seat had spare — MEASURED 149px of drawn plate around 0px
+   of cards on Bolt, 196 around 0 on Jester. A note pile is the size of the
+   notes in it, so the mat is too, and an EMPTY bank draws no plate at all. */
+.opponents .board-bank { min-height: 0; width: fit-content; max-width: 100%; }
+/* capped at the tap floor, because the fan/bank row is a FIXED 44px track (see
+   .opponents .board below): a seat whose bank happens to hold a note was 5px
+   taller than the seat beside it before this, which is the same raggedness one
+   row up. */
+.opponents .board-bank .cardzone:not(:empty) { min-height: min(var(--tap), calc(var(--card-w) * 1.4)); }
+.opponents .board-bank:has(> .zone-bank:empty) { background: none; box-shadow: none; padding: 0; }
+/* An opponent's mat is a targeting surface (Inspector General takes a whole
    set), so it owes the same 44px — MEASURED at 36×50 portrait and 30×42
-   landscape before this, i.e. under the floor on BOTH axes on the tap surface
-   for steps 2-3 of every steal and swap chain. `flex: 0 0 auto` is the half
-   that was missing: min-width alone does not survive a flex line that is wider
-   than its box, which is exactly what a seat's property line is. */
+   landscape before the floor existed. In a grid the floor belongs on the TRACK,
+   not on the item: `minmax(var(--tap), 1fr)` above makes every cell in every
+   seat at least 44px and exactly as wide as its neighbours, which is the half
+   `min-width` could never give — measured before it, one seat's mats ran
+   47/56/63/91px while the seat beside it held a single 91px mat. */
 .opponents .propcol {
-  flex: 0 0 auto;
-  min-width: calc(var(--tap) + .2em);
-  min-height: var(--tap);
-  --mat-pad: .1em;
-  padding: 0 var(--mat-pad) .12em;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "head" "props";
+  align-content: start;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  /* ZERO side padding, and it is load-bearing: `.board .cardzone:not(:empty)`
+     owes 44px on both axes (touchtest gates every [data-zone]), and a 45px cell
+     with 1.6px of padding each side leaves 41.7 — measured, that put a 1px
+     horizontal overflow inside every occupied mat on the desktop seat. The
+     nameplate is full-bleed anyway, so the padding was only ever holding the
+     cards off an edge they can stand on. */
+  --mat-pad: 0px;
+  padding: 0 0 1px;
   scroll-snap-align: start;
 }
+.opponents .propcol-head { grid-area: head; }
+.opponents .zone-props { grid-area: props; }
+/* THE RESERVED UPGRADE LANE. On your own board this is `grid-area: ups`, a
+   named column that exists whether or not a House is standing in it. A 45px
+   seat mat has no column to spare — the card zone alone owes the mat's whole
+   44px — so the lane is a CORNER instead: a fixed position at
+   the mat's bottom-right that no other element may occupy. It reserves no
+   height, so an upgrade can never make one mat taller than the nine beside it,
+   which is the defect the owner photographed (a House under Coyote's Command
+   column, hanging below the row and taking the seat with it).
+
+   `pointer-events: none`, and that is a statement rather than a dodge: on
+   another player's board `interact/` addresses `.propcol` (markPropColumns,
+   complete sets only) and card NODES (steal targets, peek). It has never
+   addressed a zone, and an opponent's upgrade zone is not a drop target in any
+   mode — it is furniture. The 44px floor is for what a thumb must hit; the
+   cards inside keep their own pointer events and stay peekable. */
+.opponents .propcol .zone-ups {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  z-index: 2;
+  margin: 0;
+  gap: 0;
+  /* three classes, to outrank `.board .cardzone:not(:empty)`'s 44px floor —
+     measured at two classes, the badge came out 44×44 inside a 45px mat and
+     covered the set it is meant to annotate. */
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+  --card-w: 15px;
+}
+.opponents .propcol .zone-ups > .card { pointer-events: auto; }
+/* Cards inside a seat mat STACK, they do not spread. A mat is one grid cell
+   wide now, so a four-card set has to fit 44px (desktop) / 51px (phone) of
+   usable width; the step between cards is derived from that width and the
+   count, the same way the hand fan derives its cover, so the top card is always
+   whole and the buried ones show an edge. Without it a three-card set wrapped
+   inside its own mat and put a 146px column in an 84px row. */
+.opponents .zone-props {
+  flex-wrap: nowrap;
+  gap: 0;
+  align-items: flex-start;
+  --mini-step: var(--card-w);
+}
+.opponents .zone-props:has(> .card:nth-child(2)) { --mini-step: min(var(--card-w), calc(var(--mat-in) - var(--card-w))); }
+.opponents .zone-props:has(> .card:nth-child(3)) { --mini-step: min(var(--card-w), calc((var(--mat-in) - var(--card-w)) / 2)); }
+.opponents .zone-props:has(> .card:nth-child(4)) { --mini-step: min(var(--card-w), calc((var(--mat-in) - var(--card-w)) / 3)); }
+.opponents .zone-props .card:not(:first-child) { margin-left: calc(var(--mini-step) - var(--card-w)); }
+/* a buried card in a stack shows its cut EDGE, exactly as the bank's does */
+.opponents .zone-props .card:not(:last-child) { box-shadow: 1px 0 0 var(--card-edge), inset -2px 0 3px -1px var(--shade-2); }
 .opponents .board { scroll-snap-align: start; }
-.opponents .board { --card-w: max(calc(var(--s) * 2.2), 36px); }
+/* The seat's own constants. Every number below was measured out of a specific
+   box at a specific viewport; they are re-stated per breakpoint, never derived
+   from a guess.
+     --seat-cols  columns in the mat grid; chosen so a cell clears 44px
+     --mat-row    the fixed row height: nameplate + a 44px zone + 2px
+     --mat-in     the usable width inside a mat, which the card step divides */
+.opponents .board {
+  --card-w: 30px;
+  --seat-cols: 3;
+  --seat-rows: 1;
+  --mat-row: 70px;
+  --mat-in: 51px;
+}
 /* Opponent money stacks 88% deep — the denomination is unreadable there and the
    worth plate in the nameplate already carries the total. */
 .opponents .card[data-type="money"] .card-name { display: none !important; }
@@ -815,6 +968,12 @@
 .opponents .board {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  /* the fan/bank row is a FIXED track at the tap floor. Both zones already owe
+     44px when they hold anything, so pinning the row there costs nothing and
+     removes the last thing that could make one seat taller than its neighbour
+     (measured: Shadow 245 vs Bolt 240 on five-player@phone, the whole
+     difference being that Shadow had a note in the bank). */
+  grid-template-rows: auto var(--tap) auto;
   grid-template-areas: "head head" "fan bank" "props props";
   align-content: start;
   column-gap: .4em;
@@ -884,7 +1043,13 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(11em, 15.5em));
     justify-content: center;
-    align-items: start;
+    /* stretch, for the reason the portrait rule now stretches: with a fixed mat
+       row height a seat can no longer be squeezed, and MEASURED with one player
+       holding seven colours (a state no recorded fixture reaches — probed) the
+       strip went 147/147/221/147 under `start`. Under stretch it is four 221s,
+       three of them with apron under their mats, which is the honest picture:
+       one player has twice the board. */
+    align-items: stretch;
     gap: calc(var(--s) * .45);
     flex: none;
     min-height: 0;
@@ -905,14 +1070,32 @@
      your own mat. The strip scrolls, and it is the row that CAN scroll — your
      own mat cannot. REQUEST (ui/ or interact/): scroll the first
      [data-targetable="1"] board into this port when a targeting mode opens. */
-  .opponents .board { --card-w: 28px; padding: .2em .3em .28em; }
+  /* THE SEAT AT DESKTOP — five columns, and a seat that fits its strip whole.
+     MEASURED at 1280×720 with four opponents: a seat is 257px, its property
+     grid 247 wide less .5em of padding = 239, so five 4px-gutter columns are
+     (239 − 16) / 5 = 44.6px each — over the floor, and the most columns that
+     clear it. AFTER this block: four seats at 257×147, strip scrollHeight 165
+     in a 165px port — nothing scrolls and nothing is cut. BEFORE it: 148, 148,
+     148 and 235 in a 189px port with 64px hidden. The 24px the track gives back
+     is what closes the payment overlap on .board-self. */
+  .opponents .board {
+    --card-w: 26px;
+    --seat-cols: 5;
+    --seat-rows: 1;
+    --mat-row: 70px;
+    --mat-in: 44px;
+    padding: .2em .3em .28em;
+  }
   .opponents .board-head { font-size: .82em; padding-bottom: .06em; margin-bottom: .1em; }
   .opponents .zone-hand-oppo { --card-w: 22px; }
+  /* 36 → 26: a 36px note is 50px tall and the fan beside it is 34, so the
+     fan-and-bank row was 54px of seat spent on the taller of two things nobody
+     reads a denomination off (the worth plate carries the total). At 26 the note
+     is 36px tall, under the 44px the row is fixed at, so the bank can never be
+     what sets a seat's height. */
+  .opponents .zone-bank { --card-w: 26px; }
   .opponents .board-bank { padding: .1em .25em; }
-  /* the one-row property line (see the base rule) needs no re-statement here;
-     only its margin and the 46px mat floor this width can afford */
-  .opponents .board-props { margin-top: .16em; justify-content: flex-start; }
-  .opponents .propcol { min-width: 46px; }
+  .opponents .board-props { margin-top: .16em; }
 
   /* ── left rail: the piles, stacked ──────────────────────────────────── */
   .table-center {
@@ -973,9 +1156,56 @@
      scroll: the mat grid is a deterministic 5×2 and the bank is one row. It was
      costing the bank its last 26px in every frame, overflow or not. */
   .self-board { -webkit-mask-image: none; mask-image: none; }
+
+  /* ── THE BANK GETS A LANE. THE MATS GET A SCROLL BOX. ──────────────────
+     OWNER, 2026-08-07, on a FINAL APPROACH payment: "Make sure we fix this
+     overlap too" — the Bank plate drawn over the whole `Command 1/2` nameplate,
+     the bottom mat row clipped through its value coins, and the instruction on
+     screen reading "Tap your bank, property and Upgrade cards".
+
+     THE CAUSE IS THE PROMPT'S HEIGHT, and it is not a rare one. `.prompt-why`
+     is `flex: 1 1 100%` (ui.css), so each reason takes a whole line; a player on
+     final approach answering a charge gets TWO — the 45s deadline and the
+     "paying out of a complete set ends it" warning. MEASURED on exactly that
+     state (probed; no recorded fixture reaches it):
+
+         #prompt              175px tall, 2 × .prompt-why
+         #self-board port     155px around 298px of board
+         .board-bank          131px OVER .board-props
+         your own cards       7 of 15 cut, 46×64 rendering 46×8
+
+     `position: sticky; bottom: 0` was doing exactly what it was asked to — stay
+     on screen — and with 143px of overflow to absorb, "on screen" meant "on top
+     of the property grid". A pinned footer cannot both stay visible and stay out
+     of the way inside one scroll box; it needs its own row, and then the mats
+     need a scroll box of their own. That is what this does: the board FILLS the
+     pane, the bank is the last row of it and never moves, and the mat grid is
+     the flexible row in the middle with its own scroller and `scroll-snap-align`
+     on every mat. Re-measured on the same state: bank over props 0, and every
+     card that is off-screen is off-screen inside a scroller a flick can reach —
+     which is the difference between dense and broken.
+
+     720px cannot show 5×2 mats (186) + bank (70) + head (17) inside a 155px
+     pane; nothing can. What the pane owes at that size is that the thing the
+     prompt names is visible and that nothing is hidden UNDER something else. */
+  .self-board { overflow: hidden; }
+  .self-board > .board { flex: 1 1 auto; min-height: 0; }
+  /* YOUR NAMEPLATE RIDES BESIDE YOUR BANK, which is the cut the landscape grid
+     already makes ("head bank" / "props props") and it is worth 21px here:
+     a head row plus its gap is 21 of the pane, and the pane is the thing that
+     runs out. MEASURED on the ordinary payment prompt — port 276px — the board
+     goes 282 → 261 of content, so the 5×2 grid and the bank both fit WHOLE and
+     nothing scrolls at all; on the two-reason final-approach prompt the mat
+     scroller goes 43 → 64px. It also reads better than it measures: your name,
+     your set tally and your net worth now sit against the money they describe,
+     instead of captioning a grid that is already labelled ten times. */
   .board-self {
     display: grid;
-    grid-template-areas: "head" "props" "bank";
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-areas: "props props props" "head  bank  .";
+    grid-template-rows: minmax(0, 1fr) auto;
+    height: 100%;
+    min-height: 0;
     justify-items: center;
     row-gap: .25em;
     --card-w: 46px;
@@ -983,13 +1213,17 @@
   .board-self .board-head {
     grid-area: head;
     align-self: center;
+    justify-self: end;
     font-size: .62em;
     flex-wrap: nowrap;
     gap: .6em;
-    width: 100%;
-    max-width: 828px;
+    width: auto;
+    max-width: 100%;
     margin: 0;
-    padding: 0 0 .2em;
+    padding: 0 .7em 0 0;
+    /* the underline was the rule between a caption and the thing it captions;
+       side by side there is nothing under it to divide */
+    box-shadow: none;
   }
   .board-self .board-head .board-worth { margin-left: 0; }
   /* A 200px mat has room for the whole set name; a phone mat does not (see the
@@ -1002,6 +1236,25 @@
      leaves 692 for five mats) but they never reflow to a different count. */
   .board-self .board-props {
     grid-area: props;
+    /* the flexible row: it takes what the pane has left after the head and the
+       bank, and scrolls inside it. `align-content: start` so the mats sit under
+       the nameplate rather than floating in the middle of the slack. */
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    /* uniform mat rows mean a flick can land on a row boundary, so it does */
+    scroll-snap-type: y proximity;
+    align-content: start;
+    scrollbar-width: thin;
+    scrollbar-color: var(--fg-mute) transparent;
+    /* the two `local` shades are the scroll cue, and NOT a mask: a mask clips
+       painting whatever `overflow` says, so it would cut a card being dragged
+       out of a mat — table/index.js's liftCard opens overflow ancestors and can
+       do nothing about a mask. They travel with the content, so each can only
+       appear at an end that has something behind it. */
+    background:
+      linear-gradient(180deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 100% .8em no-repeat local,
+      linear-gradient(0deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 100% / 100% .8em no-repeat local;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 200px));
     /* 132 is §5's resting height. 84 is what 720px actually has once the HUD
@@ -1054,6 +1307,7 @@
      cards at the derived 2px overlap with room to spare. */
   .board-self .zone-props { justify-content: center; padding-top: 4px; flex-wrap: nowrap; }
   .board-self .zone-ups { justify-content: center; }
+  .board-self .propcol { scroll-snap-align: start; }
 
   /* §5: bank mat 340 × 90, under the grid. */
   /* §5 says 340 × 90. That is the RESTING size: a nine-card bank wrapped to a
@@ -1066,10 +1320,38 @@
      fixture is how the bank ended up under the fold twice already. Pinned to
      the bottom of the scroll box, the bank is on screen whatever the mats do,
      which is the only thing a payment prompt needs to be true. */
+  /* OWNER, 2026-08-07, on a payment prompt: "Also weird overlap happening here"
+     — money cards standing proud of the Bank plate's top edge, and property
+     cards in the Command and Overseas Bases mats hanging below their own
+     column, at the exact moment the game says "tap your bank, property and
+     Upgrade cards".
+     ONE cause, MEASURED at 1280×720 with the prompt up: the scrollport was
+     252px around 282px of board, so `bottom: 0` pulled this plate 26px UP over
+     the last mat row — i.e. over the bottom 21px of every card standing in it,
+     coins included. Nothing was overflowing anything; the bank was parked on
+     top of it. Two fixes, and the first is the real one:
+       · the seats strip stopped being 189px (see the seat-grid block — a
+         uniform one-row seat is 147, so `fit-content(11.4em)` now resolves to
+         165), which hands 24px back to this scrollport. Re-measured: the
+         overlap is 2px, and 2px lands on the mat's own bottom padding, so no
+         card is covered at all.
+       · z-index 3 → 30. Payment marks payable cards `z-index: 10`, picked ones
+         20 and targetable ones 25 — all of them ABOVE the old 3 — so whatever
+         residual overlap a narrower window produces, the cards punched through
+         the plate and read as debris rather than as a card behind a shelf. 30
+         is above every resting card state and below the held card (60), which
+         must still fly over the bank it is being dropped into. */
   .board-self .board-bank {
-    position: sticky;
-    bottom: 0;
-    z-index: 3;
+    /* STATIC. It was `position: sticky; bottom: 0` and the note above records
+       what that cost at the prompt's real maximum height. It is now the grid's
+       last row, so it is always on screen by construction and can never be on
+       top of a mat. z-index 30 is kept as the belt: payment marks payable cards
+       `z-index: 10`, picked 20 and targetable 25, all of them above the old 3,
+       so any residual overlap read as cards breaking out of the plate rather
+       than as a card behind it. 30 is above every resting card state and below
+       the held card (60), which must still fly over the bank it is dropped in. */
+    position: relative;
+    z-index: 30;
     grid-area: bank;
     width: fit-content;
     min-width: 340px;
@@ -1812,6 +2094,14 @@
     grid-area: opp;
     display: flex;
     flex-direction: column;
+    /* MEASURED on five-player@landscape before this line: seats 122, 127, 227
+       and 236px wide in one 236px rail. The portrait rule sets
+       `align-items: start` for a good reason (a stretched seat is shorter than
+       its own content when the strip is height-capped) — but in a COLUMN flex
+       the cross axis is the width, so `start` means shrink-wrap, and a rail of
+       shrink-wrapped seats is four different boxes. This is the owner's "wide
+       and short beside narrow and tall" in its purest form. */
+    align-items: stretch;
     max-height: none;
     min-height: 0;
     gap: .3em;
@@ -1822,7 +2112,17 @@
     -webkit-mask-image: linear-gradient(#000 calc(100% - 1.4em), transparent);
     mask-image: linear-gradient(#000 calc(100% - 1.4em), transparent);
   }
-  .opponents .board { flex: 0 0 auto; scroll-margin: .4em 0 1.6em; --card-w: 30px; }
+  .opponents .board {
+    flex: 0 0 auto;
+    scroll-margin: .4em 0 1.6em;
+    --card-w: 30px;
+    /* the 236px rail less the seat's and the grid's padding is 221, so four
+       4px-gutter columns are 52px — the widest count that clears the floor */
+    --seat-cols: 4;
+    --seat-rows: 1;
+    --mat-row: 70px;
+    --mat-in: 50px;
+  }
   .opponents .zone-hand-oppo { --card-w: 22px; }
   /* the rail is 236px wide, so the nameplate does not need the two lines the
      ≤899px rule gives it for an 88px phone seat — that was 17px per seat of a

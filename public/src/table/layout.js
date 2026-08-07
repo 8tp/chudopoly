@@ -48,9 +48,11 @@ export function zoneFor(kind, ownerId, color) {
 
 /**
  * An opponent's empty colour column is `display:none` (table.css hides
- * `.board-opponent .propcol[data-empty="1"]` so a 10-colour board fits a
- * 4-player strip). paintBoard clears the flag — but only at the RECONCILE, at
- * the end of the job, which is after the choreography that put a card there.
+ * `.board-opponent .propcol[data-empty="1"]`; a seat's mat grid is a fixed
+ * number of 44px columns at a fixed row height, and ten of them do not fit the
+ * 171px a 1280×720 strip has — the arithmetic is in table.css's seat-grid
+ * block). paintBoard clears the flag — but only at the RECONCILE, at the end of
+ * the job, which is after the choreography that put a card there.
  *
  * Measured consequence: a property stolen into a colour the thief did not have
  * yet was reparented into a zero-size box, so table/moveCard's FLIP measured

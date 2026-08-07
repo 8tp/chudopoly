@@ -10,7 +10,7 @@
 
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
-import { setAttr, setClass, qsa } from '../core/dom.js';
+import { setAttr, setClass, qsa, prefersReducedMotion } from '../core/dom.js';
 import * as send from '../net/send.js';
 import { store, selfPlayer, playerById } from '../state/store.js';
 import * as sel from '../state/selectors.js';
@@ -575,6 +575,54 @@ function markPropColumns(ownerId, colors) {
   for (const color of colors) mark(board.querySelector(`.propcol[data-color="${color}"]`));
 }
 
+/* ── a target you cannot see is not a target (§P9 FEEL round 3, landscape) ──
+ *
+ * MEASURED on 844×390: `#opponents` is a 97px rail with 77% of its content
+ * scrolled out of view, and picking a steal target marks boards whose CENTRE is
+ * outside it. Three real taps aimed at a marked board sent nothing — correctly,
+ * because the point tapped was not on the board — and the only recovery was
+ * three blind flicks along a 97px rail with no indication of which way to go.
+ * Nothing in the client called scrollIntoView when targeting armed.
+ *
+ * So arming a step brings its targets to the player. Two rules keep it from
+ * being a nuisance:
+ *   • it fires on a STEP CHANGE, never on a redraw — applyMarks() runs on every
+ *     broadcast, and a rail that re-centres itself under the thumb once per bot
+ *     turn is worse than one that never moves;
+ *   • it does nothing when a target is already reachable (≥60% of one marked
+ *     box on screen). The common case — a 3-player desktop table where every
+ *     board is visible — never scrolls at all.
+ * `block:'nearest'` so the horizontal rail moves and the page does not.
+ */
+let revealKey = '';
+
+function visibleEnough(el) {
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  const x = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+  const y = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+  return (x * y) / (r.width * r.height) >= 0.6;
+}
+
+function revealMarks(key) {
+  if (key === revealKey) return;
+  revealKey = key;
+  if (!key) return;
+  // qsa() returns a raw NodeList (core/dom.js), which has forEach but NOT some —
+  // this threw `marks.some is not a function` on every desktop and phone run,
+  // and went unnoticed because the two gates that would have caught it were red
+  // for unrelated layout reasons.
+  const marks = [...qsa('[data-targetable="1"]')];
+  if (!marks.length || marks.some(visibleEnough)) return;
+  try {
+    marks[0].scrollIntoView({
+      block: 'nearest',
+      inline: 'center',
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    });
+  } catch { marks[0].scrollIntoView(false); }
+}
+
 export function applyMarks() {
   clearMarks();
   const snap = store.snapshot;
@@ -637,6 +685,10 @@ export function applyMarks() {
       setClass(node, 'is-discarding', picked);
     }
   }
+
+  revealMarks(mode.kind === 'target'
+    ? `${mode.needs[0] || ''}:${mode.cardId ?? ''}:${mode.picks.targetId ?? ''}`
+    : '');
 }
 
 /* ── wiring ────────────────────────────────────────────────────────────── */

@@ -89,11 +89,24 @@ first-player advantage measured and reported).
 
 1. **CHUD** keeps its identity (steal any property, even from a complete set) but **loses the
    2M tax rider**. It is OPSEC-able. If sims show it still dominates, raise its face value
-   (dead-weight as payment) rather than adding riders. *Ruling (P7 round 1):* CHUD is the only
-   card that **takes** from a complete set without giving anything back; **TDY Orders may
-   swap into one** (trade, not theft) — this is intentional and balance-critical (the bots'
-   final-approach break chain and the measured 43% conversion depend on it). Copy must state
-   the distinction rather than claim blanket exclusivity.
+   (dead-weight as payment) rather than adding riders. ~~*Ruling (P7 round 1):* TDY Orders may
+   swap into a complete set.~~ **REVERSED 2026-08-06 by research.** Hasbro's own FAQ (answer
+   926) bars *both* Sly Deal and Forced Deal from complete sets, and it is consensus, not a
+   split. Leaving TDY unguarded gave Chudopoly **three** set-breaking cards (Inspector General,
+   CHUD, TDY — 8 of 106) where MD has **one** (Deal Breaker, 2 copies), the likely cause of the
+   long-game tail. TDY now takes the same `zoneRequisitionable` guard as Midnight Requisition,
+   on **both** sides of the swap. CHUD remains the only card that takes from a complete set, so
+   the "robs vs trades" copy still holds and is now actually true.
+1b. **Upgrades follow Hasbro (2026-08-06 research).** A broken set sends its House/FOC to the
+   owner's **bank** (Hasbro CS: *"those houses and hotels have to go into your bank"*), never
+   the discard; upgrades are **payable** (modern rulebook: *"all cards — except the 2 Wild
+   Property cards — have cash value and may be used to pay debts"*); and they may be **moved
+   between complete sets** on your turn. Today's engine discards them and excludes them from
+   payment while `playerNetWorth` still counts them — the HUD shows a net worth the player
+   cannot spend, which is a lie regardless of which rule we choose.
+1c. **Surge Ops follows Double The Rent.** It **stacks** (two copies = ×4, spending two of your
+   three plays — MD explicitly allows this) and applies to **rent only**, never Finance Office
+   or Roll Call. Today's engine has both backwards.
 2. **Wild rent ("any")** targets **one chosen player**, like the color rents. (The old
    hit-everyone behavior was an undocumented buff.)
 3. **Surge Ops** doubles the **next charge you make this turn** — rent, Finance Office,

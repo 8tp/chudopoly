@@ -18,7 +18,12 @@
 // ── THE MIX ─────────────────────────────────────────────────────────────────
 //   sfx voices ─┐
 //   ui voices ──┼→ preMaster → compressor → softClip → master → destination
-//   bed ────────┘        ↖ send → convolver(0.55s room) → HP400 → return ┘
+//   bed ────────┤        ↖ send → convolver(0.55s room) → HP400 → return ┘
+//   music ──────┘        ↖ send → convolver(2.2s room)  → HP220 → return ┘
+//
+// TWO rooms, because they are two different spaces and always were: the card
+// table's IR is 0.55s so a five-card payment does not smear, and a sustained pad
+// through 0.55s is a dry pad with a tick on it. music.js owns the second send.
 //
 // The compressor catches a five-card payment landing under a klaxon; the
 // WaveShaper is the GUARANTEE, because it clamps its input to [-1,1] before the
@@ -358,16 +363,16 @@ function noiseBuffer(ctx, kind, seconds) {
   return buf;
 }
 
-/** Same cache for the room impulse — 0.55s stereo is ~53k draws per build. */
+/** Same cache for the room impulses — 0.55s stereo is ~53k draws per build. */
 const irCache = new Map();
 
-function irBuffer(ctx) {
-  const key = `ir:${ctx.sampleRate}`;
-  let data = irCache.get(key);
+function irBuffer(ctx, key, seed, seconds, decay) {
+  const id = `${key}:${ctx.sampleRate}`;
+  let data = irCache.get(id);
   if (!data) {
-    const src = makeImpulseResponse(ctx, makeRng('chudopoly-audio-ir'));
+    const src = makeImpulseResponse(ctx, makeRng(seed), seconds, decay);
     data = [Float32Array.from(src.getChannelData(0)), Float32Array.from(src.getChannelData(1))];
-    irCache.set(key, data);
+    irCache.set(id, data);
     return src;
   }
   const buf = ctx.createBuffer(2, data[0].length, ctx.sampleRate);
@@ -410,7 +415,7 @@ function buildGraph(ctx, masterGain) {
   // A card table, not a hangar: 0.55s, highpassed at 400Hz so the low tail does
   // not eat the headroom a snap-down needs, returned at -9dB.
   g.reverb = ctx.createConvolver();
-  g.reverb.buffer = irBuffer(ctx);
+  g.reverb.buffer = irBuffer(ctx, 'ir', 'chudopoly-audio-ir', 0.55, 4.6);
   g.reverbHp = ctx.createBiquadFilter();
   g.reverbHp.type = 'highpass';
   g.reverbHp.frequency.value = 400;
@@ -447,6 +452,17 @@ function buildGraph(ctx, masterGain) {
   g.musicBus.gain.value = dbToGain(-11);
   g.musicBus.connect(g.preMaster);
 
+  // A SECOND impulse, for the music and only for the music (§P10 fix 1). The
+  // card table's IR above is deliberately small — 0.55s / decay 4.6, sized so a
+  // five-card payment does not smear into one wash — and a sustained pad
+  // through it reads as a dry pad with a tick on it, which is why music.js used
+  // no reverb at all and was the one layer in the game with no room around it.
+  // 2.2s / decay 3.2 is a hangar rather than a table. music.js owns the send
+  // and the return; this is only the buffer, cached exactly like the other one
+  // (2.2s stereo is ~211k seeded draws, and tools/audiotest.mjs builds a fresh
+  // graph per bank entry).
+  g.musicIr = irBuffer(ctx, 'musicIr', 'chudopoly-music-ir', 2.2, 3.2);
+
   g.noise = {
     white: noiseBuffer(ctx, 'white', 1.2),
     pink: noiseBuffer(ctx, 'pink', 1.2),
@@ -467,7 +483,7 @@ export function setEnabled(on) {
   savePrefs();
   if (!graph) return;
   if (!enabled) { stopBed(); music.set('off'); }
-  else music.set(wantMusic);
+  else music.set(wantMusic, { key: musicKey() });
   rampMaster();
 }
 
@@ -558,7 +574,7 @@ export function init() {
   // AudioContext before a gesture" hold for music too: music.js holds no
   // context of its own and is handed this one.
   music.attach(graph);
-  if (enabled) music.set(wantMusic);
+  if (enabled) music.set(wantMusic, { key: musicKey() });
   return graph;
 }
 
@@ -1036,6 +1052,16 @@ bus.on(EVENTS.CHOREO_SFX, (msg) => {
   if (ev.t === 'final_approach') arm(ev.actor);
   else if (ev.t === 'final_approach_broken') disarm(ev.actor);
   else if (ev.t === 'win' || ev.t === 'stalemate' || ev.t === 'game_start') disarm(null);
+  if (ev.t === 'game_start') {
+    gamesSeen++;
+    music.set(wantMusic, { key: musicKey() });
+  } else if (ev.t === 'set_completed' && ev.actor != null) {
+    // §0.3 amendment: "Final Approach bed prefetched when a seat reaches two
+    // sets." Two, not three, and any seat rather than yours — by the time §3.10
+    // can arm, one more completion is all it takes, and a climax that has to
+    // wait for a 666KB fetch arrives after the moment it exists to sound.
+    if (completeSetsOf(ev.actor).length >= 2) music.prefetch('final');
+  }
 });
 
 // The relay has run by now (choreographer emits CHOREO_SFX, then CHOREO_EVENT),
@@ -1068,9 +1094,23 @@ bus.on(EVENTS.STATE_APPLIED, (p) => {
  */
 let wantMusic = 'menu';
 
+/**
+ * Two match beds ship and a match gets ONE of them, chosen at game start and
+ * never rotated inside the match (§0.3 amendment) — the scarcity is deliberate,
+ * because the in-match music has to change exactly once, when Final Approach
+ * arms, for that change to land as an event.
+ *
+ * The key is the room plus how many games this tab has watched start, so it is
+ * the same for every client in the room (the room code is), it differs between
+ * consecutive matches in the same room, and it is DETERMINISTIC — a bed that
+ * differs per reload is a bug report nobody can reproduce.
+ */
+let gamesSeen = 0;
+function musicKey() { return `${store.room.code || ''}#${gamesSeen}`; }
+
 bus.on(EVENTS.STATE_SCREEN, (screen) => {
   wantMusic = screen === 'game' ? 'match' : 'menu';
-  if (enabled) music.set(wantMusic);
+  if (enabled) music.set(wantMusic, { key: musicKey() });
 });
 
 // A won or drawn game leaves the score where it is: the endgame sting owns the
@@ -1178,10 +1218,48 @@ export async function renderMix(entries, seconds = 8) {
  * Render `seconds` of one music bed through the real chain (music.js voices →
  * musicBus → compressor → soft-clip). The score is measured, not asserted.
  *
- * @param {'menu'|'match'} which
+ * 'menu' and 'match' render the SYNTHESISED beds. The four track keys render
+ * the RECORDED ones, at their shipped trim, through the same bus with the same
+ * reverb send — which is how tools/audiotest.mjs holds a recorded bed against
+ * the procedural bed it replaces instead of against a guess.
+ *
+ * @param {'menu'|'match'|'lobby'|'match1'|'match2'|'final'} which
  */
 export async function renderMusic(which = 'menu', seconds = 16) {
-  return renderInto(seconds, (gr) => music.offline(gr, seconds, which));
+  if (which === 'menu' || which === 'match') {
+    return renderInto(seconds, (gr) => music.offline(gr, seconds, which));
+  }
+  // A file bed has to be fetched and decoded before there is anything to
+  // schedule, and decodeAudioData needs a context — so decode against a scratch
+  // one and hand the buffer to the render. AudioBuffers are not bound to the
+  // context that made them.
+  const Ctor = typeof window !== 'undefined'
+    ? window.OfflineAudioContext || window.webkitOfflineAudioContext : null;
+  if (!Ctor) throw new Error('OfflineAudioContext unavailable');
+  const scratch = new Ctor(2, 128, 48000);
+  const buf = await music.decodeTrack(scratch, which);
+  if (!buf) throw new Error(`music track ${which} did not load`);
+  return renderInto(seconds, (gr) => music.offlineFile(gr, seconds, which, buf));
+}
+
+/**
+ * Render one of music.js's four TRANSITIONS through the real chain, so the seam
+ * is a measurement instead of an opinion. `steps` is a script of
+ * `{at, do:'menu'|'match'|'arm'|'break'|'lobby'|'off'}` — see
+ * music.offlineTransition(). Every recorded bed is decoded first so the render
+ * exercises the file path and not the fallback.
+ */
+export async function renderTransition(steps, seconds = 20) {
+  const Ctor = typeof window !== 'undefined'
+    ? window.OfflineAudioContext || window.webkitOfflineAudioContext : null;
+  if (!Ctor) throw new Error('OfflineAudioContext unavailable');
+  const scratch = new Ctor(2, 128, 48000);
+  const bufs = {};
+  for (const k of music.tracks()) bufs[k] = await music.decodeTrack(scratch, k);
+  let log = null;
+  const out = await renderInto(seconds, (gr) => { log = music.offlineTransition(gr, seconds, steps, bufs); });
+  out.log = log;
+  return out;
 }
 
 async function renderInto(seconds, schedule) {
@@ -1230,7 +1308,7 @@ export function stats() {
 
 /** The §9 contract the P2 harness asked for. */
 export function harnessApi() {
-  return { list, renderOffline, renderMix, renderMusic, stats };
+  return { list, renderOffline, renderMix, renderMusic, renderTransition, stats };
 }
 
 /**

@@ -13,6 +13,11 @@
  *     mistake to the player even when the game state is good
  *   • the sour cue's fundamental sits BELOW chime-0 — the "you are being
  *     stolen from" treatment must be unmistakable against the reward tone
+ *   • the synthesised match bed peaks under card_slide (6) and the RECORDED
+ *     beds inherit that contract (7) — see the note there for why one of those
+ *     is a peak comparison and the other is not, and why neither was loosened
+ *   • the four bed TRANSITIONS contain no click at any scheduled seam and no
+ *     dead air (8). Both real bugs found in the P10 round were found here.
  *
  * Needs the audio engine (P5) to expose a render hook. Exits 2 until then.
  */
@@ -254,6 +259,188 @@ try {
     } else {
       r.fail(`match music peaks at ${db(bed.peak).toFixed(1)}dBFS, at or above card_slide `
         + `${db(slide.peak).toFixed(1)}dBFS — the score is over the card layer (§7)`);
+    }
+  }
+
+  /* ---- 7. the RECORDED beds inherit the synthesised bed's contract ---------
+   * §0.3's 2026-08-07 amendment lets four .opus tracks ship as MUSIC ONLY. The
+   * level question they raise is not the one assertion 6 answers, and this is
+   * the honest statement of the difference rather than a rewrite of it:
+   *
+   *   assertion 6 compares PEAKS. That is right for the synthesised bed, whose
+   *   crest factor is 12.8dB, and it stays exactly as it was.
+   *   A mastered recording has a ~19dB crest factor, so holding its PEAK to the
+   *   synth bed's would put its LOUDNESS 6dB lower — and matching its broadband
+   *   RMS instead would put its peak 3dB OVER card_slide, because the synth
+   *   bed's RMS is mostly 55–82Hz content under a 240Hz lowpass that a laptop
+   *   speaker does not reproduce (music.js:555 measured exactly this).
+   *
+   * So both are asserted, and they turned out not to conflict at all: trimmed
+   * to peak 2.1dB under card_slide, both match beds land within 1.5dB of the
+   * synthesised bed's RMS ABOVE 300Hz — the band that carries. Nothing was
+   * loosened to make that true; it is what the tracks measure.
+   *
+   * The climax bed is the one deliberate exception and it is bounded rather
+   * than exempt: Final Approach is the moment the score IS the event, so it may
+   * peak above card_slide, by at most 1.5dB, and must stay 5dB under card_snap
+   * (a card actually landing). Measured at ship: -23.97 vs -24.83 / -18.07.  */
+  const snap = measured.card_snap;
+  if (hasMusic && slide && snap) {
+    const dbv = (v) => (v > 0 ? 20 * Math.log10(v) : -Infinity);
+    const beds = await h.page.evaluate(async () => {
+      const out = {};
+      for (const w of ['match', 'lobby', 'match1', 'match2', 'final']) {
+        try {
+          const o = await window.__CHUD.audio.renderMusic(w, 24);
+          const sr = o.sampleRate;
+          const a = Math.exp(-2 * Math.PI * 300 / sr);
+          let peak = 0, hsum = 0, n = 0;
+          for (const c of o.channels) {
+            let prev = 0, hp = 0;
+            for (let i = 0; i < c.length; i++) {
+              const x = c[i];
+              const ax = x < 0 ? -x : x;
+              if (ax > peak) peak = ax;
+              hp = a * (hp + x - prev); prev = x;
+              hsum += hp * hp; n++;
+            }
+          }
+          out[w] = { peak, hi: Math.sqrt(hsum / n) };
+        } catch (e) { out[w] = { error: String((e && e.message) || e) }; }
+      }
+      return out;
+    });
+    const missing = Object.entries(beds).filter(([, v]) => v.error);
+    if (missing.length) {
+      r.fail(`${missing.length} music bed(s) failed to render: `
+        + missing.map(([k, v]) => `${k} (${v.error})`).join(', '));
+    }
+    const under = ['lobby', 'match1', 'match2'].filter((k) => beds[k] && !beds[k].error);
+    const over = under.filter((k) => beds[k].peak >= slide.peak);
+    // The lobby bed plays on a screen with no cards on it and §7 sets its own
+    // target (-14 dBFS master); it is excluded from the card comparison and
+    // asserted against that number instead.
+    const overGame = over.filter((k) => k !== 'lobby');
+    if (overGame.length) {
+      r.fail(`${overGame.join(', ')} peak at or above card_slide ${dbv(slide.peak).toFixed(1)}dBFS `
+        + `(${overGame.map((k) => `${k}=${dbv(beds[k].peak).toFixed(1)}`).join(', ')}) — `
+        + 'a recorded bed over the card layer is still a bed over the card layer (§7)');
+    } else if (beds.match1 && beds.match2) {
+      r.pass('both recorded match beds sit under card_slide '
+        + dim(`(match1 ${dbv(beds.match1.peak).toFixed(1)}, match2 ${dbv(beds.match2.peak).toFixed(1)} `
+          + `vs ${dbv(slide.peak).toFixed(1)} dBFS)`));
+    }
+    if (beds.lobby && !beds.lobby.error) {
+      const d = dbv(beds.lobby.peak);
+      if (d > -12 || d < -17) {
+        r.fail(`lobby bed peaks at ${d.toFixed(2)} dBFS — §7 asks the menu score for a -14 dBFS master`);
+      } else {
+        r.pass(`lobby bed master ${d.toFixed(2)} dBFS ${dim('(§7: -14)')}`);
+      }
+    }
+    if (beds.final && !beds.final.error) {
+      const d = dbv(beds.final.peak);
+      const overSlide = d - dbv(slide.peak);
+      const underSnap = dbv(snap.peak) - d;
+      if (overSlide > 1.5 || underSnap < 5) {
+        r.fail(`final-approach bed ${d.toFixed(2)} dBFS is ${overSlide.toFixed(1)}dB over card_slide `
+          + `and ${underSnap.toFixed(1)}dB under card_snap — the climax may rise over a slide `
+          + '(≤1.5dB) but never over a card landing (≥5dB)');
+      } else {
+        r.pass(`final-approach bed ${d.toFixed(2)} dBFS: +${overSlide.toFixed(1)}dB on card_slide, `
+          + `-${underSnap.toFixed(1)}dB on card_snap ${dim('(the climax is allowed to rise, bounded)')}`);
+      }
+    }
+    if (beds.match && beds.match1 && beds.match2 && !beds.match.error) {
+      const ref = dbv(beds.match.hi);
+      const loud = ['match1', 'match2'].map((k) => [k, dbv(beds[k].hi) - ref]);
+      const bad = loud.filter(([, d]) => Math.abs(d) > 4);
+      if (bad.length) {
+        r.fail(`${bad.map(([k, d]) => `${k} ${d > 0 ? '+' : ''}${d.toFixed(1)}dB`).join(', ')} `
+          + 'against the synthesised match bed above 300Hz — a recorded bed must be no louder '
+          + 'in the band that carries than the procedural bed it replaces');
+      } else {
+        r.pass('recorded match beds match the synthesised one above 300Hz '
+          + dim(loud.map(([k, d]) => `${k} ${d > 0 ? '+' : ''}${d.toFixed(1)}dB`).join(' ')));
+      }
+    }
+  } else if (hasMusic && !snap) {
+    r.warn('card_snap is not in the bank — the recorded beds were not bounded above');
+  }
+
+  /* ---- 8. the four transitions, measured rather than described -------------
+   * "A transition you did not measure is a transition you did not test." Each
+   * of music.js's four transitions is rendered offline through the real
+   * transition code (audio.renderTransition drives set()/setTension() against
+   * an OfflineAudioContext) and graded on the two ways a bed change goes wrong:
+   *
+   *   a CLICK  — a one-sample discontinuity where a source is cut or started.
+   *              Graded at the SCHEDULED seam times only, against the render's
+   *              own |dx| distribution, because hunting the whole buffer for
+   *              "the biggest jump" only ever finds the loudest transient in
+   *              the music. 2x the 99.99th percentile is the bar.
+   *   a HOLE   — dead air. This is what caught the two real bugs in the round:
+   *              stopDrone() cancelling from `now` instead of from its
+   *              scheduled time (6.0s at -114 dBFS), and the synth transport
+   *              not re-basing on a mode change (1.3s at -105 dBFS).           */
+  const hasTrans = await h.page.evaluate(() => typeof window.__CHUD.audio.renderTransition === 'function');
+  if (!hasTrans) {
+    r.warn('__CHUD.audio.renderTransition absent — the four transitions are not measured');
+  } else {
+    const PLANS = [
+      ['lobby→match', [{ at: 0, do: 'menu' }, { at: 12, do: 'match' }], 26],
+      ['match→final', [{ at: 0, do: 'match' }, { at: 16, do: 'arm' }], 26],
+      ['final→match', [{ at: 0, do: 'match' }, { at: 10, do: 'arm' }, { at: 18, do: 'break' }], 28],
+      ['match→lobby', [{ at: 0, do: 'match' }, { at: 16, do: 'lobby' }], 28],
+    ];
+    const bad = [];
+    const good = [];
+    for (const [label, steps, seconds] of PLANS) {
+      const m = await h.page.evaluate(async ([st, sec]) => {
+        const o = await window.__CHUD.audio.renderTransition(st, sec);
+        const sr = o.sampleRate, L = o.channels[0], R = o.channels[1];
+        const db = (v) => (v > 0 ? 20 * Math.log10(v) : -120);
+        const dx = [];
+        for (let i = 1; i < L.length; i += 3) dx.push(Math.abs(L[i] - L[i - 1]));
+        dx.sort((a, b) => a - b);
+        const p9999 = dx[Math.floor(dx.length * 0.9999)] || 1e-9;
+        let worst = 0, worstAt = 0;
+        for (const line of o.log) {
+          const mm = / at (\d+\.\d+)/.exec(line);
+          if (!mm) continue;
+          const t = Number(mm[1]);
+          const a = Math.max(1, Math.round((t - 0.01) * sr));
+          const b = Math.min(L.length, Math.round((t + 0.01) * sr));
+          let mx = 0;
+          for (let i = a; i < b; i++) { const d = Math.abs(L[i] - L[i - 1]); if (d > mx) mx = d; }
+          if (mx / p9999 > worst) { worst = mx / p9999; worstAt = t; }
+        }
+        // Dead air, in 100ms frames. -62 dBFS is 37dB under the quietest bed
+        // this render contains, i.e. unambiguously nothing.
+        const W = Math.round(sr * 0.1);
+        let hole = 0, run = 0, holeAt = 0;
+        const end = Math.round(sr * (sec - 1.5));      // ignore the fade at the tail
+        for (let i = 0; i + W <= end; i += W) {
+          let s = 0;
+          for (let j = i; j < i + W; j++) { const x = (L[j] + R[j]) * 0.5; s += x * x; }
+          if (db(Math.sqrt(s / W)) < -62) {
+            run++;
+            if (run > hole) { hole = run; holeAt = (i / sr) - (run - 1) * 0.1; }
+          } else run = 0;
+        }
+        return { worst, worstAt, hole: hole * 0.1, holeAt };
+      }, [steps, seconds]);
+      // 0.7s: match-2 is a genuinely sparse composition and its own quietest
+      // stretch measured 0.4s under -62 dBFS with nothing wrong at all.
+      if (m.worst > 2) bad.push(`${label}: click at ${m.worstAt.toFixed(2)}s (${m.worst.toFixed(1)}× the render's own p99.99 |dx|)`);
+      else if (m.hole > 0.7) bad.push(`${label}: ${m.hole.toFixed(1)}s of dead air at ${m.holeAt.toFixed(1)}s`);
+      else good.push(`${label} ${m.worst.toFixed(2)}×/${m.hole.toFixed(1)}s`);
+    }
+    if (bad.length) {
+      r.fail(`${bad.length} of ${PLANS.length} bed transition(s) are audibly broken`);
+      for (const b of bad) r.info(b);
+    } else {
+      r.pass(`all ${PLANS.length} bed transitions are clean ${dim(`(seam |dx| / dead air: ${good.join(', ')})`)}`);
     }
   }
 

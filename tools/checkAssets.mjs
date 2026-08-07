@@ -1,13 +1,38 @@
 #!/usr/bin/env node
 /**
- * tools/checkAssets.mjs — §0.3 gate: ZERO external binary assets, allowlist none.
+ * tools/checkAssets.mjs — §0.3 gate: no external binary assets outside a NAMED,
+ * NARROW allowlist.
  *
- * Three passes, because "no .png in the repo" is the easy half:
+ * Four passes, because "no .png in the repo" is the easy half:
  *   1. banned file EXTENSIONS anywhere in the tree
  *   2. MAGIC BYTES — a PNG named `card-back.txt` is still a PNG
  *   3. base64 binary DATA URIs inside source text — smuggling a sprite sheet
  *      into a JS string is exactly the failure mode §0.3 exists to stop.
  *      Inline SVG (as text, or `data:image/svg+xml,…`) stays legal per §0.3.
+ *   4. the ALLOWLIST'S OWN LIMITS — count, and nothing sneaking in beside it
+ *
+ * ── THE ALLOWLIST (§0.3, amended 2026-08-07) ───────────────────────────────
+ * Two amendments landed on the same day and each one names an exact directory
+ * and an exact extension. Nothing else in the repo may be binary, and that is
+ * the whole reason this gate stayed a gate instead of becoming a preference:
+ *
+ *   public/fonts/*.woff2   self-hosted webfonts. Amendment (b): a font
+ *                          generated in code is just a worse font, and
+ *                          self-hosting is what finally makes screenshot.mjs
+ *                          machine-independent.
+ *   public/audio/*.opus    recorded MUSIC, at most FOUR tracks (one lobby, two
+ *                          match, one Final Approach). The count is part of the
+ *                          amendment, not a rule of thumb: a 3-minute bed is
+ *                          ~1.5MB against a 381KB gzipped client, so a fifth
+ *                          track is another whole game's worth of payload. It
+ *                          is checked below.
+ *
+ * What is NOT licensed: every sound EFFECT stays procedural (a synthesised
+ * click fires at zero latency and jitters per call, which is what stops a cue
+ * heard 400× a match from becoming a woodpecker — samples would ship the SAME
+ * click 400 times), and the CHUDOPOLY wordmark stays hand-authored geometry.
+ * Neither is expressible as a file-extension rule, so neither is checked here;
+ * both are checked by reading the diff.
  *
  * Exits 1 listing offenders. Never 2 — this gate has nothing to wait for.
  */
@@ -25,6 +50,33 @@ const BANNED_EXT = new RegExp(
   '|zip|gz|tgz|7z|rar|pdf|wasm|dll|so|dylib|exe)$',
   'i'
 );
+
+/**
+ * The allowlist, as (directory, extension, cap) triples. A file passes only if
+ * its directory is EXACTLY the named one — `public/audio/beds/x.opus` is not
+ * `public/audio/x.opus` and does not pass — and its extension matches. `cap` is
+ * the maximum number of files that directory may hold; null is uncapped.
+ *
+ * Written as path segments rather than a regex so a `..` or a nested directory
+ * cannot satisfy it by accident.
+ */
+const ALLOW = [
+  { dir: ['public', 'fonts'], ext: '.woff2', cap: null, why: '§0.3 amendment (b): self-hosted webfonts' },
+  { dir: ['public', 'audio'], ext: '.opus', cap: 4, why: '§0.3 amendment: recorded music, at most four tracks' },
+];
+
+function allowedFor(rel) {
+  const parts = rel.split(path.sep);
+  const dir = parts.slice(0, -1);
+  const name = parts[parts.length - 1];
+  for (const a of ALLOW) {
+    if (dir.length !== a.dir.length) continue;
+    if (!a.dir.every((seg, i) => dir[i] === seg)) continue;
+    if (!name.toLowerCase().endsWith(a.ext)) continue;
+    return a;
+  }
+  return null;
+}
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.github', 'coverage', '.vscode', '.idea']);
 /** tools/shots/ holds GENERATED review screenshots — output, not source assets. Gitignored. */
@@ -73,6 +125,8 @@ const SELF = path.join('tools', 'checkAssets.mjs');
 const extHits = [];
 const magicHits = [];
 const uriHits = [];
+const capHits = [];
+const allowed = new Map();              // allowlist entry → [rel, …]
 let scanned = 0;
 
 function magicOf(file) {
@@ -113,6 +167,14 @@ function walk(dir) {
     if (!ent.isFile()) continue;
     scanned++;
 
+    const allow = allowedFor(rel);
+    if (allow) {
+      let list = allowed.get(allow);
+      if (!list) { list = []; allowed.set(allow, list); }
+      list.push(rel);
+      continue;
+    }
+
     if (BANNED_EXT.test(ent.name)) {
       extHits.push(rel);
       continue; // one offence per file is enough to fail
@@ -146,15 +208,34 @@ const report = (label, hits) => {
   if (hits.length > 40) console.log(dim(`      … ${hits.length - 40} more`));
 };
 
+/* The allowlist's own caps. §0.3's music amendment says "at most FOUR tracks"
+ * and that number carries the whole payload argument, so it is enforced here
+ * rather than remembered. */
+for (const a of ALLOW) {
+  const list = allowed.get(a) || [];
+  if (a.cap != null && list.length > a.cap) {
+    capHits.push(`${a.dir.join('/')}/*${a.ext}: ${list.length} files, cap ${a.cap} — ${a.why}`);
+  }
+}
+
 report('banned asset file(s)', extHits);
 report('binary file(s) by magic bytes', magicHits);
 report('base64 binary data URI(s) in source', uriHits);
+report('allowlisted directory over its cap', capHits);
 
 if (code === EXIT_PASS) {
-  console.log(`  ${green('✓')} ${scanned} files scanned, zero binary assets ${dim('(everything procedural)')}`);
+  console.log(`  ${green('✓')} ${scanned} files scanned, zero binary assets outside the allowlist`);
+  for (const a of ALLOW) {
+    const list = allowed.get(a) || [];
+    const cap = a.cap == null ? '' : `/${a.cap}`;
+    console.log(`  ${green('✓')} ${a.dir.join('/')}/*${a.ext}: ${list.length}${cap} ${dim(a.why)}`);
+    for (const f of list) console.log(dim(`      ${f}`));
+  }
   console.log(green(bold('checkAssets: PASS')));
 } else {
-  console.log(yellow('  every texture/sound must be generated in code (CSS, inline SVG text, canvas, WebAudio)'));
+  console.log(yellow('  every texture and every sound EFFECT must be generated in code'));
+  console.log(yellow('  (CSS, inline SVG text, canvas, WebAudio); the only binaries permitted are'));
+  for (const a of ALLOW) console.log(yellow(`    ${a.dir.join('/')}/*${a.ext} — ${a.why}`));
   console.log(red(bold('checkAssets: FAIL')));
 }
 process.exit(code);

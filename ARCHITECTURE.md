@@ -319,7 +319,7 @@ Vocabulary (engine agent may append rows in its report; may not repurpose existi
 | `swap` | `{actor, target, gave, took}` | TDY orders |
 | `set_stolen` | `{actor, from, color, cards}` | inspector general |
 | `upgrade` | `{actor, color, card}` | FOC/hangar placed |
-| `move_property` | `{actor, card, from, to}` | wild rearranged |
+| `move_property` | `{actor, card, from, to, swapWith?, swapHalf?}` | wild rearranged; the two optional fields tag the halves of an atomic swap (§3.5) |
 | `set_completed` | `{actor, color}` | a set completes (any cause) |
 | `discard` | `{actor, cards}` | end-of-turn discard |
 | `turn_end` | `{actor}` | turn passes |
@@ -481,6 +481,7 @@ cannot reach must not be screenshot.
 | No `AudioContext` before gesture | silent console, autoplay policy | audiotest + code review |
 | Zone containers never innerHTML-rebuilt | kills FLIP, scroll, focus | checkClient scan |
 | Choreography ≤600ms/event, interruptible | multiplayer can't wait on your cinematics | motion agent measures; playtest wall-clock |
+| A swap changes no zone count and no set completion | it is the only reason §3.5's cap holds by construction rather than by ordering — a swap that altered either would be two moves wearing one name, and the transient overfull state we refused would be back through the side door | `test/property-swap.test.js` |
 
 ## §11 Phase plan and review gate
 

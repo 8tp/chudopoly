@@ -57,6 +57,10 @@ export function setScreen(screen) {
 
 export function reset() {
   store.snapshot = null;
+  // The seat id belongs to the session that just ended; keeping it made a fresh
+  // join look like a resume to applyState's storeHasSelfIn() check. The NAME is
+  // the player's, not the session's, and survives.
+  store.self = { id: null, name: store.self.name };
   store.room = { code: null, phase: 'home', players: [], hostId: null };
   store.timers = { turn: null, response: null };
   store.lastSeq = 0;

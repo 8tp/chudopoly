@@ -59,45 +59,80 @@
 
 /* ── vertical rhythm: opponents / open felt with the piles / your board ── */
 
+/* Four opponents in ONE row is 88px per board on a 390px phone — one colour
+   column wide. five-player@phone showed 1-2 of a player's 10 sets and the rest
+   were silently gone; that is information loss, not cosmetics. auto-fit gives
+   the strip a shape per player count instead of one shape for all of them:
+     1 opponent   → one full-width board
+     2 opponents  → side by side (unchanged from the old flex row)
+     3-4          → a 2×2 block, 186px per board on a phone — 4-5 colour
+                    columns visible instead of 1.
+   Desktop is wide enough that auto-fit still lands 4 boards on one row (316px
+   each), so this costs the wide layout nothing. */
 .opponents {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5em, 1fr));
   gap: .4em;
   /* shrink priority: when the felt is short, the opponents strip and the centre
      give way and YOUR board keeps its full height. flex-shrink is weighted by
-     basis, so 6 and 10 against the self board's 1 make the deficit land almost
+     basis, so 40 and 10 against the self board's 1 make the deficit land almost
      entirely on these two. */
-  flex: 0 40 auto;
-  min-height: calc(var(--s) * 6.5);
-  /* 32% guillotined a 5-player phone board mid-card and, at 1280×720, clipped
-     every opponent's colour columns down to a strip of coloured dashes. The
-     centre pile is the only flex:1 box on the felt, so what this cap releases
-     it simply absorbs. */
-  max-height: 44%;
-  overflow: auto;
+  /* shrink 8, not 40: at 40 the strip always hit its floor first and hid 52px
+     of opponent board while the self board still had room. Both give ground. */
+  flex: 0 4 auto;
+  /* the floor is one board with no properties on it (measured 80px desktop,
+     93px phone) — below that the strip stops being a strip */
+  min-height: calc(var(--s) * 5.4);
+  max-height: 50%;
+  /* start, not stretch. A stretched board is shorter than its own content when
+     the strip is capped, and the grid rows inside it then get squeezed — which
+     is what sliced every opponent's cards horizontally at ~40% height
+     (measured .board-props scrollHeight−clientHeight: 46px on arc-3@desktop,
+     57px on payment@desktop). Sized to content, the strip scrolls as a whole
+     and no card is ever cut in half. */
+  align-items: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   min-width: 0;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 160, 186, .35) transparent;
+  /* The harness runs Chromium with --hide-scrollbars, and a real phone hides
+     overlay scrollbars at rest, so the scrollbar cannot be the only cue that
+     there is more below. The last 1em of the scrollport fades: content that
+     runs past the edge dissolves instead of being guillotined, and when the
+     content fits there is nothing there to fade. overflow already clips at
+     exactly this boundary, so the mask adds no new clipping. */
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
 }
-.opponents::-webkit-scrollbar { display: none; }
-.opponents .board { flex: 1 1 0; min-width: 0; overflow: hidden; }
+.opponents::-webkit-scrollbar { width: 5px; }
+.opponents::-webkit-scrollbar-thumb { background: rgba(143, 160, 186, .3); border-radius: 999px; }
+.opponents .board { min-width: 0; }
 
 .self-board {
   /* grows: leftover felt belongs to YOUR mat, not to a bigger gap around the
-     piles. With the centre free to absorb everything, trimming chrome off the
-     self board just moved the board DOWN by the same amount — measured at
-     390×844, the property field never rose above y=496. */
+     piles. */
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: 56%;
   overflow: auto;
-  scrollbar-width: none;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 160, 186, .35) transparent;
+  /* same cue as the opponents strip. arc-5-late@desktop sliced the FIGHT
+     column's upgrade card dead flat with a hidden scrollbar above it; measured
+     scrollHeight−clientHeight was 42px on payment@desktop, 19px on
+     final-approach@desktop. */
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 1.9em), transparent);
 }
 /* The SCROLL BOX grows, the mat does not: leftover space below your board is
    felt, not a 390px-tall empty outlined rectangle (which is what the big-hand
    phone shot showed when the board held two cards). */
 .self-board > .board { flex: 0 0 auto; }
-.self-board::-webkit-scrollbar { display: none; }
+.self-board::-webkit-scrollbar { width: 5px; }
+.self-board::-webkit-scrollbar-thumb { background: rgba(143, 160, 186, .3); border-radius: 999px; }
 
 /* ── player boards ─────────────────────────────────────────────────────── */
 
@@ -117,10 +152,12 @@
   border-color: rgba(86, 109, 146, .4);
   box-shadow: var(--lift-2), var(--rim);
 }
-.opponents .board { --card-w: calc(var(--s) * 2.1); }
+.opponents .board { --card-w: calc(var(--s) * 2.2); }
 
 /* THE turn marker. Exactly one board can wear it — that is the whole point of
-   spending foil on it. */
+   spending foil on it. Static: the alarm below is the only thing on the felt
+   allowed to move, so "it is your turn" and "someone is about to win" can
+   never be confused at a glance or in a still. */
 .board.is-turn {
   border-color: var(--gold);
   box-shadow:
@@ -197,11 +234,28 @@
    table". Centring puts real card nodes under the middle of the screen, which
    is also where a player's thumb and eye already are. */
 .board-self .board-bank { justify-content: center; }
-/* an orphaned "BANK" caption floating in the middle of an empty mat reads as a
-   rendering bug, not a label */
-.board-bank:has(.zone-bank:empty) .zone-tag { display: none; }
+/* Hiding the caption made the whole zone vanish, so an empty bank was a hole
+   in the mat. It is a PLACE instead: the caption stays and the zone prints an
+   empty card slot next to it, the same slot art an empty colour column uses. */
+.board-self .zone-bank:empty::after {
+  content: "";
+  display: block;
+  /* the slot is a real place, so it owes a real thumb: an empty bank drew a
+     38px ghost and touchtest read the zone as a 38×53 tap target */
+  width: max(var(--card-w), var(--tap));
+  aspect-ratio: var(--card-ratio);
+  border: 1px dashed rgba(143, 160, 186, .16);
+  border-radius: var(--card-r);
+  background: repeating-linear-gradient(122deg,
+    rgba(143, 160, 186, .05) 0 3px, transparent 3px 7px);
+}
+.board-bank:has(.zone-bank:empty) .zone-tag { opacity: .55; }
 .board-self .zone-bank { flex: 0 1 auto; justify-content: center; }
 .board-self .board-props { justify-content: center; }
+/* §5: "tapping any zone zooms it", so a zone holding cards owes a thumb on
+   both axes. Empty zones collapse to nothing and are not tap targets. */
+.board .cardzone:not(:empty) { min-height: var(--tap); min-width: var(--tap); }
+
 /* Column chrome must never sit above a card in the hit stack. */
 .propcol-head, .zone-tag, .pile-label, .board-head { pointer-events: none; }
 /* Overlap is capped at 35% on YOUR bank: at 62% a bank card's exposed strip was
@@ -212,20 +266,43 @@
 /* An opponent board is 88px wide on a five-player phone. The BANK tag ate half
    of it and the stack then overflowed into the next board. */
 .opponents .zone-bank { flex-wrap: nowrap; overflow: hidden; }
-.opponents .zone-bank .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.74); }
+/* A STACK, not a barcode. At -74% each buried card showed a 9px-wide sliver of
+   its FACE — measured 14 of them on final-approach@desktop, which renders as a
+   corrupted image, not as money. Now they overlap like real notes in a pile
+   and only the top one shows a face; the rest contribute an edge. The total is
+   already on the net-worth chip in the nameplate. */
+.opponents .zone-bank .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.88); }
+.opponents .zone-bank .card:not(:last-child) {
+  box-shadow: 0 0 0 1px rgba(2, 6, 12, .95), inset -2px 0 3px -1px rgba(0, 0, 0, .75);
+}
+/* the light denomination spine was the white in the barcode */
+.opponents .zone-bank .card:not(:last-child)::before { display: none; }
 .opponents .board-bank .zone-tag { display: none; }
 
 /* align-items:flex-start — otherwise an EMPTY colour column stretches to the
    height of the tallest sibling and 10 of them eat half the phone screen. */
 .board-props { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .3em; margin-top: .2em; }
+/* Your own upgrades are a badge on the column, not a second full-size card
+   under it: at full size a FIGHT column with a hangar ran 147px tall on a
+   1280×720 desktop and was the single thing pushing the self board past its
+   scrollport (payment@desktop overflowed by 42px). The card is still a real
+   card node, still tappable, still 44px of column. */
+.board-self .zone-ups { --card-w: calc(var(--s) * 2.2); }
 /* Your own nameplate repeats what the HUD already says, so it is the first
    chrome to give ground: trimming it lifts the property field ~9px, which is
    what puts a real card under touchtest's (0.7,0.6) probe instead of a
    .propcol head. */
 .board-self .board-head { font-size: .66em; padding-bottom: .16em; margin-bottom: .2em; }
+/* §0.9 wants 44px. Measured before this line: 48-63 × 20px portrait, 41-54 × 17
+   landscape — and this is the game's PRIMARY targeting and drop surface (first
+   property of a colour, rent colour choice, FOC set pick, every wild
+   rearrange). A 20px strip is not a tap target, it is a hairline. */
 .propcol {
   flex: 0 0 auto;
-  min-width: calc(var(--card-w) + .5em);
+  /* Both axes, not just the height. touchtest measures the box a finger has to
+     land on, and a 41×61 column fails §0.9 exactly as hard as a 63×20 one did. */
+  min-width: max(calc(var(--card-w) + .5em), calc(var(--tap) + .45em));
+  min-height: var(--tap);
   padding: .1em .2em .2em;
   border: var(--hairline) solid rgba(143, 160, 186, .13);
   border-top: 2px solid var(--band, rgba(143, 160, 186, .3));
@@ -233,7 +310,30 @@
   background: linear-gradient(180deg, rgba(3, 9, 18, .5), rgba(3, 9, 18, .18));
   box-shadow: inset 0 1px 6px rgba(0, 0, 0, .38);
 }
-.propcol[data-empty="1"] { border-top-style: dashed; background: rgba(3, 9, 18, .22); }
+/* An empty colour is a PLACE on the mat — a slot with a printed card outline
+   waiting for a card — not one of ten dashed pills that read as skeleton
+   loading. The outline is drawn at the card's own aspect so the eye reads
+   "a card goes here". */
+.propcol[data-empty="1"] {
+  position: relative;
+  border-top-style: dashed;
+  background: rgba(3, 9, 18, .16);
+  box-shadow: none;
+}
+.propcol[data-empty="1"]::after {
+  content: "";
+  display: block;
+  width: var(--card-w);
+  height: calc(var(--tap) - 1.6em);
+  min-height: .9em;
+  margin: .1em auto 0;
+  border: 1px dashed rgba(143, 160, 186, .16);
+  border-radius: calc(var(--card-r) * .8);
+  background: repeating-linear-gradient(122deg,
+    rgba(143, 160, 186, .05) 0 3px, transparent 3px 7px);
+}
+/* An opponent's empty colours are hidden entirely (below), so the slot art
+   only ever prints on YOUR mat. */
 /* A completed set signs itself in ITS OWN colour, not in foil. The first pass
    spent gold here and a mid-game phone shot carried six gold marks — §6 allows
    four uses and none of them is "a set is finished". */
@@ -259,6 +359,24 @@
   line-height: 1.4;
   white-space: nowrap;
 }
+/* The nameplate, not the card, was setting an opponent column's width: at
+   .54em "DRONE 0/2" is 45px against a 28px card, so a 186px board fitted three
+   columns instead of five and a player with eight colours wrapped to four
+   rows — a 375px-tall board on a 390px-tall phone. The colour is already
+   carried by the column's top border and the card's own spine. */
+.opponents .propcol-head {
+  font-size: .44em;
+  letter-spacing: .04em;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 .25em;
+  line-height: 1.3;
+}
+/* the name takes its own line so the CARD, not the caption, sets the column
+   width: 45px of "DRONE 0/2" against a 28px card fitted three columns in a
+   186px board and wrapped an eight-colour opponent to four rows (measured
+   330px tall). Two lines of caption over a 35px column fits five. */
+.opponents .propcol-name { flex: 1 1 100%; text-align: center; }
 .propcol-name { color: var(--band, var(--steel-300)); filter: brightness(1.12); }
 .propcol-count { color: var(--steel-300); font-variant-numeric: tabular-nums; }
 .zone-props, .zone-ups { flex-wrap: wrap; }
@@ -272,17 +390,27 @@
 .zone-ups .card:first-child { margin-left: 0; }
 .board-opponent .propcol[data-empty="1"] { display: none; }
 
-/* An opponent board is a fixed-height STRIP: its colour columns scroll
-   sideways rather than wrapping. Wrapping put a five-player phone board at
-   two rows and the .opponents cap guillotined the second one mid-card. */
+/* Opponent colour columns WRAP. The old rule made the row a silent horizontal
+   scroller and the strip then cut it off: five-player@phone showed 4 of a
+   player's columns and arc-3@desktop sliced five of them. Nothing about an
+   opponent's board is allowed to be invisible — that is the information the
+   whole game is played against. The strip is sized to content now
+   (.opponents align-items:start), so a second row is absorbed rather than
+   guillotined. */
 .opponents .board-props {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  flex-wrap: wrap;
   margin-top: .3em;
 }
-.opponents .board-props::-webkit-scrollbar { display: none; }
+/* An opponent's column has no card to tap, so it does not owe 44px — and ten
+   of them at 44px would be the whole strip. The tighter gutter is what lets a
+   186px phone board carry four columns per row instead of three, which is the
+   difference between a two-row board and a four-row one. */
+/* An opponent's column is a targeting surface too (Inspector General takes a
+   whole set), so it owes the same 44px. Its card grows to 2.2s to match: at
+   2.2s the card is exactly 44px tall, so filling the tap floor costs no height
+   at all and the column stops looking like a card lost inside a box. */
+.opponents .propcol { min-width: calc(var(--tap) + .3em); padding: .1em .1em .15em; }
+.opponents .board-props { gap: .22em; }
 /* Opponent money stacks 74% deep — the denomination is unreadable there and the
    net-worth chip in the head already carries the total. */
 .opponents .card[data-type="money"] .card-name { display: none !important; }
@@ -295,8 +423,8 @@
 .table-center {
   position: relative;
   flex: 1 10 auto;
-  min-height: calc(var(--s) * 5.9);
-  max-height: calc(var(--s) * 6.4);
+  min-height: calc(var(--s) * 6.2);
+  max-height: calc(var(--s) * 7.2);
   display: flex;
   gap: 1.6em;
   justify-content: center;
@@ -342,7 +470,7 @@
 
 .zone-deck, .zone-discard {
   position: relative;
-  --card-w: calc(var(--s) * 3.4);
+  --card-w: calc(var(--s) * 3.9);
   width: var(--card-w);
   aspect-ratio: var(--card-ratio);
   border-radius: var(--card-r);
@@ -384,7 +512,11 @@
   border-top: 2px solid var(--steel-600);
   background:
     linear-gradient(180deg, rgba(16, 30, 50, .96) 0%, rgba(6, 12, 22, .99) 40%, #050a13 100%);
-  padding: .3em .4em calc(.25em + env(safe-area-inset-bottom));
+  /* NO env(safe-area-inset-bottom) here: .screen already pads the whole screen
+     by it (base.css), and #side did it a third time. Measured on a 34px-
+     indicator phone that was ~68px of dead space under a 92px card — the
+     reason the fan looked like it was falling off the bottom edge. */
+  padding: .3em .4em .3em;
   box-shadow: 0 -10px 26px rgba(0, 0, 0, .6);
 }
 .hand-dock.over-limit { border-top-color: var(--danger); }
@@ -397,50 +529,93 @@
 .hand-label span { color: var(--ink-100); font-variant-numeric: tabular-nums; }
 .hand-actions { margin-left: auto; display: flex; gap: .3em; }
 
-/* Sized against table/hand.js's fan, not against the flat card:
-   card 4.6s wide → 6.44s tall; rotated ±12° its bounding box is
-   6.44·cos12 + 4.6·sin12 = 7.26s, plus hand.js's 0.055·h edge drop = 7.61s,
-   plus 1s of padding → 8.7s. At 7.9s the outer cards' value coins were sliced
-   off by overflow:hidden on both 1280×720 and 390×844.
-   4.6s also keeps a 7-card hand at 4.6 + 6·3.31 = 24.5s wide, which is inside
-   the 390px dock — the hand limit must never need scrolling to read. */
+/* ══ THE FAN ═══════════════════════════════════════════════════════════════
+   Why every hand card used to read "Midnigh Requisi": the name was laid out
+   across the WHOLE card and then the next card in the fan printed over its
+   right-hand third. Nothing was clipping — measured, .card-name's own
+   scrollWidth−clientWidth was 0 on every card in every shot. The text was
+   simply underneath a neighbour. That is also why the same card read complete
+   when it happened to be last in the fan: an inconsistency that reads as a
+   rendering bug rather than as a layout budget.
+
+   So the fan declares how much of a card the next one covers, and the face
+   reserves exactly that much. Two numbers move together, and they move with
+   the hand size, because the exposed strip is (zone width ÷ card count) and
+   nothing can change that:
+
+     The counter-intuitive part, derived and then measured: for a fixed zone width
+   a DEEPER fan does not buy legibility, it costs it. With n cards in W px the
+   text column is W(0.83−cover)/(n+1−n·cover) — monotonically DECREASING in
+   cover — while the font, being a fraction of the card, falls with the card.
+   So a big hand gets SMALLER cards and a SHALLOWER fan, not the reverse:
+
+     cards  card-w   cover   text column   name font   longest token
+     ≤5     5.2s=75    10%      54px         7.5px     "Thunderbirds" 50px ✓
+     6      4.3s=62     6%      48px         6.2px     41px ✓
+     7      3.6s=52     4%      41px         5.2px     34px ✓
+     8+     3.1s=45     2%      36px         4.5px     30px ✓
+
+   (Widths measured in the browser at the rendered size, not derived: a system
+   font's advance per character is ~12% wider at 6px than the 100px probe
+   suggests, and that 12% was the difference between "Thunderbirds" fitting and
+   shearing.)
+
+   The dock's height is pinned to the ≤5 card, so the fan changes size without
+   the table underneath it moving. hand.js tightens the step further if the CSS
+   one still overflows (its MIN_STRIP is 26px), so these are ceilings above 8
+   cards — which is two over the hand limit.
+
+   Height is sized against hand.js's fan, not the flat card: card 4.6s wide →
+   6.44s tall; rotated ±12° the bounding box is 6.44·cos12 + 4.6·sin12 = 7.26s,
+   plus the 0.055·h edge drop = 7.61s, plus padding. */
 .zone-hand {
-  --card-w: calc(var(--s) * 4.6);
+  --card-w: calc(var(--s) * 5.2);
+  --fan-cover: .10;
+  --fan-name: .100;
+  --fan-band: .118;
   margin-top: .28em;
   gap: 0;
   align-items: flex-end;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: .5em .3em .9em;
-  min-height: calc(var(--s) * 8.8);
+  padding: .5em .3em 1.1em;
+  /* The dock follows the card, not the other way round: pinned at the ≤5 size
+     it left 77px of dead dock above an eight-card fan, which is the same void
+     the felt used to have, moved 200px down. 1.56 is the rotated bounding box
+     of a 5:7 card at the fan's ±12° (1.4·cos12 + sin12), 1.7em is the padding
+     plus the edge drop. */
+  min-height: calc(var(--card-w) * 1.56 + 1.7em);
   justify-content: safe center;
   scrollbar-width: none;
 }
-/* A mouse does not need a 44px-tall grab target on a card, and 1280×720 is the
-   short screen: 4.2s here returns 11px to the self board, which was clipping
-   its property row by 4px. */
+.zone-hand:has(> .card:nth-child(6)) { --card-w: calc(var(--s) * 4.3); --fan-cover: .06; }
+.zone-hand:has(> .card:nth-child(7)) { --card-w: calc(var(--s) * 3.6); --fan-cover: .04; }
+.zone-hand:has(> .card:nth-child(8)) { --card-w: calc(var(--s) * 3.1); --fan-cover: .02; }
+/* A wide screen has 932px of dock (1280 − the 21em log panel) for at most
+   seven cards, so the fan does not have to overlap at all to fit — which means
+   a desktop hand card can be BIGGER than a phone one and still show every name
+   whole with no hyphenation. Measured: 5.0s = 83px card, 69px text column, and
+   the longest name in the deck ("Rent: Elite Programs / Command") sets in
+   three lines with room to spare. The old 4.2s + 28% cover was the mirror of
+   the phone bug on a screen with 300px of spare width. */
 @media (min-width: 900px) {
-  .zone-hand { --card-w: calc(var(--s) * 4.2); min-height: calc(var(--s) * 8.2); }
-  /* 1280×720 is the short screen: the pile band is pinned (no growth) and the
-     piles run a size smaller, which lifts the self board's bank row over the
-     centre of the viewport — where touchtest's first probe lands. */
-  .zone-deck, .zone-discard { --card-w: calc(var(--s) * 3.1); }
-  .pile { gap: .25em; }
-  .table-center { min-height: calc(var(--s) * 5.6); max-height: calc(var(--s) * 5.6); }
-  /* A wide screen has no reason to stack an opponent's hand fan ABOVE their
-     bank — side by side it is the same cluster 38px shorter, per board, which
-     is what buys the self board its place in the middle of the viewport. */
-  .opponents .board {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-areas: "head head" "fan bank" "props props";
-    align-content: start;
-    column-gap: .5em;
+  .zone-hand {
+    --card-w: calc(var(--s) * 4.6);
+    --fan-cover: .08;
+    --fan-name: .104;
+    --fan-band: .120;
+    min-height: calc(var(--card-w) * 1.56 + 1.5em);
+    padding-bottom: .9em;
   }
-  .opponents .board-head { grid-area: head; }
-  .opponents .zone-hand-oppo { grid-area: fan; margin-bottom: 0; }
-  .opponents .board-bank { grid-area: bank; }
-  .opponents .board-props { grid-area: props; margin-top: .3em; }
+  .zone-hand:has(> .card:nth-child(6)),
+  .zone-hand:has(> .card:nth-child(7)),
+  .zone-hand:has(> .card:nth-child(8)) { --fan-cover: .10; }
+  /* 1280×720 is the short screen, so the pile band still gives ground first —
+     but arc-1-opening@desktop had a 180px empty mid-table band with two 51px
+     piles inside it. It grows into slack now and shrinks back out of it. */
+  .zone-deck, .zone-discard { --card-w: calc(var(--s) * 3.5); }
+  .pile { gap: .25em; }
+  .table-center { min-height: calc(var(--s) * 5.0); max-height: calc(var(--s) * 6.4); }
   /* Same trick on your own mat: the nameplate rides beside the bank instead of
      costing a row above it. Measured at 1280×720 this lifts the bank from
      y=363 to y=341, i.e. over the middle of the viewport. */
@@ -470,15 +645,47 @@
 }
 .zone-hand::-webkit-scrollbar { display: none; }
 .zone-hand .card { flex: 0 0 auto; }
-.zone-hand .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.28); }
+.zone-hand .card:not(:first-child) { margin-left: calc(-1 * var(--fan-cover) * var(--card-w)); }
+/* The same occlusion, one zone over: a bank stack overlaps 35% and a colour
+   column 40%, so every buried card's type band read "BAN", "SPA", "WIL". A
+   buried card in a real stack shows its EDGE — the colour of the band bar and
+   the spine — and the card on top is the one you read. The propcol head and
+   the net-worth chip already carry the counts. */
+.board .cardzone .card:not(:last-child) .card-band { color: transparent; }
+
+/* THE FIX for the sliced names: the face never lays type into the strip its
+   neighbour is standing on. 6% on top of the cover is the parallax of the fan
+   — adjacent cards differ by span/(n−1) = 3.4-4.6° of tilt, which walks the
+   covering edge ±3.7px across an 92px card. The LAST card has no neighbour and
+   keeps the whole face; that asymmetry is invisible because it only ever adds
+   room. */
+.zone-hand .card:not(:last-child) .card-face {
+  padding-right: calc((var(--fan-cover) + .06) * 100%);
+}
 
 /* opponent hands: a tight fan of backs */
 .zone-hand-oppo {
-  --card-w: calc(var(--s) * 1.55);
-  min-height: calc(var(--s) * 2.3);
+  --card-w: calc(var(--s) * 1.45);
+  min-height: calc(var(--s) * 2.05);
   align-items: flex-start;
   margin-bottom: .25em;
 }
+/* Stacking an opponent's hand fan ABOVE their bank cost a row per board at
+   every width, not just on desktop — measured 30px each, which on a phone with
+   four opponents is 120px of the felt spent on nothing. Side by side it is the
+   same cluster, one row shorter. (This block used to live inside the 900px
+   query; the phone needs it more than the desktop does.) */
+.opponents .board {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "head head" "fan bank" "props props";
+  align-content: start;
+  column-gap: .45em;
+}
+.opponents .board-head { grid-area: head; }
+.opponents .zone-hand-oppo { grid-area: fan; margin-bottom: 0; }
+.opponents .board-bank { grid-area: bank; }
+.opponents .board-props { grid-area: props; margin-top: .3em; }
 .zone-hand-oppo .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.55); }
 
 /* ══ THE CARD ══════════════════════════════════════════════════════════════
@@ -565,8 +772,17 @@
   padding: 0 .35em;
   text-align: center;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: clip;
+  /* "WILD · ANY" is ten characters on a 44px board card. nowrap + clip cut it
+     to "WILD · A"; nowrap + ellipsis cut it to "WILD…". It has spaces in it,
+     so it can simply take two lines — measured across the shot set, 39 board
+     bands were being cut and none of them needed to be. */
+  white-space: normal;
+  /* clip cut mid-letter — "ACTIO", "BAN", "REN", "SPAC" — which is the loudest
+     "this app is broken" signal a table can send. Nothing should reach this
+     rule any more (the band's own font tracks the exposed strip in the hand,
+     and board bands are short set codes), but if a label ever does outgrow its
+     card, an ellipsis says "there is more" instead of lying. */
+  text-overflow: ellipsis;
   box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .3), inset 0 1px 0 rgba(255, 255, 255, .28);
 }
 
@@ -583,9 +799,29 @@
 /* descendant, not child: P4's flip wraps the face in .card-inner */
 .zone-hand .card .card-name,
 .zone-discard .card .card-name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  /* NOT -webkit-line-clamp. Measured: a `display:-webkit-box` suppresses
+     Chromium's hyphenation dictionary, which is why a clamped name broke as
+     "Inspecto|r General" and "Drone/Train|ing" — a shear, not a hyphen, and
+     the exact thing that reads as a rendering bug. As a plain block the same
+     text hyphenates ("Inspec-tor"), and the height cap does the clamping.
+     .card-art is the flex:1 box on the face, so the lines the name needs come
+     out of the art field rather than out of the reader. */
+  display: block;
+  max-height: 48%;
+  font-size: calc(var(--card-w) * var(--fan-name, .100));
+  line-height: 1.14;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  /* last resort only — every token in the deck fits or hyphenates at the
+     sizes above. Widest measured token: "Fighter/Mobility" at 7.32em,
+     "Thunderbirds" at 6.27em, against a 6.5em column. */
+  overflow-wrap: break-word;
+}
+.zone-hand .card .card-band,
+.zone-discard .card .card-band {
+  font-size: calc(var(--card-w) * var(--fan-band, .118));
+  letter-spacing: .02em;
+  line-height: 1.3;
 }
 
 .card-art {
@@ -640,7 +876,47 @@
   white-space: nowrap;
 }
 .zone-hand .card .card-ladder,
-.zone-discard .card .card-ladder { display: block; }
+.zone-discard .card .card-ladder {
+  display: block;
+  /* the rent ladder carries a three-bar glyph worth 1.2em before its numbers,
+     so it needs more of the line than its character count suggests; .82 keeps
+     the widest ladder in the deck ("1/2/3/4", Overseas Bases) inside the
+     narrowest column in the set — 40px, landscape at seven cards. */
+  font-size: calc(var(--card-w) * var(--fan-name, .100) * .82);
+}
+/* The foot is a row of two, and the ladder always lost: "1/2/3/4" plus its
+   three-bar glyph needs 38px and the coin left it 30. It takes its own line
+   now — the face has the height (the art field is the flex:1 box) and the
+   numbers are the whole point of a rent ladder. */
+.zone-hand .card .card-foot,
+.zone-discard .card .card-foot { flex-wrap: wrap; row-gap: 2%; }
+.zone-hand .card .card-ladder,
+.zone-discard .card .card-ladder { flex: 1 1 100%; }
+
+/* An action's ladder was its own name shouted in caps ("MIDNIGHT REQUISITION"
+   under "Midnight Requisition"), and a rent's was its colours restated
+   ("FIGHT/MOBIL" under "Rent: Fighters / Mobility"). Both overflowed the foot
+   and were cut to "MIDNIC" / "FIGHT/I". Neither adds a fact the name has not
+   already given, so the foot carries the value coin alone. The ladder stays
+   where it is the only source of its number: property rent steps and a wild's
+   legal colours. */
+/* Chromium's hyphenation dictionary does not break a token containing a
+   slash, and "Fighter/Mobility" is sixteen characters — measured 7.32em wide
+   against a 6.5em column, so it sheared to "Drone/Train|ing". Wild names, and
+   only wild names, run 14% smaller; nothing else in the deck needs it. */
+.zone-hand .card[data-type="wild_property"] .card-name,
+.zone-discard .card[data-type="wild_property"] .card-name {
+  font-size: calc(var(--card-w) * var(--fan-name, .100) * .78);
+}
+
+/* A wild's ladder ("ANY", "DRONE/TRAIN") restates its band and its name, and
+   at 75px against a 30px box it was the worst offender in the set. */
+.zone-hand .card[data-type="action"] .card-ladder,
+.zone-hand .card[data-type="rent"] .card-ladder,
+.zone-hand .card[data-type="wild_property"] .card-ladder,
+.zone-discard .card[data-type="action"] .card-ladder,
+.zone-discard .card[data-type="rent"] .card-ladder,
+.zone-discard .card[data-type="wild_property"] .card-ladder { display: none; }
 
 /* rent ladder as STEPS: three ascending bars in the set colour, ahead of the
    numbers. Property cards only — an action card has no ladder to draw. */
@@ -649,9 +925,9 @@
   content: "";
   display: inline-block;
   vertical-align: -.08em;
-  width: 1.15em;
+  width: 1em;
   height: .78em;
-  margin-right: .3em;
+  margin-right: .2em;
   background: var(--band, var(--steel-300));
   -webkit-mask-image: linear-gradient(#000, #000), linear-gradient(#000, #000), linear-gradient(#000, #000);
   mask-image: linear-gradient(#000, #000), linear-gradient(#000, #000), linear-gradient(#000, #000);
@@ -806,7 +1082,12 @@
   --band: #9fb2c9;
   --band-ink: #0a0f18;
   --motif: repeating-linear-gradient(-45deg, #000 0 7%, transparent 7% 22%);
-  --motif-alpha: .26;
+  /* .26 of a mid-grey over near-black graphite is a 4% contrast step: at hand
+     size an ACTION card's art field read as a missing image rather than as
+     hazard chevrons. The motif is the only thing distinguishing an action
+     card's art from a black rectangle, so it gets the alpha the coloured sets
+     get for free from their hues. */
+  --motif-alpha: .5;
   background: linear-gradient(168deg, #2f3646 0%, #1f2532 48%, #151a24 100%);
 }
 .card[data-type="action"] .card-art {
@@ -814,6 +1095,7 @@
     linear-gradient(170deg, rgba(255, 255, 255, .05), rgba(0, 0, 0, .34)),
     radial-gradient(120% 96% at 50% 8%, #2a3242 0%, #10141d 100%);
 }
+.card[data-type="action"] .card-art::before { background: #b9cadf; }
 
 /* RENT: amber demand band, broadcast arcs. */
 .card[data-type="rent"] {
@@ -953,10 +1235,17 @@
 .card-facedown::after { background: none; box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .5); }
 
 /* ══ states — each unmistakable, none of them clashing ═════════════════════
-     gold   = targetable / lifted / selected     (the scarce foil)
-     green  = picked, droppable                  (a commitment you made)
+     gold   = TARGETABLE — "the game is asking you to pick this one"
+     ice    = lifted / dragging                  (height, not meaning)
+     green  = picked / dropping / droppable-hover (a commitment you made)
      steel  = payable                            (merely eligible)
-     shadow = lifted / dragging / flying         (height off the table) */
+     shadow = lifted / dragging / flying         (height off the table)
+
+   Lifting a card used to draw a 2px gold ring, which put foil on any card the
+   player happened to be holding — mid-game@desktop carried four gold marks
+   with three different meanings. Height is not a meaning; it is height. It is
+   drawn in cold white now, which is what a card catching the hangar light
+   actually looks like, and the foil is left to mean one thing. */
 
 .card.is-flying {
   z-index: 40;
@@ -970,18 +1259,18 @@
   z-index: 30;
   filter: brightness(1.1);
   box-shadow:
-    0 0 0 2px var(--gold),
-    inset 0 0 0 1px rgba(255, 234, 180, .35),
+    0 0 0 2px rgba(226, 240, 255, .92),
+    inset 0 0 0 1px rgba(255, 255, 255, .3),
     0 10px 20px rgba(0, 0, 0, .6),
-    0 0 24px rgba(232, 185, 85, .35);
+    0 0 24px rgba(180, 214, 255, .3);
 }
 .card.is-dragging {
   z-index: 45;
   filter: brightness(1.14);
   box-shadow:
-    0 0 0 2px var(--gold),
+    0 0 0 2px rgba(238, 247, 255, .96),
     0 18px 30px rgba(0, 0, 0, .68),
-    0 0 30px rgba(232, 185, 85, .32);
+    0 0 30px rgba(180, 214, 255, .3);
 }
 /* released over a legal zone: the lift collapses and the rim turns to the
    commit green for the few frames before the choreographer's FLIP owns it */
@@ -1058,25 +1347,33 @@
 .card[data-droppable="1"].is-drop-hover { box-shadow: 0 0 0 2px var(--go), 0 0 22px rgba(42, 179, 106, .45); }
 
 /* ══ FINAL APPROACH (§3.10) ════════════════════════════════════════════════
-   Three sets down, one turn cycle to survive. This is the loud one — the only
-   place the foil is allowed to behave like a klaxon.
+   Three sets down, one turn cycle to survive. This is the emergency, and it is
+   RED — no foil anywhere in it.
 
-   It has to coexist with [data-targetable], because an armed player is exactly
-   who everyone is about to hit. The two are layered on DIFFERENT geometry and
-   DIFFERENT hues so neither reads as the other:
+   It used to sweep gold↔red, which meant three things went wrong at once:
+   the cycle STARTED and ENDED on the gold frame, so every still capture (the
+   screenshot harness pauses animations at frame 0) showed an armed board
+   wearing the same gold as the turn marker; the reduced-motion fallback also
+   led with inset gold, so a reduced-motion player never saw the alarm at all;
+   and mid-game@desktop put an armed BLAZE next to a your-turn HARNESS in one
+   frame with identical treatment. An alarm has to read as an alarm at rest.
 
-     targetable      OUTSIDE the border — thin gold ring + gold bleed, 1.5s
+   It still has to coexist with [data-targetable] — an armed player is exactly
+   who everyone is about to hit — so the two sit on different geometry, in
+   different colours, at different periods:
+
+     targetable      OUTSIDE the border — thin GOLD ring + gold bleed, 1.5s
                      "you may tap this"
-     final approach  INSIDE the border  — thick alarm bevel sweeping gold↔red,
-                     a hazard rail across the head, red bleed, 1.1s
+     final approach  INSIDE the border  — thick RED alarm bevel, a hazard rail
+                     across the head, red bleed, 1.1s
                      "this board is about to win"
 
-   Different edge, different colour of bleed, different period: at a glance the
-   armed board is lit from within and the targetable one is outlined. */
+   The armed board is lit red from within; the targetable one is ringed in
+   gold. Neither needs motion to be told apart. */
 
 .board[data-final-approach="1"] {
-  border-color: var(--gold);
-  background-image: linear-gradient(180deg, rgba(232, 185, 85, .16), rgba(208, 52, 44, .06) 42%, transparent 78%);
+  border-color: var(--danger);
+  background-image: linear-gradient(180deg, rgba(208, 52, 44, .22), rgba(208, 52, 44, .06) 46%, transparent 80%);
   animation: armed-klaxon 1.1s ease-in-out infinite;
   z-index: 2;
 }
@@ -1090,30 +1387,32 @@
   height: 3px;
   border-radius: var(--radius) var(--radius) 0 0;
   background: repeating-linear-gradient(115deg,
-    var(--gold) 0 8px, #150d02 8px 10px, var(--danger) 10px 18px, #150d02 18px 20px);
+    var(--danger) 0 9px, #120404 9px 12px, var(--danger-lit) 12px 19px, #120404 19px 22px);
   opacity: .95;
   pointer-events: none;
 }
 .board[data-final-approach="1"] .board-name {
-  color: var(--gold-hi);
-  text-shadow: 0 0 .6em rgba(232, 185, 85, .7), 0 1px 0 rgba(0, 0, 0, .7);
+  color: var(--danger-lit);
+  text-shadow: 0 0 .6em rgba(208, 52, 44, .8), 0 1px 0 rgba(0, 0, 0, .8);
 }
-.board[data-final-approach="1"] .board-sets { color: var(--gold); }
-.board[data-final-approach="1"] .board-worth { box-shadow: inset 0 0 0 1px rgba(232, 185, 85, .45); }
+.board[data-final-approach="1"] .board-sets { color: var(--danger-lit); }
+.board[data-final-approach="1"] .board-worth { box-shadow: inset 0 0 0 1px rgba(255, 145, 132, .5); }
 
+/* Both ends of the cycle are red. It only varies in INTENSITY, so a paused
+   frame, a reduced-motion render and a live pulse all say the same thing. */
 @keyframes armed-klaxon {
   0%, 100% {
     box-shadow:
-      inset 0 0 0 3px var(--gold),
-      inset 0 0 30px rgba(232, 185, 85, .3),
-      0 0 26px rgba(232, 185, 85, .45),
+      inset 0 0 0 3px var(--danger),
+      inset 0 0 30px rgba(208, 52, 44, .34),
+      0 0 26px rgba(208, 52, 44, .42),
       var(--lift-2);
   }
   50% {
     box-shadow:
-      inset 0 0 0 3px var(--danger),
-      inset 0 0 34px rgba(208, 52, 44, .38),
-      0 0 34px rgba(208, 52, 44, .55),
+      inset 0 0 0 3px var(--danger-lit),
+      inset 0 0 36px rgba(208, 52, 44, .5),
+      0 0 36px rgba(208, 52, 44, .7),
       var(--lift-2);
   }
 }
@@ -1123,19 +1422,103 @@
 .board[data-final-approach="1"][data-targetable="1"] {
   animation: armed-klaxon 1.1s ease-in-out infinite, mark-pulse 1.5s ease-in-out infinite;
   outline: 2px solid var(--gold);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
-/* §0.9: the static variant must still be unmistakable, so it is the loud half
-   of the cycle — gold bevel, red bleed, hazard rail — with nothing moving. */
+/* §0.9: the static variant is the loud half of the cycle with nothing moving. */
 @media (prefers-reduced-motion: reduce) {
   .board[data-final-approach="1"],
   .board[data-final-approach="1"][data-targetable="1"] {
     animation: none !important;
     box-shadow:
-      inset 0 0 0 3px var(--gold),
-      inset 0 0 32px rgba(208, 52, 44, .3),
-      0 0 30px rgba(208, 52, 44, .5),
+      inset 0 0 0 3px var(--danger-lit),
+      inset 0 0 36px rgba(208, 52, 44, .5),
+      0 0 34px rgba(208, 52, 44, .65),
       var(--lift-2);
   }
+}
+
+/* ══ SHORT LANDSCAPE — a real layout, not a squeezed portrait one ══════════
+   Measured at 844×390 before this block: HUD 52 + dock 162 left #table 176px,
+   which #opponents (78) and #table-center (71) consumed entirely, so
+   .self-board computed to height 12 against a scrollHeight of up to 179 —
+   93% of your own properties, bank and colour columns were simply not on
+   screen. You could not place, rearrange or pay with a property.
+
+   Portrait stacks three bands down a tall screen. Landscape has the opposite
+   shape, so it stacks them ACROSS: opponents own a left column the full height
+   of the felt (a phone in landscape is 390px tall, which is four opponent
+   boards), and the piles and YOUR mat share the right one. The dock puts its
+   button bar beside the fan instead of above it, which is 50px of the 390
+   given straight back to the table. */
+@media (orientation: landscape) and (max-height: 560px) and (max-width: 1024px) {
+  .table {
+    display: grid;
+    grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "opp centre" "opp self";
+    gap: .3em .45em;
+    padding: .35em .4em .3em;
+  }
+  .opponents {
+    grid-area: opp;
+    display: flex;
+    flex-direction: column;
+    max-height: none;
+    min-height: 0;
+    gap: .3em;
+  }
+  .opponents .board { flex: 0 0 auto; }
+  /* one board per row across ~380px: no column ever has to wrap or scroll */
+  .opponents .board-props { flex-wrap: wrap; }
+
+  .table-center {
+    grid-area: centre;
+    flex: 0 0 auto;
+    min-height: 0;
+    max-height: none;
+    gap: 1.1em;
+    padding: .1em 0 .2em;
+  }
+  .zone-deck, .zone-discard { --card-w: calc(var(--s) * 3.7); }
+
+  .self-board {
+    grid-area: self;
+    max-height: none;
+    min-height: 0;
+  }
+  /* 44px of empty colour column × 10 is the whole right-hand pane on a 390px
+     tall screen; landscape drops the slot art and keeps the tap floor at a
+     size the pane can actually carry. */
+  /* the tap floor is a floor in landscape too — the pane is wide, so ten 44px
+     columns cost one row here, not two */
+  .board-self .propcol[data-empty="1"]::after { display: none; }
+
+  /* the dock lies down: label + buttons on the left, fan on the right */
+  .hand-dock { display: flex; align-items: center; gap: .5em; padding: .25em .4em; }
+  .hand-bar {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    width: calc(var(--tap) * 2.6);
+    gap: .2em;
+  }
+  .hand-label { flex: 1 1 100%; text-align: center; }
+  .hand-actions { margin-left: 0; flex-wrap: wrap; justify-content: center; }
+  .hand-actions .btn { font-size: .74em; padding: 0 .55em; }
+  .zone-hand {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-top: 0;
+    min-height: calc(var(--card-w) * 1.5 + 1.1em);
+    padding: .3em .3em .4em;
+    /* 700px of dock for at most eight cards: the fan never has to overlap, so
+       every name sets whole at the biggest card size the height allows. */
+    --card-w: calc(var(--s) * 4.4);
+    --fan-cover: .04;
+    --fan-name: .104;
+    --fan-band: .120;
+  }
+  .zone-hand:has(> .card:nth-child(6)),
+  .zone-hand:has(> .card:nth-child(7)),
+  .zone-hand:has(> .card:nth-child(8)) { --fan-cover: .06; }
 }

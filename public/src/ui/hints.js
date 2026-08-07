@@ -20,7 +20,12 @@ const MAX_ON_SCREEN = 3;
 const LIFE_MS = 9000;
 
 const HINTS = {
-  drag: 'Drag cards straight onto the table to play them — the strip is the slow way.',
+  // The peek is the one affordance nobody discovers by accident, and it is the
+  // one that makes the game teach itself (owner directive, P7) — so it is the
+  // FIRST thing said, before the drag.
+  peek: 'Hold any card to read it — yours, theirs, anywhere on the table. On a mouse, just '
+    + 'hover.',
+  drag: 'Drag cards straight onto the table to play them — anywhere on the felt works.',
   pay: 'Tap your bank and property cards to pay, then confirm. Overpaying gives no change.',
   armed: 'Someone is on FINAL APPROACH. Break one of their sets before their turn comes '
     + 'around, or they win.',
@@ -46,17 +51,46 @@ function remember(id) {
 
 function done() { return load().size >= Object.keys(HINTS).length; }
 
+/**
+ * How far off the bottom of the viewport the stack must sit.
+ *
+ * The first version lifted by the HAND DOCK's height alone and ignored #prompt.
+ * MEASURED on a first-timer's first rent, 390×844: .hints occupied y603–648 and
+ * the CONFIRM PAYMENT button y609–653, i.e. 146×39 of a 155×44 button covered,
+ * for the full 9s life of the hint. The same bug hid 79% of DETAILS on the first
+ * hand-card tap. Both were invisible to every tool because the stack is
+ * pointer-events:none and elementsFromPoint therefore never reports it.
+ *
+ * So the lift is not a sum of guessed boxes: it is the distance from the bottom
+ * of the viewport to the TOP of the highest thing docked down there. Anything
+ * that later joins the dock is covered for free.
+ */
+function liftPx() {
+  const bottom = window.visualViewport
+    ? window.visualViewport.height + window.visualViewport.offsetTop
+    : window.innerHeight;
+  let top = bottom;
+  for (const id of ['prompt', 'hand-dock']) {
+    const node = $(id);
+    if (!node || node.hidden) continue;
+    const rect = node.getBoundingClientRect();
+    if (rect.height > 0 && rect.top < top) top = rect.top;
+  }
+  return Math.max(8, Math.round(bottom - top) + 8);
+}
+
+/** Re-measure. Cheap (two getBoundingClientRect) and only while a hint is up. */
+function relayout() {
+  if (!host?.isConnected) return;
+  host.style.setProperty('--hint-lift', `${liftPx()}px`);
+}
+
 function container() {
   if (!host?.isConnected) {
     host = el('div', { class: 'hints', attrs: { 'aria-live': 'polite' } });
     ($('app') || document.body).appendChild(host);
   }
-  // Sit above the hand dock rather than over it: the dock's height is the hand
-  // card size plus the button bar, which changes with the viewport, so it is
-  // measured instead of guessed. Measured once per hint — three times a game.
-  const dock = $('hand-dock');
-  const lift = dock ? Math.round(dock.getBoundingClientRect().height) + 8 : 76;
-  host.style.setProperty('--hint-lift', `${lift}px`);
+  relayout();
   return host;
 }
 
@@ -90,8 +124,24 @@ export function reset() {
   for (const id of [...live.keys()]) dismiss(id);
 }
 
+/**
+ * The prompt bar grows and shrinks under the hint (a strip is 99–109px, an idle
+ * bar is hidden), and ui/prompt.js renders AFTER this module on the same bus
+ * event — so re-measuring inside a bus handler would read the previous layout.
+ * A ResizeObserver fires after layout, which is the only moment the number is
+ * true.
+ */
+function watchDock() {
+  if (typeof ResizeObserver !== 'function') return;
+  const ro = new ResizeObserver(() => relayout());
+  for (const id of ['prompt', 'hand-dock']) { const node = $(id); if (node) ro.observe(node); }
+  window.visualViewport?.addEventListener('resize', relayout);
+  window.addEventListener('resize', relayout);
+}
+
 export function mount() {
   if (done()) return;
+  watchDock();
 
   // 1 · the player just tapped a hand card: teach the drag they did not use.
   bus.on(EVENTS.INTERACT_CHANGED, () => {
@@ -109,6 +159,9 @@ export function mount() {
       for (const id of [...live.keys()]) dismiss(id);
       return;
     }
+
+    // 1 · the first hand they are ever dealt: how to READ a card.
+    if (sel.myHand().length) show('peek');
 
     // 2 · first time money is demanded of them.
     if (sel.owedAmount() > 0) show('pay');

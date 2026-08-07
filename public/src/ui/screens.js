@@ -7,6 +7,8 @@
 import { $, clear, setHidden, setText, setClass } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
+import * as socket from '../net/socket.js';
+import * as store from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
 
 const SCREENS = ['home', 'lobby', 'game'];
@@ -53,6 +55,43 @@ export function closeSheet() {
 }
 
 export function sheetOpen() { return !$('sheet')?.hidden; }
+
+/* ── leaving, for real ─────────────────────────────────────────────────────
+ *
+ * OWNER BUG (P7, reproduced headlessly): pressing Leave room did nothing. Two
+ * compounding causes, both here:
+ *
+ *   1. The handler navigated with `location.href = location.pathname` and never
+ *      called clearCreds(). The reload re-ran boot(), boot() found chud_pid /
+ *      chud_room / chud_resume still in sessionStorage and called
+ *      resumeOrConnect() — which put the player straight back into the room
+ *      they had just left. Measured after the click: screenGameVisible true,
+ *      creds unchanged, URL unchanged, zero console errors.
+ *   2. `leave_room` was only ENQUEUED. net/socket.js drains at MIN_GAP=150ms,
+ *      and the navigation threw the outbox away before the frame was written,
+ *      so the server never learned the seat was free.
+ *
+ * The fix is one teardown used by every exit — Leave room, and main.js's fatal
+ * "Room not found" / "Invalid resume credentials" path. It does not reload:
+ * a reload was only ever a way of avoiding this function.
+ *
+ * @param {{message?:string, error?:string, farewell?:Function}} opts
+ *        farewell runs while the socket is still open and is flushed before it
+ *        closes — that is where `leave_room` goes.
+ */
+export function endSession({ message = '', error = '', farewell = null } = {}) {
+  if (typeof farewell === 'function') farewell();
+  socket.disconnect({ flushFirst: true });
+  socket.clearCreds();
+  store.store.connected = false;
+  store.reset();
+  closeSheet();
+  setHidden($('win-overlay'), true);
+  store.setScreen('home');
+  showScreen('home');                 // setScreen is a no-op if we were already 'home'
+  setText($('home-error'), error);
+  if (message) toast(message);
+}
 
 export function mount() {
   pointer.registerActions({

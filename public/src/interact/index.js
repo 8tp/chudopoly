@@ -12,13 +12,14 @@ import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import { setAttr, setClass, qsa } from '../core/dom.js';
 import * as send from '../net/send.js';
-import { store, selfPlayer } from '../state/store.js';
+import { store, selfPlayer, playerById } from '../state/store.js';
 import * as sel from '../state/selectors.js';
 import * as table from '../table/index.js';
 import { getNode } from '../table/cardnode.js';
 import { isPropertyCard, COLOR_KEYS } from '../core/cards.js';
 import * as pointer from './pointer.js';
 import * as drag from './drag.js';
+import { CUE, cueEl } from '../anim/cues.js';
 
 export const mode = {
   kind: 'idle',            // idle | strip | target | payment | discard | details
@@ -45,6 +46,35 @@ const HINTS = {
 function changed() {
   applyMarks();
   bus.emit(EVENTS.INTERACT_CHANGED, mode);
+}
+
+/* ── refusal (§5 "invalid targets shake their head", §P7.3) ────────────────
+ *
+ * Before this existed, the ONLY refusal the client could express was
+ * `<button disabled title="…">`: a measured full game produced 0 `denied`
+ * sounds because CUE.DENIED fired from exactly one place (a failed drag-drop).
+ * Every "no" now goes through here, so a refusal is a shake + the sour cue +
+ * the haptic + the sentence, wherever it was asked for.
+ *
+ * @param {string} reason  the sentence — never empty, never a bare "invalid"
+ * @param {Element|null} el  what to shake; the card node when nothing better
+ */
+export function refuse(reason, el) {
+  const node = el || (mode.cardId != null ? getNode(mode.cardId) : null);
+  shakeHead(node);
+  cueEl(CUE.DENIED, true, false, node);
+  if (reason) bus.emit(EVENTS.TOAST, reason);
+}
+
+/** One class, self-cleaning. Re-triggering mid-shake restarts it (a second
+ *  refusal must be visible, not swallowed by the running animation). */
+export function shakeHead(el) {
+  if (!el) return;
+  el.classList.remove('is-refused');
+  void el.offsetWidth;                       // one forced reflow per refusal beat
+  el.classList.add('is-refused');
+  clearTimeout(el.__refuseTimer);
+  el.__refuseTimer = setTimeout(() => el.classList.remove('is-refused'), 420);
 }
 
 export function reset() {
@@ -91,7 +121,7 @@ export function playSelected() {
   const card = mode.card;
   if (!card) return;
   const reason = sel.blockedReason(card);
-  if (reason) { bus.emit(EVENTS.TOAST, reason); return; }
+  if (reason) { refuse(reason); return; }
 
   if (isPropertyCard(card)) {
     mode.intent = 'property';
@@ -102,10 +132,10 @@ export function playSelected() {
   } else if (card.type === 'action' || card.type === 'rent') {
     mode.intent = 'action';
     const needs = sel.requirementsFor(card);
-    if (!needs) { bus.emit(EVENTS.TOAST, 'That card cannot be played now'); return; }
+    if (!needs) { refuse('That card cannot be played now'); return; }
     mode.needs = needs;
   } else {
-    bus.emit(EVENTS.TOAST, 'Money cards are banked, not played');
+    refuse('Money cards are banked, not played');
     return;
   }
 
@@ -118,8 +148,8 @@ export function playSelected() {
 export function bankSelected() {
   const card = mode.card;
   if (!card) return;
-  if (isPropertyCard(card)) { bus.emit(EVENTS.TOAST, 'Properties cannot be banked'); return; }
-  if (!sel.canPlay()) { bus.emit(EVENTS.TOAST, 'Not your turn to play'); return; }
+  if (isPropertyCard(card)) { refuse('Properties cannot be banked'); return; }
+  if (!sel.canPlay()) { refuse(sel.cannotPlayReason()); return; }
   const index = sel.handIndexOf(card.id);
   if (index < 0) return;
   send.playMoney(index);
@@ -130,9 +160,9 @@ export function bankSelected() {
 export function beginMove(cardId) {
   const found = sel.myPropertyCard(cardId);
   if (!found || found.card.type !== 'wild_property') return;
-  if (!sel.canPlay()) { bus.emit(EVENTS.TOAST, 'You can only rearrange on your own turn'); return; }
+  if (!sel.canPlay()) { refuse(sel.cannotPlayReason(), getNode(cardId)); return; }
   const colors = sel.moveColors(found.card, found.color);
-  if (!colors.length) { bus.emit(EVENTS.TOAST, 'Nowhere legal to move it'); return; }
+  if (!colors.length) { refuse('Nowhere legal to move it — every other set is full', getNode(cardId)); return; }
   mode.kind = 'target';
   mode.intent = 'move';
   mode.cardId = cardId;
@@ -191,9 +221,13 @@ export function confirmPayment() {
   if (mode.kind !== 'payment') return;
   const ids = [...mode.selected];
   const payable = sel.payableCards();
-  if (!ids.length && payable.length) { bus.emit(EVENTS.TOAST, 'Select cards to pay with'); return; }
+  const bar = document.getElementById('prompt');
+  if (!ids.length && payable.length) {
+    refuse('Tap your bank and property cards to choose what to hand over', bar);
+    return;
+  }
   if (selectedTotal() < mode.amount && ids.length < payable.length) {
-    bus.emit(EVENTS.TOAST, `Pay at least ${mode.amount}M, or surrender everything`);
+    refuse(`${selectedTotal()}M is short of ${mode.amount}M — add cards, or surrender everything`, bar);
     return;
   }
   send.respond('accept', ids);
@@ -203,7 +237,8 @@ export function confirmPayment() {
 export function confirmDiscard() {
   if (mode.kind !== 'discard') return;
   if (mode.selected.size !== mode.excess) {
-    bus.emit(EVENTS.TOAST, `Select exactly ${mode.excess}`);
+    refuse(`Choose exactly ${mode.excess} card${mode.excess === 1 ? '' : 's'} to discard `
+      + `— ${mode.selected.size} chosen`, document.getElementById('prompt'));
     return;
   }
   send.endTurn([...mode.selected]);
@@ -224,7 +259,7 @@ function dispatch() {
   if (mode.intent === 'move') {
     send.moveProperty(mode.cardId, mode.picks.targetColor);
   } else if (index < 0) {
-    bus.emit(EVENTS.TOAST, 'That card is no longer in your hand');
+    refuse('That card left your hand before the play landed');
   } else if (mode.intent === 'property') {
     send.playProperty(index, mode.picks.targetColor);
   } else if (mode.intent === 'action') {
@@ -306,8 +341,12 @@ export function dragCandidate(cardId) {
  * Legal landing places for a dragged card, as elements.
  *   rank 0 — a precise target: a set column, a board, the bank, a card
  *   rank 1 — a region that means "play it": your own board, the table centre.
- * drag.js resolves a release inside a region to the nearest precise target it
- * contains, so a rough drop still lands somewhere the player meant.
+ *   rank 2 — the whole felt, as the LAST resort, for cards whose neutral
+ *            meaning is unambiguous ("play it and I will aim on the table").
+ * drag.js resolves a release to the nearest rank-0 target within a snap radius
+ * first, then to a region's nearest precise child, then to rank 2 — so a rough
+ * drop still lands somewhere the player meant (owner feedback: aiming at a
+ * 20px column strip "feels terrible").
  * An empty target list is legal: the card is draggable but nothing it could do
  * is legal right now, and `reason` says why.
  */
@@ -365,6 +404,8 @@ export function dragPlan(cardId) {
       }
     }
     push(document.getElementById('table-center'), { kind: 'play' }, 1);
+    // The neutral "play it" target is the FELT, not the 64px-tall deck strip.
+    push(document.getElementById('table'), { kind: 'play' }, 2);
   }
 
   if (bankable) {
@@ -487,8 +528,26 @@ export function applyMarks() {
 
 /* ── wiring ────────────────────────────────────────────────────────────── */
 
+let explained = false;                 // one interruption sentence per broadcast
+
+/** A live drag/selection that a server broadcast just invalidated (§P7.11). */
+function yanked(cardId) {
+  explained = true;
+  refuse(`${interruptedBy()} — your card is back in your hand.`, getNode(cardId));
+}
+
+function interruptedBy() {
+  const owed = sel.owedAmount();
+  if (owed > 0) {
+    const pa = store.snapshot?.pendingAction;
+    const who = playerById(pa?.sourceId)?.name;
+    return `${who || 'Someone'} charges you ${owed}M`;
+  }
+  return sel.cannotPlayReason();
+}
+
 export function mount() {
-  drag.mount({ dragPlan, dropCommit, dragCandidate, refreshMarks: applyMarks });
+  drag.mount({ dragPlan, dropCommit, dragCandidate, refreshMarks: applyMarks, yanked });
   pointer.onEscape(() => cancel());
   pointer.onTargetTap((el) => handleTargetTap(el));
   pointer.onCardTap((id, node) => {
@@ -516,15 +575,24 @@ export function mount() {
   // must fall through to the owed check below — a snapshot can BOTH invalidate
   // the old mode and demand payment (fixture jumps, missed broadcasts).
   const syncMode = () => {
+    // "I was holding something and the table took it away." Captured BEFORE the
+    // mode is rewritten, because that is the only moment the difference between
+    // "I put it down" and "it was taken" still exists (§P7.11).
+    const wasBusy = mode.kind === 'strip' || mode.kind === 'target';
     if (mode.kind === 'strip' || mode.kind === 'target') {
       if (mode.intent !== 'move' && mode.cardId != null && !sel.handCard(mode.cardId)) reset();
     }
     if (mode.kind === 'payment' && sel.owedAmount() === 0) reset();
     if (mode.kind === 'discard' && sel.myHand().length <= (store.snapshot?.handLimit || 7)) reset();
-    if (mode.kind === 'idle' && sel.owedAmount() > 0) { beginPayment(sel.owedAmount()); return; }
+    if (mode.kind === 'idle' && sel.owedAmount() > 0) {
+      const held = wasBusy && !explained;
+      beginPayment(sel.owedAmount());
+      if (held) bus.emit(EVENTS.TOAST, `${interruptedBy()} — answer that first.`);
+      return;
+    }
     applyMarks();
   };
-  bus.on(EVENTS.STATE_APPLIED, () => { drag.revalidate(); syncMode(); });
+  bus.on(EVENTS.STATE_APPLIED, () => { explained = false; drag.revalidate(); syncMode(); });
 
   // On a fixture/snap load STATE_APPLIED fires before reconcile has created any
   // card node, so marks (and payment auto-entry) found nothing to act on.

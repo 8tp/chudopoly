@@ -83,8 +83,16 @@ export function install(readyPromise, applyStateFn) {
 
   choreographer.setInstant(true);
   socket.setSendRecording(true);
+  // `big` rides along: it selects a different voice/mix branch in audio/engine,
+  // and without it no tool could assert the big-moment path ever fires (audio
+  // agent, P7 round 1 — it had to wrap the recorder in a throwaway driver).
   audio.setRecorder((name, opts) => {
-    bridge.sfxLog.push({ name, t: Math.round(performance.now()), mine: !!opts?.mine });
+    bridge.sfxLog.push({
+      name,
+      t: Math.round(performance.now()),
+      mine: !!opts?.mine,
+      big: !!opts?.big,
+    });
   });
   bridge.audio = audio.harnessApi();
   fx.setHapticRecorder((pattern) => {

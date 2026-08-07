@@ -11,7 +11,7 @@ import { store, selfPlayer } from '../state/store.js';
 import * as sel from '../state/selectors.js';
 import {
   COLORS, COLOR_KEYS, cardName, cardText, colorName, rentFor, setSize,
-  blockableByOpsec, isPropertyCard, upgradeKinds,
+  opsecFlag, isPropertyCard, upgradeKinds,
 } from '../core/cards.js';
 import { openSheet } from './screens.js';
 
@@ -142,6 +142,10 @@ function actionContext(card) {
   return out;
 }
 
+/** The live "what is this worth right now" rows. ui/peek.js renders the same
+ *  ones, so the hover/hold peek and the full sheet can never disagree. */
+export function contextRows(card) { return card ? context(card) : []; }
+
 function context(card) {
   if (!store.snapshot || !selfPlayer()) return [];
   if (card.type === 'rent') return rentContext(card);
@@ -171,10 +175,11 @@ export function show(card) {
   }
 
   const tags = el('div', { class: 'dt-tags' });
-  if (blockableByOpsec(card)) {
-    tags.appendChild(el('span', { class: 'dt-tag is-block', text: 'OPSEC can cancel it' }));
-  } else if (card.type === 'action' && card.action !== 'opsec') {
-    tags.appendChild(el('span', { class: 'dt-tag', text: 'OPSEC cannot touch it' }));
+  // §P7.15 — one source for this sentence, so the OPSEC card can no longer be
+  // flagged "OPSEC cannot touch it" directly under its own counter-OPSEC rule.
+  if (card.type === 'action' || card.type === 'rent') {
+    const flag = opsecFlag(card);
+    tags.appendChild(el('span', { class: `dt-tag is-${flag.kind}`, text: flag.text }));
   }
   if (card.placedColor && COLORS[card.placedColor]) {
     tags.appendChild(el('span', { class: 'dt-tag', text: `On ${colorName(card.placedColor)}` }));

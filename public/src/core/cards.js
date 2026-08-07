@@ -27,6 +27,18 @@ export const COLOR_KEYS = Object.freeze(Object.keys(COLORS));
 
 export const HAND_LIMIT = 7;
 export const SETS_TO_WIN = 3;
+/** game.js DECK_CYCLE_LIMIT (§3.11). The live snapshot carries deckCycleLimit
+ *  and always wins; this is the number the help sheet quotes when there is no
+ *  game on screen. test/ui-contract.test.js cross-checks it against game.js. */
+export const DECK_CYCLE_LIMIT = 16;
+
+/** The cycle at which the HUD starts showing the counter. Half the allowance is
+ *  where an attrition finish stops being theoretical (game.js: healthy games
+ *  spend 1.9 cycles, p90 5). ui/hud.js and ui/help.js must agree, or the brief
+ *  promises a warning the HUD does not give. */
+export function deckCycleNotice(limit = DECK_CYCLE_LIMIT) {
+  return Math.ceil((limit || DECK_CYCLE_LIMIT) / 2);
+}
 
 /** Which actions need what before play_action is legal (mirrors game.js playAction). */
 export const ACTION_NEEDS = Object.freeze({
@@ -63,11 +75,15 @@ export function zoneFull(player, color) {
   return size === 0 || (player?.properties?.[color]?.length || 0) >= size;
 }
 
-/** Midnight Requisition may not touch a zone that is exactly a complete set. */
+/** Midnight Requisition may not touch a complete set.
+ *  Mirrors game.js zoneRequisitionable(): `n > 0 && n < info.size`. It was
+ *  `n !== size` while a zone could be forced past its size; §3.5 overflow is
+ *  gone (receiveProperty banks a homeless property instead), so a zone at or
+ *  over its size is simply off limits. */
 export function requisitionable(player, color) {
   const size = setSize(color);
   const n = player?.properties?.[color]?.length || 0;
-  return n > 0 && n !== size;
+  return n > 0 && n < size;
 }
 
 export function legalColorsFor(card) {
@@ -122,11 +138,16 @@ export const ACTION_RULES = Object.freeze({
   inspector_general: 'Seize one whole COMPLETE set from a player. Its Upgrade and FOC come with it.',
   // playAction case 'midnight_requisition' + zoneRequisitionable().
   midnight_requisition: 'Take one property. Never out of a complete set.',
-  // executeEntry case 'swap' — both boards can lose a set to it.
-  tdy_orders: 'Trade one of your properties for one of theirs. Either side can lose a set.',
+  // playAction case 'tdy_orders' has NO zoneRequisitionable guard and
+  // executeEntry case 'swap' splices out of whatever colour holds the card, so
+  // a complete set is fair game on BOTH sides. §3.1 (P7 ruling) keeps that
+  // power deliberately; the copy states it instead of pretending otherwise.
+  tdy_orders: 'Trade one of your properties for one of theirs — a complete set is not safe from '
+    + 'it, on either side. You always give a card back, which is what separates it from CHUD.',
   // playAction case 'chud' — no zoneRequisitionable guard, and §3.1 removed the tax.
-  chud: 'Commandeer Hardware Under Directive. Take ANY property, even out of a complete set — '
-    + 'the only card that can. No tax.',
+  chud: 'Commandeer Hardware Under Directive. TAKE any property, even out of a complete set, and '
+    + 'give nothing back — the only card that does that. (TDY Orders can trade into a complete '
+    + 'set; it cannot rob one.) No tax.',
   // playAction case 'upgrade' + calcRent() + discardUpgrades().
   upgrade: '+3M rent on one complete set. Can never be handed over as payment, '
     + 'but counts in your net worth — and is discarded if the set breaks.',
@@ -170,6 +191,23 @@ export function blockableByOpsec(card) {
   if (!card) return false;
   if (card.type === 'rent') return true;
   return card.type === 'action' && BLOCKABLE.has(card.action);
+}
+
+/**
+ * The one sentence that goes on a card's OPSEC flag. OPSEC itself is the case
+ * the boolean above cannot express: it does not create a pendingAction, so
+ * blockableByOpsec() is false — and the catalogue printed "OPSEC CANNOT TOUCH
+ * IT" one line under the card's own rule text describing counter-OPSEC (§P7.15).
+ * respondToAction case 'opsec' flips entry.responderId and increments depth, so
+ * an OPSEC is answered by another OPSEC and by nothing else.
+ */
+export function opsecFlag(card) {
+  if (card?.type === 'action' && card.action === 'opsec') {
+    return { text: 'Answered only by another OPSEC', kind: 'chain' };
+  }
+  return blockableByOpsec(card)
+    ? { text: 'OPSEC can cancel it', kind: 'block' }
+    : { text: 'OPSEC cannot touch it', kind: 'noblock' };
 }
 
 /** Display name. game.js names rent cards off raw colour keys

@@ -693,10 +693,212 @@
 }
 #win-reason { line-height: 1.4; font-size: .82em; }
 
+/* ══ P7 round-1 fixes ═══════════════════════════════════════════════════ */
+
+/* ── §0.9 tap floor: everything under 44px that this agent owns ─────────
+   Measured on 390×844 by tools/lib/audit.mjs, which now measures every
+   surface rather than whatever happened to be staged last:
+     .brief-tab        35px  (calc(--tap * .8))   — this file, fixed below
+     .chat-tab         34px  (calc(--tap * .78))  — OVERRIDE 3, rule in ui.css
+     .side-head .btn-icon 44×20 (2em box)         — OVERRIDE 4, rule in ui.css
+     .btn-small        34px  (calc(--tap * .78))  — OVERRIDE 5, rule in base.css
+   The three OVERRIDEs are reported to the design agent to be folded into
+   their own files; they are here so the floor holds in the meantime.
+   Left where they are because they are NOT mine to move:
+     .propcol          20px tall — table.css / table agent
+     hand card strips  39–44px exposed — table/hand.js fan overlap */
+.brief-tab { min-height: var(--tap); }
+
+/* OVERRIDE 3 — ui.css: `.chat-tab { min-height: calc(var(--tap) * .78) }` */
+.chat-tabs .chat-tab { min-height: var(--tap); }
+
+/* OVERRIDE 4 — ui.css: `.side-head .btn-icon { min-height:2em; width:2em; height:2em }`
+   at .68em context that computes to 44×20. The head keeps its small type; only
+   the close button grows back to the floor. */
+.side-head .btn-icon {
+  min-height: var(--tap);
+  width: var(--tap);
+  height: var(--tap);
+  font-size: 1.1em;
+}
+
+/* OVERRIDE 5 — base.css: `.btn-small { min-height: calc(var(--tap) * .78) }`.
+   Kick/Remove in the lobby are destructive and were 34px. */
+.lobby-row .btn-small { min-height: var(--tap); }
+
+/* ── §P7.6 the software keyboard ────────────────────────────────────────
+   OVERRIDE 6 — ui.css pins `.side { bottom: 0 }` to the LAYOUT viewport, which
+   iOS does not shrink for the keyboard: measured #chat-input and SEND both at
+   bottom 835 on an 844 viewport, 327px under the keyboard. ui/comms.js
+   publishes the occluded height as --kb-inset from visualViewport (§2). */
+.side { bottom: var(--kb-inset, 0px); }
+body.kb-open .side { transition: bottom .14s ease-out; }
+/* With the keyboard up the log is the first thing that can afford to shrink;
+   the composer is the reason the keyboard exists. */
+body.kb-open .log { flex: 0 1 22%; }
+body.kb-open .chat-row { position: sticky; bottom: 0; }
+
+/* ── §P7.12 the connection indicator ────────────────────────────────────
+   OVERRIDE 7 — ui.css draws `.conn` as a .55em (≈8px) dot whose only
+   explanation is a hover `title`, which a phone cannot produce. The dot keeps
+   its place; a word joins it when there is something to say. ui/hud.js builds
+   the label (public/index.html is architect-owned). */
+.conn { width: .7em; height: .7em; }
+.conn.is-off { animation: conn-pulse 1.1s ease-in-out infinite; }
+@keyframes conn-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 .5em rgba(208, 52, 44, .9); }
+  50%      { opacity: .45; box-shadow: 0 0 .2em rgba(208, 52, 44, .5); }
+}
+.conn-label {
+  font-size: .6em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--danger-lit);
+  white-space: nowrap;
+  max-width: 0;
+  overflow: hidden;
+  transition: max-width .18s ease, opacity .18s ease;
+  opacity: 0;
+}
+.conn-label.is-on { max-width: 9em; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .conn.is-off { animation: none; }
+  .conn-label { transition: none; }
+}
+
+/* ── §P7.7 the response countdown, on the bar that asks the question ────
+   The HUD ring is 2.35em at the top of a 390px phone; being attacked is
+   answered at the bottom. Same ring, same urgency classes (ui.css .timer),
+   rendered inside #prompt by ui/prompt.js and driven by the one clock. */
+/* Bigger than the HUD's 2.35em ring: this one is the deadline you are answering,
+   and at 34×34 measured on a 390px phone it read as a chip, not a clock. */
+.prompt-timer { order: -1; align-self: center; width: 2.9em; height: 2.9em; }
+.prompt-timer .timer-text { font-size: .74em; }
+.hud-strip .strip-chip[title] { cursor: help; }
+
+/* ── §P7.3 a refusal that can speak ─────────────────────────────────────
+   The Play control used to render `<button disabled title="…">` — no shake, no
+   cue, no haptic, no sentence, and a measured 0 `denied` sounds in a full game.
+   It now stays live and refuses out loud (interact/index.js refuse()); this is
+   what "live but it will say no" looks like, and it is deliberately NOT the
+   0.38-opacity :disabled treatment, which reads as "nothing here". */
+.btn.is-refusing {
+  filter: saturate(.4);
+  opacity: .72;
+  box-shadow: inset 0 0 0 1px rgba(208, 52, 44, .45);
+}
+.btn.is-refusing::after {
+  content: " ?";
+  font-weight: 900;
+  color: var(--warn);
+}
+
+/* ── the PEEK: reading a card costs zero taps (owner directive, P7) ──────
+   Hover on desktop, touch-and-hold on a phone. ui/peek.js clones the live card
+   node from table/cardnode.js, so the face is the shipped renderer at a bigger
+   size — this file only sizes and frames it.
+
+   pointer-events:none on the whole layer is load-bearing: the peek sits over
+   the table while a drag can be starting underneath it, and it must never take
+   a click, a drag or a hit-test away from the card it is describing.
+
+   Theme-agnostic: every value below is a design token, so a light theme is a
+   token swap and not a rewrite of this block. */
+.peek {
+  position: fixed;
+  z-index: 92;                       /* over the table and the prompt, under .sheet (90 is the scrim, 92 clears the bar) */
+  pointer-events: none;
+  display: flex;
+  gap: .7em;
+  align-items: flex-start;
+  width: min(30em, 92vw);
+  max-height: 78vh;
+  padding: .7em .8em;
+  border-radius: calc(var(--radius) * 1.4);
+  border: var(--hairline) solid var(--gold-deep);
+  background: linear-gradient(180deg, rgba(20, 34, 56, .98), rgba(6, 13, 24, .99));
+  box-shadow: var(--lift-2), var(--rim), 0 24px 60px rgba(0, 0, 0, .7);
+  opacity: 0;
+  transform: scale(.96);
+  transform-origin: center;
+  transition: opacity .1s ease-out, transform .12s cubic-bezier(.18, 1.5, .4, 1);
+}
+.peek.is-in { opacity: 1; transform: scale(1); }
+
+/* The cloned card, at a size you can actually read. Every table pose variable
+   is neutralised: the clone carries no --fx/--fy/--tilt (ui/peek.js strips the
+   style attribute) and must not inherit a zone's layout rules. */
+.peek .card.is-peek {
+  position: relative;
+  flex: 0 0 auto;
+  inset: auto;
+  width: calc(var(--card-w) * 2.1);
+  height: auto;
+  aspect-ratio: 5 / 7;
+  transform: none;
+  margin: 0;
+  z-index: 0;
+  box-shadow: var(--lift-2), var(--rim);
+}
+.peek .card.is-peek .card-inner { transform: none; }
+.peek .card.is-peek .card-back { display: none; }
+
+.peek-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .3em; }
+.peek-kind {
+  font-size: .62em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.peek-name { font-size: 1em; font-weight: 900; line-height: 1.15; color: var(--ink-100); }
+.peek-rule { margin: 0; font-size: .82em; line-height: 1.42; color: var(--ink-300); }
+.peek-rows { margin: .15em 0 .1em; }
+.peek .dt-tag { align-self: flex-start; }
+.peek .dt-why { margin-top: .1em; }
+
+@media (max-width: 480px) {
+  /* One column on a phone: 30em beside a card does not fit 390px, and the
+     hold-peek is anchored above the thumb where height is the scarce axis. */
+  .peek { flex-direction: column; align-items: center; width: min(21em, 88vw); gap: .5em; }
+  .peek .card.is-peek { width: calc(var(--card-w) * 2.6); }
+  .peek-body { width: 100%; }
+  .peek-name { text-align: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .peek { transition: opacity .1s linear; transform: none; }
+  .peek.is-in { transform: none; }
+}
+
 /* ── phone: the brief must stay readable at 390px ─────────────────────── */
 
 @media (max-width: 480px) {
-  .brief-page { max-height: 58vh; }
+  /* The rail WRAPS on a phone instead of scrolling sideways.
+     Measured at 390px: `overflow-x: auto` left button.brief-tab[help-page] at
+     x=345 with width 67 — right edge 412, i.e. 22px off the screen, and the
+     mask made that read as decoration rather than as a control you cannot
+     reach. A scroller you have to discover is worse than two rows you can see.
+     scroll-snap and the fade mask go with it; neither means anything once
+     every tab is on screen at once. */
+  .brief-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    scroll-snap-type: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+    row-gap: .3em;
+  }
+  .brief-tab {
+    flex: 1 1 auto;
+    padding: 0 .55em;
+    font-size: .72em;
+    /* Two rows of tabs cost ~94px of an 82vh sheet; the page keeps the rest.
+       The 44px floor is not negotiable for a row that is now the only way to
+       change page (§0.9). */
+    min-height: var(--tap);
+  }
+  .brief-page { max-height: 52vh; }
   .fa-col { width: 3.5em; }
   .fa-tag { flex-basis: 4.4em; }
   .op-who { flex-basis: 3.6em; }

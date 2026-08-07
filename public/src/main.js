@@ -5,7 +5,7 @@
 
 import * as bus from './core/bus.js';
 import { EVENTS } from './core/bus.js';
-import { $, setText, setClass } from './core/dom.js';
+import { $, setText } from './core/dom.js';
 import * as socket from './net/socket.js';
 import * as store from './state/store.js';
 import * as sel from './state/selectors.js';
@@ -21,6 +21,7 @@ import * as lobby from './ui/lobby.js';
 import * as hud from './ui/hud.js';
 import * as prompt from './ui/prompt.js';
 import * as comms from './ui/comms.js';
+import * as peek from './ui/peek.js';
 import * as overlays from './ui/overlays.js';
 import { isHarness, install as installHarness } from './harness.js';
 
@@ -36,10 +37,51 @@ function applyState(msg, opts = {}) {
   return result;
 }
 
-function wireNet() {
+/* ── a session that cannot come back (§P7.21) ──────────────────────────────
+ *
+ * MEASURED: restart the server and the client sat on a frozen board claiming
+ * "connected" forever. The reconnect loop worked perfectly — it just got
+ * `{type:'error', message:'Room not found'}` every 2s from
+ * server/handlers.js:114/160, which the client only ever TOASTED. clearCreds()
+ * was reachable from exactly one place (NET_KICKED), so the dead resume token
+ * was replayed for as long as the tab stayed open, and `connected` was true
+ * because the transport was up — the indicator was telling the truth about the
+ * socket and lying about the game.
+ *
+ * These two messages mean the seat is gone and no retry can bring it back.
+ * They are the only ones treated as fatal: everything else is a refused move.
+ */
+const FATAL_SESSION = [
+  'Room not found',                 // server/handlers.js join_room / reconnect
+  'Invalid resume credentials',     // server/handlers.js reconnect
+];
+
+function isFatalSessionError(text) {
+  return FATAL_SESSION.some(m => String(text).toLowerCase().includes(m.toLowerCase()));
+}
+
+/** Stop retrying, forget the seat, say so, and put the player somewhere real.
+ *  Same teardown the Leave room control uses (ui/screens.js) — there is exactly
+ *  one way out of a session. */
+function endSession(why) {
+  screens.endSession({
+    error: `${why} — that game is over on the server (it restarted, or the room expired). `
+      + 'Start a new one.',
+    message: 'That room is gone. Starting fresh.',
+  });
+}
+
+/**
+ * The connection flag is wired BEFORE any screen mounts, because ui/hud.js
+ * subscribes to the same two events and would otherwise paint the previous
+ * value — the indicator was a frame behind the truth in both directions.
+ */
+function wireConnectionFlag() {
   bus.on(EVENTS.NET_OPEN, () => { store.store.connected = true; });
   bus.on(EVENTS.NET_CLOSE, () => { store.store.connected = false; });
+}
 
+function wireNet() {
   bus.on(EVENTS.NET_JOINED, (msg) => {
     store.setSelf(msg.playerId, msg.name);
     table.setSelf(msg.playerId);
@@ -50,7 +92,9 @@ function wireNet() {
   bus.on(EVENTS.NET_STATE, (msg) => applyState(msg));
 
   bus.on(EVENTS.NET_ERROR, (msg) => {
-    screens.toast(msg.message || 'Refused');
+    const text = msg?.message || 'Refused';
+    if (isFatalSessionError(text)) { endSession(text); return; }
+    screens.toast(text);
     if (msg.needDiscard) interact.beginDiscard(msg.excess || 1);
     if (msg.needPayment) interact.beginPayment(msg.amount || sel.owedAmount());
   });
@@ -76,13 +120,8 @@ function wireNet() {
   // just be eaten by fx's 300ms floor.
 }
 
-function wireConnectionChrome() {
-  const paint = () => setClass($('hud-conn'), 'is-off', !store.store.connected);
-  bus.on(EVENTS.NET_OPEN, paint);
-  bus.on(EVENTS.NET_CLOSE, paint);
-}
-
 function boot() {
+  wireConnectionFlag();
   table.mount(store.store.self.id);
 
   screens.mount();
@@ -92,11 +131,11 @@ function boot() {
   hud.mount();
   prompt.mount();
   comms.mount();
+  peek.mount();
   interact.mount();
   pointer.mount();
 
   wireNet();
-  wireConnectionChrome();
 
   if (isHarness()) {
     installHarness(ready, (msg, opts) => applyState(msg, opts));

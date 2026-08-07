@@ -234,21 +234,47 @@ test('§P7.15 OPSEC is never flagged "OPSEC cannot touch it"', () => {
   }
 });
 
-test('§P7.17 the final-approach countdown never prints an unguaranteed number', () => {
+test('§P7.17 the final-approach countdown prints only the honest engine field', () => {
   const hud = read('public/src/ui/hud.js');
-  // finalApproachIn counts turns of ANY seat until the checkpoint CONDITION —
+  // `finalApproachIn` counts turns of ANY seat until the checkpoint CONDITION —
   // off by one when armed on your own turn, and clamped to 0 for up to three
-  // turns when armed off-turn. It may gate the guaranteed sentence and nothing
-  // more; the printable count must come from an engine field.
-  assert.match(hud, /HONEST_FIELDS/, 'hud must read an engine-supplied honest count');
-  assert.match(hud, /convertsNext/, 'the only guaranteed state is finalApproachIn === 0');
-  // finalApproachIn may gate a sentence and may key a re-render; it may never
-  // BE a sentence. Every remaining use must be one of those two.
+  // turns when armed off-turn. game.js marks it deprecated and still ships it,
+  // so the only protection is that no client code reads it at all.
   const uses = hud.split('\n')
-    .filter(line => /finalApproachIn/.test(line) && !/^\s*(\*|\/\/)/.test(line))
-    .filter(line => !/const stamp =/.test(line) && !/finalApproachIn === 0/.test(line));
+    .filter(line => /finalApproachIn/.test(line) && !/^\s*(\*|\/\/)/.test(line));
   assert.deepEqual(uses, [],
-    `finalApproachIn must not reach a printed string: ${uses.join(' | ')}`);
+    `the deprecated finalApproachIn must not be read: ${uses.join(' | ')}`);
+  assert.match(hud, /opponentTurnsRemaining/,
+    'the countdown must come from the engine-supplied opponent-turn count');
+  assert.match(hud, /convertsNext/,
+    'opponentTurnsRemaining === 0 is the one guaranteed "they win next turn" state');
+
+  // And the engine must still be publishing it.
+  const { createGame, getPlayerView } = require('../game.js');
+  const g = createGame([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], { seed: 'ui' });
+  const view = getPlayerView(g, 'a');
+  assert.ok('opponentTurnsRemaining' in view.players[0],
+    'getPlayerView must expose opponentTurnsRemaining');
+});
+
+test('the automatic turn draw leaves no draw affordance behind (§P7.9)', () => {
+  const prompt = read('public/src/ui/prompt.js');
+  assert.match(prompt, /setHidden\(\$\('btn-draw'\), true\)/,
+    'the hand-bar draw button is suppressed unconditionally');
+  assert.doesNotMatch(prompt, /button\('draw'/, 'the prompt must not build a draw control');
+  assert.doesNotMatch(read('public/src/ui/hud.js'), /setHidden\(\$\('btn-draw'\)/,
+    'only one module may decide whether a draw control is on screen');
+  // game.js beginTurn() draws for every seat, so a broadcast never carries
+  // turnPhase 'draw' — the help must not promise a step that does not exist.
+  assert.doesNotMatch(read('public/src/ui/help.js'), /Draw first|Draw to start/i);
+});
+
+test('the win overlay names the tiebreak that actually decided an attrition game', () => {
+  const overlays = read('public/src/ui/overlays.js');
+  assert.match(overlays, /stalemateBasis/);
+  for (const basis of ['net_worth', 'turn_order', 'unopposed']) {
+    assert.match(overlays, new RegExp(`case '${basis}'`), `no copy for basis ${basis}`);
+  }
 });
 
 test('§P7.3 a refusal is never a disabled button', () => {

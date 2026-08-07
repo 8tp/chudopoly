@@ -110,7 +110,17 @@ first-player advantage measured and reported).
    net worth display so the UI never lies.
 8. **Free wild rearranging** stays (it's good), but becomes a first-class visible interaction.
 10. **FINAL APPROACH (win grace cycle — owner directive 2026-08-06).** Reaching 3 complete
-    sets does NOT win immediately (deliberate departure from Monopoly Deal). It arms *final
+    sets does NOT win immediately. **This is FAITHFUL to Monopoly Deal, not a departure** —
+    corrected 2026-08-06 after research: the official rule is *"if you realize you've won
+    during someone else's turn, you must wait until it's your turn to say it"*, and the winner
+    is the first to have three sets **and have them down on the table** on their own turn. So
+    a real grace window exists in MD and opponents can break a set inside it. Two consequences:
+    (a) the **contested race is already answered** — both claimants wait, and whoever's turn
+    arrives first declares and wins, which is exactly what `resolveFinalApproach` does, so no
+    sudden-death or tiebreak mechanic is needed; (b) our §3.10-strict full-cycle checkpoint is
+    slightly *more* generous than MD, which grants only "until your next turn" (identical when
+    you complete on your own turn — 94.8% of armings — and shorter when you are handed the set
+    off-turn). It arms *final
     approach*: every other player gets exactly one turn to respond; if the player still holds
     ≥3 complete sets when their own next turn begins, they win then. Dropping below 3 disarms
     (and can re-arm — each arming restarts the cycle). Multiple players can be armed at once;

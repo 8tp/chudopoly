@@ -33,7 +33,21 @@
   --ink-300:   #becbdf;
   --ink-100:   #eef3fb;
 
-  /* ── foil: SCARCE. your turn · selection · CHUD · victory. Nothing else. */
+  /* ── THE FIVE MARKED STATES (§6). One treatment each, no two alike ─────
+       your turn        foil border + foil nameplate, STATIC        (--gold)
+       targetable/drop  foil ring OUTSIDE the border, pulsing       (--gold)
+       CHUD             foil card stock                             (--gold)
+       victory          foil flood, modal only                      (--gold)
+       final approach   RED alarm bevel INSIDE the border + hazard rail (--danger)
+     Everything else that used to wear foil — a lifted card, a dragged card,
+     the urgent timer ring, the prompt rail, the chat handle, a help heading —
+     now wears steel, ice or green. mid-game@desktop carried 4 gold marks in
+     one frame with two different meanings; the alarm and the turn marker were
+     the same colour.
+     "your turn" and "targetable" share the foil deliberately: they are on
+     different geometry (fill vs ring), and they never appear on the same node
+     — you target opponents, and the turn marker is on the actor. */
+  /* ── foil: SCARCE. See the table above. ─────────────────────────────── */
   --gold:      #e8b955;
   --gold-hi:   #ffeab4;
   --gold-mid:  #c8922f;
@@ -45,7 +59,26 @@
   --foil: linear-gradient(155deg, var(--gold-hi) 0%, var(--gold) 34%,
                           var(--gold-mid) 56%, var(--gold-hi) 74%, var(--gold-mid) 100%);
 
-  /* ── signal roles (buttons + states). Never decorative. ──────────────── */
+  /* ── signal roles (buttons + states). Never decorative. ────────────────
+     KNOWN COLLISION — HANDED TO THE ART-DIRECTION WAVE, NOT FIXED HERE.
+     §6 says the saturated colour on the table comes from the card sets, so a
+     signal sitting inside a set's hue band lies about what it is. Measured
+     hue angles (HSL):
+        --go 152°        vs --set-green  136°  — 16° apart. payment@desktop
+                         puts a green CONFIRM chip 40px from a green ELITE
+                         chip and they read as one family.
+        --warn 31°       vs --set-orange  29°  —  2° apart. --warn is the RENT
+                         card's band, so a rent card and a Test & Eval
+                         property wear the same colour.
+        --gold 42°       vs --set-yellow  46°  —  4° apart. A MOBIL chip is
+                         indistinguishable from foil.
+        --danger 3°      vs --set-red    353°  — 10° apart.
+        --info 210°      vs --set-intel  210°  —  0° apart (intel is at 20%
+                         saturation, so this one survives).
+     Whoever re-cuts the palette: every signal needs ≥ 20° of separation from
+     every set hue it can sit beside, or a different MATERIAL (foil gradient
+     vs flat ink) to carry the difference. The structural work in this pass is
+     hue-independent and must survive the recut — see the state table above. */
   --go:         #2ab36a;             /* taxiway green — "the next thing to do" */
   --go-deep:    #12703f;
   --go-ink:     #04160c;
@@ -78,7 +111,7 @@
   --set-pink:      #ff6fb2;          /* Space Force */
   --set-orange:    #ff9127;          /* Test & Eval */
   --set-red:       #e33b4d;          /* Fighters    */
-  --set-yellow:    #f5c518;          /* Mobility    */
+  --set-yellow:    #f5c518;          /* Mobility    — 46°, 4° off --gold: see the collision note above */
   --set-green:     #2fa34a;          /* Elite       */
   --set-darkblue:  #3f6fd8;          /* Command     — #00308F was 1.9:1 on card stock */
   --set-base:      #4e8d86;          /* Overseas Bases */

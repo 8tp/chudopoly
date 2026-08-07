@@ -13,7 +13,7 @@ import * as pointer from '../interact/pointer.js';
 import { openSheet } from './screens.js';
 import {
   COLORS, COLOR_KEYS, HAND_LIMIT, SETS_TO_WIN, ACTION_RULES, ACTION_COUNTS,
-  RENT_COUNTS, colorName, blockableByOpsec,
+  RENT_COUNTS, colorName, opsecFlag, DECK_CYCLE_LIMIT, deckCycleNotice,
 } from '../core/cards.js';
 
 /* ── small builders ──────────────────────────────────────────────────────── */
@@ -72,8 +72,11 @@ function approachDiagram() {
     board,
     el('ol', { class: 'fa-steps' }, [
       step('arm', 'ARMED', 'Your third set completes. You do NOT win yet.'),
-      step('wait', 'CYCLE', 'Every other player takes one full turn to break you. '
-        + 'The banner counts the turns down.'),
+      // checkpointReached(): turnCounter − armedAtTurn >= activeCount. Arming on
+      // someone else's turn puts one of YOUR OWN turns inside that window, and
+      // that turn does not convert — so the opponents get a second one each.
+      step('wait', 'CYCLE', 'Every other player gets at least one full turn to break you — '
+        + 'up to two each if you armed on someone else\'s turn.'),
       step('break', 'OR BREAK', 'Lose any set in that window and you are disarmed. '
         + 'Rebuild it and you re-arm — the count restarts at zero.'),
       // beginTurn() → resolveFinalApproach(): the FIRST own-turn start at or
@@ -103,6 +106,13 @@ function pageGoal() {
       ['The win lands on your turn start',
         'If you still hold three complete sets when your own next turn begins after that '
         + 'cycle, the game ends there.'],
+      // The question every armed player asks. turnsSinceArming counts EVERY
+      // seat's turn, so an own-turn inside the window is spent, not cashed.
+      ['"Why didn\'t I win on my own turn?"',
+        'Because the cycle was not finished yet. Arm on somebody else\'s turn and one of '
+        + 'your own turns falls inside the grace window — that turn passes without '
+        + 'converting, and you win on the NEXT one. The banner never counts your own '
+        + 'turns as answers.'],
       // syncSets(): sets < SETS_TO_WIN && finalApproach → disarm, delete armedAtTurn.
       ['Breaking resets everything',
         'Drop below three and you are disarmed. Build back up and you re-arm, but the '
@@ -113,16 +123,21 @@ function pageGoal() {
     ]),
     el('h5', { class: 'brief-sub', text: 'How you break someone on final approach' }),
     bullets([
-      // playAction 'chud' has no zoneRequisitionable guard.
-      'THE CHUD CARD — the only card that takes a property out of a complete set.',
+      // playAction 'chud' has no zoneRequisitionable guard, and nothing goes
+      // back the other way — that, not "can reach a complete set", is what is
+      // unique about it (§3.1 P7 ruling).
+      'THE CHUD CARD — takes a property straight out of a complete set and gives nothing '
+      + 'back. The only card that robs one.',
       // executeEntry 'steal_set'.
       'Inspector General — seizes the whole set, Upgrade and FOC included.',
-      // executeEntry 'swap' → syncSets on both sides.
-      'TDY Orders — swap a card out of the set for one of yours.',
+      // playAction 'tdy_orders' has no complete-set guard either, and
+      // executeEntry 'swap' splices out of whatever colour holds the card.
+      'TDY Orders — trades INTO a complete set: their set card for one of yours. Both '
+      + 'boards resync, so it can break a set on either side.',
       // processPayment: propCards come out of properties, then syncSets(payer).
       'Charge them more than their bank covers, so they must pay with a set card.',
-      // playAction 'midnight_requisition' refuses when zoneCount === size.
-      'Midnight Requisition cannot do it — it refuses complete sets.',
+      // playAction 'midnight_requisition' → zoneRequisitionable(): n > 0 && n < size.
+      'Midnight Requisition cannot — it refuses any zone that is already a complete set.',
     ]),
   ];
 }
@@ -131,10 +146,13 @@ function pageGoal() {
 
 function pageTurn() {
   return [
-    // drawCards(): count = hand.length === 0 ? 5 : 2.
-    p('Draw, then up to three plays, then get down to the hand limit.', 'brief-lede'),
+    // beginTurn() draws automatically; drawCards(): count = hand.length === 0 ? 5 : 2.
+    p('Your cards are dealt for you, then up to three plays, then get down to the hand limit.',
+      'brief-lede'),
     rules([
-      ['1 · Draw', 'Take 2 cards. If your hand is empty at the start of your turn, take 5 instead.'],
+      ['1 · The deal is automatic',
+        'Two cards land in your hand the moment your turn starts — five if your hand was '
+        + 'empty. There is nothing to press.'],
       // playsRemaining = 3; playAsMoney / playProperty / playAction each decrement it.
       ['2 · Up to 3 plays', 'A play is: bank a card for its value, place a property, play an '
         + 'action or rent card, or add an Upgrade / FOC to a complete set.'],
@@ -202,11 +220,14 @@ function pageSets() {
       ['A zone holds its set size and no more',
         'You cannot stack a fourth Fighter as armour. Extra copies stay in your hand or go '
         + 'on a wild\'s other colour.'],
-      // receiveProperty() overflows when every legal zone is full;
-      // zoneRequisitionable() is n > 0 && n !== size, so an overflowed zone is fair game.
-      ['A forced card can overflow a set',
-        'A payment or steal with nowhere legal to land pushes a zone past its size. It still '
-        + 'counts as complete — but it stops being immune to Midnight Requisition.'],
+      // receiveProperty(): no zone can be forced past its size any more. It
+      // tries the preferred colour, then the fullest legal one, then
+      // shiftWildToMakeRoom() — the rearrange you could have made yourself —
+      // and only then banks the card and emits `banked_property`.
+      ['A property with nowhere to go becomes money',
+        'A payment or steal that has no legal zone left first slides one of your own wilds '
+        + 'aside to make room. If even that fails, the card is banked at face value instead. '
+        + 'No zone is ever pushed past its size.'],
       // playAction 'upgrade'/'foc' require isSetComplete; foc requires 'house'.
       ['Upgrade +3M, FOC +4M',
         'Complete sets only, one of each per set, and FOC needs the Upgrade in place first.'],
@@ -217,6 +238,16 @@ function pageSets() {
         + 'go to the discard the moment the set under them breaks.'],
       ['Wilds', 'A two-colour wild counts as either of its colours. The "any" wild counts as '
         + 'every colour but is worth 0M — that is what you pay for it.'],
+      // receiveProperty(): `ordered` puts preferredColor first — every caller
+      // passes card.placedColor, the colour it was on before — then the
+      // remaining legal colours sorted by DESCENDING zoneCount, and takes the
+      // first zone that is not full.
+      ['Cards you RECEIVE place themselves',
+        'A property handed to you by a payment, a steal or a swap is placed by the engine, '
+        + 'not by you. It prefers the colour it was already on, and only then the colour you '
+        + 'have most of — so an arriving wild can land somewhere that does NOT finish your '
+        + 'set. Move it afterwards: rearranging a wild on your own board is free and costs '
+        + 'no play.'],
     ]),
   ];
 }
@@ -276,18 +307,15 @@ const CARD_VALUES = {
   upgrade: 3, foc: 4, opsec: 4,
 };
 
-function cardEntry({ title, value, count, rule, blockable, kind }) {
+function cardEntry({ title, value, count, qty, rule, flag, kind }) {
   return el('div', { class: `brief-card${kind ? ` is-${kind}` : ''}` }, [
     el('div', { class: 'brief-card-head' }, [
       el('span', { class: 'brief-card-name', text: title }),
       el('span', { class: 'brief-card-coin', text: `${value}M` }),
-      el('span', { class: 'brief-card-qty', text: `×${count}` }),
+      el('span', { class: 'brief-card-qty', text: qty || `×${count}` }),
     ]),
     el('p', { class: 'brief-card-rule', text: rule }),
-    el('span', {
-      class: `brief-card-flag is-${blockable ? 'block' : 'noblock'}`,
-      text: blockable ? 'OPSEC can cancel it' : 'OPSEC cannot touch it',
-    }),
+    el('span', { class: `brief-card-flag is-${flag.kind}`, text: flag.text }),
   ]);
 }
 
@@ -304,10 +332,12 @@ function pageCards() {
   out.push(cardEntry({
     title: 'Rent: a colour pair',
     value: 1,
-    count: RENT_COUNTS.pair * pairs.length,
+    // buildDeck() makes RENT_COUNTS.pair of EACH of the five pairs. "×10" read
+    // as "ten of this card" next to a list of per-card counts (§P7.20).
+    qty: `×${RENT_COUNTS.pair} each · ${RENT_COUNTS.pair * pairs.length} total`,
     rule: 'Charge rent on one of the two colours printed on it — EVERY other player pays. '
       + 'Five pairs exist: ' + pairs.map(pair => pair.map(colorName).join('/')).join(', ') + '.',
-    blockable: true,
+    flag: opsecFlag({ type: 'rent' }),
     kind: 'rent',
   }));
   out.push(cardEntry({
@@ -317,7 +347,7 @@ function pageCards() {
     // playAction rent branch, isWildRent: requires targetId, targets = [that player].
     rule: 'Charge rent on any ONE colour you own, from ONE player you name. It does not hit '
       + 'the table — that is what the higher face value buys.',
-    blockable: true,
+    flag: opsecFlag({ type: 'rent' }),
     kind: 'rent',
   }));
 
@@ -328,13 +358,16 @@ function pageCards() {
       value: CARD_VALUES[action],
       count: ACTION_COUNTS[action],
       rule: ACTION_RULES[action],
-      // one source for "does this create a pendingAction" — cards.js
-      blockable: blockableByOpsec({ type: 'action', action }),
+      // One source for the OPSEC sentence — cards.js. The boolean this used to
+      // take could not express OPSEC itself, which creates no pendingAction and
+      // was therefore flagged "OPSEC CANNOT TOUCH IT" one line under its own
+      // counter-OPSEC rule text (§P7.15).
+      flag: opsecFlag({ type: 'action', action }),
       kind: action === 'chud' ? 'chud' : '',
     }));
   }
   out.push(note('Upgrade, FOC, Surge Operations and PCS Orders aim at nobody, so there is '
-    + 'nothing for an OPSEC to answer.'));
+    + 'nothing for an OPSEC to answer. OPSEC itself is answered only by another OPSEC.'));
   return out;
 }
 
@@ -376,6 +409,14 @@ function pageOpsec() {
         + 'Your OPSEC protects you and nobody else.'],
       ['It cannot pre-empt',
         'You play it in response to a card already on the table, never ahead of one.'],
+      // playAction: discardAndSpend() runs BEFORE startPending(), so the card
+      // and the play are gone the instant it is played; chargeAmount() deletes
+      // state._surgeOps at that same moment. A block refunds none of it.
+      ['A blocked attack still costs the attacker everything',
+        'Their card was discarded and one of their three plays was spent the moment they '
+        + 'played it. If they had Surge Operations running, the doubling was burned on the '
+        + 'charge too, and it does not come back. Blocking does not undo the play — it only '
+        + 'stops the effect.'],
     ]),
     note('When an OPSEC is standing against you, the bar asks whether to let it stand or '
       + 'counter. "Let it stand" means your own action is cancelled.'),
@@ -396,21 +437,42 @@ function pageEndings() {
       ['Last one standing',
         'Scooping discards everything you own and takes you out for good. If everyone else '
         + 'scoops, the survivor wins on the spot — no cycle, no checkpoint.'],
-      // endInStalemate(): ranked by completedSets, then playerNetWorth.
+      // endInStalemate(): ranked by completedSets, then playerNetWorth, and the
+      // sort is stable over `state.players.filter(!eliminated)` — so a dead heat
+      // on both numbers is settled by seat order, earliest seat first.
       ['Attrition — decided on points',
-        'Most completed sets wins; net worth (bank + properties + upgrades) breaks the tie.'],
+        'Most completed sets wins; net worth (bank + properties + upgrades) breaks the tie; '
+        + 'and if two players match on both, the earlier seat at the table takes it.'],
     ]),
     el('h5', { class: 'brief-sub', text: 'What triggers attrition' }),
     bullets([
       // endTurn(): _idleTurns >= activeCount when deck and discard are both empty.
       'Deck and discard are both empty and a full round passes with nobody playing a card '
       + 'out of hand.',
-      // endTurn(): shuffleCount >= DECK_CYCLE_LIMIT (16).
-      'Or the discard has been reshuffled back into the deck 16 times. The table has had '
-      + 'long enough; it goes to points.',
+      // endTurn(): shuffleCount >= DECK_CYCLE_LIMIT.
+      `Or the discard has been reshuffled back into the deck ${DECK_CYCLE_LIMIT} times. `
+      + 'The table has had long enough; it goes to points.',
     ]),
-    note('The HUD shows the deck cycle count once the deck has been through it a few times, '
-      + 'so an attrition finish is never a surprise.'),
+    el('h5', { class: 'brief-sub', text: 'What scooping actually does' }),
+    bullets([
+      // scoop(): hand, bank and every property zone are emptied into discardPile,
+      // then discardUpgrades() per colour.
+      'Every card you own — hand, bank, properties and upgrades — goes to the discard pile, '
+      + 'where it is shuffled back into the deck later. It is not removed from the game.',
+      // scoop(): pa.targets filtered by playerId; pendingAction nulled when empty
+      // or when the scooper was the source.
+      'Any demand pointed at you dies with you. If you were the only target, the attacker\'s '
+      + 'card is already spent and they get nothing.',
+      // scoop(): activePlayers.length === 1 → finishGame(..., 'last_standing').
+      'If you were the second-to-last player in, the survivor wins on the spot — no final '
+      + 'approach, no checkpoint. Scooping out of a losing position can hand someone the game.',
+      'There is no undo, and you cannot come back in.',
+    ]),
+    // ui/hud.js renders the chip at cycle >= deckCycleNotice() — 8 of 16.
+    // "once the deck has been through it a few times" was unfalsifiable (§P7.20).
+    note(`The HUD starts showing the deck-cycle count at ${deckCycleNotice()} of `
+      + `${DECK_CYCLE_LIMIT}, and turns it gold in the last two, so an attrition finish is `
+      + 'never a surprise.'),
   ];
 }
 

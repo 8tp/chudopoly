@@ -17,10 +17,15 @@ let scope = 'room';
 let tail = [];
 
 /**
- * getPlayerView sends only the LAST 20 log lines, so "append everything past
- * the count I already rendered" freezes the log the moment the game passes 20
- * lines. Instead: find the longest suffix of what we have rendered that is a
- * prefix of what arrived, and append the remainder.
+ * getPlayerView sends only the LAST N log lines (game.js LOG_TAIL), so "append
+ * everything past the count I already rendered" freezes the log the moment the
+ * game passes N lines. Instead: find the longest suffix of what we have
+ * rendered that is a prefix of what arrived, and append the remainder.
+ *
+ * `tail` must keep the WHOLE received window, not a fixed 20: the engine agent
+ * raised LOG_TAIL from 20 to 40 in this same round, and a client that
+ * remembered only the last 20 of a 40-line window found no overlap at all and
+ * re-appended every line — 20 duplicates per broadcast.
  */
 function renderLog() {
   const box = $('log');
@@ -37,8 +42,8 @@ function renderLog() {
   for (let i = start; i < lines.length; i++) {
     box.appendChild(el('div', { class: 'log-line', text: lines[i] }));
   }
-  tail = lines.slice(-20);
-  while (box.childElementCount > 80) box.removeChild(box.firstChild);
+  tail = lines.slice();
+  while (box.childElementCount > 120) box.removeChild(box.firstChild);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -81,7 +86,58 @@ function floatEmote(playerId, name, text) {
   setTimeout(() => bubble.remove(), 2400);
 }
 
+/* ── the software keyboard (§2, restored §P7.6) ────────────────────────────
+ *
+ * §2 lists "visualViewport keyboard handling" among the things kept from the
+ * old client. It was kept nowhere outside fx/overlay.js, and the cost was
+ * measured: on a 390×844 phone with the iOS keyboard up, #chat-input and SEND
+ * both sat at bottom 835 — 327px under the keyboard. You cannot see what you
+ * are typing.
+ *
+ * Why it happens: iOS does not shrink the LAYOUT viewport for the keyboard, so
+ * a `position:absolute; bottom:0` panel keeps sizing to the full 844px. Only
+ * `visualViewport` knows. This publishes the occluded height as `--kb-inset` on
+ * <html>; content.css lifts the side panel by exactly that (OVERRIDE 3).
+ *
+ * The value is written on the root, not on .side, so anything else that has to
+ * dodge the keyboard later can read it without another listener.
+ */
+function keyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return 0;
+  const occluded = window.innerHeight - (vv.height + vv.offsetTop);
+  // Under ~80px it is address-bar chrome, not a keyboard; clamping avoids a
+  // panel that twitches every time Safari's toolbar collapses on scroll.
+  return occluded > 80 ? Math.round(occluded) : 0;
+}
+
+function syncKeyboard() {
+  const inset = keyboardInset();
+  const root = document.documentElement;
+  const current = root.style.getPropertyValue('--kb-inset');
+  const next = `${inset}px`;
+  if (current !== next) root.style.setProperty('--kb-inset', next);
+  setClass(document.body, 'kb-open', inset > 0);
+  // The composer is the reason the keyboard is up; keep it in view even when
+  // the panel is taller than what is left of the viewport.
+  if (inset > 0 && document.activeElement === $('chat-input')) {
+    $('chat-msgs') && ($('chat-msgs').scrollTop = $('chat-msgs').scrollHeight);
+  }
+}
+
+function watchKeyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  vv.addEventListener('resize', syncKeyboard);
+  vv.addEventListener('scroll', syncKeyboard);
+  window.addEventListener('resize', syncKeyboard);
+  $('chat-input')?.addEventListener('focus', syncKeyboard);
+  $('chat-input')?.addEventListener('blur', () => setTimeout(syncKeyboard, 120));
+  syncKeyboard();
+}
+
 export function mount() {
+  watchKeyboard();
   pointer.registerActions({
     'chat-scope': (elx) => { scope = elx.dataset.scope === 'global' ? 'global' : 'room'; store.unread[scope] = 0; renderChat(); },
     'send-chat': () => {

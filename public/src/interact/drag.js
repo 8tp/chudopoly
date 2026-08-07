@@ -27,6 +27,10 @@ const FX_CUE = EVENTS.FX_CUE || 'fx:cue';
 const CUE_PICKUP = 'card_pickup';
 const CUE_DENIED = 'denied';        // the §P4 brief names this one
 const CUE_DETAILS = 'card_details';
+// ui/peek.js listens on these. core/bus.js is architect-owned, so they follow
+// the same "string literal until the constant exists" pattern as FX_CUE.
+const UI_PEEK = EVENTS.UI_PEEK || 'ui:peek';
+const UI_PEEK_END = EVENTS.UI_PEEK_END || 'ui:peek_end';
 
 /** One cue per BEAT — two small allocations, never per frame (§0.8). */
 function cue(kind, x, y) {
@@ -50,16 +54,44 @@ let live = null;             // the active drag, or null
 
 export function mount(machineApi) {
   api = machineApi;
-  pointer.onGesture({ dragStart, dragMove, dragEnd, dragCancel, longPress });
+  pointer.onGesture({
+    press, release, dragStart, dragMove, dragEnd, dragCancel, longPress, longPressEnd,
+  });
 }
 
-/* ── press → details sheet (§P4.3) ─────────────────────────────────────── */
+/* ── the ≤1-frame acknowledgement (§P7.2) ──────────────────────────────────
+ * Measured before this existed: pointerdown → first feedback of ANY kind was
+ * 427ms+ (the click), sfxLog 0, fxLog 0, no class on the node. card_pickup
+ * fired only past the 8px slop, so a tap-first player heard it 0 times in a
+ * 274-sound game. The press paints and sounds; what the press MEANS is still
+ * decided later by the tap/drag split. */
+function press(cardId, node) {
+  if (!node) return;
+  node.classList.add('is-pressed');
+  cueAt(CUE_PICKUP, node);
+}
 
+function release(cardId, node, info) {
+  node?.classList.remove('is-pressed');
+  if (info?.phase === 'held') bus.emit(UI_PEEK_END, null);
+}
+
+/* ── hold → PEEK (owner directive P7; was: → details sheet, §P4.3) ────────
+ *
+ * "on mobile if you touch and hold ... it should render the card so you can
+ * actually view it and read what it does without having to click on it and
+ * then click on details."
+ *
+ * So the hold is now a PEEK: it appears while the finger is down and it is
+ * gone on release. The full details sheet is still reachable, but only as a
+ * deliberate act — tapping a table card, or the Details control on the strip. */
 function longPress(cardId, node) {
-  // Reuses the registered details path (ui/prompt.js listens on UI_DETAILS) —
-  // there is exactly one details renderer in the client.
-  bus.emit(EVENTS.UI_DETAILS, cardId);
+  bus.emit(UI_PEEK, { cardId, node });
   cueAt(CUE_DETAILS, node);
+}
+
+function longPressEnd() {
+  bus.emit(UI_PEEK_END, null);
 }
 
 /* ── drag ──────────────────────────────────────────────────────────────── */
@@ -78,6 +110,7 @@ function dragStart(cardId, node, press) {
     // or the card jumps to the fan's centre the moment it is picked up.
     rx: restVar(node, '__rx', '--fx'),
     ry: restVar(node, '__ry', '--fy'),
+    snap: press.pointerType === 'touch' ? SNAP_TOUCH : SNAP_MOUSE,
     hover: null,
   };
 
@@ -87,8 +120,11 @@ function dragStart(cardId, node, press) {
   document.body.classList.add('is-dragging-card');
   setStyle(node, '--fs', String(SCALE));
 
-  for (const t of plan.targets) setAttr(t.el, 'data-droppable', '1');
-  cue(CUE_PICKUP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  // No pickup cue here: press() already fired it at pointerdown, ~380ms earlier
+  // in a real drag. Two cues for one grab read as a stutter.
+  // rank 2 is the whole felt — marking it "1" would draw a dashed outline round
+  // the entire table, so it is marked and styled separately.
+  for (const t of plan.targets) setAttr(t.el, 'data-droppable', t.rank === 2 ? '2' : '1');
   return true;
 }
 
@@ -141,36 +177,85 @@ function dragCancel() {
   springBack(node, cardId, plan.source);
 }
 
-/* ── drop resolution ───────────────────────────────────────────────────── */
-
-/**
- * The element under the finger decides, with one forgiving rule: releasing
- * inside a REGION target (rank 1 — "your side of the table", "the centre")
- * that contains precise targets picks the nearest precise one. Dropping a wild
- * roughly on your own board therefore lands it in the closest legal column
- * instead of asking a second question.
+/* ── drop resolution: aim is not the game (owner feedback, P7 round 1) ─────
+ *
+ * "dragging cards on to the table just feels terrible since its a strip in the
+ * middle of the table (at least just on desktop alone)."
+ *
+ * The old rule was "the element under the pointer decides": a release one pixel
+ * outside a `.propcol` — measured 20px tall — or outside the ~64px-tall
+ * #table-center strip resolved to null, which meant spring-back plus a refusal
+ * for a gesture that was obviously aimed at something. Now:
+ *
+ *   1. INSIDE a precise target wins outright.
+ *   2. INSIDE a REGION (rank 1 — "your side of the table", "the centre") routes
+ *      to the nearest precise target that region contains, or means the region.
+ *   3. Otherwise the NEAREST precise target within a snap radius wins, measured
+ *      edge-to-point, so a near miss still lands.
+ *   4. A playable non-property released anywhere else on the felt (rank 2, the
+ *      whole #table) just plays and aims on the table, so the neutral drop is
+ *      the entire felt instead of a strip.
+ *
+ * Containment must beat proximity, and that ordering is load-bearing: measured
+ * with 3 → 1, a playable action released dead centre on the DISCARD PILE was
+ * banked, because the bank happened to sit 100px away and won on distance. You
+ * cannot be "near" something you are standing inside.
+ *
+ * The radius is bigger for a mouse than a finger only because a finger has a
+ * 44px contact patch of its own; the effective forgiveness is about the same.
  */
-function resolve(x, y) {
-  if (!live) return null;
-  const el = document.elementFromPoint(x, y);
-  const hitEl = el && el.closest ? el.closest('[data-droppable="1"]') : null;
-  if (!hitEl) return null;
-  const hit = live.plan.targets.find(t => t.el === hitEl);
-  if (!hit) return null;
-  if (hit.rank !== 1) return hit;
+const SNAP_MOUSE = 120;
+const SNAP_TOUCH = 90;
 
+/** Distance from a point to a rect: 0 inside, edge distance outside. */
+function rectDist(r, x, y) {
+  const dx = Math.max(r.left - x, 0, x - r.right);
+  const dy = Math.max(r.top - y, 0, y - r.bottom);
+  return Math.hypot(dx, dy);
+}
+
+/** The nearest rank-0 target to (x,y), optionally restricted to a container. */
+function nearestPrecise(x, y, within) {
   let best = null;
   let bestD = Infinity;
   for (const t of live.plan.targets) {
-    if (t.rank === 1 || !hitEl.contains(t.el)) continue;
+    if (t.rank !== 0) continue;
+    if (within && !within.contains(t.el)) continue;
     const r = t.el.getBoundingClientRect();
     if (!r.width && !r.height) continue;
-    const dx = x - (r.left + r.width / 2);
-    const dy = y - (r.top + r.height / 2);
-    const d = dx * dx + dy * dy;
+    const d = rectDist(r, x, y);
     if (d < bestD) { bestD = d; best = t; }
   }
-  return best || hit;
+  return { best, dist: bestD };
+}
+
+function resolve(x, y) {
+  if (!live) return null;
+  const { best, dist } = nearestPrecise(x, y);
+
+  // 1 — standing inside a precise target.
+  if (best && dist === 0) return best;
+
+  // 2 — standing inside a region: route to the nearest precise target it holds.
+  const el = document.elementFromPoint(x, y);
+  const hitEl = el && el.closest ? el.closest('[data-droppable="1"]') : null;
+  const hit = hitEl ? live.plan.targets.find(t => t.el === hitEl) : null;
+  if (hit && hit.rank === 0) return hit;
+  if (hit) {
+    const inside = nearestPrecise(x, y, hit.el);
+    return inside.best || hit;
+  }
+
+  // 3 — near enough to a precise target that this is obviously what was meant.
+  if (best && dist <= live.snap) return best;
+
+  // 4 — the felt itself, for cards whose neutral meaning is "play it".
+  const fallback = live.plan.targets.find(t => t.rank === 2);
+  if (fallback) {
+    const r = fallback.el.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return fallback;
+  }
+  return null;
 }
 
 function hover(hit) {
@@ -249,7 +334,15 @@ function rest(node) {
 export function revalidate() {
   if (!live || !api) return;
   if (api.dragCandidate(live.cardId)) return;
+  const cardId = live.cardId;
   pointer.abortDrag();
   if (live) dragCancel();
-  for (const el of qsa('[data-droppable="1"]')) el.removeAttribute('data-droppable');
+  for (const el of qsa('[data-droppable]')) el.removeAttribute('data-droppable');
+  // §P7.11: measured `dragging true→false, mode→payment, no toast` — the card
+  // left the finger silently. Correct behaviour, unexplained, reads as a bug.
+  api.yanked?.(cardId);
 }
+
+/** Is a card under the finger right now? Callers use it to tell "the state
+ *  broadcast interrupted me" from "I put it down". */
+export function holding() { return !!live; }

@@ -22,6 +22,9 @@ let ws = null;
 let connecting = false;
 let retryTimer = 0;
 let wantConnection = false;
+let everOpened = false;          // an outage is only an outage after a first open
+let pendingResume = null;        // the ONE armed NET_OPEN hook (see resumeOrConnect)
+let queueNoticeAt = 0;
 
 const outbox = [];
 let drainTimer = 0;
@@ -62,6 +65,12 @@ function session(key) {
 
 export function isOpen() { return ws?.readyState === 1; }
 
+/** Is this client TRYING to hold a connection? False before the first
+ *  connect() and after disconnect() — a fixture-staged harness page, or a
+ *  player who has left. "Not connected" only means something when we want to
+ *  be: without this the connection indicator cried wolf on every screenshot. */
+export function wanted() { return wantConnection; }
+
 export function connect() {
   wantConnection = true;
   if (isOpen() || connecting) return;
@@ -80,6 +89,7 @@ export function connect() {
 
   socket.onopen = () => {
     connecting = false;
+    everOpened = true;
     bus.emit(EVENTS.NET_OPEN, null);
     drain();
   };
@@ -100,11 +110,16 @@ export function connect() {
   };
 }
 
-export function disconnect() {
+/** @param {{flushFirst?:boolean}} opts flushFirst writes anything queued (a
+ *  `leave_room`) before the socket goes down. WebSocket.close() sends its close
+ *  frame after the buffered data, so the write is not lost. */
+export function disconnect({ flushFirst = false } = {}) {
   wantConnection = false;
   clearTimeout(retryTimer);
   retryTimer = 0;
+  if (flushFirst) flush();
   outbox.length = 0;
+  if (pendingResume) { pendingResume(); pendingResume = null; }
   try { ws?.close(); } catch { /* already gone */ }
   ws = null;
 }
@@ -118,13 +133,26 @@ function scheduleRetry() {
   }, RETRY_MS);
 }
 
-/** Reconnect and immediately re-claim the seat if this tab holds resume creds. */
+/**
+ * Reconnect and immediately re-claim the seat if this tab holds resume creds.
+ *
+ * §P7.22 — the subscription lifecycle is the whole point. `bus.once()` only
+ * unsubscribes when its event FIRES (core/bus.js), and NET_OPEN cannot fire
+ * while the server is down; scheduleRetry() calls this every 2s. Measured: a
+ * 60s outage armed 29 live hooks and pushed 29 identical `reconnect` frames
+ * into the outbox on the one eventual open — 29 × 150ms of MIN_GAP, straight
+ * into the server's 40-per-5s limiter, which closes the socket with 1008 and
+ * starts the whole thing again. Exactly one hook is armed at a time.
+ */
 export function resumeOrConnect() {
   const { playerId, code, resumeToken } = creds();
-  const resume = playerId && code && resumeToken;
-  bus.once(EVENTS.NET_OPEN, () => {
-    if (resume) send({ type: 'reconnect', playerId, code, resumeToken });
-  });
+  if (pendingResume) { pendingResume(); pendingResume = null; }
+  if (playerId && code && resumeToken) {
+    pendingResume = bus.once(EVENTS.NET_OPEN, () => {
+      pendingResume = null;
+      send({ type: 'reconnect', playerId, code, resumeToken });
+    });
+  }
   connect();
 }
 
@@ -156,7 +184,76 @@ function route(msg) {
 export function send(msg) {
   if (recordSends) sentLog.push({ ...msg, t: Math.round(performance.now()) });
   outbox.push(msg);
+  if (!isOpen()) announceQueue();
   drain();
+}
+
+/**
+ * §P7.12 — a DRAW tap during a measured 4s outage was queued in total silence
+ * while the connection dot still read green. The queue is right; the silence is
+ * not. Rate-limited so a burst of taps produces one sentence, and suppressed
+ * before the first open so a normal boot never says "offline".
+ */
+function announceQueue() {
+  if (!everOpened) return;
+  const now = Date.now();
+  if (now - queueNoticeAt < 3000) return;
+  queueNoticeAt = now;
+  bus.emit(EVENTS.TOAST, 'Offline — held, and sent the moment the connection is back');
+}
+
+/* ── the browser's own verdict on the network ──────────────────────────────
+ * A dropped mobile connection does not always close the socket promptly (the
+ * TCP session just stops answering), so the indicator can read "connected" for
+ * a whole minute of nothing. navigator.onLine is the earliest honest signal
+ * there is, and `online` is a better retry trigger than waiting out RETRY_MS. */
+function onOffline() {
+  if (!wantConnection) return;
+  bus.emit(EVENTS.NET_CLOSE, { code: 0, reason: 'offline' });
+}
+
+function onOnline() {
+  if (!wantConnection) return;
+  if (isOpen()) { bus.emit(EVENTS.NET_OPEN, null); drain(); return; }
+  clearTimeout(retryTimer);
+  retryTimer = 0;
+  resumeOrConnect();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', onOffline);
+  window.addEventListener('online', onOnline);
+}
+
+/**
+ * Write everything queued RIGHT NOW, ignoring MIN_GAP.
+ *
+ * For teardown only. `send()` enqueues into an outbox drained at 150ms
+ * intervals, so a `leave_room` followed immediately by a disconnect or a
+ * navigation was discarded before it ever reached the wire — the server never
+ * learned the player had left, and the seat stayed occupied (owner bug, P7).
+ * A teardown is at most two frames, nowhere near the server's 40-per-5s limit,
+ * and there is no later drain to rely on.
+ * @returns {number} frames actually written
+ */
+export function flush() {
+  if (!isOpen()) { outbox.length = 0; return 0; }
+  clearTimeout(drainTimer);
+  drainTimer = 0;
+  let written = 0;
+  while (outbox.length) {
+    const msg = outbox.shift();
+    try {
+      ws.send(JSON.stringify(msg));
+      written++;
+      bus.emit(EVENTS.NET_SENT, msg);
+    } catch (err) {
+      bus.reportError(err);
+      break;
+    }
+  }
+  lastSentAt = Date.now();
+  return written;
 }
 
 function drain() {

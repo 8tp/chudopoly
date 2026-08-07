@@ -12,6 +12,7 @@ import * as send from '../net/send.js';
 import { store, seatName } from '../state/store.js';
 import { COLORS, COLOR_KEYS, SETS_TO_WIN } from '../core/cards.js';
 import * as pointer from '../interact/pointer.js';
+import * as screens from './screens.js';
 import { closeSheet, sheetOpen } from './screens.js';
 import * as help from './help.js';
 import * as settings from './settings.js';
@@ -30,6 +31,41 @@ function stalemateCause(snap) {
   }
   const limit = snap.deckCycleLimit || 0;
   return limit && (snap.deckCycle || 0) >= limit ? 'deck_cycles' : 'deck_dry';
+}
+
+/**
+ * WHICH of the three tiebreaks actually decided it. endInStalemate() computes
+ * this against the runner-up and publishes it as `stalemateBasis` (and on the
+ * `stalemate` event as `basis`) — before that the screen said "most sets wins"
+ * even when the game had been settled on net worth or on seat order, which is
+ * the kind of quiet lie §3.9 exists to stop.
+ */
+function stalemateBasis(snap) {
+  if (snap.stalemateBasis) return snap.stalemateBasis;
+  for (let i = (snap.events || []).length - 1; i >= 0; i--) {
+    if (snap.events[i].t === 'stalemate') return snap.events[i].basis || null;
+  }
+  return null;
+}
+
+function basisSentence(basis, player) {
+  const sets = player?.completedSets ?? 0;
+  switch (basis) {
+    case 'sets':
+      return `Most completed sets took it — ${player?.name || 'the winner'} finished on ${sets}.`;
+    case 'net_worth':
+      return `${player?.name || 'The winner'} tied on ${sets} set${sets === 1 ? '' : 's'} and `
+        + `won on net worth, ${player?.netWorth ?? 0}M.`;
+    case 'turn_order':
+      return 'The table tied on completed sets AND on net worth, so the earliest seat took it '
+        + '— the third and last tiebreak.';
+    case 'unopposed':
+      return `${player?.name || 'The winner'} was the only player left standing when the `
+        + 'cards ran out.';
+    default:
+      return `Most completed sets wins — ${player?.name || 'the winner'} took it with ${sets}, `
+        + `net worth ${player?.netWorth ?? 0}M breaking any tie, and seat order after that.`;
+  }
 }
 
 function endingCopy(snap) {
@@ -54,7 +90,8 @@ function endingCopy(snap) {
     return {
       title: mine ? 'DECIDED ON POINTS' : `${seatName(winner)} WINS ON POINTS`,
       tag: 'ATTRITION',
-      // endInStalemate(): ranked by completedSets, then playerNetWorth.
+      // endInStalemate(): ranked by completedSets, then playerNetWorth, then
+      // seat order — and it now says WHICH of the three decided it.
       reason: (cause === 'deck_cycles'
         // endTurn(): shuffleCount >= DECK_CYCLE_LIMIT.
         ? `The discard was reshuffled into the deck ${snap.deckCycleLimit || 16} times with `
@@ -62,9 +99,9 @@ function endingCopy(snap) {
         // endTurn(): _idleTurns >= activeCount with deck and discard both empty.
         : 'Deck and discard both ran dry and a full round passed with nobody playing a card '
           + 'out of hand, so the game went to points. ')
-        + `Most completed sets wins — ${player ? player.name : 'the winner'} took it with `
-        + `${player?.completedSets ?? 0}, net worth ${player?.netWorth ?? 0}M breaking any tie.`,
+        + basisSentence(stalemateBasis(snap), player),
       points: true,
+      basis: stalemateBasis(snap),
     };
   }
   // 'sets' — resolveFinalApproach() at the armed player's own turn start.
@@ -108,11 +145,63 @@ function boardRow(player, { points, winner }) {
   return row;
 }
 
-function renderWin() {
+/* ── when the scrim is allowed to arrive (§P7.1) ───────────────────────────
+ *
+ * MEASURED before this existed: state applied → #win-overlay visible at +1ms,
+ * but the `win` FX cue and the fanfare fired at +388ms. The overlay — z-index
+ * 95 over rgba(2,5,10,.9) — therefore opened 387ms BEFORE its own celebration
+ * and covered the table for all of it. The choreographer already calls
+ * flight.finishAll() on `win` precisely so "the overlay must not open over
+ * moving cards"; the overlay was simply not listening.
+ *
+ * So: build the content on STATE_APPLIED, unhide on the CHOREOGRAPHER's word.
+ *   • CELEBRATION_MS — fx/index.js CUE.WIN adds 0.60 trauma to #table, and
+ *     fx/shake.js DECAY is 1.5 trauma/s, so the shake runs 400ms. The gold
+ *     flash is 0.8s. The audio agent retimed the fanfare to RESOLVE at 270ms
+ *     (P7) precisely so the resolution lands on a visible table, with its held
+ *     fifth and confetti crackle running to 1.18s as deliberate tail. 850ms
+ *     covers the shake, the flash and the resolution, and leaves the tail —
+ *     plus the confetti (3.2s life at z-index 97, above the scrim) — ringing
+ *     under the overlay, which is where they read best.
+ *   • A snapped state (reconnect, fixture injection) had no celebration to
+ *     wait for — show it at once, or a reconnect into a finished game stares
+ *     at a dead table.
+ *   • FALLBACK_MS is the promise that the screen can never be lost: if no cue
+ *     ever arrives the overlay opens anyway.
+ */
+const CELEBRATION_MS = 850;
+const FALLBACK_MS = 2600;
+
+let pending = false;
+let showTimer = 0;
+
+function clearPending() {
+  pending = false;
+  clearTimeout(showTimer);
+  showTimer = 0;
+  window.removeEventListener('pointerdown', skipHold, true);
+}
+
+function reveal() {
+  const overlay = $('win-overlay');
+  clearPending();
+  if (overlay) setHidden(overlay, false);
+}
+
+/** The player is allowed to be impatient: a tap during the hold opens it now. */
+function skipHold() { if (pending) reveal(); }
+
+function armReveal(delay) {
+  if (!pending) return;
+  clearTimeout(showTimer);
+  showTimer = setTimeout(reveal, delay);
+}
+
+function renderWin(payload) {
   const overlay = $('win-overlay');
   const snap = store.snapshot;
   if (!overlay) return;
-  if (!snap || snap.phase !== 'finished') { setHidden(overlay, true); return; }
+  if (!snap || snap.phase !== 'finished') { clearPending(); setHidden(overlay, true); return; }
 
   const copy = endingCopy(snap);
   setText($('win-title'), copy.title);
@@ -143,7 +232,17 @@ function renderWin() {
     }));
   }
   $('btn-rematch').disabled = store.room.hostId !== store.self.id;
-  setHidden(overlay, false);
+
+  if (!overlay.hidden) return;                 // already up: only the copy changed
+  // Nothing to wait for unless a `win`/`stalemate` beat is actually queued to
+  // play: a snapped state (reconnect, fixture injection, catch-up drain) has no
+  // celebration coming, and holding the screen back for one would be a hang.
+  const celebrating = (payload?.events || []).some(ev => ev?.t === 'win' || ev?.t === 'stalemate');
+  if (!celebrating) { reveal(); return; }
+  if (pending) return;
+  pending = true;
+  window.addEventListener('pointerdown', skipHold, true);
+  armReveal(FALLBACK_MS);
 }
 
 export function mount() {
@@ -154,14 +253,28 @@ export function mount() {
   pointer.registerActions({
     help: () => help.show(),
     rematch: () => send.rematch(),
-    'leave-room': () => {
-      send.leaveRoom();
-      closeSheet();
-      setHidden($('win-overlay'), true);
-      location.href = location.pathname;
-    },
+    // One handler for the HUD's ✕ and the win screen's "Leave room" — they
+    // always shared it, and it always failed the same way. The farewell frame
+    // is written before the socket closes (screens.endSession → socket.flush),
+    // so the server really does free the seat: a finished game loses the seat,
+    // a game in progress hands it to a bot.
+    'leave-room': () => screens.endSession({
+      farewell: () => send.leaveRoom(),
+      message: 'You left the room',
+    }),
   });
   bus.on(EVENTS.STATE_APPLIED, renderWin);
+
+  // The choreographer's word, not the store's (§P7.1). `win`/`stalemate` are the
+  // last events it plays, and it calls flight.finishAll() on both, so by the
+  // time this fires the table is settled and the celebration has started.
+  bus.on(EVENTS.CHOREO_EVENT, (ev) => {
+    if (!pending) return;
+    if (ev?.t === 'win' || ev?.t === 'stalemate') armReveal(CELEBRATION_MS);
+  });
+  // Belt and braces: a catch-up drain can swallow the event (choreographer
+  // skips cinematics when it is behind) and still reaches idle.
+  bus.on(EVENTS.CHOREO_IDLE, () => armReveal(CELEBRATION_MS));
 
   // `/#help` is a deep link into the brief. hashchange matters as much as load:
   // navigating from `/?harness=1` to `/?harness=1#help` changes only the hash,

@@ -5,18 +5,75 @@
    that table.css already spends on [data-targetable] so a droppable zone and a
    targetable zone cannot drift apart. */
 
-/* ── touch discipline (§P4.4) ───────────────────────────────────────────────
+/* ── touch discipline (§P4.4, corrected §P7.5) ──────────────────────────────
    touch-action is scoped to the two places a drag can begin. The page, the side
    panel, the chat and the log keep native scrolling.
-   The hand is a horizontal scroller of overlapping cards with almost no empty
-   space to grab, so `none` there would make a 9-card hand unscrollable by
-   finger: `pan-x` keeps the sideways scroll and leaves every vertical gesture
-   (which is what a play is — every drop target is above the hand) to us.
+
+   The hand was `pan-x` to preserve a sideways hand scroll. MEASURED, real CDP
+   Input.dispatchTouchEvent on 390×844: a 120px drag that moves LEFT before it
+   moves up produced startedDragAfterHorizontal:false and 0 messages to the
+   server — the compositor took the gesture at the first horizontal pixel and
+   the client never saw another pointermove. Vertical-first drags succeeded, so
+   the bug was invisible to anyone who dragged "correctly".
+   The scroll it was protecting does not exist: table/hand.js tighten() shrinks
+   the fan overlap until the hand fits, measured scrollWidth 379 === clientWidth
+   379 with 8 cards on a 390px phone. So: `none`, and every direction is ours.
    The self board scrolls vertically and is mostly covered by cards, so only the
    cards that can actually be dragged from it (wilds — free rearranging, §3.8)
    claim the gesture; every other card there keeps the board scrollable. */
-#hand-dock .card { touch-action: pan-x; }
+#hand-dock .card { touch-action: none; }
 #self-board .card[data-type="wild_property"] { touch-action: none; }
+
+/* ── the press acknowledgement (§P7.2) ──────────────────────────────────────
+   Painted synchronously inside the pointerdown handler by interact/drag.js.
+   Before it existed the first feedback of any kind after a pointerdown was the
+   click, measured at 427ms+ with sfx 0 / fx 0 at every sample in between.
+   It is deliberately NOT .is-lifted: the lift is what the SELECTION means, and
+   the machine clears it on every snapshot. This survives exactly as long as the
+   finger is down. */
+.card.is-pressed {
+  transition: filter .06s linear;
+  filter: brightness(1.16) saturate(1.05);
+  z-index: 28;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card.is-pressed { transition: none; }
+}
+
+/* ── refusal: the head-shake (§5, §P7.3) ────────────────────────────────────
+   §5 asks invalid targets to shake their head. The only refusal the client
+   could express was `<button disabled>`; a full measured game produced 0
+   `denied` cues. interact/index.js refuse() drives this class, the DENIED cue
+   (sour sound + haptic) and a sentence, together, for every "no". 320ms so the
+   shake is over before the player's second tap lands. */
+@keyframes refuse-shake {
+  0%   { transform: translateX(0); }
+  15%  { transform: translateX(-6px); }
+  32%  { transform: translateX(5px); }
+  50%  { transform: translateX(-4px); }
+  68%  { transform: translateX(3px); }
+  85%  { transform: translateX(-2px); }
+  100% { transform: translateX(0); }
+}
+/* A .card's transform is anim/flight.js's (§P4 contract) — never animate it.
+   The card refuses with light and rim instead; only non-card chrome shakes. */
+@keyframes refuse-flash {
+  0%, 100% { filter: none; }
+  30%      { filter: brightness(1.35) saturate(.5) hue-rotate(-18deg); }
+  70%      { filter: brightness(.86) saturate(.6); }
+}
+.is-refused { animation: refuse-shake .32s cubic-bezier(.36, .07, .19, .97) both; }
+.card.is-refused {
+  animation: refuse-flash .32s ease both;
+  box-shadow: 0 0 0 2px var(--danger), 0 0 18px rgba(208, 52, 44, .45);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* §0.9: motion collapses, the refusal does not go silent — the cue still
+     fires and the danger rim still lands. */
+  .is-refused { animation: none; }
+  .card.is-refused { animation: none; }
+  .is-refused:not(.card) { outline: 2px solid var(--danger); outline-offset: 2px; }
+}
 
 /* ── the held card ─────────────────────────────────────────────────────── */
 .card.is-dragging {
@@ -43,12 +100,25 @@ body.is-dragging-card {
   outline: 2px dashed var(--gold-dim);
   outline-offset: 2px;
 }
+/* The committed target. Owner feedback P7: "which one am I about to hit" was
+   a 2px outline change on a 20px strip. The hovered target is now filled, not
+   merely outlined — it is the single loudest thing on the felt while a card is
+   in the air, because it is the only question being asked. */
 [data-droppable="1"].is-drop-hover {
-  outline: 2px solid var(--gold);
+  outline: 3px solid var(--gold);
   outline-offset: 2px;
+  background-image: linear-gradient(180deg, rgba(232, 185, 85, .28), rgba(232, 185, 85, .1));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 0 22px rgba(232, 185, 85, .45);
 }
 .propcol[data-droppable="1"] { border-style: solid; border-color: var(--gold-dim); }
 .propcol[data-droppable="1"].is-drop-hover { border-color: var(--gold); }
+
+/* rank 2 — the whole felt as the last-resort "just play it" target. It must
+   NOT draw a dashed box round the entire table; it only reads once it is the
+   thing being hit. */
+#table[data-droppable="2"].is-drop-hover {
+  box-shadow: inset 0 0 0 3px var(--gold-dim), inset 0 0 60px rgba(232, 185, 85, .12);
+}
 
 /* ── cursors (hover-capable pointers only, §2) ─────────────────────────── */
 @media (hover: hover) {
@@ -56,4 +126,8 @@ body.is-dragging-card {
   #self-board .card[data-type="wild_property"] { cursor: grab; }
   .card.is-dragging, .card.is-dragging * { cursor: grabbing; }
   [data-droppable="1"] { cursor: copy; }
+  /* A mouse has no 44px contact patch, so the desktop snap radius is wider
+     (interact/drag.js SNAP_MOUSE 120 vs SNAP_TOUCH 90) and the whole felt
+     advertises that a drop anywhere will be caught. */
+  body.is-dragging-card #table { cursor: copy; }
 }

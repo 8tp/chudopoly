@@ -96,6 +96,13 @@ export function canPlay() {
     && snap.currentPlayerId === store.self.id && snap.playsRemaining > 0;
 }
 
+/**
+ * DEAD as of the automatic turn draw (game.js beginTurn, 65e36ef): the engine
+ * draws for every seat inside the same synchronous call that starts the turn,
+ * so `turnPhase` is never broadcast as 'draw' and this is never true. Kept as
+ * the single place that would notice a server which still hands out a draw
+ * phase, rather than deleted and re-guessed by three call sites.
+ */
 export function canDraw() {
   const snap = store.snapshot;
   return !!snap && snap.phase === 'playing' && snap.turnPhase === 'draw'
@@ -166,10 +173,30 @@ export function requirementsFor(card) {
   return needs.slice();
 }
 
+/**
+ * Why `canPlay()` is false, in the engine's own words. playAction/playProperty/
+ * playAsMoney all reject in this order, so the sentence a player is shown is the
+ * error they would have got: "Not your turn" / "Cannot play now" (turnPhase) /
+ * "Resolve pending action first" / "No plays remaining".
+ * One flat "Not your turn to play" for all four was measured as the client's
+ * entire refusal vocabulary (§P7.3) — it is wrong three times out of four.
+ */
+export function cannotPlayReason() {
+  const snap = store.snapshot;
+  if (!snap || snap.phase !== 'playing') return 'The game is not running';
+  if (snap.currentPlayerId !== store.self.id) {
+    return `It is ${playerById(snap.currentPlayerId)?.name || 'someone else'}'s turn`;
+  }
+  if (snap.pendingAction) return 'Resolve the card on the table first';
+  if (snap.turnPhase !== 'play') return 'You cannot play right now';
+  if (snap.playsRemaining <= 0) return 'No plays left this turn — end your turn';
+  return 'You cannot play right now';
+}
+
 /** Would this play be refused by the engine right now? Returns a reason or ''. */
 export function blockedReason(card) {
   const me = selfPlayer();
-  if (!canPlay()) return 'Not your turn to play';
+  if (!canPlay()) return cannotPlayReason();
   switch (card.type) {
     case 'money':
       // playAsMoney is the ONLY legal move for these; an enabled Play button

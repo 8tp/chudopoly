@@ -429,6 +429,36 @@ function ensurePicker() {
   const column = $('lobby-rules');
   if (!column) return;
 
+  /* THE HOST'S BODY LEADS WITH THE DECISION, AND IT IS MOVED IN THE DOM.
+   *
+   * Measured at 390×844 with host + 4 bots, disclosure closed, at rest:
+   * .lobby-body was scrollHeight 996 in a 618px scrollport, the room column ran
+   * y86..606, and #ruleset therefore started at y620 — 23px of summary line
+   * against a fold at 688, with 0 of the 4 preset plates fully in view. The
+   * ruleset's position was a function of the seat count (the room column grows
+   * 54px per seat, the rules column does not grow at all), so the one decision
+   * this screen exists for sank further out of sight as the lobby filled.
+   * After this move, at the same scrollTop 0: .ruleset-head y86..109, all four
+   * plates in the scrollport, the win-rule sentence at y414..465, and 158px of
+   * the room column — its legend and two and a half seats — still under it at
+   * every seat count.
+   *
+   * IN THE DOM, NOT WITH `order`. A CSS reorder under a phone query was tried
+   * and measured first: it puts tab order and reading order in opposite
+   * sequences inside a container that scrolls to whatever takes focus, so a
+   * host tabbing off Copy invite went DOWN past the fold into the seat list
+   * (scrollTop 0 → 366) and then back UP 816px to the presets. Moving the node
+   * keeps one sequence at every width and lets ui.css drop `order` entirely;
+   * ui.css THE DECISION LEADS carries the two focus walks side by side.
+   *
+   * HERE RATHER THAN IN index.html because that file is architect-owned (§1),
+   * and HOST-ONLY because it is the host's decision that earns the lead: a
+   * guest's rules column holds one sentence (ensureGuestNote) and keeps the
+   * seat list first, which is what a guest is there to read. A request to make
+   * this the shipped source order is in this agent's report.
+   */
+  column.parentNode?.prepend(column);
+
   pending = loadHostRules();
 
   pickerRoot = el('section', {

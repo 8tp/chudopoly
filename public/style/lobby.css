@@ -46,7 +46,13 @@
 
 /* The rule under it is ui.css's `.lobby-legend` marking, on the other column's
    head. Both halves of the lobby now open the same way — a name, and a line
-   under it that runs the width of its column. */
+   under it that runs the width of its column.
+
+   That sameness is load-bearing at phone widths now, not just tidy. This head
+   is the FIRST thing in a host's body (ui.css THE DECISION LEADS), so the seat
+   list arrives second, directly under "Change individual rules ▸". An
+   unlabelled list of names there reads as part of the disclosure, which is why
+   ui.css stopped hiding .lobby-legend on a phone and paid 26px for it. */
 .ruleset-head {
   display: flex;
   align-items: baseline;

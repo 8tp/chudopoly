@@ -147,21 +147,42 @@ const MOTIFS = [
  * change than a median musical moment in the same piece.
  *
  *   track           loopStart  loopEnd  period   xfade  seam flux percentile
- *   lobby             17.579s  97.707s  80.128s   2.5s   2.4%   (p50 0.4245)
+ *   lobby              5.272s  61.272s  56.000s   2.5s   6.6%   (p50 0.4946)
  *   match-1           34.504s  98.504s  64.000s   2.0s  20.0%   (p50 0.3891)
  *   match-2           13.520s  45.520s  32.000s   2.0s  29.3%   (p50 0.6299)
  *   final-approach    19.093s  52.075s  32.982s   2.5s   5.1%   (p50 0.5360)
+ *
+ * The lobby row is the SECOND lobby track and every number in it was re-derived
+ * from scratch, not carried over: the first one (ambient) was replaced on
+ * 2026-08-07 by a sequencer score because it read too peaceful against the
+ * synth bed it stands in for. Nothing about the old file survives here — the
+ * region moved 17.579→5.272, the period 80.1s→56.0s, the trim +2.0→−5.6dB, and
+ * the grid appeared out of nothing (below). Level step across the new seam is
+ * +0.74dB; the best-scoring alternative region was 7.0% but stepped 4.81dB, and
+ * a step is what a listener sitting on a menu actually notices.
  *
  * `bar` is the track's measured bar length, or 0 when it has none. A comb
  * filter over the low-band onset envelope, in 20s chunks across each track:
  *   match-1  60.00 bpm in 5 of 7 chunks, 120.00 (the 8ths) in the other 2
  *   match-2  60.00 / 120.00 in 7 of 7
- *   lobby    51–63 bpm, a different answer every chunk — no stable pulse
- *   final    51–80 bpm, likewise
- * So the two match beds have a real 4.000s bar and their loop points are ON it
- * (period = 16 and 8 bars respectively, phase 0 into the trimmed buffer); the
- * lobby and climax beds are ambient and carry no grid to align to, which is why
- * transitions involving them fall back to the synth transport. See atDownbeat().
+ *   final    51–80 bpm, a different answer every chunk — no stable pulse
+ *
+ * The LOBBY needed a better instrument than chunk-wise comb, which answered
+ * 50–56 bpm in every chunk — all of them at the bottom edge of the search range,
+ * which is what a comb does when the real period is longer than the range. A
+ * normalised autocorrelation of the onset envelope over lags 0.1–9s found the
+ * structure instead: a dominant peak at 0.1280s (r 0.0746) with harmonics at
+ * 0.248 / 0.376 / 0.752 / 1.499, i.e. SIXTEENTHS at 120bpm — the arpeggiated
+ * sequencer line — and a second strong peak at 4.0027s (r 0.0352). That is a
+ * 4.000s bar, the same as the two match beds, and a fine comb confirms the
+ * phase at 1.2720s. So three of the five beds now carry a real grid and only
+ * the climax falls back to the synth transport. See atDownbeat().
+ *
+ * WHY xfade IS 2.5 HERE AND 2.0 ON THE MATCH BEDS: the same rule, applied to a
+ * different pulse. 56.000 − 2.5 = 53.5s is a whole number of the 0.5s beats AND
+ * of the 0.125s sixteenths the sequencer runs, so the arpeggio does not flam
+ * across the overlap. X=1.0 scored better on flux (0.9th percentile) and was
+ * rejected on level: it stepped −3.06dB where 2.5 steps +0.74.
  *
  * WHY THE MATCH BEDS' xfade IS 2.0 AND NOT 2.5. During a loop crossfade the two
  * copies are (period − xfade) apart in the source, so the overlap is rhythmic
@@ -175,8 +196,8 @@ const MOTIFS = [
  */
 const TRACKS = Object.freeze({
   lobby: {
-    file: 'lobby.opus', loopStart: 17.579, loopEnd: 97.707, xfade: 2.5,
-    bar: 0, trimDb: 2.0,
+    file: 'lobby.opus', loopStart: 5.272, loopEnd: 61.272, xfade: 2.5,
+    bar: 4.0, trimDb: -4.0,
   },
   match1: {
     file: 'match-1.opus', loopStart: 34.504, loopEnd: 98.504, xfade: 2.0,
@@ -190,6 +211,35 @@ const TRACKS = Object.freeze({
     file: 'final-approach.opus', loopStart: 19.093, loopEnd: 52.075, xfade: 2.5,
     bar: 0, trimDb: -10.7,
   },
+
+  /* ── THE ENDGAME PAIR (§0.3 amended 2026-08-07 (c), cap four → six) ───────
+   *
+   * Not beds. One-shots, 39.97s each, and the ONLY tracks here with no loop
+   * region: they are meant to end. MEASURED, both of them, and this is why
+   * there is no tail fade — they end in digital silence on their own. Last 50ms
+   * RMS: victory −90.3 dBFS, defeat −95.7; last sample 7.0e-6 and 6.4e-6; worst
+   * one-sample step inside the final 20ms 1.16e-4 and 2.94e-5. Nothing to fade.
+   *
+   * Their HEADS are opposite and both are right for what they sit under. The
+   * fanfare and defeat STINGS fire on the same instant at −4.2 and −4.6 dBFS,
+   * so the recording is the thing under the sting, not the thing announcing it:
+   *   victory  −92.9 dBFS at 0.00s, −33.2 at 2s, −14.3 at 5s — a five-second
+   *            swell that arrives as the fanfare rings out
+   *   defeat   −97.6 at 0.00s, −12.8 at 1.00s — one hit, then it settles
+   *
+   * `holds` is the supersede rule and it is the whole design (see startCeremony):
+   *   victory 'menu'  survives every menu-side screen change — the win overlay,
+   *                   Rematch into a lobby, back to the main menu — and yields
+   *                   only to a match actually starting.
+   *   defeat  'none'  ends when the player leaves the overlay. The asymmetry IS
+   *                   the respect: a win is something you carry out with you, a
+   *                   loss is acknowledged and then closed. Following someone
+   *                   into the lobby with their own defeat music is the
+   *                   "mocking" §7's brief rules out, and it is the one thing
+   *                   nobody could turn off without turning off all music.
+   */
+  victory: { file: 'victory.opus', oneShot: true, holds: 'menu', bar: 0, trimDb: -2.4 },
+  defeat: { file: 'defeat.opus', oneShot: true, holds: 'none', bar: 0, trimDb: 2.1 },
 });
 
 const MATCH_TRACKS = ['match1', 'match2'];
@@ -237,6 +287,13 @@ let matchTrack = null;                  // which of the two, this match
 let matchKey = '';                      // the per-match seed for that choice
 let bedWant = null;                     // which track SHOULD be the bed
 let pendingArm = false;                 // armed before the climax buffer landed
+let ceremony = null;                    // the endgame one-shot, if one is playing
+/* Bumped every time a match BEGINS. A ceremony fetch that resolves late must
+ * not interrupt a game that started while it was in flight — but "are we in
+ * match mode" is the wrong question to ask, because you win while still looking
+ * at the game screen, so mode IS 'match' at the moment ending() is called. That
+ * mistake cost a live round: the cue loaded and never played. */
+let matchSeq = 0;
 let busyUntil = 0;                       // no new transition lands before this
 
 const LOOKAHEAD = 0.45;                 // schedule this far ahead of the clock
@@ -547,6 +604,8 @@ export function stats() {
     loading: loading.size,
     failed: [...failed],
     fileVoices: voices.length,
+    ceremony: ceremony ? ceremony.key : null,
+    ceremonyLeft: ceremony ? Math.max(0, ceremony.endAt - ctxNow()) : 0,
     // The synth layer's transition envelope, so "is the synth still under the
     // recorded bed" is answerable from __CHUD without a render.
     synthEnv: mix ? mix.synthEnv.gain.value : 0,
@@ -609,6 +668,10 @@ function load(key) {
  * for. See TRANSITIONS.
  */
 function trimToLoop(ctx, buf, spec) {
+  // A one-shot has no loop region to cut to and is kept whole: the endgame pair
+  // is meant to END, and both were measured ending in digital silence on their
+  // own (see TRACKS), so there is nothing to trim and nothing to fade.
+  if (spec.oneShot) return buf;
   const sr = buf.sampleRate;
   const a = Math.max(0, Math.round(spec.loopStart * sr));
   const n = Math.min(buf.length - a, Math.round((spec.loopEnd - spec.loopStart) * sr));
@@ -622,6 +685,9 @@ function trimToLoop(ctx, buf, spec) {
 /** Drop buffers for tracks the current mode can never need. See LOAD POLICY. */
 function release(keep) {
   for (const k of [...buffers.keys()]) {
+    // A ceremony in flight keeps its own buffer whatever the mode thinks: it is
+    // a 15MB decode and the source is still reading from it.
+    if (ceremony && k === ceremony.key) continue;
     if (!keep.includes(k)) buffers.delete(k);
   }
 }
@@ -1062,7 +1128,17 @@ function start(which) {
   }
   rampOut();
 
+  // A ceremony that still holds keeps the room; `mode` is updated above so that
+  // resumeBed() raises the right bed when the cue ends, and the buffer for it is
+  // warmed now so that handover is instant rather than a second fetch.
+  if (ceremonyHolds(which)) {
+    if (which !== 'match') { matchTrack = null; tension = false; bedWant = 'lobby'; load('lobby'); }
+    return;
+  }
+  if (ceremony) stopCeremony(now + 0.02, which === 'match' ? 0.45 : 0.9);
+
   if (which === 'match') {
+    matchSeq++;
     if (!matchTrack) matchTrack = pickMatchTrack();
     // A session pays for one lobby + one match + at most one climax, never the
     // set (§0.3 amendment). The lobby loop region is 30.8MB of AudioBuffer and
@@ -1086,7 +1162,7 @@ function start(which) {
   // something ended.
   matchTrack = null;
   tension = false;
-  release(['lobby']);
+  release(['lobby', 'victory', 'defeat']);
   const t = Math.max(now + 0.02, busyUntil);
   const X = from === 'off' ? FADE : 1.0;
   stopFiles(t, X, 'out');
@@ -1211,6 +1287,100 @@ function ensureSynth() {
   if (mode !== 'match' && drone) stopDrone(ctxNow() + 0.6);
 }
 
+/* ── THE CEREMONY ────────────────────────────────────────────────────────
+ *
+ * The endgame pair is not a bed and must not be driven by `mode`. Owner: "let
+ * it play/finish for the winners even when rematching or going back to main
+ * menu." So it is a ONE-SHOT THAT OWNS THE MUSIC BUS, and the mode machine
+ * defers to it rather than the other way round.
+ *
+ * THE SUPERSEDE RULE, stated once. A ceremony yields to exactly two things:
+ *   • a match actually starting — the match bed cannot be muted because someone
+ *     is still enjoying their lap of honour, and by then they have chosen to
+ *     play again
+ *   • a newer ending (see below)
+ * and to nothing else. Every menu-side move — win overlay → Rematch → lobby →
+ * main menu → lobby — leaves it alone, which is the entire request. `holds`
+ * narrows that per track: 'menu' for victory, 'none' for defeat, so defeat ends
+ * when the player leaves the overlay and victory does not.
+ *
+ * A SECOND ENDING while one is playing is reachable (a fast rematch against
+ * bots) and it RESTARTS. A new win is a new ceremony; hearing the previous
+ * game's fanfare tail under a fresh overlay would read as a stuck sound. The
+ * outgoing instance gets 0.25s of equal-power fade so the retrigger is an edit
+ * rather than a click.
+ *
+ * MUTING mid-cue stops it and clears it, so un-muting raises the bed the screen
+ * calls for and does NOT restart the cue from the top — un-muting into the first
+ * five seconds of a victory swell you already heard would be worse than silence.
+ */
+function ceremonyHolds(nextMode) {
+  if (!ceremony) return false;
+  if (nextMode === 'match') return false;
+  return ceremony.spec.holds === 'menu';
+}
+
+export function ending(kind) {
+  const key = kind === 'victory' ? 'victory' : 'defeat';
+  if (!g || !mix || !enabled || !TRACKS[key]) return;
+  if (buffers.has(key)) { startCeremony(key); return; }
+  const seq = matchSeq;
+  load(key).then((buf) => {
+    // The game has to still be the one that ended by the time this lands: a
+    // fetch resolving after the player has started ANOTHER match must not
+    // interrupt it. Generation, not mode — see matchSeq.
+    if (buf && matchSeq === seq && enabled && g) startCeremony(key);
+  });
+}
+
+function startCeremony(key) {
+  const spec = TRACKS[key];
+  const buf = buffers.get(key);
+  if (!spec || !buf || !g || !mix) return;
+  const t = ctxNow() + 0.02;
+  if (ceremony) stopCeremony(t, 0.25);
+  // The bed gets out of the way. Not a crossfade — the sting is landing on this
+  // same instant and the room should be the cue's.
+  stopFiles(t, 0.6, 'out');
+  silenceSynth(t);
+  busyUntil = t;
+  const src = g.ctx.createBufferSource();
+  nodesMade++;
+  src.buffer = buf;
+  const vg = g.ctx.createGain();
+  nodesMade++;
+  vg.gain.value = dbToGain(spec.trimDb);
+  src.connect(vg); vg.connect(mix.file);
+  src.start(t);
+  const c = { key, spec, src, gain: vg, startAt: t, endAt: t + buf.duration };
+  // Both cues end in digital silence measured (see TRACKS), so this is the real
+  // end of the piece and not a cut.
+  src.onended = () => { if (ceremony === c) resumeBed(); };
+  ceremony = c;
+  note(`startCeremony ${key} at ${t.toFixed(3)} level ${vg.gain.value.toFixed(4)} dur ${buf.duration.toFixed(2)}`);
+}
+
+function stopCeremony(at, dur) {
+  const c = ceremony;
+  ceremony = null;
+  if (!c || !g) return;
+  const t = Math.max(at, ctxNow());
+  note(`stopCeremony ${c.key} at ${t.toFixed(3)} over ${dur}`);
+  fadeParam(c.gain.gain, t, dur, dbToGain(c.spec.trimDb), 0.0001, 'out');
+  try { c.src.onended = null; c.src.stop(t + dur + 0.03); } catch { /* already stopped */ }
+}
+
+/** The ceremony is over. Hand the room back to whatever the screen now wants,
+ *  at that screen's own level, unhurried — nothing happened, something ended. */
+function resumeBed() {
+  note('ceremonyEnded');
+  ceremony = null;
+  if (!g || !mix || mode === 'off' || !enabled) return;
+  const t = ctxNow() + 0.02;
+  setSynthTrim(t);
+  raiseBed(t, 1.6, mode === 'match' ? matchTrack : 'lobby');
+}
+
 /**
  * Cross from the synth bed to the recorded one as soon as the buffer exists.
  * A plain equal-power crossfade on the transport's bar, over 3.0s: the two are
@@ -1257,6 +1427,9 @@ function crossToFile(key, notBefore) {
 
 function stopAll(fade) {
   const wasMode = mode;
+  // Cleared, not paused: un-muting raises the bed the screen calls for rather
+  // than restarting a 40s cue from the top.
+  stopCeremony(ctxNow() + 0.01, Math.max(fade * 0.5, 0.15));
   mode = 'off';
   tension = false;
   bedWant = null;
@@ -1853,7 +2026,7 @@ export function offlineFile(graph, seconds, key, buf) {
   const m = buildMix(graph, 1);
   const src = graph.ctx.createBufferSource();
   src.buffer = buf;
-  src.loop = true;
+  src.loop = !spec.oneShot;
   const vg = graph.ctx.createGain();
   vg.gain.value = dbToGain(spec.trimDb);
   src.connect(vg); vg.connect(m.file);
@@ -1889,13 +2062,13 @@ export function tracks() { return Object.keys(TRACKS); }
  * `bufs` is a {key: AudioBuffer} of already-decoded loop regions, because
  * decoding is async and scheduling here is not.
  *
- * @param {Array<{at:number, do:'menu'|'match'|'arm'|'break'|'lobby'|'off'}>} steps
+ * @param {Array<{at:number, do:'menu'|'match'|'arm'|'break'|'lobby'|'off'|'win'|'lose'}>} steps
  */
 export function offlineTransition(graph, seconds, steps, bufs, opts) {
   const save = {
     g, mix, mode, want, rng, drone, nextSwell, bar, motif, synthLive, synthOffAt, synthUpAt,
     nextBar, tension, bedWant, matchTrack, matchKey, voices, pendingArm, busyUntil,
-    clockOffset, level, buffers: new Map(buffers),
+    clockOffset, level, ceremony, buffers: new Map(buffers),
   };
   // Rendered at full user volume, like every other offline render here, so the
   // numbers compare directly against renderMusic()'s rather than against a
@@ -1922,6 +2095,7 @@ export function offlineTransition(graph, seconds, steps, bufs, opts) {
   bedWant = null;
   matchTrack = null;
   pendingArm = false;
+  ceremony = null;
   busyUntil = 0;
   synthLive = true;
   synthOffAt = 0;
@@ -1951,6 +2125,8 @@ export function offlineTransition(graph, seconds, steps, bufs, opts) {
         if (s.do === 'arm') setTension(true);
         else if (s.do === 'break') setTension(false);
         else if (s.do === 'off') set('off');
+        else if (s.do === 'win') ending('victory');
+        else if (s.do === 'lose') ending('defeat');
         else set(s.do === 'lobby' ? 'menu' : s.do, { key: s.key || 'offline' });
       }
       pump();
@@ -1965,7 +2141,7 @@ export function offlineTransition(graph, seconds, steps, bufs, opts) {
     nextBar = save.nextBar; tension = save.tension;
     bedWant = save.bedWant; matchTrack = save.matchTrack; matchKey = save.matchKey;
     voices = save.voices; pendingArm = save.pendingArm; busyUntil = save.busyUntil;
-    clockOffset = save.clockOffset; level = save.level;
+    clockOffset = save.clockOffset; level = save.level; ceremony = save.ceremony;
     buffers.clear();
     for (const [k, v] of save.buffers) buffers.set(k, v);
   }

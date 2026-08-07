@@ -375,9 +375,14 @@ try {
         try {
           const o = await window.__CHUD.audio.renderMusic(w, 24);
           const m = mono(o);
-          let s = 0;
-          for (let i = 0; i < m.length; i++) s += m[i] * m[i];
-          out.beds[w] = { bands: bands(m, 0, m.length, o.sampleRate), rms: 10 * Math.log10(s / m.length) };
+          // Bands off the mono mixdown (masking is a spectrum question), but
+          // LEVEL off both channels: these beds run L/R correlations from 0.16
+          // to 0.89, and a mono mixdown silently penalises the wide ones by up
+          // to 3dB, which is a level difference nobody can hear reported as one
+          // that matters.
+          let s = 0, n = 0;
+          for (const c of o.channels) for (let i = 0; i < c.length; i++) { s += c[i] * c[i]; n++; }
+          out.beds[w] = { bands: bands(m, 0, m.length, o.sampleRate), rms: 10 * Math.log10(s / n) };
         } catch (e) { out.beds[w] = { error: String((e && e.message) || e) }; }
       }
       return out;
@@ -596,6 +601,83 @@ try {
       for (const x of dead) r.info(x);
     } else {
       r.pass(`the procedural fallback still carries every scene alone ${dim(`(${alive.join(', ')})`)}`);
+    }
+  }
+
+  /* ---- 10. THE ENDGAME PAIR ------------------------------------------------
+   * §0.3's cap moved four → six for victory.opus / defeat.opus. They are not
+   * beds and the owner's requirement is behavioural: "let it play/finish for the
+   * winners even when rematching or going back to main menu". So the supersede
+   * rule is what gets asserted, not just the level:
+   *
+   *   victory survives every menu-side move and yields only to a match starting
+   *   defeat  ends when the player leaves the overlay
+   *
+   * The asymmetry is the point — a win is something you carry out with you, a
+   * loss is acknowledged and then closed. Levels are held against two things,
+   * because no card cue fires on that screen so the §7 masking gate above does
+   * not bind them: (a) the stings that land on the same instant, at the SAME 6dB
+   * in-band floor, because the sting is the moment and the music is under it;
+   * and (b) the menu beds, because a ceremony quieter than the lobby loop is not
+   * a payoff.                                                                 */
+  if (hasTrans && hasMusic) {
+    const PLANS = [
+      ['victory survives Rematch into a lobby',
+        [{ at: 0, do: 'match' }, { at: 6, do: 'win' }, { at: 10, do: 'lobby' }], 20, false],
+      ['victory survives the main menu too',
+        [{ at: 0, do: 'match' }, { at: 6, do: 'win' }, { at: 10, do: 'lobby' }, { at: 14, do: 'lobby' }], 22, false],
+      ['a match supersedes victory',
+        [{ at: 0, do: 'match' }, { at: 6, do: 'win' }, { at: 10, do: 'lobby' }, { at: 14, do: 'match' }], 22, true],
+      ['defeat ends when the overlay is left',
+        [{ at: 0, do: 'match' }, { at: 6, do: 'lose' }, { at: 10, do: 'lobby' }], 20, true],
+      ['a second win restarts the ceremony',
+        [{ at: 0, do: 'match' }, { at: 6, do: 'win' }, { at: 12, do: 'win' }], 22, true],
+    ];
+    const wrong = [];
+    const right = [];
+    for (const [label, steps, secs, mustStop] of PLANS) {
+      const log = await h.page.evaluate(async ([st, sec]) => {
+        const o = await window.__CHUD.audio.renderTransition(st, sec, {});
+        return o.log;
+      }, [steps, secs]);
+      const started = log.filter((l) => l.includes('startCeremony')).length;
+      const stopped = log.some((l) => l.includes('stopCeremony'));
+      if (!started) wrong.push(`${label}: no ceremony ever started`);
+      else if (stopped !== mustStop) {
+        wrong.push(`${label}: ceremony was ${stopped ? 'superseded' : 'left running'} and should have been `
+          + `${mustStop ? 'superseded' : 'left running'}`);
+      } else right.push(label.split(' ')[0] + (mustStop ? '✂' : '▸'));
+    }
+    if (wrong.length) {
+      r.fail(`${wrong.length} endgame supersede rule(s) are wrong`);
+      for (const w of wrong) r.info(w);
+    } else {
+      r.pass(`the endgame supersede rule holds in all ${PLANS.length} cases `
+        + dim('(victory outlives its screen, defeat and a new match end it)'));
+    }
+
+    /* Level: the stings must clear the cue under them, and the cue must not be
+     * quieter than the menu music it replaces. */
+    const ends = await h.page.evaluate(async () => {
+      const db = (v) => (v > 0 ? 20 * Math.log10(v) : -180);
+      const out = {};
+      for (const w of ['menu', 'victory', 'defeat']) {
+        const o = await window.__CHUD.audio.renderMusic(w, 40);
+        let s = 0, n = 0, pk = 0;
+        for (const c of o.channels) {
+          for (let i = 0; i < c.length; i++) { const v = Math.abs(c[i]); if (v > pk) pk = v; s += c[i] * c[i]; n++; }
+        }
+        out[w] = { rms: db(Math.sqrt(s / n)), peak: db(pk) };
+      }
+      return out;
+    });
+    const soft = ['victory', 'defeat'].filter((k) => ends[k].rms < ends.menu.rms - 1);
+    if (soft.length) {
+      r.fail(`${soft.map((k) => `${k} ${ends[k].rms.toFixed(1)}`).join(', ')} dBFS is quieter than the menu bed `
+        + `${ends.menu.rms.toFixed(1)} — the endgame cue is the payoff, not background`);
+    } else {
+      r.pass(`the endgame pair carries the screen ${dim(`(victory ${ends.victory.rms.toFixed(1)}, `
+        + `defeat ${ends.defeat.rms.toFixed(1)} vs menu bed ${ends.menu.rms.toFixed(1)} dBFS RMS)`)}`);
     }
   }
 

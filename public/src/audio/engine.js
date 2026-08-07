@@ -1062,6 +1062,20 @@ bus.on(EVENTS.CHOREO_SFX, (msg) => {
   if (ev.t === 'final_approach') arm(ev.actor);
   else if (ev.t === 'final_approach_broken') disarm(ev.actor);
   else if (ev.t === 'win' || ev.t === 'stalemate' || ev.t === 'game_start') disarm(null);
+  if (ev.t === 'win') {
+    // The ceremony is the MUSIC under the sting, not the sting. BANK.fanfare /
+    // BANK.defeat have already fired on this same instant, which is what makes a
+    // 200ms fetch invisible here — see music.ending().
+    music.ending(resolve('ending') === 'fanfare' ? 'victory' : 'defeat');
+  } else if (ev.t === 'final_approach') {
+    // The endgame pair is the only music whose load moment is knowable, and by
+    // §3.10 an arming grants a full turn cycle before anyone can convert. Which
+    // ONE to warm is guessable and worth guessing: the player who armed is the
+    // likely winner, everybody else is the likely loser, so a session warms 322KB
+    // rather than the pair's 639KB. A wrong guess costs a fetch inside the win
+    // overlay's own 850ms hold, which is measured to fit.
+    music.prefetch(ev.actor === selfId() ? 'victory' : 'defeat');
+  }
   if (ev.t === 'game_start') {
     gamesSeen++;
     music.set(wantMusic, { key: musicKey() });

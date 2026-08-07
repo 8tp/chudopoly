@@ -33,6 +33,7 @@ export function unsubscribe(fn) {
 /** Seconds since the clock first ran. Presentation only — never game logic. */
 export function now() { return elapsed; }
 export function frameCount() { return frames; }
+export function subCount() { return subs.length; }
 
 function drain() {
   for (let i = 0; i < pendingAdd.length; i++) {

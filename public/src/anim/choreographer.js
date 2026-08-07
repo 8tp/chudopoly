@@ -152,6 +152,10 @@ export function setSelf(id) { selfId = id; }
 export function setInstant(on) { instant = !!on; }
 export function isInstant() { return instant; }
 export function pending() { return queue.length; }
+/** Is the drain loop mid-job? Read by the §9 bridge — "the queue is 0 but the
+ *  table is still performing" and "nothing is happening" look identical from
+ *  pending() alone, and telling them apart is the whole of a stall diagnosis. */
+export function isRunning() { return running; }
 
 export function clear() { queue.length = 0; }
 

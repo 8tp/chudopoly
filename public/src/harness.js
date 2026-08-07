@@ -13,6 +13,7 @@ import * as fx from './fx/index.js';
 import * as socket from './net/socket.js';
 import * as interact from './interact/index.js';
 import * as bus from './core/bus.js';
+import * as clock from './core/clock.js';
 
 export function isHarness() {
   try { return new URLSearchParams(location.search).has('harness'); } catch { return false; }
@@ -54,6 +55,18 @@ export function install(readyPromise, applyStateFn) {
       selected: [...interact.mode.selected],
       hint: interact.mode.hint,
     }),
+    enumerable: true,
+  });
+  // Why the table is not moving. pending() alone cannot tell "the queue is
+  // empty" from "the queue is empty because the drain is parked on a clock that
+  // stopped", and the clock's own frame count is the only thing that says
+  // whether frames are being delivered at all (backgrounded tab, §0.6).
+  Object.defineProperty(bridge, 'choreo', {
+    get: () => ({ pending: choreographer.pending(), running: choreographer.isRunning() }),
+    enumerable: true,
+  });
+  Object.defineProperty(bridge, 'clock', {
+    get: () => ({ now: clock.now(), frames: clock.frameCount(), subs: clock.subCount() }),
     enumerable: true,
   });
   Object.defineProperty(bridge, 'driftLog', {

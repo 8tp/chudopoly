@@ -55,6 +55,25 @@ function findClaimableSeat(room, playerId, resumeToken) {
 }
 
 // A seat a human held before the takeover comes back to that human, AI and all.
+//
+// THE CANCEL IS NOT OPTIONAL AND NEITHER IS THE RESCHEDULE (owner bug, 2026-08-07:
+// "I tabbed out of a bot game … went back in and everything really froze and doesnt
+// let me play cards"). There is ONE bot timeout per room (bot.js `room._botTimeout`),
+// so cancelling the move a seat-that-is-no-longer-a-bot was about to make also throws
+// away the move whichever OTHER bot currently holds the turn was about to make. Nothing
+// re-arms it: every caller of this function finished with `broadcastRoom`, which does
+// not schedule, and no later message can schedule one either — every path that does is
+// reached by a LEGAL move from the current player, and the current player is a bot that
+// is never going to move again. The room stops dead on that bot's turn, permanently,
+// and survives a reload (the second reclaim is a no-op, so nothing schedules then
+// either). Measured on quick play: drop the socket, reconnect 2.5s later, and eventSeq
+// is frozen at the same number 12s on with `phase: 'playing'` — a table nobody can act
+// on, which is exactly what the owner was looking at.
+//
+// So callers must broadcast with `broadcastAndScheduleBot`. Rescheduling is safe and
+// idempotent: bot.js's scheduleBotAction returns immediately if a timeout already
+// exists, and it schedules for whoever currently holds the turn — which, after the
+// lines above, is by definition not this seat.
 function reclaimFromBot(room, seat, code, how) {
   if (!seat.isBot || !seat._wasHuman) return;
   seat.isBot = false;
@@ -356,7 +375,9 @@ function handleMessage(ws, msg, state) {
         sendJoined(ws, room, dc);
         broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
         if (room.chat.length) broadcast.send(ws, { type: 'chat_history', scope: 'room', msgs: room.chat.slice(-CHAT_MAX) });
-        broadcast.broadcastRoom(room);
+        // …AndScheduleBot, not broadcastRoom: reclaimFromBot above may have just
+        // cancelled the room's ONE bot timeout. See its header.
+        broadcast.broadcastAndScheduleBot(room);
         console.log(`[ROOM] ${code} ~${dc.name} rejoined game`);
         break;
       }
@@ -394,7 +415,9 @@ function handleMessage(ws, msg, state) {
       sendJoined(ws, room, p);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
       if (room.chat.length) broadcast.send(ws, { type: 'chat_history', scope: 'room', msgs: room.chat.slice(-CHAT_MAX) });
-      broadcast.broadcastRoom(room);
+      // …AndScheduleBot, not broadcastRoom: reclaimFromBot above may have just
+      // cancelled the room's ONE bot timeout. See its header.
+      broadcast.broadcastAndScheduleBot(room);
       console.log(`[ROOM] ${code} ~${p.name} reconnected`);
       break;
     }

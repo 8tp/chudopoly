@@ -57,6 +57,11 @@ const steps = [
 ];
 if (!FAST) steps.push(['node', ['tools/simbalance.mjs', '--games', String(args.games || 400)], 'simbalance']);
 if (!FAST) steps.push(['node', ['tools/playtest.mjs'], 'playtest']);
+// The owner tabbed out of a bot game and came back to a table nobody could move
+// (server/handlers.js reclaimFromBot). It backgrounds a real page, takes the
+// socket with it, and asserts both halves of coming back: the client catches up,
+// and there is still a game to catch up to.
+if (!FAST) steps.push(['node', ['tools/tabaway.mjs'], 'tabaway']);
 steps.push(['node', ['tools/touchtest.mjs'], 'touchtest']);
 // The review set is now gated on its own honesty (duplicate shots, undriven
 // client modes, clipped text, theme pairs that come out identical) — not on

@@ -21,8 +21,29 @@
 // for exactly as long as the final approach lasts. The alarm IS the harmony.
 //
 //   menu   Am | F | G | Am, 66bpm, pad + sparse bugle + brushed backbeat
-//   match  a two-note drone (A1 + E2) and nothing else
+//   match  A1 + E2 under a slow two-stroke pulse and a 4-bar i–VI–i breath
 //   armed  match root fades, E pedal remains, engine.js's tension clock enters
+//
+// ── THE MATCH BED HAS A PULSE NOW (P9 FEEL round 1) ────────────────────────
+// It used to be "a two-note drone and nothing else", and a 60s offline render
+// said exactly that: RMS −37.4 to −40.0 dB with a 12.2 dB total spread that was
+// ENTIRELY the 1s fade-in, peak −30 dBFS, and an envelope autocorrelation with
+// no structure at the bar or anywhere else. The verdict it earned: "you would
+// not mute it in 30 seconds because you would not notice it."
+//
+// §7's two non-negotiables for a bed are a PULSE and a PHRASE THAT ENDS, and
+// they are written about the menu only because the match bed was never given
+// any shape to argue about. It gets both here, at the level it already had:
+//   • pulse — a soft 68→40Hz stroke on 1 and 3 of every bar, i.e. one every
+//     1.82s. §7 forbids a kick drum and this is not one: it is lowpassed at
+//     150Hz and swelled rather than struck, so it is an engine turning over
+//     under the floor, not a beat.
+//   • phrase — four bars. The bed breathes up through bar 2, the fifth lifts
+//     E2 → F2 (i → VI) across bar 3, and bar 4 comes back down to the tonic
+//     BELOW where it started. That is a cadence, and it is what makes 60s of it
+//     four things that happened instead of one thing that did not stop.
+// The phrase stands down when §3.10 arms: the whole point of the E pedal is
+// that it does not move while the alarm is reinforcing it.
 //
 // ── SONIC IDENTITY ─────────────────────────────────────────────────────────
 // §6's "night flight line": crisp, physical, a little military-formal. The
@@ -107,6 +128,33 @@ let pumpMs = 0;
 
 const LOOKAHEAD = 0.45;                 // schedule this far ahead of the clock
 const FADE = 0.9;                       // bed crossfades
+
+/* ── levels ──────────────────────────────────────────────────────────────
+ * MENU_TRIM: §7 asks the menu score for a −14 dBFS master and the 60s render
+ * measured −20 peak, i.e. six decibels of it were simply missing. ×2 is +6.0 dB
+ * and lands it on the number. It is applied to the MENU bed only — the match
+ * bed's whole contract is that it sits under card_slide (tools/audiotest.mjs
+ * asserts it), and this is the reason that trim is not a change to `level`,
+ * which is the player's volume and applies to both.
+ *
+ * DRONE_GAIN is unchanged at 0.045: the match bed gains a shape, not a level.
+ */
+const MENU_TRIM = 2.0;
+const DRONE_GAIN = 0.045;
+
+/** The match pulse, in beats of the bar. §7: no kick drum — this is a swelled
+ *  68→40Hz stroke through a 150Hz lowpass, felt rather than heard, and 1 and 3
+ *  put it at 33 strokes a minute. A resting heart rate, which is the tempo of
+ *  "pre-flight, before dawn". */
+const MATCH_PULSE = [[0, 0.024], [2, 0.016]];
+const MATCH_PHRASE = 4;                 // bars per breath — the thing that ENDS
+
+/** The fifth, and where the phrase takes it. E2 is the tonic chord's fifth and
+ *  an octave above the §3.10 tension sub; F2 is the VI, and moving between them
+ *  is the entire harmonic content of the match bed — which is the right amount
+ *  for something that has to stay under the card layer for 150 seconds. */
+const E2_HZ = A2 * st(7) * 0.5;         // 82.4Hz
+const F2_HZ = A2 * st(8) * 0.5;         // 87.3Hz
 
 /* ── plumbing ───────────────────────────────────────────────────────────── */
 
@@ -213,7 +261,12 @@ export function stats() {
 function rampOut() {
   if (!g || !out) return;
   const now = g.ctx.currentTime;
-  const target = enabled && mode !== 'off' ? Math.max(level, 0.0001) : 0.0001;
+  // MENU_TRIM is §7's −14 dBFS master, and it is a property of the BED, not of
+  // the player's volume — which is why it multiplies `level` rather than
+  // replacing it, and why the match bed (which must stay under card_slide) is
+  // untouched by it.
+  const trim = mode === 'menu' ? MENU_TRIM : 1;
+  const target = enabled && mode !== 'off' ? Math.max(level * trim, 0.0001) : 0.0001;
   const p = out.gain;
   p.cancelScheduledValues(now);
   p.setValueAtTime(Math.max(p.value, EPS), now);
@@ -264,6 +317,7 @@ function pump() {
   let guard = 0;
   while (nextBar < now + LOOKAHEAD && guard++ < 4) {
     if (mode === 'menu') scheduleMenuBar(nextBar, bar);
+    else if (mode === 'match') scheduleMatchBar(nextBar, bar);
     nextBar += BAR;
     bar++;
   }
@@ -334,7 +388,16 @@ function scheduleMenuBar(t, index) {
     const ov = osc(mult === 0.5 ? 'sine' : 'sawtooth', root * mult * det, t, t + BAR + 0.9);
     ov.connect(vg); vg.connect(padLp);
   }
-  swell(padEnv.gain, t, 0.19, 0.55, BAR * 0.4, BAR * 0.55);
+  /* The pad SUSTAINS ACROSS THE BAR LINE. It used to be attack 0.55 / hold
+     1.45 / release 2.00 = 4.00s against a 3.64s bar, which sounds like an
+     overlap and is not one: the release is exponential to EPS, so the old bar
+     was already at nothing by ~3.4s and the new bar spent its first 0.55s
+     climbing. The measured consequence was a HOLE at every bar line — 12 of the
+     60 seconds of the render sat at RMS −50 to −64 dB, which is not a rest, it
+     is the music stopping four times a phrase. Attack 0.30 / hold 2.62 /
+     release 1.53 puts the release under the next bar's attack instead, and the
+     two bars cross with both of them audible. */
+  swell(padEnv.gain, t, 0.21, 0.30, BAR * 0.72, BAR * 0.42);
 
   /* 2. bugle — bars 0 and 2 of the phrase only. Sparse by construction: never
         more than 3 notes in 7.3s, so it reads as a call, not a tune. */
@@ -444,7 +507,7 @@ function startDrone() {
   // E2 (82.4Hz) — the fifth, an octave above the 41.2Hz sub the §3.10 tension
   // bed runs, which is what lets the alarm land IN the harmony (see the header).
   const fifth = gain(0.34);
-  const fv = osc('triangle', A2 * st(7) * 0.5, now, 0);
+  const fv = osc('triangle', E2_HZ, now, 0);
   fv.connect(fifth); fifth.connect(lp);
 
   const floorG = gain(0.5);
@@ -461,8 +524,59 @@ function startDrone() {
   // peak / -17.7 RMS, i.e. LOUDER than half the sting bank. -21dB puts it at
   // -30.6 peak / -39.2 RMS — under card_slide, the quietest routine sound.
   dg.gain.setValueAtTime(EPS, now);
-  dg.gain.linearRampToValueAtTime(0.045, now + 2.2);
-  drone = { lp, dg, rootGain, nodes: [rv, rv2, fv, fn, lfo] };
+  dg.gain.linearRampToValueAtTime(DRONE_GAIN, now + 2.2);
+  drone = { lp, dg, rootGain, fifth: fv, nodes: [rv, rv2, fv, fn, lfo] };
+}
+
+/**
+ * One bar of the match bed: the pulse, and the bar's share of the four-bar
+ * breath. There is still no per-frame JS here — this is the same lookahead
+ * scheduler the menu uses, it builds two small nodes a bar, and the drone's own
+ * voices remain persistent oscillators with automation written onto them rather
+ * than anything rebuilt.
+ *
+ * The breath is deliberately asymmetric: bars 1 and 2 rise, bar 3 is the top
+ * (and the only bar the fifth leaves the tonic chord for the VI), bar 4 comes
+ * back down BELOW the starting level before the next phrase lifts again. A
+ * cycle that returns exactly to where it began is a loop; one that undershoots
+ * and re-attacks is a phrase.
+ */
+function scheduleMatchBar(t, index) {
+  if (!drone) return;
+  for (const [b, amp] of MATCH_PULSE) pulse(t + b * BEAT, amp);
+
+  const phase = index % MATCH_PHRASE;
+  const to = phase === 1 ? DRONE_GAIN * 1.26
+    : phase === 2 ? DRONE_GAIN * 1.12
+      : phase === 3 ? DRONE_GAIN * 0.74
+        : DRONE_GAIN;
+  try { drone.dg.gain.linearRampToValueAtTime(to, t + BAR); } catch { /* stopped */ }
+
+  // §3.10: while the final approach is armed the fifth IS the pedal the tension
+  // bed's 41.2Hz sub reinforces, and a pedal that wanders is not a pedal.
+  if (tension) return;
+  const up = phase === 2;
+  try {
+    drone.fifth.frequency.linearRampToValueAtTime(up ? F2_HZ : E2_HZ, t + BAR * 0.6);
+  } catch { /* stopped */ }
+}
+
+/** The pulse voice. Not a kick (§7 forbids one): a swelled 68→40Hz sine under a
+ *  150Hz lowpass, with a 50ms attack rather than a transient, so it arrives as
+ *  something turning over below the floor rather than as a drum being hit. */
+function pulse(t, amp) {
+  const lp = filt('lowpass', 150, 0.7);
+  const pg = gain(0);
+  lp.connect(pg); pg.connect(out);
+  const o = osc('sine', 68, t, t + 0.95);
+  glide(o.frequency, t, 68, 40, 0.30);
+  o.connect(lp);
+  // Long rather than loud. The bed's peak is capped by tools/audiotest.mjs
+  // (it must stay under card_slide), so the stroke buys its presence in
+  // DURATION — 0.84s of swell against a 1.82s grid is a 46% duty cycle, which
+  // is what puts a measurable modulation on the envelope at a peak that does
+  // not move.
+  swell(pg.gain, t, amp, 0.07, 0.22, 0.55);
 }
 
 function stopDrone(at) {
@@ -494,7 +608,10 @@ export function offline(graph, seconds, which) {
   const save = { g, out, duck, mode, rng, drone, nextAir, bar, motif };
   g = graph;
   out = graph.ctx.createGain();
-  out.gain.value = 1;
+  // The render is the SHIPPED bed at full volume, so it carries the same trim
+  // rampOut() applies live — otherwise the number §7 is asserted against is a
+  // level nobody ever hears.
+  out.gain.value = which === 'menu' ? MENU_TRIM : 1;
   duck = graph.ctx.createGain();
   out.connect(duck);
   duck.connect(graph.musicBus);
@@ -506,6 +623,7 @@ export function offline(graph, seconds, which) {
   try {
     if (which === 'match') {
       startDrone();
+      for (let t = 0.05, i = 0; t < seconds; t += BAR, i++) scheduleMatchBar(t, i);
       for (let t = 3; t < seconds; t += 16) air(t);
     } else {
       for (let t = 0.05, i = 0; t < seconds; t += BAR, i++) scheduleMenuBar(t, i);

@@ -51,6 +51,10 @@ const SCALE = 1.06;
 // `250ms cubic-bezier(.22,1,.36,1)`. anim/flight.js solves that exact bezier
 // (settleEase); this is the CSS fallback for the board→board case flight.js is
 // not asked to handle, so it names the same curve.
+// The release pop (motion.css `.is-unpressing`). 190ms of curve plus a frame of
+// slack: hold it any longer and a fast double-tap presses a card that is still
+// unpressing, hold it shorter and the class is pulled mid-overshoot.
+const UNPRESS_MS = 210;
 const SPRING_MS = 260;
 const SPRING_EASE = 'cubic-bezier(.22, 1, .36, 1)';
 const COMMIT_HOLD_MS = 900;  // an accepted drop keeps its offset this long, then
@@ -100,12 +104,37 @@ export function mount(machineApi) {
  * decided later by the tap/drag split. */
 function press(cardId, node) {
   if (!node) return;
+  clearTimeout(node.__unpressTimer);
+  node.classList.remove('is-unpressing');
   node.classList.add('is-pressed');
   cueAt(CUE_PICKUP, node);
 }
 
+/**
+ * The release is half of the press (§P9 FEEL round 1). `.is-pressed` used to be
+ * removed and that was the end of it: the card snapped back to its rest pose in
+ * one frame, with no transition, which is precisely the "no weight" the press
+ * was measured as having. `.is-unpressing` keeps motion.css's press channel
+ * alive for one back-out curve so the card springs through 1.0 and settles.
+ *
+ * NOT after a drag: from `phase === 'drag'` the card is already mid-flight or
+ * mid-spring-back under anim/flight.js, and a second pose writer on the same
+ * node is the one thing the transform contract forbids.
+ */
+function unpress(node, phase) {
+  if (!node) return;
+  node.classList.remove('is-pressed');
+  clearTimeout(node.__unpressTimer);
+  if (phase === 'drag') { node.classList.remove('is-unpressing'); return; }
+  node.classList.add('is-unpressing');
+  node.__unpressTimer = setTimeout(() => {
+    node.__unpressTimer = 0;
+    node.classList.remove('is-unpressing');
+  }, UNPRESS_MS);
+}
+
 function release(cardId, node, info) {
-  node?.classList.remove('is-pressed');
+  unpress(node, info?.phase);
   if (info?.phase === 'held') bus.emit(UI_PEEK_END, null);
 }
 

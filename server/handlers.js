@@ -98,6 +98,7 @@ function scheduleRoomReap(roomCode) {
 
 function deleteRoom(roomCode, room) {
   if (room._reapTimerId) { clearTimeout(room._reapTimerId); room._reapTimerId = null; }
+  if (room._rulesBroadcastTimer) { clearTimeout(room._rulesBroadcastTimer); room._rulesBroadcastTimer = null; }
   timers.clearTurnTimer(room);
   rooms.delete(roomCode);
   console.log(`[ROOM] ${roomCode} deleted (empty)`);
@@ -160,6 +161,52 @@ const GLOBAL_CHAT_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_GLOBAL_CHAT_
 const EMOTE_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_EMOTE_MS) || 1000);
 // A history refill is a page, not the whole ring.
 const CHAT_PAGE = 20;
+// `set_rules` is a 60-byte request that fans a full room state to every seat, so it belongs
+// in the same family. It is NOT dropped like chat_history though: dropping it would leave
+// the picker and the launch disagreeing, which is the whole defect it exists to fix. The
+// ruleset is therefore ALWAYS stored, and only the BROADCAST is coalesced — leading edge
+// immediately, then at most one trailing broadcast per window carrying the final value. A
+// host dragging a select produces one fan-out per window instead of one per keystroke.
+const SET_RULES_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_SET_RULES_MS) || 250);
+
+/* ── Lobby ruleset ───────────────────────────────────────────────────── */
+
+// The five fields `set_rules` and `start_game` share. Kept as a list so "did the host say
+// anything about the rules?" is one question with one answer in both places.
+const RULE_FIELDS = ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn'];
+
+function pickRuleOpts(msg) {
+  const opts = {};
+  for (const key of RULE_FIELDS) if (msg[key] !== undefined) opts[key] = msg[key];
+  return opts;
+}
+
+function sameRules(a, b) {
+  if (!a || !b) return false;
+  return a.preset === b.preset && a.winRule === b.winRule && a.setsToWin === b.setsToWin
+    && a.pureSetRequired === b.pureSetRequired && a.passGoRestartsTurn === b.passGoRestartsTurn;
+}
+
+// Leading-edge broadcast, then one coalesced trailing broadcast per window. The trailing
+// timer is unref'd and re-checks that the room is still registered, so a room reaped inside
+// the window can never be resurrected or hold the process open.
+function broadcastRulesChange(room) {
+  const now = Date.now();
+  const since = now - (room._rulesBroadcastAt || 0);
+  if (since >= SET_RULES_COOLDOWN_MS) {
+    room._rulesBroadcastAt = now;
+    broadcast.broadcastRoom(room);
+    return;
+  }
+  if (room._rulesBroadcastTimer) return;      // a trailing broadcast is already queued
+  room._rulesBroadcastTimer = setTimeout(() => {
+    room._rulesBroadcastTimer = null;
+    if (rooms.get(room.code) !== room) return;
+    room._rulesBroadcastAt = Date.now();
+    broadcast.broadcastRoom(room);
+  }, SET_RULES_COOLDOWN_MS - since);
+  room._rulesBroadcastTimer.unref?.();
+}
 
 function startRoomGame(room, turnTimeout, responseTimeout, ruleOpts) {
   // Unconditional, and BEFORE the new state exists. This used to arm the turn timer only
@@ -175,6 +222,13 @@ function startRoomGame(room, turnTimeout, responseTimeout, ruleOpts) {
     ? (room.rules || G.resolveRules({}))
     : G.resolveRules(ruleOpts);
   room.winRule = room.rules.winRule;   // legacy field, kept in sync
+  // The lobby's PENDING ruleset is re-pointed at what actually launched, so the field the
+  // broadcast carries (pendingRules || rules) is the live ruleset for the rest of the
+  // room's life — including every rematch, which keeps room.rules and so keeps this too.
+  // Without it a start_game that overrode the picker would leave a stale pendingRules
+  // shadowing the real rules on the wire.
+  room.pendingRules = room.rules;
+  if (room._rulesBroadcastTimer) { clearTimeout(room._rulesBroadcastTimer); room._rulesBroadcastTimer = null; }
   room.turnTimeout = clampSeconds(turnTimeout, MAX_TURN_TIMEOUT, DEFAULT_TURN_TIMEOUT);
   room.responseTimeout = clampSeconds(responseTimeout, MAX_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT);
   const humans = room.players.filter(p => !p.isBot).length;
@@ -205,8 +259,12 @@ function handleMessage(ws, msg, state) {
       const player = { id: state.playerId, resumeToken: genResumeToken(), name: msg.name, ws };
       // The clocks are seeded at creation, not at start_game, so the LOBBY broadcast already
       // says what this table will run on and the REPLY select can show the real default.
+      // Same reasoning for the RULESET: seeded at creation so the first lobby broadcast
+      // already tells every seat — host or not — which ruleset this table plays if nobody
+      // touches the picker. `set_rules` replaces it; start_game launches whatever it holds.
       const room = { code, phase: 'lobby', hostId: state.playerId, players: [player], state: null, chat: [],
-        turnTimeout: DEFAULT_TURN_TIMEOUT, responseTimeout: DEFAULT_RESPONSE_TIMEOUT };
+        turnTimeout: DEFAULT_TURN_TIMEOUT, responseTimeout: DEFAULT_RESPONSE_TIMEOUT,
+        pendingRules: G.resolveRules({}) };
       rooms.set(code, room);
       sendJoined(ws, room, player);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
@@ -379,6 +437,35 @@ function handleMessage(ws, msg, state) {
       break;
     }
 
+    // The lobby's rules picker was host-only BY NECESSITY, not by design: broadcastRoom had
+    // no field that could carry a ruleset before a game existed, so every non-host saw
+    // "the host is choosing" and could not tell what they were about to play. This is the
+    // one command that fixes that — it changes nothing about the game, it only publishes
+    // the host's choice to the whole room ahead of start_game.
+    case 'set_rules': {
+      const room = rooms.get(roomCode);
+      // Host-only, same shape as kick/add_bot/start_game — and REFUSED, not silently
+      // ignored, so a client that has lost the host badge learns it immediately instead of
+      // showing a ruleset the room will never play.
+      if (!room || room.hostId !== playerId) {
+        broadcast.send(ws, { type: 'error', message: 'Only host can change the rules' });
+        break;
+      }
+      // Lobby-only, matching start_game: the ruleset of a table already in play is fixed.
+      if (room.phase !== 'lobby') {
+        broadcast.send(ws, { type: 'error', message: 'Cannot change the rules during a game' });
+        break;
+      }
+      const next = G.resolveRules(pickRuleOpts(msg));
+      // A no-op costs nothing at all: re-sending the ruleset the room already has fans
+      // nothing out. This is what makes a client that echoes its selects on every render
+      // harmless.
+      if (sameRules(room.pendingRules, next)) break;
+      room.pendingRules = next;
+      broadcastRulesChange(room);
+      break;
+    }
+
     case 'start_game': {
       const room = rooms.get(roomCode);
       if (!room || room.hostId !== playerId) { broadcast.send(ws, { type: 'error', message: 'Only host can start' }); break; }
@@ -391,13 +478,15 @@ function handleMessage(ws, msg, state) {
         break;
       }
       if (room.players.length < 2) { broadcast.send(ws, { type: 'error', message: 'Need at least 2 players' }); break; }
-      startRoomGame(room, msg.turnTimeout, msg.responseTimeout, {
-        preset: msg.preset,
-        winRule: msg.winRule,
-        setsToWin: msg.setsToWin,
-        pureSetRequired: msg.pureSetRequired,
-        passGoRestartsTurn: msg.passGoRestartsTurn,
-      });
+      // If the message says ANYTHING about the rules it is authoritative in full — exactly
+      // today's behaviour, so a client that never sends set_rules is unaffected. If it says
+      // nothing, the ruleset the lobby has been showing every seat is what launches, so the
+      // picker and the launch cannot disagree. resolveRules is idempotent on its own output
+      // (a 'custom' preset falls back to the default base and all four toggles override it),
+      // so replaying pendingRules through it yields the identical ruleset.
+      const said = RULE_FIELDS.some(key => msg[key] !== undefined);
+      const ruleOpts = said ? pickRuleOpts(msg) : (room.pendingRules ? { ...room.pendingRules } : {});
+      startRoomGame(room, msg.turnTimeout, msg.responseTimeout, ruleOpts);
       console.log(`[GAME] ${roomCode} started with ${room.players.length} players, timeout=${room.turnTimeout}s, responseTimeout=${room.responseTimeout}s, rules=${JSON.stringify(room.rules)}`);
       break;
     }

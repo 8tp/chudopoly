@@ -73,7 +73,7 @@
 //  win               yours           380 confetti, 3.2s                     gold .30    .60     win
 //  win               someone else's  150 confetti, 2.6s                     gold .12    .26     —
 //  stalemate         any             42 grey settle puffs, 1.0–1.8s         steel .14   0       —
-//  card_pickup       —               —                                      —           0       —
+//  card_pickup       yours           —                                      —           0       pickup 6ms
 //  card_details      —               —                                      —           0       —
 //
 //  * set_completed's flash/trauma/haptic are yours only. Somebody else
@@ -400,10 +400,20 @@ function onCue(payload) {
     return;
   }
 
+  // THE PRESS (§P9 FEEL round 1). The most-performed interaction in the game —
+  // ~200 pointerdowns per session — was the only one that reached the actuator
+  // with nothing at all: a real-touch CDP press produced an EMPTY hapticLog.
+  // 6ms is the shortest thing an actuator renders and deliberately below
+  // `denied` (12ms), because a press is an acknowledgement, not an answer; at
+  // priority 0 it can never displace a landing, a theft or the win, and
+  // haptics.js's 300ms floor is what keeps a fast tapper from a rattle.
+  // No particles and no trauma: the finger is already on the card.
+  if (kind === CUE.PICKUP) { if (mine) hap.haptic('pickup'); return; }
+
   // Guard BEFORE the overlay is built: the cues fx deliberately ignores are the
-  // frequent ones (flight_start, deal_done, turn_start, pickup, details, and
-  // every card landing that is not yours), and a game that only ever fires
-  // those must never allocate a canvas backing store. §0.8's idle-cost rule.
+  // frequent ones (flight_start, deal_done, turn_start, details, and every card
+  // landing that is not yours), and a game that only ever fires those must
+  // never allocate a canvas backing store. §0.8's idle-cost rule.
   if (!EFFECTFUL[kind]) return;
 
   if (beat.live) expireBeat();
@@ -552,6 +562,7 @@ function onCue(payload) {
  * armed player is somebody ELSE.
  */
 const HAPTIC_FOR_CUE = Object.freeze({
+  [CUE.PICKUP]: 'pickup',
   [CUE.LANDED]: 'land',
   [CUE.DENIED]: 'denied',
   [CUE.SET_COMPLETED]: 'setComplete',

@@ -50,6 +50,14 @@ function broadcastRoom(room) {
         // "45s to answer" has to be legible before the charge lands, not after.
         // 0 means that clock is off. Seconds.
         timers: { turn: room.turnTimeout ?? null, response: room.responseTimeout ?? null },
+        // The RULESET, always present, and the one field that makes the lobby's rules picker
+        // legible to a seat that is not the host. `game` is null in a lobby, so before this
+        // there was nowhere at all to carry a ruleset that had not started yet: a non-host
+        // could not see what they were about to play, only "the host is choosing".
+        // `pendingRules` is the lobby's intent (set by the host's `set_rules`); `rules` is
+        // what a live game actually resolved to. startRoomGame re-points pendingRules at
+        // rules the instant a game starts, so the two can never disagree on the wire.
+        rules: room.pendingRules || room.rules || null,
       }));
     }
   });

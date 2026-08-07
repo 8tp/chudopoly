@@ -32,6 +32,39 @@ test('accepts supported product commands', () => {
   assert.equal(validateMessage({ type:'rematch' }).ok, true);
 });
 
+// Both clocks are optional: absent means "the host did not say" and the server supplies the
+// default (60s turn, 45s answer). Only "absent" is forgiving — a malformed value is still a
+// hard refusal, because silently clamping a typo leaves a table on a setting nobody chose.
+test('start_game clocks are optional but never sloppy', () => {
+  assert.equal(validateMessage({ type:'start_game' }).ok, true, 'both omitted');
+  assert.equal(validateMessage({ type:'start_game', turnTimeout:60 }).ok, true, 'answer clock omitted');
+  assert.equal(validateMessage({ type:'start_game', responseTimeout:45 }).ok, true, 'turn clock omitted');
+  assert.equal(validateMessage({ type:'start_game', responseTimeout:0 }).ok, true, 'explicit OFF is legal');
+  for (const bad of [{ responseTimeout:121 }, { responseTimeout:-1 }, { responseTimeout:45.5 },
+    { responseTimeout:'45' }, { responseTimeout:null }, { turnTimeout:301 }, { turnTimeout:'x' }]) {
+    assert.equal(validateMessage({ type:'start_game', ...bad }).ok, false, JSON.stringify(bad));
+  }
+});
+
+// `set_rules` only announces the ruleset the lobby is about to launch, so it must accept
+// EXACTLY what start_game accepts — anything narrower and the picker could show a ruleset
+// start_game then refuses; anything wider and the picker could show one it cannot launch.
+test('set_rules accepts exactly the rule fields start_game accepts', () => {
+  assert.equal(validateMessage({ type:'set_rules' }).ok, true, 'all fields optional');
+  for (const good of [{ preset:'blitz' }, { preset:'mdFaithful', setsToWin:5 },
+    { winRule:'instant' }, { setsToWin:4 }, { pureSetRequired:true }, { passGoRestartsTurn:false }]) {
+    assert.equal(validateMessage({ type:'set_rules', ...good }).ok, true, JSON.stringify(good));
+    assert.equal(validateMessage({ type:'start_game', ...good }).ok, true, `start_game ${JSON.stringify(good)}`);
+  }
+  for (const bad of [{ preset:'cheat' }, { winRule:'sudden_death' }, { setsToWin:2 }, { setsToWin:'3' },
+    { pureSetRequired:'yes' }, { passGoRestartsTurn:1 }]) {
+    assert.equal(validateMessage({ type:'set_rules', ...bad }).ok, false, JSON.stringify(bad));
+    assert.equal(validateMessage({ type:'start_game', ...bad }).ok, false, `start_game ${JSON.stringify(bad)}`);
+  }
+  // It carries no clocks, no ids and no state: extra keys are ignored, never acted on.
+  assert.equal(validateMessage({ type:'set_rules', turnTimeout:'nonsense' }).ok, true);
+});
+
 test('a wild rent carrying a targetId passes validation', () => {
   const targetId = '902ac21e-0feb-4d88-877c-1f17ad62ef00';
   assert.equal(validateMessage({ type:'play_action', cardIndex:2, targetColor:'brown', targetId }).ok, true);

@@ -80,10 +80,40 @@ const STAGGER = { deal: 46, draw: 82, payment: 70, discard: 55, set_stolen: 45 }
  * than performed; everything else (card slides, draws, discards, turn passes)
  * may go silent, which is exactly where the 42% should come from.
  */
+/* P9 FEEL round 1 adds the ACTION VOICES, and they belong here for exactly the
+ * reason the set exists. Measured on the same 137-state transcript at 700ms and
+ * at 120ms between broadcasts:
+ *
+ *                    700ms   120ms
+ *   steal                6       6     ← protected, worked perfectly
+ *   opsec                3       3     ← protected
+ *   klaxon / fanfare     1       1     ← protected
+ *   act_rent             5       0
+ *   act_swap             3       0
+ *   act_surge            1       0
+ *   upgrade              1       0
+ *   chud                 1       0     ← §7 names this card BY HAND
+ *   demand              12       3
+ *
+ * Every card in audio/sfx.js's action vocabulary — the cross, the meter, the
+ * flutter, and the CHUD sting — is a once-or-twice-a-game sound. §7 built them
+ * so the game has more than one voice; the whole "1 sting per game → 34" gain
+ * was the FIRST thing a fast table deleted, and what was left was the card
+ * handling that already makes up 62% of the mix.
+ *
+ * `demand` and `rent_charged` come with them because they are the same beat's
+ * second half — they are what says the card on the pile is pointed at YOU, and
+ * an aimed action with no aim is just a discard.
+ *
+ * What is deliberately NOT here: play_money (`chip` 18→4) and play_property
+ * (`prop_place` 33→7). Those are the 62%, they are the collapse working as
+ * designed, and protecting them would leave backpressure with nothing to spend.
+ */
 const BIG = Object.freeze({
   set_completed: 1, steal: 1, set_stolen: 1, swap: 1, opsec: 1, action_blocked: 1,
   payment: 1, final_approach: 1, final_approach_broken: 1, win: 1, stalemate: 1,
   scoop: 1, insolvent: 1,
+  play_action: 1, upgrade: 1, demand: 1, rent_charged: 1,
 });
 export function isBigMoment(t) { return !!BIG[t]; }
 

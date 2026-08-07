@@ -85,6 +85,80 @@ test('host rematch preserves the room roster and creates a fresh game', () => {
   assert.equal(room.state.events[0].t, 'game_start');
 });
 
+// The lobby's pending ruleset must not fight the rule that a rematch keeps the ruleset the
+// table just played. `set_rules` is lobby-only, so pendingRules cannot be changed once a
+// game exists; startRoomGame re-points it at room.rules on every launch, so the field the
+// broadcast carries stays the LIVE ruleset through any number of rematches.
+test('a rematch replays the agreed ruleset, and the broadcast never reports a stale one', () => {
+  const ws = { readyState:1, send() {} };
+  const players = [
+    { id:'host', name:'Host', resumeToken:'secret', ws },
+    { id:'bot', name:'Viper', isBot:true, botMode:'neutral', ws:null },
+  ];
+  const agreed = G.resolveRules({ preset:'blitz', setsToWin:5 });
+  const oldState = G.createGame(players.map(({ id, name }) => ({ id, name })), agreed);
+  oldState.phase = 'finished';
+  oldState.winner = 'host';
+  const room = {
+    code:'ABCD', phase:'playing', hostId:'host', players, state:oldState, chat:[],
+    turnTimeout:0, responseTimeout:30,
+    rules: agreed, winRule: agreed.winRule, pendingRules: agreed,
+  };
+  const rooms = new Map([['ABCD', room]]);
+  handlers.init({
+    G,
+    Bot:{},
+    broadcast:{ send() {}, broadcastAndScheduleBot() {} },
+    timers:{ clearTurnTimer() {}, startTurnTimer() {}, startResponseTimer() {}, clearResponseTimer() {} },
+    absent:{}, rooms, globalChat:[], CHAT_MAX:50, chatIdRef:{ value:0 },
+    genCode:() => 'EFGH', genId:() => 'id', genResumeToken:() => 'token', wss:{ clients:[] },
+  });
+
+  handlers.handleMessage(ws, { type:'rematch' }, { playerId:'host', roomCode:'ABCD' });
+
+  assert.deepEqual(room.rules, agreed, 'the ruleset is still sticky across a rematch');
+  assert.deepEqual(room.state.rules, agreed, 'and the NEW game really resolved it');
+  assert.equal(room.state.winRule, 'instant');
+  assert.deepEqual(room.pendingRules, room.rules,
+    'the lobby field tracks the live ruleset — it can never shadow it');
+
+  // A second rematch changes nothing: sticky is sticky.
+  handlers.handleMessage(ws, { type:'rematch' }, { playerId:'host', roomCode:'ABCD' });
+  assert.deepEqual(room.state.rules, agreed);
+  assert.deepEqual(room.pendingRules, agreed);
+});
+
+test('set_rules cannot touch a room that is already playing, from any seat', () => {
+  const sent = [];
+  const ws = { readyState:1, send() {} };
+  const players = [{ id:'host', name:'Host', resumeToken:'secret', ws }];
+  const agreed = G.resolveRules({ preset:'mdFaithful' });
+  const room = {
+    code:'ABCD', phase:'playing', hostId:'host', players, chat:[],
+    state:G.createGame([{ id:'host', name:'Host' }, { id:'bot', name:'Viper' }], agreed),
+    turnTimeout:0, responseTimeout:30, rules:agreed, pendingRules:agreed,
+  };
+  const rooms = new Map([['ABCD', room]]);
+  let broadcasts = 0;
+  handlers.init({
+    G,
+    Bot:{},
+    broadcast:{ send(_ws, msg) { sent.push(msg); }, broadcastRoom() { broadcasts++; }, broadcastAndScheduleBot() { broadcasts++; } },
+    timers:{ clearTurnTimer() {}, startTurnTimer() {}, startResponseTimer() {}, clearResponseTimer() {} },
+    absent:{}, rooms, globalChat:[], CHAT_MAX:50, chatIdRef:{ value:0 },
+    genCode:() => 'EFGH', genId:() => 'id', genResumeToken:() => 'token', wss:{ clients:[] },
+  });
+
+  handlers.handleMessage(ws, { type:'set_rules', preset:'blitz' }, { playerId:'host', roomCode:'ABCD' });
+  assert.match(sent.at(-1)?.message || '', /during a game/i, 'the host is refused mid-game');
+
+  handlers.handleMessage(ws, { type:'set_rules', preset:'blitz' }, { playerId:'someone', roomCode:'ABCD' });
+  assert.match(sent.at(-1)?.message || '', /only host/i, 'and a non-host is refused, not ignored');
+
+  assert.deepEqual(room.pendingRules, agreed, 'nothing was stored');
+  assert.equal(broadcasts, 0, 'and a refusal costs the room no fan-out at all');
+});
+
 test('CHUD_SEED is honoured outside production and refused inside it', () => {
   assert.equal(handlers.seedFromEnv({}), null);
   assert.equal(handlers.seedFromEnv({ CHUD_SEED:'' }), null);

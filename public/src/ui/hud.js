@@ -15,6 +15,7 @@ import * as send from '../net/send.js';
 import * as socket from '../net/socket.js';
 import { store, seatName, isMyTurn } from '../state/store.js';
 import * as sel from '../state/selectors.js';
+import * as choreographer from '../anim/choreographer.js';
 import * as interact from '../interact/index.js';
 import * as pointer from '../interact/pointer.js';
 import * as audio from '../audio/engine.js';
@@ -322,28 +323,164 @@ function renderConn() {
   setClass(connLabel, 'is-on', lost);
 }
 
-function render() {
-  const snap = store.snapshot;
-  setText($('hud-room'), store.room.code || '');
-  renderConn();
-  if (!snap) return;
+/* ── the HUD does not lead the table (§P9 FEEL round 1) ────────────────────
+ *
+ * This used to render straight off the snapshot on STATE_APPLIED, and the
+ * snapshot is the FUTURE: main.js applies it and only then hands the event tail
+ * to the choreographer, so every word in the header was true several hundred
+ * milliseconds before the felt showed it. Measured, twice, and both of them
+ * spoilers:
+ *
+ *   DEAL  at t=100ms the header already read "YOUR TURN · 3 plays" and the dock
+ *         read "HAND 7" — with the hand zone EMPTY and the first card still
+ *         leaving the deck. The hand does not arrive until t≈1400ms
+ *         (frames/deal/deal-006-t00100.jpg).
+ *   WIN   the header wrote 'GAME OVER' 334ms before the gold flood on a lone
+ *         win event, and ~870ms before it when the win was queued behind a
+ *         turn_start. ui/overlays.js holds ITS reveal for the choreographer's
+ *         win cue plus 850ms; the header simply gave the ending away first —
+ *         and it gave it away in two neutral words that did not even say
+ *         whether you had won.
+ *
+ * So the narration waits for the choreographer's word, exactly as the overlay
+ * does. The rule is one line: if this payload carries events that are about to
+ * be PERFORMED, paint nothing until they have been. Everything that is not
+ * narration (the room code, the connection state, and the timer, which is on
+ * its own clock) stays immediate.
+ *
+ * Three guards, all of them the difference between a delay and a hang:
+ *   • a snapped state (reconnect, fixture, rematch join) has no performance
+ *     coming and paints at once, which is also what keeps tools/screenshot.mjs
+ *     and the harness's instant path reproducible;
+ *   • FALLBACK_MS is re-armed by every CHOREO_EVENT, so it means "2.6s with no
+ *     word from the choreographer", not "2.6s total" — a long steal caravan
+ *     cannot trip it, a stalled queue always does;
+ *   • the terminal hold is CELEBRATION_MS on top of idle, the same 850ms
+ *     ui/overlays.js spends, so the header can only ever land WITH or AFTER the
+ *     screen that is supposed to break the news.
+ */
+const CELEBRATION_MS = 850;          // must match ui/overlays.js
+const FALLBACK_MS = 2600;            // ditto — the promise that nothing is lost
 
+/* ── END TURN is sent once (P9 harness round 1) ────────────────────────────
+ * MEASURED: a double-tap sent two `endTurn` frames on ~1 run in 6. The server
+ * is authoritative so nothing was corrupted, but the reason the second tap
+ * happened is the defect — between the tap and the broadcast that answers it
+ * the button looked exactly as live as it had a moment earlier, and a control
+ * that does not visibly take the press is a control a player presses again.
+ *
+ * Two halves, and the first one is the important one:
+ *   • the button goes disabled SYNCHRONOUSLY inside the handler, so the press
+ *     is acknowledged in the same task it arrived in (the same rule §P7.2 wrote
+ *     for the card press);
+ *   • a latch, because `disabled` lands on the next style resolution and a
+ *     genuinely fast double-tap can beat it.
+ * The latch is released by the TRUTH — the first snapshot that says the turn
+ * has moved on — with a 1.2s ceiling so a dropped broadcast can never strand
+ * the button. 1.2s is above the 900ms interact/drag.js already spends waiting
+ * on the server before it gives up on a committed drop.
+ */
+const END_TURN_LOCK_MS = 1200;
+let endTurnSent = false;
+let endTurnTimer = 0;
+
+function clearEndTurnLatch() {
+  endTurnSent = false;
+  clearTimeout(endTurnTimer);
+  endTurnTimer = 0;
+}
+
+let holdTimer = 0;
+let holding = false;
+/** Has the narration been painted for the game that is currently on the table?
+ *  False through the opening deal and again after an ending, which is what lets
+ *  a rematch's deal show DEALING instead of the last game's result. */
+let narrated = false;
+
+function clearHold() { clearTimeout(holdTimer); holdTimer = 0; holding = false; }
+
+function releaseHold(delay) {
+  if (!holding) return;
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => { clearHold(); renderNarration(); }, delay);
+}
+
+/** The ending, in words that say WHICH ending. 'GAME OVER' was identical
+ *  whether you had taken it or been beaten to it, which is the one thing a
+ *  result line must not be. Points and stalemate genuinely have no winner and
+ *  keep the neutral form.
+ *
+ *  'MISSION COMPLETE', not the overlay's 'MISSION ACCOMPLISHED', for a measured
+ *  reason: #hud-turn is a 160px box on a 390px phone and the long form needs
+ *  188px (tools/screenshot.mjs caught it on win@phone). The short form measures
+ *  149px in the same box. Same voice, same fact, and it does not pretend to be
+ *  the headline — ui/overlays.js owns the headline, and it is on screen by the
+ *  time this is painted. */
+function endingLine(snap) {
+  const winner = snap.winner;
+  if (winner == null) return 'GAME OVER';
+  return winner === store.self.id ? 'MISSION COMPLETE' : `${seatName(winner)} WINS`;
+}
+
+/** What the header says while it is waiting for a deal it has not seen yet.
+ *  Only for the opening of a game: a mid-game hold keeps the last true line,
+ *  because that line is still what is on the felt. */
+function holdPlaceholder(snap) {
+  if (snap.phase !== 'playing' || narrated) return;
+  setText($('hud-turn'), 'DEALING');
+  setClass($('hud-turn'), 'is-mine', false);
+  setText($('hud-plays'), '');
+  setText($('hand-count'), '0');
+}
+
+function renderNarration() {
+  const snap = store.snapshot;
+  if (!snap) return;
   const mine = isMyTurn();
   const turnName = snap.phase === 'finished'
-    ? 'GAME OVER'
+    ? endingLine(snap)
     : (mine ? 'YOUR TURN' : `${seatName(snap.currentPlayerId)}'s turn`);
   setText($('hud-turn'), turnName);
-  setClass($('hud-turn'), 'is-mine', mine);
+  setClass($('hud-turn'), 'is-mine', mine && snap.phase !== 'finished');
   setText($('hud-plays'), mine && snap.turnPhase === 'play' ? `${snap.playsRemaining} plays` : '');
   setText($('hand-count'), String(sel.myHand().length));
   setClass($('hand-dock'), 'over-limit', sel.myHand().length > (snap.handLimit || 7));
 
   // #btn-draw is suppressed by ui/prompt.js — the draw is automatic now, so
   // there is no draw affordance anywhere (§P7.9). Nothing here touches it.
-  setAttr($('btn-end-turn'), 'disabled', !mine || snap.turnPhase !== 'play' ? true : null);
+  // The controls ride with the narration on purpose: End Turn coming live while
+  // your hand is still in the air is the same lie as the counter that says you
+  // are holding it. Both actions re-check the store when they fire, so a late
+  // disable can never let an illegal one through.
+  setAttr($('btn-end-turn'), 'disabled',
+    !mine || snap.turnPhase !== 'play' || endTurnSent ? true : null);
   setAttr($('btn-scoop'), 'disabled', snap.phase !== 'playing' ? true : null);
   setClass($('table'), 'surge-on', !!snap.surgeOps);
   renderStrip();
+  narrated = snap.phase === 'playing';
+}
+
+function render(payload) {
+  const snap = store.snapshot;
+  setText($('hud-room'), store.room.code || '');
+  renderConn();
+  if (!snap) return;
+
+  // The latch is cleared by the snapshot, not by the narration: the moment the
+  // server says the turn has moved on the button is free again, even though the
+  // header is still waiting for the choreographer to catch up.
+  if (endTurnSent && !(isMyTurn() && snap.turnPhase === 'play')) clearEndTurnLatch();
+
+  const performing = !!payload
+    && !payload.snap
+    && (payload.events?.length || 0) > 0
+    && !choreographer.isInstant();
+
+  if (!performing) { clearHold(); renderNarration(); return; }
+
+  holding = true;
+  holdPlaceholder(snap);
+  releaseHold(FALLBACK_MS);
 }
 
 /** The settings entry point. public/index.html is architect-owned (§1) and P6
@@ -373,6 +510,14 @@ export function mount() {
       if (!snap || !isMyTurn()) { toast('Not your turn'); return; }
       const excess = sel.myHand().length - (snap.handLimit || 7);
       if (excess > 0) { interact.beginDiscard(excess); return; }
+      if (endTurnSent) return;
+      endTurnSent = true;
+      clearTimeout(endTurnTimer);
+      endTurnTimer = setTimeout(clearEndTurnLatch, END_TURN_LOCK_MS);
+      // The tap is answered in the same task it arrived in. This is the whole
+      // point: the round trip is not the bug, the SILENCE during it is, and a
+      // control that still looks live is an invitation to hit it again.
+      setAttr($('btn-end-turn'), 'disabled', true);
       send.endTurn();
     },
     scoop: () => {
@@ -401,6 +546,13 @@ export function mount() {
   });
 
   bus.on(EVENTS.STATE_APPLIED, render);
+  // The choreographer's word (§P9). CHOREO_EVENT only re-arms the deadline —
+  // the narration is not allowed out until the whole job has been performed.
+  bus.on(EVENTS.CHOREO_EVENT, () => releaseHold(FALLBACK_MS));
+  bus.on(EVENTS.CHOREO_IDLE, () => {
+    releaseHold(store.snapshot?.phase === 'finished' ? CELEBRATION_MS : 0);
+  });
+  bus.on(EVENTS.STATE_SCREEN, () => { clearHold(); narrated = false; });
   bus.on(EVENTS.NET_OPEN, renderConn);
   bus.on(EVENTS.NET_CLOSE, renderConn);
   subscribe(tickTimer);

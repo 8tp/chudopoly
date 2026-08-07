@@ -43,6 +43,112 @@
 }
 .card[data-facing="down"] { --flip: 180deg; }
 
+/* ── the press has weight (§4; P9 FEEL round 1) ──────────────────────────
+   MEASURED before this existed: `.is-pressed` was `filter: brightness(1.16)
+   saturate(1.05); z-index: 28` and nothing else, so the card's
+   getBoundingClientRect() was BYTE-IDENTICAL hovered vs pressed
+   (x 414.77 y 565.44 w 124.01 both). On a real-touch 390×844 phone the card
+   changed 37.2% of its pixels at a mean delta of 26/765 — about 8.7 levels per
+   channel. That is the interaction a player performs ~200 times a game, and it
+   was a brightness nudge.
+
+   ART §4 gives a pressable a real press MECHANIC (`translate(4px,4px)`, shadow
+   → 0). A card is not chrome — §4 also forbids the hard offset shadow on cards
+   — so the same idea is spent in the card's own material language: the card is
+   pushed INTO the felt (it gets smaller and sits 2px lower), its drop shadow
+   contracts to the paper-touching-surface form, and the RELEASE springs it back
+   through 1.0 on a back-out curve so the pop is where the weight reads.
+
+   Down rather than up is not a preference, it is the geometry: `#zone-hand` is
+   `overflow-x:auto`, which computes `overflow-y:auto`, so it CLIPS. A lift out
+   of the fan is cut off at the dock's top edge unless the whole ancestor chain
+   is opened (table.liftCard), which is a drag-weight operation and must not run
+   on every pointerdown. A card that gets smaller can never be clipped.
+
+   THE TRANSFORM CONTRACT IS NOT BROKEN. The rule below restates §5's contract
+   verbatim and appends the press, exactly as the file header allows, and the
+   two press channels are registered so they interpolate rather than flipping at
+   50%. --fx/--fy/--tilt/--fs stay anim/flight.js's alone; interact/drag.js
+   drives only the classes. Both selectors exclude .is-dragging and .is-flying
+   so the transition can never smooth a per-frame pose write (the drag's
+   velocity lean is the best thing in the build and this must not touch it). */
+@property --press-s { syntax: '<number>'; inherits: false; initial-value: 1; }
+@property --press-y { syntax: '<length>'; inherits: false; initial-value: 0px; }
+
+/* The shared half is the TRANSFORM ONLY, and that is not tidiness — a
+   `transition` here would silently delete the release animation below.
+   Transitions sit ABOVE animations in the cascade (CSS Cascading 5 §6.6.2), so
+   a `transition: --press-s` that also matched `.is-unpressing` overrode every
+   keyframe of `card-unpress`: measured, the whole release read a flat
+   `--press-s: 1` on every rAF sample for 190ms while the class was on the node.
+   Each state therefore declares its OWN timing mechanism, and only its own. */
+.card.is-pressed:not(.is-dragging):not(.is-flying),
+.card.is-unpressing:not(.is-dragging):not(.is-flying) {
+  transform:
+    translate(var(--fx, 0px), var(--fy, 0px)) rotate(var(--tilt, 0deg)) scale(var(--fs, 1))
+    translateY(var(--press-y)) scale(var(--press-s));
+}
+
+/* Pushed in. The shadow is a REQUEST to the design agent, not a colour decision:
+   --card-drop-press is theirs to define in variables.css (per theme) and the
+   fallback is the smallest honest "paper is touching the table" drop. */
+.card.is-pressed:not(.is-dragging):not(.is-flying) {
+  --press-s: .955;
+  --press-y: 2px;
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop-press, 0 1px 1px rgba(0, 0, 0, .22));
+  transition:
+    --press-s 80ms cubic-bezier(.3, .8, .4, 1),
+    --press-y 80ms cubic-bezier(.3, .8, .4, 1),
+    box-shadow 80ms ease-out,
+    filter .06s linear;
+}
+
+/* Coming back — and OVERSHOOTING, which is where the mass actually reads.
+   A back-out easing was tried first and measured 1.0042 at its peak: a
+   spring-back bezier scales its overshoot by the DELTA, and the delta here is
+   only 0.045, so the pop was 0.4px on a 97px card — arithmetically present and
+   perceptually absent. An explicit keyframe states the overshoot instead of
+   deriving it: 1.028 and −3px at 46%, which is 2.7px of growth, the same order
+   as the hover, and comfortably inside the 13px of headroom the card has above
+   it inside #zone-hand. interact/drag.js holds this class for UNPRESS_MS and
+   never puts it on a card that became a drag (the drag owns the pose then). */
+@keyframes card-unpress {
+  0%   { --press-s: .955; --press-y: 2px; }
+  46%  { --press-s: 1.028; --press-y: -3px; }
+  100% { --press-s: 1; --press-y: 0px; }
+}
+.card.is-unpressing:not(.is-dragging):not(.is-flying) {
+  animation: card-unpress 190ms cubic-bezier(.33, 0, .2, 1) both;
+}
+
+/* ── the hovered card (§P9 polish 6) ─────────────────────────────────────
+   MEASURED: rest → hover on a hand card was `changedPx 0`. The peek was the
+   only desktop affordance, so a mouse got no answer at all from the object it
+   was pointing at until 140ms later, somewhere else on the screen.
+
+   Same channel, a third of the amount, and OUTWARD rather than inward: hover is
+   "this one is live", press is "I have hold of it". Pointer devices only (§2) —
+   a touch device synthesises :hover on tap and would fight the press. The
+   z-index is between the fan's own stacking (table.css tops out at 25) and
+   .is-pressed's 28, so the hovered card comes out of the fan without ever
+   outranking the one under a finger. 1.035 of a 174px card is 3px of growth per
+   edge, which the dock's clip absorbs. */
+@media (hover: hover) {
+  #hand-dock .card[data-card-id]:hover:not(.is-pressed):not(.is-unpressing):not(.is-dragging):not(.is-flying) {
+    --press-s: 1.035;
+    --press-y: -1px;
+    z-index: 27;
+    box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop-air, var(--card-drop));
+    transform:
+      translate(var(--fx, 0px), var(--fy, 0px)) rotate(var(--tilt, 0deg)) scale(var(--fs, 1))
+      translateY(var(--press-y)) scale(var(--press-s));
+    transition:
+      --press-s 110ms cubic-bezier(.22, 1, .36, 1),
+      --press-y 110ms cubic-bezier(.22, 1, .36, 1),
+      box-shadow 110ms ease-out;
+  }
+}
+
 /* ── in flight ───────────────────────────────────────────────────────────
    Nothing restates the transform here: table.css declares the contract once
    and no longer lets a zone-local rule (the old `.zone-deck .card` stack
@@ -62,6 +168,8 @@
 .card.is-flying,
 .card.is-riffling,
 .card.is-held,
+.card.is-pressed,
+.card.is-unpressing,
 .card.is-dragging { will-change: transform; }
 
 /* ── the held card (table.liftCard) ──────────────────────────────────────
@@ -114,6 +222,14 @@
    left here is the flip, which becomes an instant face swap. */
 @media (prefers-reduced-motion: reduce) {
   .card-inner { transform: none; }
+  /* The press POSE is a state, not motion, and it is the only acknowledgement a
+     pointerdown has — it stays. What goes is the tween and the release pop. */
+  .card.is-pressed, .card.is-unpressing, #hand-dock .card[data-card-id]:hover { transition: none; }
+  .card.is-unpressing:not(.is-dragging):not(.is-flying) {
+    animation: none;
+    --press-s: 1;
+    --press-y: 0px;
+  }
   /* the drag stretch is motion; the lift's clip escape is not, and stays */
   .card { --fsx: 1; }
   .card[data-facing="down"] .card-inner > .card-face { visibility: hidden; }

@@ -79,8 +79,14 @@ export function haptic(pattern, priority) {
  *                          player is somebody else, i.e. against you.
  *   win        40/60/40/60/200 — a roll into a long resolve.
  *   denied        12   — the shortest thing the actuator can render.
+ *   pickup         6   — P9: the press. Below `denied` on purpose — a press is
+ *                        an acknowledgement that the card heard you, not an
+ *                        answer to anything, and it is the most frequent event
+ *                        in the game (~200/session). Priority 0, so the 300ms
+ *                        floor drops it behind absolutely everything.
  */
 export const HAPTICS = Object.freeze({
+  pickup: 6,
   land: 10,
   targeted: [30, 40, 30],
   setComplete: [20, 30, 20],
@@ -95,6 +101,7 @@ export const HAPTICS = Object.freeze({
  * and nothing outranks the win.
  */
 export const PRIORITY = Object.freeze({
+  pickup: 0,
   land: 0,
   denied: 1,
   targeted: 2,

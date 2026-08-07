@@ -2,7 +2,7 @@
 
 const MESSAGE_TYPES = new Set([
   'create_room', 'quick_play', 'join_room', 'reconnect', 'kick', 'add_bot',
-  'remove_bot', 'leave_room', 'start_game', 'rematch', 'draw', 'play_money',
+  'remove_bot', 'leave_room', 'set_rules', 'start_game', 'rematch', 'draw', 'play_money',
   'play_property', 'move_property', 'play_action', 'respond', 'emote', 'chat',
   'chat_history', 'scoop', 'end_turn',
 ]);
@@ -31,6 +31,23 @@ function validUniqueCardIds(value, maxLength = 110) {
   return Array.isArray(value) && value.length <= maxLength
     && value.every(id => isInt(id, 0, 1000))
     && new Set(value).size === value.length;
+}
+
+// The five rule fields, shared verbatim by `start_game` (which launches a ruleset) and
+// `set_rules` (which only announces the one the lobby is about to launch). Both commands
+// MUST accept exactly the same values, or the picker could show a ruleset that start_game
+// would then refuse. One function, two callers, no drift.
+//
+// Every field is optional and additive: absent means the Chudopoly default. A preset
+// supplies the base; individual toggles override it. Presets are resolved server-side
+// (game.js resolveRules), never trusted from the client.
+function validateRuleFields(message) {
+  if (message.preset !== undefined && !RULE_PRESETS.has(message.preset)) return fail('Invalid rule preset');
+  if (message.winRule !== undefined && !WIN_RULES.has(message.winRule)) return fail('Invalid win rule');
+  if (message.setsToWin !== undefined && !SETS_TO_WIN.has(message.setsToWin)) return fail('Invalid sets to win (3, 4 or 5)');
+  if (!validOptionalBool(message.pureSetRequired)) return fail('Invalid pure-set setting');
+  if (!validOptionalBool(message.passGoRestartsTurn)) return fail('Invalid PCS Orders setting');
+  return null;
 }
 
 function validateMessage(message) {
@@ -67,15 +84,18 @@ function validateMessage(message) {
       // typo'd clock is how a table ends up running on a setting nobody chose.
       if (message.turnTimeout !== undefined && !isInt(message.turnTimeout, 0, 300)) return fail('Invalid timer setting');
       if (message.responseTimeout !== undefined && !isInt(message.responseTimeout, 0, 120)) return fail('Invalid timer setting');
-      // Every rule field is additive and backward-compatible: absent means the Chudopoly
-      // default. A preset supplies the base; individual toggles override it. Presets are
-      // resolved server-side (game.js resolveRules), never trusted from the client.
-      if (message.preset !== undefined && !RULE_PRESETS.has(message.preset)) return fail('Invalid rule preset');
-      if (message.winRule !== undefined && !WIN_RULES.has(message.winRule)) return fail('Invalid win rule');
-      if (message.setsToWin !== undefined && !SETS_TO_WIN.has(message.setsToWin)) return fail('Invalid sets to win (3, 4 or 5)');
-      if (!validOptionalBool(message.pureSetRequired)) return fail('Invalid pure-set setting');
-      if (!validOptionalBool(message.passGoRestartsTurn)) return fail('Invalid PCS Orders setting');
+      {
+        const ruleError = validateRuleFields(message);
+        if (ruleError) return ruleError;
+      }
       break;
+    case 'set_rules': {
+      // Lobby-only, host-only (enforced in handlers.js). Carries nothing but the same five
+      // optional rule fields start_game accepts — no clocks, no player ids, no state.
+      const ruleError = validateRuleFields(message);
+      if (ruleError) return ruleError;
+      break;
+    }
     case 'play_money':
       if (!isInt(message.cardIndex, 0, 110)) return fail('Invalid card index');
       break;

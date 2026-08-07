@@ -30,7 +30,7 @@
 // `peek.setFaceRenderer(fn)` remains the seam; passing a non-function restores
 // the original behaviour of deep-cloning the live node.
 
-import { $, el, clear, setClass } from '../core/dom.js';
+import { $, el, clear, setClass, prefersReducedMotion } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import { getNode, buildFace } from '../table/cardnode.js';
@@ -44,16 +44,50 @@ import { contextRows } from './details.js';
 const UI_PEEK = EVENTS.UI_PEEK || 'ui:peek';
 const UI_PEEK_END = EVENTS.UI_PEEK_END || 'ui:peek_end';
 
-// 140ms: below ~100 a sweep across a fanned hand strobes; above ~200 the peek
-// feels like it is lagging the cursor. Out is instant — a delay on the way out
-// is the thing that makes hover layers feel sticky.
+/* ── THE DELAY GROUP (ART §8, "the missing piece") ─────────────────────────
+ *
+ * §8's table asks for three numbers and this file shipped one of them, which is
+ * exactly the failure §8 predicts: "a single timer can either stop lag or stop
+ * strobing, not both". MEASURED before this existed, pointer parked on a
+ * genuinely non-peekable point between reads: 226 / 196 / 197ms per card. A
+ * 7-card fan is ~1.4s of dead hovering to read your own hand, every turn.
+ *
+ *   HOVER_IN_MS  140  the COLD open. An intent delay, so a sweep across a fan
+ *                     on the way somewhere else shows nothing.
+ *   GROUP_MS     600  the grace. Once one peek has been earned, the player is
+ *                     READING — second-and-later peeks open at 0ms and
+ *                     crossfade, and the group only lapses after 600ms with
+ *                     nothing peeked. One intent delay per reading session
+ *                     instead of one per card.
+ *   HOVER_OUT_MS 160  the close delay, cancelled by re-entering ANY peekable.
+ *                     Instant-out feels twitchy across the 2px gap between
+ *                     fanned cards, and it is also what made the group
+ *                     impossible: the peek was gone before the pointer had
+ *                     arrived anywhere else.
+ *
+ * The two delays compose into one honest promise: reading costs 140ms once, and
+ * nothing after that.
+ */
 const HOVER_IN_MS = 140;
+const GROUP_MS = 600;
+const HOVER_OUT_MS = 160;
+const SWAP_MS = 130;             // the crossfade §8 asks a grouped open to do
 const EDGE = 10;                 // px kept between the peek and the viewport
 
 let host = null;
 let showing = null;              // card id currently peeked
 let inTimer = 0;
+let outTimer = 0;
+let closedAt = -1e9;             // when the group's grace window started
 let anchorEl = null;
+
+function now() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+/** True while the player is READING: something is peeked, or something was
+ *  peeked recently enough that the next card is part of the same sweep. */
+function inGroup() { return showing !== null || (now() - closedAt) < GROUP_MS; }
 /** The shipped renderer: table/cardart.js's peek tier, carrying the CANONICAL
  *  rule text. Passing cardText in rather than letting the face invent its own is
  *  what stops the face and the details sheet from ever disagreeing.
@@ -195,6 +229,12 @@ export function show(cardId, node) {
 
   const box = container();
   if (showing === cardId && !box.hidden) { reposition(node); return true; }
+  // Already up = this is a SWAP, not an entrance: the layer stays, its contents
+  // change under a short crossfade. Dropping `is-in` and re-running the entrance
+  // for every grouped open is the strobe §8 is trying to prevent — and it also
+  // fired on every STATE_APPLIED rebuild, so a peek held open through a
+  // snapshot used to flash once per broadcast.
+  const swapping = !box.hidden;
   showing = cardId;
   anchorEl = node || null;
 
@@ -204,10 +244,25 @@ export function show(cardId, node) {
   box.appendChild(body(card, face));
 
   box.hidden = false;
+  if (swapping) {
+    reposition(node);
+    crossfade(box);
+    return true;
+  }
   setClass(box, 'is-in', false);
   reposition(node);
   requestAnimationFrame(() => setClass(box, 'is-in', true));
   return true;
+}
+
+/** The crossfade, in JS rather than CSS on purpose: the peek's LOOK (its
+ *  entrance transform, its opacity at rest) belongs to the design agent's
+ *  stylesheet, and a competing `.is-swapping` rule here would be a second
+ *  owner of the same property. A WAAPI keyframe borrows opacity for 130ms and
+ *  hands it straight back. §0.9: reduced motion gets the instant swap. */
+function crossfade(box) {
+  if (prefersReducedMotion() || typeof box.animate !== 'function') return;
+  box.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: SWAP_MS, easing: 'ease-out' });
 }
 
 function reposition(node) {
@@ -221,7 +276,13 @@ function reposition(node) {
 
 export function hide() {
   clearTimeout(inTimer);
+  clearTimeout(outTimer);
   inTimer = 0;
+  outTimer = 0;
+  // The grace window starts when the peek actually goes away, so the next card
+  // in the same sweep opens at 0ms. An intent that never matured into a peek
+  // does not earn one.
+  if (showing !== null) closedAt = now();
   showing = null;
   anchorEl = null;
   if (!host || host.hidden) return;
@@ -229,6 +290,17 @@ export function hide() {
   host.hidden = true;
   clear(host);
 }
+
+/** Leaving a peekable. §8's 160ms, cancelled by arriving at any other one. */
+function armHide() {
+  clearTimeout(inTimer);
+  inTimer = 0;
+  if (showing === null) return;
+  if (outTimer) return;
+  outTimer = setTimeout(() => { outTimer = 0; hide(); }, HOVER_OUT_MS);
+}
+
+function cancelHide() { clearTimeout(outTimer); outTimer = 0; }
 
 export function isOpen() { return !!showing; }
 
@@ -249,8 +321,13 @@ function peekId(node) {
 function armHover(node) {
   const id = peekId(node);
   if (!Number.isInteger(id)) return;
+  cancelHide();                                   // arriving cancels leaving
   if (showing === id) return;
   clearTimeout(inTimer);
+  inTimer = 0;
+  // Inside the group there is no intent to establish — the player has already
+  // told us they are reading. Straight to the swap.
+  if (inGroup()) { show(id, node); return; }
   inTimer = setTimeout(() => { inTimer = 0; show(id, node); }, HOVER_IN_MS);
 }
 
@@ -264,7 +341,7 @@ export function mount() {
     document.addEventListener('pointerover', (e) => {
       if (e.pointerType === 'touch') return;
       const node = cardUnder(e.target);
-      if (!node) { if (showing !== null) hide(); return; }
+      if (!node) { armHide(); return; }
       armHover(node);
     }, true);
 
@@ -274,7 +351,10 @@ export function mount() {
       const to = cardUnder(e.relatedTarget);
       if (node && to === node) return;                  // moving within the same card
       if (to) { armHover(to); return; }
-      hide();
+      // Not `hide()`: §8's close delay is what makes the 2px gap between two
+      // fanned cards survivable, and it is what gives the pointer time to
+      // arrive somewhere else before the group has to be rebuilt.
+      armHide();
     }, true);
   }
 

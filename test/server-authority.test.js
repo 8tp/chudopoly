@@ -242,6 +242,195 @@ test('start_game is refused once a game is under way, and the live game is untou
   shut(host);
 });
 
+/* ── 2b. set_rules — the lobby's ruleset, visible to every seat ───────── */
+// The rules picker was host-only BY NECESSITY: a lobby broadcast carried code/phase/players/
+// hostId/game/timers and `game` is null before a game exists, so there was nowhere at all to
+// put a ruleset that had not started yet. A non-host was shown "the host is choosing" and
+// could not tell what they were about to play. `set_rules` publishes it; the broadcast
+// carries it as `rules`; start_game with no rule fields launches exactly it.
+
+// A lobby with a host and one other human seat.
+async function lobbyPair(hostName, guestName) {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: hostName });
+  const hostJoined = await waitFor(host, m => m.type === 'joined');
+  assert.ok(hostJoined, 'host joined');
+  const code = hostJoined.code;
+
+  const guest = await openClient();
+  send(guest, { type: 'join_room', code, name: guestName });
+  const guestJoined = await waitFor(guest, m => m.type === 'joined');
+  assert.ok(guestJoined, 'guest joined');
+  await sleep(120);
+  return { host, guest, code, hostJoined, guestJoined };
+}
+
+test('a lobby broadcast carries the ruleset from the very first frame', async () => {
+  const { host, guest } = await lobbyPair('Seed1', 'Seed2');
+  const seen = lastState(guest);
+  assert.ok(seen, 'the guest sees the lobby');
+  assert.equal(seen.game, null, 'and there is no game yet — this is the whole problem');
+  assert.ok(seen.rules, 'yet the ruleset is already on the wire');
+  assert.equal(seen.rules.preset, 'chudopoly', 'an untouched table says what it will play');
+  send(host, { type: 'leave_room' });
+  send(guest, { type: 'leave_room' });
+  shut(host, guest);
+});
+
+test('a non-host sees the host\'s ruleset in its very next broadcast', async () => {
+  const { host, guest } = await lobbyPair('Picker', 'Watcher');
+
+  guest._messages.length = 0;
+  send(host, { type: 'set_rules', preset: 'mdFaithful' });
+
+  // The buffer was emptied, so the first `state` that arrives IS the next broadcast.
+  const next = await waitFor(guest, m => m.type === 'state', 2000);
+  assert.ok(next, 'the room is re-broadcast');
+  assert.ok(next.rules, 'and it carries the ruleset');
+  assert.equal(next.rules.preset, 'mdFaithful');
+  assert.equal(next.rules.winRule, 'mdFaithful');
+  assert.equal(next.rules.pureSetRequired, true);
+  assert.equal(next.phase, 'lobby', 'no game was started by picking rules');
+  assert.equal(next.game, null);
+
+  send(host, { type: 'leave_room' });
+  send(guest, { type: 'leave_room' });
+  shut(host, guest);
+});
+
+test('start_game with no rule fields launches exactly the ruleset the lobby showed', async () => {
+  const { host, guest } = await lobbyPair('Launcher', 'Bystander');
+
+  // A mixed ruleset: a preset plus one override, so it can only have come from the picker.
+  send(host, { type: 'set_rules', preset: 'blitz', setsToWin: 5 });
+  const announced = await waitFor(guest, m => m.type === 'state' && m.rules?.setsToWin === 5, 2000);
+  assert.ok(announced, 'the guest is told');
+  assert.equal(announced.rules.preset, 'custom', 'a mixed ruleset is never labelled a preset');
+  await sleep(300);
+
+  // Not one rule field on the wire — the launch has to come from the pending ruleset.
+  guest._messages.length = 0;
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30 });
+  const live = await waitFor(guest, m => m.type === 'state' && m.phase === 'playing', 3000);
+  assert.ok(live, 'the game started');
+  assert.deepEqual(live.rules, announced.rules, 'the picker and the launch cannot disagree');
+  assert.deepEqual(live.game.rules, announced.rules, 'and the GAME really resolved that ruleset');
+  assert.equal(live.game.winRule, 'instant');
+
+  send(host, { type: 'leave_room' });
+  send(guest, { type: 'leave_room' });
+  shut(host, guest);
+});
+
+test('start_game that DOES name rules still wins outright (old clients are unaffected)', async () => {
+  const { host, guest } = await lobbyPair('Override', 'Sitter');
+
+  send(host, { type: 'set_rules', preset: 'blitz' });
+  assert.ok(await waitFor(guest, m => m.type === 'state' && m.rules?.preset === 'blitz', 2000));
+  await sleep(300);
+
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30, preset: 'longGame' });
+  const live = await waitFor(guest, m => m.type === 'state' && m.phase === 'playing', 3000);
+  assert.ok(live, 'the game started');
+  assert.equal(live.game.rules.preset, 'longGame', 'the message is authoritative when it speaks');
+  assert.deepEqual(live.rules, live.game.rules, 'and the stale pending set never shadows it');
+
+  send(host, { type: 'leave_room' });
+  send(guest, { type: 'leave_room' });
+  shut(host, guest);
+});
+
+test('a non-host cannot set the rules, and is told so rather than ignored', async () => {
+  const { host, guest } = await lobbyPair('RealHost', 'Pretender');
+  const before = lastState(guest).rules;
+
+  send(guest, { type: 'set_rules', preset: 'longGame', setsToWin: 5 });
+  const refusal = await waitFor(guest, m => m.type === 'error', 2000);
+  assert.ok(refusal, 'the non-host is refused');
+  assert.match(refusal.message, /only host/i);
+
+  await sleep(300);
+  assert.deepEqual(lastState(host).rules, before, 'and the room\'s ruleset is untouched');
+  assert.deepEqual(lastState(guest).rules, before);
+
+  send(host, { type: 'leave_room' });
+  send(guest, { type: 'leave_room' });
+  shut(host, guest);
+});
+
+test('set_rules is refused once a game is under way, and the live ruleset is untouched', async () => {
+  const { host } = await tableWithBots('MidGame');
+  const before = lastState(host).game.rules;
+
+  send(host, { type: 'set_rules', preset: 'blitz', setsToWin: 5 });
+  const refusal = await waitFor(host, m => m.type === 'error', 2000);
+  assert.ok(refusal, 'the change is refused');
+  assert.match(refusal.message, /during a game/i);
+
+  await sleep(300);
+  const after = lastState(host);
+  assert.deepEqual(after.game.rules, before, 'the ruleset cannot be swapped under a live table');
+  assert.deepEqual(after.rules, before, 'and the broadcast still reports the LIVE ruleset');
+  shut(host);
+});
+
+test('a pending ruleset belongs to the ROOM, and survives a host transfer', async () => {
+  const { host, guest, guestJoined } = await lobbyPair('Leaving', 'Successor');
+
+  send(host, { type: 'set_rules', preset: 'longGame' });
+  assert.ok(await waitFor(guest, m => m.type === 'state' && m.rules?.preset === 'longGame', 2000));
+  await sleep(300);
+
+  host._socket.destroy();                       // the host drops; the room does not
+  const promoted = await waitFor(guest, m => m.type === 'state' && m.hostId === guestJoined.playerId, 3000);
+  assert.ok(promoted, 'the guest is promoted to host');
+  assert.equal(promoted.rules.preset, 'longGame',
+    'the ruleset is the room\'s intent, not the departed host\'s');
+
+  // And the new host launching with no rule fields gets the ruleset the room agreed on.
+  send(guest, { type: 'start_game', turnTimeout: 60, responseTimeout: 30 });
+  const live = await waitFor(guest, m => m.type === 'state' && m.phase === 'playing', 3000);
+  assert.ok(live, 'the new host can start');
+  assert.equal(live.game.rules.preset, 'longGame');
+  assert.equal(live.game.rules.setsToWin, 5);
+
+  send(guest, { type: 'leave_room' });
+  shut(host, guest);
+});
+
+test('set_rules coalesces its fan-out and never loses the last value', async () => {
+  const { host, guest } = await lobbyPair('Spammer', 'Fanned');
+  await sleep(300);
+
+  // 12 changes as fast as the socket allows — every one of them a DIFFERENT ruleset, so
+  // the no-op guard cannot be what saves us. Inside the 40-frame/5s limit, but each one
+  // would otherwise fan a full room state to every seat.
+  guest._messages.length = 0;
+  const sequence = ['chudopoly', 'blitz', 'mdFaithful', 'longGame'];
+  for (let i = 0; i < 12; i++) {
+    send(host, { type: 'set_rules', preset: sequence[i % sequence.length] });
+    await sleep(10);
+  }
+  const last = sequence[11 % sequence.length];
+  await sleep(700);
+
+  const fanned = guest._messages.filter(m => m.type === 'state').length;
+  assert.ok(fanned <= 4, `12 changes must not fan out 12 room states (saw ${fanned})`);
+  assert.ok(fanned >= 1, 'but the room is still told');
+  assert.equal(lastState(guest).rules.preset, last,
+    'and coalescing never drops the final value — the picker still matches the launch');
+
+  // A client that re-announces the ruleset it already has costs the room nothing at all.
+  guest._messages.length = 0;
+  for (let i = 0; i < 5; i++) { send(host, { type: 'set_rules', preset: last }); await sleep(30); }
+  await sleep(500);
+  assert.deepEqual(guest._messages, [], 'a no-op change is not a broadcast');
+
+  send(host, { type: 'leave_room' });
+  send(guest, { type: 'leave_room' });
+  shut(host, guest);
+});
+
 /* ── 3. rooms are accounted for ──────────────────────────────────────── */
 // `leave_room` during a live game nulled state.roomCode and returned, so handleClose bailed
 // and NO reaper was ever armed. The room, its bots, its turn timer and its state lived

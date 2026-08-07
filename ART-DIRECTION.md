@@ -161,6 +161,24 @@ as: **two world-stopping moments, one physical system underneath.**
 > 60px strip"), and the hand must stay fully on-screen. The measured geometry below is kept
 > as the record of what the three-column cut was solving; re-solve those problems within a
 > top-opponents layout.
+>
+> **Delivered, with its cost stated (2026-08-07).** Seats sit across the top, comms is a
+> right-hand overlay drawer, and the piles never sit between hand and properties. The drop
+> target stayed a 5×2 grid (~110px drag, not 285px into a 60px strip). But **720px cannot hold
+> seats-on-top *and* §5's run-up**: the hand fan is **84px, not 96**, the ~100px gap to the
+> hand is **0**, and the bank is `position: sticky; bottom: 0`. Those three numbers supersede
+> §5's above. Opponent seats scroll with 2+ opponents; a full board still overflows ~15px into
+> the sticky-bank fallback.
+>
+> **Furniture separation is now the load-bearing part of the identity** (2026-08-07). The
+> build read flat because cards sat on mats at 1.09:1 and mats on the table at 1.8 L\* (light)
+> / 0.1 L\* (dark) — right colours, no steps. The furniture now steps *down* from the ground
+> (light panels 94.2 → 70.1, dark 14.1 → 30.0) and all 16 adjacent pairs clear 12 L\*.
+> **Caveat the gate prints every run:** 12/12 dark and 10/12 light pairs are carried by *edge*
+> treatment, and the weakest field step is **0.0 L\*** — `#hud` and `.board-bank` are the same
+> tone as their surroundings, separated purely by stroke and shadow. That is a legitimate §4
+> position and it is fragile in a nameable way: remove the strokes and the same palette fails
+> at 4.4.
 
 The complaint diagnosed: ten set slots in one centred ~60px-tall row with ~250px of dead apron
 below, hand fan cropped at the viewport — a ~285px drag straight up into a 60px band with no

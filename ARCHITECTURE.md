@@ -301,6 +301,22 @@ Review sets are for humans/critics, not pixel-gated (no imagediff until the desi
 **A gate must be proven to fail.** Before a new assertion is trusted, break the fix it guards
 (mutation) and watch it go red — an assertion nobody has seen fail is a decoration.
 
+**A gate must also be proven not to move.** Two runs on an unchanged build must produce the
+same number, and a driver must verify its target before aiming at it. Every moving count this
+project produced was the gate measuring something other than what it reported: buried text
+went 317 → 219 → 219 because both audits ran 180ms *before* the frame that was actually
+photographed; the clipped-control count moved 38 → 48 because six surfaces were opened over a
+*live* game whose bots act on a wall clock a seed cannot fix; and `peek-opponent` reported
+`peek:absent` because the driver aimed at the middle card in document order, which was behind
+`.propcol` — reporting a layout defect as a peek defect.
+
+**A gate that measured nothing must not pass.** Enforced by `MIN_PAIRS` in grayscale and
+`stagesFailed` in touchtest, both found by mutation rather than review — touchtest once printed
+"✓ tap targets ≥ 44px on all 9 measured surfaces" on a run where all five staged surfaces had
+failed to load, because the summary counted what it was given.
+
+**A summary may not report success over a set it did not fully measure.**
+
 ## §9 The `__CHUD` bridge (test-only contract)
 
 With `?harness=1`, the client exposes `window.__CHUD`:

@@ -1750,13 +1750,19 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 
    Widening the centre column instead would be the other fix, and it belongs to
    ui.css, which this agent does not own (see the report). */
+/* Row, not column. This stacked only because ui.css's rail gave the outer
+   tracks a minmax(0) floor that resolved to 92.9px at 1280 — "How to play"
+   alone is 80px of that, so a second mark had nowhere to go. The rail now
+   floors both outer tracks at 10em symmetrically (an EQUAL floor cannot move
+   the centre, which was the original objection), so the two reading marks sit
+   on one line. */
 .home-marks {
   grid-area: help;
   justify-self: start;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .2em .9em;
   min-width: 0;
 }
 

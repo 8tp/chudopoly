@@ -279,8 +279,13 @@
      centre column then divides unevenly. Measured on the first pass: the
      marshalling area's midpoint landed at 42% of the viewport instead of 50%,
      which is the same off-centre-weight defect this round exists to fix, only
-     mirrored. */
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+     mirrored.
+     AMENDED: minmax(10em, 1fr), still symmetric. The defect above was UNEQUAL
+     content-driven floors (86 vs 118), not floors as such — an equal floor on
+     both sides cannot move the centre. Measured by the flight-log agent: at
+     minmax(0) the outer tracks resolved to 92.9px at 1280 against "How to play"
+     alone at 80px, so a SECOND reading mark had nowhere to go but underneath. */
+  grid-template-columns: minmax(10em, 1fr) minmax(0, auto) minmax(10em, 1fr);
   grid-template-areas: "help actions settings";
   align-items: center;
   gap: .7em 1.2em;

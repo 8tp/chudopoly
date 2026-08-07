@@ -229,11 +229,31 @@ function swapFits(card, color) {
   return card?.type === 'wild_property' && legalColorsFor(card).includes(color);
 }
 
-/** Cards in my `color` zone that `cardId` could trade places with. */
+/** Cards in my `color` zone that `cardId` could trade places with.
+ *
+ * THE ZONE MUST BE FULL, and leaving that out shipped a live regression. Owner:
+ * "its literally forcing a swap" when they only wanted to add a wild to a set.
+ *
+ * swapColors() — which decides what to MARK — has always required `zoneFull`.
+ * interact/index.js's pick() calls THIS function to decide which command to
+ * send, and without the same guard any move into a zone that merely happened to
+ * hold a compatible wild was dispatched as a swap: two cards moved and two
+ * rearranges spent for a gesture that meant "put this here". The marking was
+ * right and the dispatch was wrong, which is the worst shape for this bug —
+ * the mats looked like an ordinary move right up until it wasn't one.
+ *
+ * The guard belongs here rather than at the call site because all three callers
+ * want it: the dispatch, the `swapCard` step's re-validation, and the marking.
+ * This file's own note on swapColors states the policy the dispatch broke — the
+ * engine accepts a swap into a zone with room, the client does not OFFER one,
+ * because where a zone has room the MOVE is the right command: one rearrange
+ * instead of two, one card instead of two. Offer ⊆ accept, which is the
+ * direction §0.1 requires. */
 export function swapPartners(cardId, color) {
   const me = selfPlayer();
   const mine = myPropertyCard(cardId);
   if (!mine || !color || color === mine.color) return [];
+  if (!zoneFull(me, color)) return [];
   if (!swapFits(mine.card, color)) return [];
   return (me?.properties?.[color] || []).filter(c => swapFits(c, mine.color));
 }

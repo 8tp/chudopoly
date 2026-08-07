@@ -74,6 +74,16 @@ if (!FAST) steps.push(['node', ['tools/tabaway.mjs'], 'tabaway']);
 // delay, which is how this one shipped past every other gate.
 if (!FAST) steps.push(['node', ['tools/handoff.mjs'], 'handoff']);
 steps.push(['node', ['tools/touchtest.mjs'], 'touchtest']);
+/* DIRECT MANIPULATION ON YOUR OWN BOARD. Two defects reported in live play were
+ * unreachable by every gate above: a `myColor` answer on a full mat dispatched
+ * §3.5's swap with no confirming step, and a card dragged OUT OF A MAT painted
+ * underneath the cards it crossed. touchtest and screenshot both drag a HAND
+ * card, which is measurably clean — the stacking bug needs a card whose ancestor
+ * is a `.propcol`, and the swap needs a deadlocked board no recorded fixture
+ * contains. It builds its boards through engine calls (§0.7) and drives real
+ * CDP input. In the inner loop: it is 25s and it defends a gesture the owner
+ * uses on every turn. */
+steps.push(['node', ['tools/dragtest.mjs'], 'dragtest']);
 // The review set is now gated on its own honesty (duplicate shots, undriven
 // client modes, clipped text, theme pairs that come out identical) — not on
 // pixels, which §8 still forbids.

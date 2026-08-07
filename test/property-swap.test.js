@@ -778,9 +778,8 @@ test('tap and drag reach the swap through the SAME fork', () => {
   const pickBody = pickFn.slice(0, pickFn.indexOf('\nfunction handleTargetTap'));
   assert.match(pickBody, /sel\.swapPartners\(mode\.cardId, value\)/,
     'the myColor step is where a FULL mat becomes a swap');
-  assert.match(pickBody, /partners\.length === 1/, 'one partner is not prompted for');
   assert.match(pickBody, /mode\.needs\.splice\(1, 0, 'swapCard'\)/,
-    'two or more partners get a step, not a silent pick');
+    'a full mat with a partner in it gets a step, never a silent pick');
 
   // The drag route ships the same drop kind for both, so it does not decide.
   const planFn = src.slice(src.indexOf('export function dragPlan'));
@@ -796,6 +795,82 @@ test('tap and drag reach the swap through the SAME fork', () => {
   const dispatchBody = dispatchFn.slice(0, dispatchFn.indexOf('\n}\n'));
   assert.match(dispatchBody, /mode\.picks\.withCardId != null[\s\S]*send\.swapProperty/);
   assert.match(dispatchBody, /else send\.moveProperty/);
+});
+
+/* ── 10b. CONSENT: choosing the mat must not be what chooses the swap ─────
+ *
+ * THE DEFECT, reported live after d05d523 shipped and after ccea2c4 fixed the
+ * OTHER half of it. Owner: "im trying to add a wild to one that has a dual color
+ * one and they are just getting swapped over and over."
+ *
+ * ccea2c4 made the OFFER correct — swapPartners() requires `zoneFull`, so a swap
+ * is only ever proposed where a plain move is illegal — and that was not this
+ * bug. This one is underneath it: where a swap IS legal, `pick('myColor')` took
+ * a single partner without asking, under this file's standing rule that you
+ * never prompt for a decision with one answer.
+ *
+ * The rule is right and it was answering the wrong question. "Which partner?"
+ * has one answer. "Did you want a swap at all?" has two, on every full mat in
+ * the game, because the gesture that chose the destination is byte-for-byte
+ * identical for a move and for a swap — and they are not the same move: one
+ * relocates one card for one rearrange, the other relocates two for two.
+ *
+ * The d05d523 matrix ran 48 real-CDP combinations over this exact code and
+ * missed it, because every one of them was a board where the swap was what the
+ * player wanted. A gate written from the implementation's own intent cannot see
+ * an intent mismatch. So what is pinned here is the SHAPE — no assignment of
+ * `withCardId` outside the step whose only job is to collect it — and the
+ * behaviour is measured under real input by tools/dragtest.mjs §A/§A′, which
+ * stages §3.5's deadlocked board through engine calls and reads sentLog.
+ */
+test('the myColor step can never dispatch a swap on its own', () => {
+  const src = readFileSync(join(__dirname, '..', 'public/src/interact/index.js'), 'utf8');
+  const pickFn = src.slice(src.indexOf('export function pick(step, value)'));
+  const pickBody = pickFn.slice(0, pickFn.indexOf('\nfunction handleTargetTap'));
+
+  // The colour branch, in isolation: it may ARM the step and may not ANSWER it.
+  const colorBranch = pickBody.slice(pickBody.indexOf("case 'myColor':"),
+    pickBody.indexOf("case 'swapCard':"));
+  assert.doesNotMatch(colorBranch, /withCardId/,
+    'choosing the destination must not also choose the partner — that is the whole defect');
+  assert.match(colorBranch, /mode\.needs\.splice\(1, 0, 'swapCard'\)/);
+  assert.doesNotMatch(colorBranch, /length === 1|length > 1/,
+    'the step is unconditional on how many partners there are: it buys CONSENT, not information');
+
+  // …and across the whole file there is exactly ONE place `withCardId` is set,
+  // in the step the player answers by pointing at a card. dispatch() reads it.
+  const assignments = [...src.matchAll(/mode\.picks\.withCardId\s*=/g)];
+  assert.equal(assignments.length, 1,
+    `withCardId is assigned in ${assignments.length} places — a swap must have one door`);
+  const swapStep = pickBody.slice(pickBody.indexOf("case 'swapCard':"));
+  assert.match(swapStep, /mode\.picks\.withCardId = value/);
+
+  // The consequence dispatch() draws from it is unchanged: no answer, no swap.
+  const dispatchFn = src.slice(src.indexOf('function dispatch()'));
+  const dispatchBody = dispatchFn.slice(0, dispatchFn.indexOf('\n}\n'));
+  assert.match(dispatchBody, /mode\.picks\.withCardId != null[\s\S]*send\.swapProperty/);
+});
+
+test('the swapCard step says what it costs, and the mats say it before the tap', () => {
+  const src = readFileSync(join(__dirname, '..', 'public/src/interact/index.js'), 'utf8');
+
+  // §3.9: the step's own prompt names the thing that makes a swap different
+  // from the move it is standing in for — both cards move.
+  const hints = src.slice(src.indexOf('const HINTS'), src.indexOf('function changed()'));
+  assert.match(hints, /swapCard:.*TRADE/,
+    'the swapCard prompt must name the trade, or the step is a mystery tap');
+
+  // And the DRAG route paints the same TRADE chit the tap route has always had.
+  // Before this round it painted nothing at all: applyMarks() only ran its
+  // advice branch for `mode.kind === 'target'`, and a drag never enters that
+  // mode until the finger is up — so mid-drag a swap mat carried exactly
+  // `data-droppable="1"` and `is-drop-hover`, the same two marks as every
+  // ordinary move target. tools/dragtest.mjs §A′ reads the chit mid-gesture.
+  const marks = src.slice(src.indexOf('export function applyMarks'));
+  assert.match(marks, /drag\.heldCardId\(\)/,
+    'applyMarks must know what is under the finger to answer for the mat');
+  assert.match(marks, /paintAdvice\(found\.card/,
+    'a live board drag paints the same chits as the tap route');
 });
 
 test('a full mat that CAN trade is a target, not a refusal', () => {

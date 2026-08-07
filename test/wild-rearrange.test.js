@@ -325,6 +325,73 @@ test('drop resolution refuses an illegal mat BEFORE hysteresis or the snap radiu
   assert.match(src, /api\?\.dropRefusal\?\./, 'a refused mat asks the machine for its sentence');
 });
 
+/* ── 5b. the held card rides ABOVE the table, and one mat was stopping it ───
+ *
+ * Owner, live: "when dragging cards between base sets it doesnt overlap over
+ * them so it goes underneath and looks jarring/offputting." ART §5 puts the held
+ * card above the table; `interact.css .card.is-dragging { z-index: 60 }` says so.
+ *
+ * MEASURED at 1280×720 under real CDP, a rainbow wild dragged out of a full
+ * Elite Programs mat across a full Command mat. Ancestors of the held card that
+ * establish a stacking context:
+ *
+ *   ["div.propcol[green] → filter: saturate(0.5) + opacity: 0.55",
+ *    "div#self-board → z-index: 1"]
+ *
+ * and `document.elementFromPoint` at the held card's own centre returned
+ * `card#20` — a card in the mat it was crossing — at 9 of 9 sample points.
+ *
+ * The card NEVER LEAVES THE MAT IT WAS PICKED UP FROM: table.liftCard() opens
+ * the clipping ancestor chain and deliberately does not reparent. So any
+ * treatment on that mat that makes it a stacking context resolves `z-index: 60`
+ * against the mat's own children instead of against the table, and the mat
+ * itself — `position: relative; z-index: auto` — paints at the z-index-0 step of
+ * #self-board in TREE ORDER. Every mat later in document order drew over it.
+ *
+ * TWO declarations were doing it, both on the source column and neither about
+ * it: `[data-drop-illegal]`'s opacity+filter (markIllegal() marked the column
+ * the card came FROM, which is not an illegal target — it is home, and
+ * resolve() step 0 already treats a release there as a change of mind), and
+ * `[data-drop-source]`'s own `filter: saturate(.5)`.
+ *
+ * The behaviour is measured under real input by tools/dragtest.mjs §B, which
+ * also fails when the held card overlaps no other card — a paint-order gate that
+ * flies over bare felt has measured nothing. What is pinned here is the pair of
+ * facts that make it hold, because both are one careless edit away from coming
+ * back.
+ */
+test('the column a card was picked up from is not marked illegal', () => {
+  const src = readFileSync(join(__dirname, '..', 'public/src/interact/drag.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function markIllegal(plan)'));
+  const body = fn.slice(0, fn.indexOf('\n/**', 1));
+  assert.match(body, /const source = live\?\.node\?\.closest\?\.\('\.propcol'\)/,
+    'markIllegal must know which column the held card is still sitting in');
+  assert.match(body, /col !== source && !legal\.has\(col\)/,
+    'home is not a refusal — and the illegal treatment is a stacking context');
+});
+
+test('no treatment on a .propcol may trap the held card inside it', () => {
+  const css = readFileSync(join(__dirname, '..', 'public/style/interact.css'), 'utf8');
+
+  // The rule for the column a wild is LEAVING is the one the held card is
+  // inside. It may not carry any property that creates a stacking context.
+  const start = css.indexOf('.propcol[data-drop-source="1"] {');
+  assert.ok(start > 0, 'fixture assumption: the drop-source rule still exists');
+  const block = css.slice(start, css.indexOf('}', start));
+  for (const prop of ['filter', 'opacity', 'transform', 'isolation', 'mix-blend-mode',
+    'backdrop-filter', 'will-change', 'contain', 'perspective']) {
+    assert.doesNotMatch(block, new RegExp(`(^|[;{\\s])${prop}\\s*:`),
+      `.propcol[data-drop-source] must not set ${prop} — it makes the mat a stacking `
+      + 'context and z-index 60 on the held card stops meaning anything');
+  }
+  // The desaturation is not deleted, it is moved onto what is left behind.
+  assert.match(css, /\.propcol\[data-drop-source="1"\] \.card:not\(\.is-dragging\)\s*\{[^}]*filter/,
+    'the departure still reads: the mat\'s RESTING cards desaturate');
+
+  // And `.card.is-dragging` is still the thing that claims the top of the table.
+  assert.match(css, /\.card\.is-dragging \{[\s\S]*?z-index: 60/);
+});
+
 test('the machine answers "why that mat" for both routes', () => {
   const src = readFileSync(join(__dirname, '..', 'public/src/interact/index.js'), 'utf8');
   assert.match(src, /export function dropRefusal\(cardId, color\)/);

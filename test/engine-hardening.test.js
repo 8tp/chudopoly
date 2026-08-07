@@ -484,6 +484,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const nodePath = require('node:path');
 
+// Swaps console.warn/log for the duration so deliberately-broken fixtures do not print
+// scary lines on every `npm test` run — a suite that always warns trains people to ignore
+// warnings. The captured lines are handed to the test so it can assert on them instead.
+function captureConsole() {
+  const out = { warn: [], log: [] };
+  const realWarn = console.warn, realLog = console.log;
+  console.warn = (...a) => out.warn.push(a.join(' '));
+  console.log = (...a) => out.log.push(a.join(' '));
+  out.restore = () => { console.warn = realWarn; console.log = realLog; };
+  return out;
+}
+
 // async: the record is appended asynchronously, so the temp dir must outlive the await.
 async function withGameLog(env, fn) {
   const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'chudlog-'));
@@ -492,8 +504,10 @@ async function withGameLog(env, fn) {
   for (const [k, v] of Object.entries(env)) process.env[k] = v;
   delete require.cache[require.resolve('../server/gamelog')];
   const gamelog = require('../server/gamelog');
-  try { return await fn(gamelog, dir); }
+  const captured = captureConsole();
+  try { return await fn(gamelog, dir, captured); }
   finally {
+    captured.restore();
     process.env = saved;
     delete require.cache[require.resolve('../server/gamelog')];
     fs.rmSync(dir, { recursive: true, force: true });
@@ -554,10 +568,83 @@ test('game logging never throws into a room, whatever the state looks like', asy
     assert.doesNotThrow(() => gamelog.recordFinished(undefined, G));
     assert.doesNotThrow(() => gamelog.recordFinished({}, G));
     assert.doesNotThrow(() => gamelog.recordFinished({ state: { phase: 'playing' } }, G));
-    const broken = finishedRoom();
-    broken.state.players = null;              // would throw inside buildRecord
-    assert.doesNotThrow(() => gamelog.recordFinished(broken, G));
   });
+});
+
+// The state shapes below cannot arise from the engine (audited: every assignment to these
+// collections is `{}` or a filtered array, never null). They stand in for a genuinely
+// corrupt game — the kind forensics exists for — and must still be RECORDED, not skipped.
+test('a structurally corrupt game is still recorded rather than lost', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '1' }, async (gamelog, dir) => {
+    const room = finishedRoom();
+    room.state.players = null;          // the exact shape that used to kill logging
+    room.state.events = null;
+    room.state.log = undefined;
+    room.state.stats = null;
+    room.players[0].hand = null;
+
+    assert.equal(gamelog.recordFinished(room, G), true, 'the weird game is recorded');
+    await new Promise(r => setTimeout(r, 120));
+
+    const rec = JSON.parse(fs.readFileSync(nodePath.join(dir, 'games.jsonl'), 'utf8').trim());
+    assert.equal(rec.boardsMissing, true, 'and the corruption is stated in the record');
+    assert.deepEqual(rec.boards, []);
+    assert.deepEqual(rec.events, []);
+    assert.deepEqual(rec.log, []);
+    assert.equal(rec.winner, 'a', 'the parts that survived are still there');
+    assert.ok(rec.integrity, 'validateState is captured, not allowed to throw out');
+    assert.deepEqual(gamelog.stats(), { written: 1, skipped: 0, disabled: false });
+  });
+});
+
+test('one unserializable game skips itself and logging keeps working', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '1' }, async (gamelog, dir, captured) => {
+    // A circular reference is the one thing buildRecord cannot coerce away.
+    const bad = finishedRoom();
+    bad.code = 'BAD1';
+    bad.state.stats = {};
+    bad.state.stats.self = bad.state.stats;
+
+    assert.equal(gamelog.recordFinished(bad, G), false, 'the bad record is skipped');
+    assert.equal(gamelog.stats().disabled, false, 'but the module is NOT disabled');
+
+    const good = finishedRoom();
+    good.code = 'GOOD';
+    assert.equal(gamelog.recordFinished(good, G), true, 'the next game still records');
+    await new Promise(r => setTimeout(r, 120));
+
+    const lines = fs.readFileSync(nodePath.join(dir, 'games.jsonl'), 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).code, 'GOOD');
+    assert.deepEqual(gamelog.stats(), { written: 1, skipped: 1, disabled: false });
+    const warning = captured.warn.find(l => l.includes('BAD1'));
+    assert.ok(warning, 'the skip is reported');
+    assert.match(warning, /logging continues/, 'and says so explicitly');
+    assert.equal(captured.warn.some(l => /disabled/.test(l)), false, 'nothing was disabled');
+  });
+});
+
+test('a filesystem failure — and only that — hard-disables logging', async () => {
+  const blocker = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'chudblock-'));
+  const filePath = nodePath.join(blocker, 'not-a-dir');
+  fs.writeFileSync(filePath, 'x');
+  const saved = { ...process.env };
+  process.env.CHUD_GAME_LOG = '1';
+  process.env.CHUD_GAME_LOG_DIR = nodePath.join(filePath, 'sub');   // mkdir under a FILE
+  delete require.cache[require.resolve('../server/gamelog')];
+  const gamelog = require('../server/gamelog');
+  const captured = captureConsole();
+  try {
+    assert.equal(gamelog.recordFinished(finishedRoom(), G), false);
+    assert.equal(gamelog.stats().disabled, true, 'a filesystem error is genuinely fatal');
+    assert.equal(gamelog.recordFinished(finishedRoom(), G), false, 'and stays disabled');
+    assert.ok(captured.warn.some(l => /disabled after filesystem failure/.test(l)));
+  } finally {
+    captured.restore();
+    process.env = saved;
+    delete require.cache[require.resolve('../server/gamelog')];
+    fs.rmSync(blocker, { recursive: true, force: true });
+  }
 });
 
 test('the game log is bounded: it rotates instead of growing without limit', async () => {

@@ -22,17 +22,19 @@
 //     fanned hand shows nothing until you stop on a card.
 //
 // ── THE FACE ───────────────────────────────────────────────────────────────
-// The peek does NOT draw its own card. It deep-clones the live card node built
-// by table/cardnode.js and strips the identity + interaction state off the
-// clone, so it is literally the shipped renderer at a bigger size and cannot
-// drift from it. An SVG card-art system is being built concurrently: call
-// `peek.setFaceRenderer(fn)` with `(card) => Element` and it takes over
-// completely — that is the whole seam, and nothing else in this file changes.
+// The peek renders table/cardart.js's PEEK tier — a genuinely different
+// composition from the in-game face, not the same face scaled up: it has room
+// for the full property name, the whole rent ladder as leader-dot rows, and a
+// paragraph of rule text, none of which fit on a 90px card. It renders from the
+// card DATA, so a card with no node on the table (a culled discard) still peeks.
+// `peek.setFaceRenderer(fn)` remains the seam; passing a non-function restores
+// the original behaviour of deep-cloning the live node.
 
 import { $, el, clear, setClass } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import { getNode, buildFace } from '../table/cardnode.js';
+import { faceNode } from '../table/cardart.js';
 import { cardName, cardText, kindLabel, opsecFlag } from '../core/cards.js';
 import * as sel from '../state/selectors.js';
 import { contextRows } from './details.js';
@@ -52,9 +54,21 @@ let host = null;
 let showing = null;              // card id currently peeked
 let inTimer = 0;
 let anchorEl = null;
-let faceRenderer = null;         // set by setFaceRenderer(); null = clone the live node
+/** The shipped renderer: table/cardart.js's peek tier, carrying the CANONICAL
+ *  rule text. Passing cardText in rather than letting the face invent its own is
+ *  what stops the face and the details sheet from ever disagreeing.
+ *
+ *  This also retires the clone path for the peek entirely, which quietly fixes
+ *  the culled-discard case for free: table/reconcile() forgets every discard
+ *  past DISCARD_VISIBLE, and a peek that had to clone a live node had nothing to
+ *  clone. The peek tier renders from the card DATA, so a card with no node on
+ *  the table still peeks. */
+const DEFAULT_FACE = (card) => faceNode(card, 'peek', { rule: cardText(card) });
 
-/** Swap in a different card-face renderer (the SVG large-tier face).
+let faceRenderer = DEFAULT_FACE;
+
+/** Swap in a different card-face renderer. Pass a non-function to fall back to
+ *  cloning the live card node.
  *  @param {(card:object)=>Element|null} fn */
 export function setFaceRenderer(fn) { faceRenderer = typeof fn === 'function' ? fn : null; }
 
@@ -101,11 +115,20 @@ function faceOf(card) {
   return copy;
 }
 
-function body(card) {
+/** @param {Element|null} face  the face already built for this card, so the body
+ *  can drop whatever the face is now printing itself. A cardart peek face
+ *  carries the kind band, the name and the rule; repeating them under it was
+ *  the same three strings twice in one 250px column. What the body still owns
+ *  is the LIVE half — what this rent would charge right now, whether the play
+ *  is legal — which is not printed on a card and never should be. */
+function body(card, face) {
+  const printed = !!face && face.classList?.contains('ca-peek');
   const box = el('div', { class: 'peek-body' });
-  box.appendChild(el('div', { class: 'peek-kind', text: kindLabel(card) }));
-  box.appendChild(el('div', { class: 'peek-name', text: cardName(card) || card.name || '' }));
-  box.appendChild(el('p', { class: 'peek-rule', text: cardText(card) }));
+  if (!printed) {
+    box.appendChild(el('div', { class: 'peek-kind', text: kindLabel(card) }));
+    box.appendChild(el('div', { class: 'peek-name', text: cardName(card) || card.name || '' }));
+    box.appendChild(el('p', { class: 'peek-rule', text: cardText(card) }));
+  }
 
   const rows = contextRows(card);
   if (rows.length) {
@@ -178,7 +201,7 @@ export function show(cardId, node) {
   clear(box);
   const face = faceOf(card);
   if (face) box.appendChild(face);
-  box.appendChild(body(card));
+  box.appendChild(body(card, face));
 
   box.hidden = false;
   setClass(box, 'is-in', false);

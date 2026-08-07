@@ -10,6 +10,7 @@ import { el, setAttr, setText } from '../core/dom.js';
 import { COLORS, kindLabel, isPropertyCard, cardName } from '../core/cards.js';
 import { stableSpread } from '../core/rng.js';
 import * as flight from '../anim/flight.js';
+import { faceNode, backNode } from './cardart.js';
 
 const nodes = new Map();      // cardId -> element
 const backs = [];             // pooled face-down nodes (deck + opponent hands)
@@ -58,7 +59,7 @@ function buildCard(card) {
   node.__rx = 0; node.__ry = 0; node.__rt = 0;
   node.appendChild(el('div', { class: 'card-inner' }, [
     buildFace(card),
-    el('div', { class: 'card-back' }, [el('div', { class: 'card-back-roundel', text: '★' })]),
+    el('div', { class: 'card-back' }, [backNode('hand')]),
   ]));
   refresh(node, card);
   return node;
@@ -73,6 +74,19 @@ function buildCard(card) {
  */
 export function buildFace(card) {
   const face = el('div', { class: 'card-face' });
+
+  // table/cardart.js is that renderer. ONE face is built per card and then only
+  // reparented, so the art cannot be re-rendered per zone — style/cardart.css
+  // degrades this single face with container queries on the card's own width
+  // (≤66 / ≤48 / ≤34px), which is what lets a hand card become a 38px board
+  // chip and a 18px upgrade chip without anything touching the DOM.
+  const art = faceNode(card, 'hand');
+  if (art) {
+    face.appendChild(art);
+    return face;
+  }
+
+  // Fallback: the pre-art face. Reached only if cardart declines the card.
   face.appendChild(el('div', { class: 'card-band', text: kindLabel(card) }));
   face.appendChild(el('div', { class: 'card-name', text: cardName(card) || card.name || '' }));
   face.appendChild(el('div', { class: 'card-art' }));
@@ -144,7 +158,7 @@ export function takeBack() {
   const node = backs.pop() || el('div', {
     class: 'card card-facedown',
     attrs: { 'data-back': '1', 'aria-hidden': 'true' },
-  }, [el('div', { class: 'card-back' }, [el('div', { class: 'card-back-roundel', text: '★' })])]);
+  }, [el('div', { class: 'card-back' }, [backNode('hand')])]);
   return node;
 }
 

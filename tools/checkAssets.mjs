@@ -66,7 +66,7 @@ const BANNED_EXT = new RegExp(
  */
 const ALLOW = [
   { dir: ['public', 'fonts'], ext: '.woff2', cap: null, why: '§0.3 amendment (b): self-hosted webfonts' },
-  { dir: ['public', 'audio'], ext: '.opus', cap: 6, why: '§0.3 amendment: recorded music, at most six tracks' },
+  { dir: ['public', 'audio'], ext: '.opus', cap: 9, why: '§0.3 amendment (e): recorded music, at most nine tracks — lobby, five match beds, final approach, victory, defeat' },
 ];
 
 function allowedFor(rel) {

@@ -7,7 +7,7 @@
 // destroys the node the transform is running on.
 
 import { el, setAttr, setText } from '../core/dom.js';
-import { COLORS, kindLabel, isPropertyCard } from '../core/cards.js';
+import { COLORS, kindLabel, isPropertyCard, cardName } from '../core/cards.js';
 import { stableSpread } from '../core/rng.js';
 import * as flight from '../anim/flight.js';
 
@@ -67,7 +67,7 @@ function buildCard(card) {
 function buildFace(card) {
   const face = el('div', { class: 'card-face' });
   face.appendChild(el('div', { class: 'card-band', text: kindLabel(card) }));
-  face.appendChild(el('div', { class: 'card-name', text: card.name || '' }));
+  face.appendChild(el('div', { class: 'card-name', text: cardName(card) || card.name || '' }));
   face.appendChild(el('div', { class: 'card-art' }));
 
   const foot = el('div', { class: 'card-foot' });
@@ -99,7 +99,7 @@ export function refresh(node, card) {
   const color = card.placedColor || card.color || (isPropertyCard(card) ? card.colors?.[0] : null);
   setAttr(node, 'data-color', color && COLORS[color] ? color : null);
   setAttr(node, 'data-action-kind', card.action || null);
-  setAttr(node, 'aria-label', `${card.name || 'Card'}, ${card.value ?? 0}M`);
+  setAttr(node, 'aria-label', `${cardName(card) || card.name || 'Card'}, ${card.value ?? 0}M`);
   const band = node.querySelector('.card-band');
   if (band) setText(band, kindLabel(card));
 }

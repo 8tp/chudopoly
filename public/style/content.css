@@ -1,0 +1,704 @@
+/* content.css — the explaining surfaces (P6).
+   Owner: content & clarity agent. Everything here is rules copy, card details,
+   the final-approach strip, first-game hints and the settings sheet.
+
+   It loads last on purpose: the only rules that reach outside this file's own
+   classes are two documented overrides, both marked OVERRIDE below.
+
+   Colour: `[data-color="…"]` in table.css already publishes `--band` /
+   `--band-ink` on ANY element carrying the attribute, so every swatch and set
+   column here reads the one set-colour ramp instead of restating it. */
+
+/* ── the brief: paged rules sheet ─────────────────────────────────────── */
+
+.brief { display: flex; flex-direction: column; gap: .55em; min-height: 0; max-width: 100%; }
+
+.brief-tabs {
+  display: flex;
+  gap: .25em;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  padding-bottom: .3em;
+  margin: 0 -.2em;
+  padding-left: .2em;
+  padding-right: .2em;
+  scroll-snap-type: x proximity;
+  border-bottom: var(--hairline) solid rgba(86, 109, 146, .3);
+  /* the rail runs off the right edge at 390px — fade it so that reads as
+     "there is more" rather than as a clipped button */
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 1.6em), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 1.6em), transparent 100%);
+}
+.brief-tabs::-webkit-scrollbar { display: none; }
+
+.brief-tab {
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+  min-height: calc(var(--tap) * .8);
+  padding: 0 .8em;
+  border: var(--hairline) solid rgba(86, 109, 146, .34);
+  border-radius: 999px;
+  background: rgba(15, 28, 48, .8);
+  color: var(--steel-300);
+  font-size: .76em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.brief-tab.is-on {
+  color: var(--gold-hi);
+  border-color: var(--gold-mid);
+  background: linear-gradient(180deg, rgba(232, 185, 85, .22), rgba(125, 90, 24, .16));
+  box-shadow: 0 0 .7em rgba(232, 185, 85, .22), var(--rim);
+}
+@media (hover: hover) {
+  .brief-tab:hover:not(.is-on) { color: var(--ink-100); border-color: var(--steel-400); }
+}
+.brief-tab:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.brief-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding-right: .2em;
+  /* One column of prose at a comfortable measure; the sheet is 30em wide. */
+  max-width: 34em;
+}
+.brief-page:focus-visible { outline: none; }
+
+.brief-title {
+  margin: 0 0 .4em;
+  font-size: 1.02em;
+  color: var(--ink-100);
+  letter-spacing: .01em;
+}
+.brief-sub {
+  margin: 1.1em 0 .4em;
+  font-size: .72em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.brief-lede {
+  margin: 0 0 .8em;
+  font-size: .92em;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--ink-100);
+  border-left: 2px solid var(--gold-deep);
+  padding-left: .6em;
+}
+.brief-list { margin: 0 0 .6em; padding-left: 1em; }
+.brief-list li { font-size: .84em; line-height: 1.45; color: var(--ink-300); }
+
+/* the rule list: claim on top, consequence under it */
+.brief-rules { margin: 0 0 .4em; }
+.brief-rules dt {
+  font-size: .82em;
+  font-weight: 800;
+  letter-spacing: .01em;
+  color: var(--ink-100);
+  margin-top: .7em;
+}
+.brief-rules dt::before {
+  content: "";
+  display: inline-block;
+  width: .34em;
+  height: .34em;
+  margin-right: .5em;
+  vertical-align: .12em;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 .4em rgba(232, 185, 85, .6);
+}
+.brief-rules dd {
+  margin: .12em 0 0 1.2em;
+  font-size: .81em;
+  line-height: 1.45;
+  color: var(--ink-300);
+}
+
+.brief-note {
+  margin: .9em 0 .2em;
+  padding: .5em .65em;
+  font-size: .78em;
+  line-height: 1.42;
+  color: var(--steel-300);
+  background: rgba(0, 0, 0, .3);
+  border-left: 2px solid var(--steel-500);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.brief-swatch {
+  display: inline-block;
+  width: .72em;
+  height: .72em;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  background: var(--band, var(--steel-400));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .7), var(--rim);
+}
+
+/* ── sets & rent table ────────────────────────────────────────────────── */
+
+.brief-scroll { overflow-x: auto; scrollbar-width: thin; margin-bottom: .5em; }
+.brief-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .78em;
+}
+.brief-table th {
+  text-align: left;
+  padding: .3em .4em;
+  font-size: .88em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--steel-300);
+  border-bottom: var(--hairline) solid rgba(86, 109, 146, .4);
+  white-space: nowrap;
+}
+.brief-table td {
+  padding: .34em .4em;
+  border-bottom: var(--hairline) solid rgba(86, 109, 146, .16);
+  color: var(--ink-300);
+  vertical-align: middle;
+}
+.brief-table tr:last-child td { border-bottom: 0; }
+.brief-table .num { text-align: center; font-weight: 800; color: var(--ink-100); }
+.brief-table .setname {
+  display: flex;
+  align-items: center;
+  gap: .45em;
+  font-weight: 700;
+  color: var(--ink-100);
+  white-space: nowrap;
+}
+.brief-table .ladder { display: flex; gap: .22em; flex-wrap: wrap; }
+.rung {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .18em;
+  padding: .1em .38em;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, .34);
+  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .16);
+  font-variant-numeric: tabular-nums;
+}
+.rung i { font-style: normal; font-size: .78em; color: var(--steel-300); }
+.rung b { color: var(--ink-100); }
+/* the full-set rung is the number people actually plan around */
+.rung.is-full {
+  background: linear-gradient(180deg, rgba(232, 185, 85, .22), rgba(125, 90, 24, .14));
+  box-shadow: inset 0 0 0 1px rgba(232, 185, 85, .38);
+}
+.rung.is-full b { color: var(--gold-hi); }
+
+/* ── final approach diagram ───────────────────────────────────────────── */
+
+.fa-diagram {
+  display: flex;
+  flex-direction: column;
+  gap: .7em;
+  margin: 0 0 1em;
+  padding: .7em .65em;
+  border: var(--hairline) solid var(--gold-deep);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(232, 185, 85, .1), transparent 70%),
+    rgba(4, 10, 20, .5);
+}
+.fa-board { display: flex; flex-direction: column; align-items: center; gap: .35em; }
+.fa-board-label, .fa-board-count {
+  font-size: .62em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--steel-300);
+}
+.fa-board-count { color: var(--gold-hi); }
+.fa-cols { display: flex; gap: .45em; }
+.fa-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .22em;
+  width: 4.1em;
+  padding: .35em .3em .3em;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(31, 51, 80, .6), rgba(9, 18, 32, .8));
+  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .14);
+}
+.fa-col.is-complete {
+  box-shadow: inset 0 0 0 1px var(--gold-mid), 0 0 .9em rgba(232, 185, 85, .28);
+  background: linear-gradient(180deg, rgba(232, 185, 85, .14), rgba(9, 18, 32, .85));
+}
+.fa-col-name {
+  font-size: .58em;
+  font-weight: 900;
+  letter-spacing: .08em;
+  color: var(--band-ink, var(--ink-100));
+  background: var(--band, var(--steel-500));
+  padding: .18em .4em;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.fa-col-pips { display: flex; gap: .16em; }
+.fa-col-pips i {
+  width: .5em;
+  height: .7em;
+  border-radius: 1px;
+  background: var(--band, var(--steel-400));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .6);
+}
+.fa-col-tick {
+  font-size: .55em;
+  font-weight: 900;
+  letter-spacing: .1em;
+  color: var(--gold-hi);
+}
+
+.fa-steps { list-style: none; margin: 0; padding: 0 0 0 .1em; }
+.fa-step {
+  position: relative;
+  display: flex;
+  gap: .5em;
+  align-items: flex-start;
+  padding: .3em 0 .3em .9em;
+  margin: 0;
+}
+/* the rail */
+.fa-step::before {
+  content: "";
+  position: absolute;
+  left: .15em;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--gold-deep);
+}
+.fa-step:first-child::before { top: .8em; }
+.fa-step:last-child::before { bottom: calc(100% - .8em); }
+.fa-step::after {
+  content: "";
+  position: absolute;
+  left: -.05em;
+  top: .62em;
+  width: .42em;
+  height: .42em;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 .4em rgba(232, 185, 85, .7);
+}
+.fa-step.is-break::after { background: var(--danger); box-shadow: 0 0 .4em rgba(208, 52, 44, .7); }
+.fa-step.is-win::after { background: var(--go); box-shadow: 0 0 .5em rgba(42, 179, 106, .8); }
+.fa-tag {
+  flex: 0 0 5.2em;
+  font-size: .6em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  color: var(--gold);
+  padding-top: .35em;
+}
+.fa-step.is-break .fa-tag { color: var(--danger-lit); }
+.fa-step.is-win .fa-tag { color: #7ce0a8; }
+.fa-text { font-size: .8em; line-height: 1.4; color: var(--ink-300); }
+
+/* ── card catalogue ───────────────────────────────────────────────────── */
+
+.brief-card {
+  margin-bottom: .45em;
+  padding: .45em .6em .5em;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--steel-500);
+  background: linear-gradient(180deg, rgba(31, 51, 80, .42), rgba(9, 18, 32, .55));
+  box-shadow: var(--rim);
+}
+.brief-card.is-chud { border-left-color: var(--gold); }
+.brief-card.is-rent { border-left-color: var(--info); }
+.brief-card-head { display: flex; align-items: baseline; gap: .45em; }
+.brief-card-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: .86em;
+  font-weight: 900;
+  letter-spacing: .01em;
+  color: var(--ink-100);
+}
+.brief-card.is-chud .brief-card-name { color: var(--gold-hi); }
+.brief-card-coin {
+  flex: 0 0 auto;
+  font-size: .74em;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+.brief-card-qty {
+  flex: 0 0 auto;
+  font-size: .66em;
+  font-weight: 800;
+  letter-spacing: .06em;
+  color: var(--steel-300);
+}
+.brief-card-rule {
+  margin: .2em 0 .3em;
+  font-size: .79em;
+  line-height: 1.42;
+  color: var(--ink-300);
+}
+.brief-card-flag {
+  display: inline-block;
+  font-size: .62em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+}
+.brief-card-flag.is-block { color: #7ce0a8; }
+.brief-card-flag.is-noblock { color: var(--steel-300); }
+
+/* ── OPSEC chain ──────────────────────────────────────────────────────── */
+
+.op-chain {
+  list-style: none;
+  margin: 0 0 .9em;
+  padding: .55em .6em;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, .32);
+  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .12);
+  counter-reset: beat;
+}
+.op-beat {
+  display: flex;
+  gap: .5em;
+  align-items: baseline;
+  padding: .28em 0;
+  border-bottom: var(--hairline) solid rgba(143, 160, 186, .1);
+}
+.op-beat:last-child { border-bottom: 0; }
+.op-who {
+  flex: 0 0 4.4em;
+  font-size: .62em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  text-align: right;
+  color: var(--steel-300);
+}
+.op-beat.is-attack .op-who { color: var(--danger-lit); }
+.op-beat.is-defend .op-who { color: var(--info); }
+.op-beat.is-result .op-who { color: var(--gold); }
+.op-text { font-size: .79em; line-height: 1.4; color: var(--ink-300); }
+.op-beat.is-result .op-text { color: var(--ink-100); font-weight: 700; }
+
+/* ── card details sheet ───────────────────────────────────────────────── */
+
+.details-rule { font-size: .88em; line-height: 1.45; color: var(--ink-100); }
+.dt-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: .6em;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.dt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: .7em;
+  padding: .32em .6em;
+  font-size: .8em;
+  background: rgba(0, 0, 0, .3);
+}
+.dt-label { color: var(--steel-300); min-width: 0; }
+.dt-value { font-weight: 800; color: var(--ink-100); text-align: right; }
+.dt-row.is-good .dt-value { color: #9ff0c1; }
+.dt-row.is-bad .dt-value { color: var(--steel-300); font-weight: 700; }
+.dt-row.is-hot .dt-value { color: var(--gold-hi); }
+
+.dt-tags { display: flex; flex-wrap: wrap; gap: .3em; margin-bottom: .4em; }
+.dt-tag {
+  font-size: .64em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  padding: .24em .55em;
+  border-radius: 999px;
+  border: var(--hairline) solid rgba(143, 160, 186, .26);
+  color: var(--steel-300);
+}
+.dt-tag.is-block { color: #7ce0a8; border-color: rgba(42, 179, 106, .4); }
+.dt-why { font-size: .78em; font-weight: 700; color: var(--warn); margin: 0; }
+
+/* ── final approach strip (inside the HUD) ────────────────────────────── */
+
+/* OVERRIDE 1 — ui.css sets `.hud { display:flex }` on one row. The strip is a
+   full-width second row of the same header, so it needs wrapping enabled.
+
+   `.hud-mid` must lose its auto basis at the same time: at 390px "PHOENIX'S
+   TURN" is wider than the space left over, and with wrapping on that pushed the
+   whole icon group onto its own line — measured on the 390×844 shot, a wasted
+   44px band above the table. A zero basis lets it shrink instead, which is what
+   its own `min-width: 0` and text-overflow were already written for.
+   Both are inert while the strip is hidden. */
+.hud { flex-wrap: wrap; }
+.hud-mid { flex: 1 1 0; }
+
+.hud-strip {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: .45em;
+  min-width: 0;
+  padding: .28em .5em;
+  margin-top: .18em;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(31, 51, 80, .8), rgba(9, 18, 32, .9));
+  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .16);
+}
+.hud-strip.is-threat {
+  background: linear-gradient(180deg, rgba(122, 26, 20, .72), rgba(30, 8, 6, .9));
+  box-shadow: inset 0 0 0 1px rgba(255, 145, 132, .38), 0 0 14px rgba(208, 52, 44, .28);
+}
+.hud-strip.is-mine {
+  background: linear-gradient(180deg, rgba(125, 90, 24, .5), rgba(20, 14, 3, .9));
+  box-shadow: inset 0 0 0 1px var(--gold-mid), 0 0 16px rgba(232, 185, 85, .3);
+}
+.strip-flag {
+  flex: 0 0 auto;
+  font-size: .62em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  padding: .26em .5em;
+  border-radius: 3px;
+  color: var(--ink-100);
+  background: rgba(0, 0, 0, .38);
+  white-space: nowrap;
+}
+.hud-strip.is-threat .strip-flag {
+  color: #fff;
+  background: var(--danger);
+  animation: strip-pulse 1.5s ease-in-out infinite;
+}
+.hud-strip.is-mine .strip-flag { color: var(--gold-ink); background: var(--foil); }
+@keyframes strip-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(208, 52, 44, .55); }
+  50%      { box-shadow: 0 0 0 .3em rgba(208, 52, 44, 0); }
+}
+.strip-text {
+  flex: 1 1 8em;
+  min-width: 0;
+  font-size: .72em;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--ink-100);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strip-who b { color: var(--danger-lit); }
+.hud-strip.is-mine .strip-who b { color: var(--gold-hi); }
+.strip-sep { color: var(--steel-400); }
+.chip.strip-chip { flex: 0 0 auto; font-size: .62em; }
+.chip.strip-chip.is-hot { color: var(--gold-hi); border-color: var(--gold-mid); }
+
+.prompt-why.is-approach { color: var(--gold-hi); }
+
+/* ── first-game hints ─────────────────────────────────────────────────── */
+
+/* Never modal, never blocking: the whole stack is inert to the pointer, so a
+   hint sitting over the table cannot eat a tap meant for a card. */
+.hints {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--hint-lift, 4.6em) + env(safe-area-inset-bottom) + .3em);
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: .3em;
+  width: min(26em, 92vw);
+  pointer-events: none;
+}
+.hint-card {
+  display: flex;
+  gap: .45em;
+  align-items: flex-start;
+  padding: .45em .7em;
+  border-radius: var(--radius);
+  border: var(--hairline) solid var(--gold-deep);
+  background: linear-gradient(180deg, rgba(38, 56, 88, .97), rgba(10, 19, 34, .98));
+  box-shadow: var(--lift-2), var(--rim);
+  opacity: 0;
+  transform: translateY(.5em);
+  transition: opacity .18s ease, transform .22s cubic-bezier(.18, 1.5, .4, 1);
+}
+.hint-card.is-in { opacity: 1; transform: translateY(0); }
+.hint-card.is-out { opacity: 0; transform: translateY(.3em); }
+.hint-mark {
+  flex: 0 0 auto;
+  font-weight: 900;
+  color: var(--gold);
+  line-height: 1.3;
+}
+.hint-body {
+  font-size: .78em;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--ink-100);
+}
+
+/* ── settings sheet ───────────────────────────────────────────────────── */
+
+.settings { display: flex; flex-direction: column; gap: .6em; }
+.settings-row { display: flex; align-items: center; gap: .7em; min-height: var(--tap); }
+.settings-label {
+  flex: 0 0 5em;
+  font-size: .78em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--steel-300);
+}
+.settings-readout {
+  flex: 0 0 3.2em;
+  text-align: right;
+  font-size: .78em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-100);
+}
+
+/* a real checkbox wearing a switch */
+.switch { position: relative; display: inline-flex; flex: 0 0 auto; }
+.switch-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-face {
+  display: block;
+  width: 3.1em;
+  height: 1.6em;
+  border-radius: 999px;
+  background: var(--steel-800);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .6), inset 0 0 0 1px rgba(143, 160, 186, .22);
+  transition: background .16s ease, box-shadow .16s ease;
+}
+.switch-face::after {
+  content: "";
+  display: block;
+  width: 1.2em;
+  height: 1.2em;
+  margin: .2em;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #8fa0ba, #46587a);
+  box-shadow: var(--lift-1);
+  transition: transform .16s cubic-bezier(.18, 1.5, .4, 1), background .16s ease;
+}
+.switch-input:checked + .switch-face {
+  background: linear-gradient(180deg, rgba(42, 179, 106, .5), rgba(18, 112, 63, .5));
+  box-shadow: inset 0 0 0 1px rgba(42, 179, 106, .6);
+}
+.switch-input:checked + .switch-face::after {
+  transform: translateX(1.5em);
+  background: linear-gradient(180deg, #9ff0c1, var(--go));
+}
+.switch-input:focus-visible + .switch-face { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--tap);
+  accent-color: var(--go);
+  background: transparent;
+  cursor: pointer;
+}
+.slider:disabled { opacity: .4; cursor: not-allowed; }
+.slider:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+/* ── win overlay: name the ending, show the boards ────────────────────── */
+
+.win-tag {
+  align-self: center;
+  font-size: .68em;
+  font-weight: 900;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--gold);
+  padding: .2em .7em;
+  border-radius: 999px;
+  border: var(--hairline) solid var(--gold-deep);
+  background: rgba(0, 0, 0, .35);
+  margin-bottom: .5em;
+}
+.win-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: .68em;
+  font-weight: 800;
+  letter-spacing: var(--micro-track);
+  text-transform: uppercase;
+  color: var(--steel-300);
+  padding: 0 .55em .2em;
+}
+
+/* OVERRIDE 2 — ui.css lays .win-row out as a two-item flex row. With the set
+   marks and the per-player breakdown it becomes a two-line grid. */
+.win-summary .win-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas: "name sets worth" "detail detail detail";
+  align-items: center;
+  gap: .1em .5em;
+  text-align: left;
+  padding: .34em .55em;
+}
+.win-summary .win-row:first-child { background: rgba(0, 0, 0, .3); color: var(--ink-300); }
+.win-summary .win-row.is-winner {
+  background: linear-gradient(90deg, rgba(232, 185, 85, .22), rgba(232, 185, 85, .05));
+  color: var(--gold-hi);
+  box-shadow: inset 0 0 0 1px rgba(232, 185, 85, .28);
+}
+.win-summary .win-row.is-out { opacity: .55; }
+.win-name { grid-area: name; }
+.win-sets { grid-area: sets; font-weight: 800; font-variant-numeric: tabular-nums; }
+.win-worth { grid-area: worth; font-variant-numeric: tabular-nums; min-width: 3.4em; text-align: right; }
+.win-marks {
+  grid-area: name;
+  justify-self: end;
+  display: inline-flex;
+  gap: .16em;
+  margin-right: .5em;
+}
+.win-detail {
+  grid-area: detail;
+  font-size: .78em;
+  color: var(--steel-300);
+  letter-spacing: .02em;
+}
+/* the two numbers an attrition finish was actually decided on */
+.win-sets.is-decider, .win-worth.is-decider {
+  color: var(--gold-hi);
+  text-shadow: 0 0 .5em rgba(232, 185, 85, .35);
+}
+#win-reason { line-height: 1.4; font-size: .82em; }
+
+/* ── phone: the brief must stay readable at 390px ─────────────────────── */
+
+@media (max-width: 480px) {
+  .brief-page { max-height: 58vh; }
+  .fa-col { width: 3.5em; }
+  .fa-tag { flex-basis: 4.4em; }
+  .op-who { flex-basis: 3.6em; }
+  .settings-label { flex-basis: 4.2em; }
+}

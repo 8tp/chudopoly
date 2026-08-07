@@ -13,8 +13,8 @@ import * as sel from '../state/selectors.js';
 import * as interact from '../interact/index.js';
 import { mode } from '../interact/index.js';
 import * as pointer from '../interact/pointer.js';
-import { colorName, cardText } from '../core/cards.js';
-import { openSheet } from './screens.js';
+import { colorName, cardName } from '../core/cards.js';
+import * as details from './details.js';
 
 const ACTION_TITLE = {
   rent: 'Rent', finance_office: 'Finance Office', roll_call: 'Roll Call',
@@ -39,6 +39,20 @@ function describePending(pa) {
   return `${who} plays ${title}`;
 }
 
+/**
+ * A player on final approach who pays with a property loses the set and is
+ * disarmed (processPayment → syncSets(payer)). Worth saying out loud at the one
+ * moment it can happen by accident.
+ */
+function approachWarning() {
+  const me = store.snapshot?.players?.find(p => p.id === store.self.id);
+  if (!me?.finalApproach) return null;
+  return el('span', {
+    class: 'prompt-why is-approach',
+    text: 'You are on FINAL APPROACH — paying with a card out of a complete set ends it.',
+  });
+}
+
 function render() {
   const bar = $('prompt');
   if (!bar) return;
@@ -50,13 +64,20 @@ function render() {
     const entry = sel.myPendingEntry();
     if (pa && entry) {
       if (!sel.acceptMeansSuffer(entry)) {
-        kids.push(el('span', { class: 'prompt-text', text: `OPSEC blocks your ${ACTION_TITLE[pa.action] || pa.action}.` }));
+        // respondToAction(): at an odd depth I am the attacker, and 'accept'
+        // means the defender's OPSEC stands — my own card is cancelled.
+        kids.push(el('span', {
+          class: 'prompt-text',
+          text: `${seatName(entry.id)} played OPSEC on your `
+            + `${ACTION_TITLE[pa.action] || pa.action}. Letting it stand cancels your card.`,
+        }));
         kids.push(button('Let it stand', 'respond-accept', 'btn btn-primary'));
         if (sel.hasOpsec()) kids.push(button('Counter OPSEC', 'respond-opsec', 'btn'));
       } else if (pa.type === 'payment') {
         kids.push(el('span', { class: 'prompt-text', text: describePending(pa) }));
         kids.push(button('Pay', 'begin-payment', 'btn btn-primary'));
         if (sel.hasOpsec()) kids.push(button('OPSEC', 'respond-opsec', 'btn'));
+        kids.push(approachWarning());
       } else {
         kids.push(el('span', { class: 'prompt-text', text: describePending(pa) }));
         kids.push(button('Accept', 'respond-accept', 'btn btn-primary'));
@@ -72,6 +93,7 @@ function render() {
       kids.push(button('Surrender everything', 'pay-all', 'btn btn-danger'));
     }
     if (sel.hasOpsec()) kids.push(button('OPSEC instead', 'respond-opsec', 'btn'));
+    kids.push(approachWarning());
   } else if (mode.kind === 'discard') {
     kids.push(el('span', { class: 'prompt-text', text: `${mode.hint} — ${mode.selected.size}/${mode.excess} chosen` }));
     kids.push(button('Confirm discard', 'confirm-discard', 'btn btn-primary'));
@@ -84,7 +106,7 @@ function render() {
     const bankable = card.type !== 'property' && card.type !== 'wild_property';
     const playable = card.type !== 'money';       // money has exactly one move
     const reason = playable ? sel.blockedReason(card) : '';
-    kids.push(el('span', { class: 'prompt-text', text: card.name }));
+    kids.push(el('span', { class: 'prompt-text', text: cardName(card) }));
     if (playable) {
       const play = button('Play', 'play-card', 'btn btn-primary');
       if (reason) { play.disabled = true; play.title = reason; }
@@ -99,20 +121,11 @@ function render() {
     kids.push(button('Draw', 'draw', 'btn btn-primary'));
   }
 
-  if (!kids.length) { setHidden(bar, true); clear(bar); return; }
+  const items = kids.filter(Boolean);
+  if (!items.length) { setHidden(bar, true); clear(bar); return; }
   clear(bar);
-  for (const kid of kids) bar.appendChild(kid);
+  for (const kid of items) bar.appendChild(kid);
   setHidden(bar, false);
-}
-
-/** §5: tapping a card must never hide data behind a hover the phone cannot do. */
-function showDetails(card) {
-  if (!card) return;
-  openSheet(card.name, el('div', { class: 'details' }, [
-    el('p', { class: 'details-kind', text: `${String(card.type).replace(/_/g, ' ')} · ${card.value ?? 0}M` }),
-    el('p', { text: cardText(card) }),
-    el('p', { class: 'hint', text: card.placedColor ? `Placed on ${colorName(card.placedColor)}` : '' }),
-  ]));
 }
 
 export function mount() {
@@ -121,9 +134,9 @@ export function mount() {
     'respond-opsec': () => { send.respond('opsec'); interact.reset(); },
     'begin-payment': () => interact.beginPayment(sel.owedAmount()),
     'pay-all': () => { interact.selectAllPayable(); interact.confirmPayment(); },
-    'card-details': () => showDetails(mode.card),
+    'card-details': () => details.show(mode.card),
   });
-  bus.on(EVENTS.UI_DETAILS, (cardId) => showDetails(sel.findCard(cardId)));
+  bus.on(EVENTS.UI_DETAILS, (cardId) => details.show(sel.findCard(cardId)));
   bus.on(EVENTS.INTERACT_CHANGED, render);
   bus.on(EVENTS.STATE_APPLIED, render);
 }

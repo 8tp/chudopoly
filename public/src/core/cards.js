@@ -97,6 +97,93 @@ export function isPropertyCard(card) {
   return card?.type === 'property' || card?.type === 'wild_property';
 }
 
+/* ── card copy (§3.9: no rule may exist that the help does not state) ─────
+ *
+ * Every string below was read off game.js before it was written, and names the
+ * function that implements it. The server ships a terse `description` on action
+ * cards (game.js buildDeck); these supersede it because they carry the riders
+ * the one-liner leaves out (what OPSEC can touch, what an Upgrade does when the
+ * set breaks). If a line here and game.js disagree, game.js wins and this file
+ * is the bug.
+ */
+
+export const ACTION_RULES = Object.freeze({
+  // playAction case 'pcs_orders' — draws 2, no pendingAction, so nothing to counter.
+  pcs_orders: 'Draw 2 more cards. It aims at nobody, so OPSEC cannot touch it.',
+  // playAction case 'surge_ops' + chargeAmount(): one flag, consumed by the next
+  // charge of ANY kind; endTurn deletes it.
+  surge_ops: 'Doubles the NEXT charge you make this turn — rent, Finance Office, '
+    + 'Roll Call, any demand. Costs a play. One at a time, and it expires when your turn ends.',
+  // playAction case 'roll_call' — startPending over every other active player.
+  roll_call: 'Every other player pays you 2M. Each of them answers on their own.',
+  // playAction case 'finance_office' — single target, 5M.
+  finance_office: 'One player you name pays you 5M.',
+  // executeEntry case 'steal_set' — moves target.upgrades[col] across too.
+  inspector_general: 'Seize one whole COMPLETE set from a player. Its Upgrade and FOC come with it.',
+  // playAction case 'midnight_requisition' + zoneRequisitionable().
+  midnight_requisition: 'Take one property. Never out of a complete set.',
+  // executeEntry case 'swap' — both boards can lose a set to it.
+  tdy_orders: 'Trade one of your properties for one of theirs. Either side can lose a set.',
+  // playAction case 'chud' — no zoneRequisitionable guard, and §3.1 removed the tax.
+  chud: 'Commandeer Hardware Under Directive. Take ANY property, even out of a complete set — '
+    + 'the only card that can. No tax.',
+  // playAction case 'upgrade' + calcRent() + discardUpgrades().
+  upgrade: '+3M rent on one complete set. Can never be handed over as payment, '
+    + 'but counts in your net worth — and is discarded if the set breaks.',
+  // playAction case 'foc' — requires 'house' first, one per set.
+  foc: '+4M rent on a complete set that already has an Upgrade. Same terms: never payable, '
+    + 'counts in net worth, discarded if the set breaks.',
+  // respondToAction case 'opsec' — the card is spliced out and discarded before
+  // the depth increments, so it is spent whichever way the chain ends.
+  opsec: 'Cancels an action aimed at you. They may counter with their own OPSEC, and so on — '
+    + 'whoever stops countering loses the exchange. Spent either way.',
+});
+
+/** How many of each action card the 106-card deck holds (game.js buildDeck,
+ *  the `actions` table plus the two hand-written CHUD cards).
+ *  test/ui-contract.test.js cross-checks these against buildDeck(). */
+export const ACTION_COUNTS = Object.freeze({
+  inspector_general: 2,
+  opsec: 3,
+  midnight_requisition: 3,
+  tdy_orders: 3,
+  finance_office: 3,
+  roll_call: 3,
+  pcs_orders: 10,
+  upgrade: 3,
+  foc: 2,
+  surge_ops: 2,
+  chud: 2,
+});
+
+/** Rent cards: five colour pairs at 2 each, the "any" rent at 3 (buildDeck). */
+export const RENT_COUNTS = Object.freeze({ pair: 2, any: 3 });
+
+/** Actions that create a pendingAction, i.e. the ones OPSEC can answer.
+ *  Mirrors which playAction branches call startPending(). */
+const BLOCKABLE = Object.freeze(new Set([
+  'finance_office', 'roll_call', 'inspector_general',
+  'midnight_requisition', 'tdy_orders', 'chud',
+]));
+
+export function blockableByOpsec(card) {
+  if (!card) return false;
+  if (card.type === 'rent') return true;
+  return card.type === 'action' && BLOCKABLE.has(card.action);
+}
+
+/** Display name. game.js names rent cards off raw colour keys
+ *  ("Rent: brown/lightblue"); nothing but this function should be shown. */
+export function cardName(card) {
+  if (!card) return '';
+  if (card.type === 'rent') {
+    return card.colors?.[0] === 'any'
+      ? 'Rent: Any Colour'
+      : `Rent: ${card.colors.map(colorName).join(' / ')}`;
+  }
+  return card.name || '';
+}
+
 /** Short label for the card's kind, used on the type band of the face. */
 export function kindLabel(card) {
   if (!card) return '';
@@ -110,10 +197,12 @@ export function kindLabel(card) {
   }
 }
 
-/** Human sentence for what a card does — the help/details text (§3.9). */
+/** Human sentence for what a card does — the help/details text (§3.9).
+ *  ACTION_RULES beats the server's `description`: the wire text is the terse
+ *  face blurb, these are the rule as implemented. */
 export function cardText(card) {
   if (!card) return '';
-  if (card.description) return card.description;
+  if (card.type === 'action') return ACTION_RULES[card.action] || card.description || '';
   if (card.type === 'money') return `Bank it for ${card.value}M of paying power.`;
   if (card.type === 'property') {
     const info = COLORS[card.color];
@@ -122,14 +211,22 @@ export function cardText(card) {
       : 'Property.';
   }
   if (card.type === 'wild_property') {
+    // playProperty/moveProperty accept any colour for an 'any' wild; its value
+    // is 0 in buildDeck, which is the whole cost of the card.
     return card.colors?.[0] === 'any'
-      ? 'Counts as any colour. Worth 0M as payment — that is its cost.'
-      : `Counts as ${card.colors.map(colorName).join(' or ')}.`;
+      ? 'Stands in for any colour. Worth 0M as payment — that is its cost. '
+        + 'Move it between your sets for free on your turn.'
+      : `Stands in for ${card.colors.map(colorName).join(' or ')}. `
+        + 'Move it between those two sets for free on your turn.';
   }
   if (card.type === 'rent') {
+    // playAction rent branch: isWildRent → one named target; otherwise every
+    // other active player. calcRent() scales with the count, complete or not.
     return card.colors?.[0] === 'any'
-      ? 'Charge rent on any one of your colours, from ONE player you choose.'
-      : `Charge every player rent on your ${card.colors.map(colorName).join(' or ')}.`;
+      ? 'Charge rent on any ONE colour you own, from ONE player you name. '
+        + 'You do not need the complete set.'
+      : `Charge rent on your ${card.colors.map(colorName).join(' or ')} — `
+        + 'EVERY other player pays. You do not need the complete set.';
   }
-  return '';
+  return card.description || '';
 }

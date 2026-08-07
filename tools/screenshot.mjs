@@ -41,6 +41,7 @@ const SHOTS = [
   { name: 'payment', fixture: 'payment-pending' },
   { name: 'opsec-chain', fixture: 'opsec-chain' },
   { name: 'five-player', fixture: 'five-player' },
+  { name: 'final-approach', fixture: 'final-approach' },
   { name: 'win', fixture: 'finished' },
   // Arc slices: one real game, six moments (§9 — reachable states only).
   { name: 'arc-1-opening', fixture: 'arc', at: 0 },

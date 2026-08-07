@@ -121,6 +121,103 @@ test('the __CHUD bridge exposes the §9 contract and is harness-gated', () => {
   assert.match(read('public/src/main.js'), /isHarness\(\)/);
 });
 
+/* ── §3.9: no rule may exist that the help does not state ─────────────────
+   The client restates engine facts as prose. These tests are the only thing
+   stopping that prose from drifting away from game.js again. */
+
+test('every action card the engine ships has client rule copy, in the right quantity', () => {
+  const { buildDeck } = require('../game.js');
+  const cards = read('public/src/core/cards.js');
+  const block = /export const ACTION_COUNTS = Object\.freeze\(\{([\s\S]*?)\}\);/.exec(cards);
+  assert.ok(block, 'core/cards.js must publish ACTION_COUNTS');
+  const claimed = Object.fromEntries(
+    [...block[1].matchAll(/(\w+)\s*:\s*(\d+)/g)].map(m => [m[1], Number(m[2])]));
+
+  const actual = {};
+  for (const card of buildDeck()) {
+    if (card.type === 'action') actual[card.action] = (actual[card.action] || 0) + 1;
+  }
+  assert.deepEqual(claimed, actual, 'ACTION_COUNTS must match game.js buildDeck()');
+
+  const rules = /export const ACTION_RULES = Object\.freeze\(\{([\s\S]*?)\n\}\);/.exec(cards);
+  assert.ok(rules, 'core/cards.js must publish ACTION_RULES');
+  for (const action of Object.keys(actual)) {
+    assert.match(rules[1], new RegExp(`\\b${action}:`), `no rule copy for ${action}`);
+  }
+
+  // The catalogue page prints a face value per card; it must be the real one.
+  const help = read('public/src/ui/help.js');
+  const values = /const CARD_VALUES = \{([\s\S]*?)\};/.exec(help);
+  assert.ok(values, 'ui/help.js must publish CARD_VALUES');
+  const printed = Object.fromEntries(
+    [...values[1].matchAll(/(\w+):\s*(\d+)/g)].map(m => [m[1], Number(m[2])]));
+  const real = {};
+  for (const card of buildDeck()) if (card.type === 'action') real[card.action] = card.value;
+  assert.deepEqual(printed, real, 'help face values must match game.js buildDeck()');
+
+  // Rent cards: five colour pairs plus the "any" rent.
+  const rentCounts = {};
+  for (const card of buildDeck()) {
+    if (card.type === 'rent') {
+      const key = card.colors[0] === 'any' ? 'any' : 'pair';
+      rentCounts[key] = (rentCounts[key] || 0) + 1;
+    }
+  }
+  const declared = /RENT_COUNTS = Object\.freeze\(\{ pair: (\d+), any: (\d+) \}\)/.exec(cards);
+  assert.ok(declared, 'core/cards.js must publish RENT_COUNTS');
+  assert.equal(rentCounts.any, Number(declared[2]));
+  assert.equal(rentCounts.pair, Number(declared[1]) * 5, 'five colour pairs');
+});
+
+test('the help brief states the rules §3 introduced', () => {
+  // The sheet renders help.js's own prose plus the card copy it pulls out of
+  // core/cards.js, so the claim set is the union of the two.
+  const brief = read('public/src/ui/help.js') + read('public/src/core/cards.js');
+  const { DECK_CYCLE_LIMIT, HAND_LIMIT, SETS_TO_WIN } = require('../game.js');
+  const claims = [
+    [/final approach/i, '§3.10 final approach'],
+    [/full turn cycle|full cycle/i, '§3.10 grace is a whole cycle'],
+    [new RegExp(`reshuffled back into the deck ${DECK_CYCLE_LIMIT} times`, 'i'),
+      '§3.11 deck-cycle attrition'],
+    [/net worth/i, '§3.6 points tiebreak'],
+    [/OPSEC/, 'OPSEC chains'],
+    [/one player you name/i, '§3.2 wild rent hits one player'],
+    [/next charge/i, '§3.3 Surge Ops doubles the next charge'],
+    [/surrender every card you own/i, '§3.4 zero-value wilds still count'],
+    [/holds its set size/i, '§3.5 zone cap'],
+    [/never be handed over as payment/i, '§3.7 upgrades are not payable'],
+    [/counts in your net worth/i, '§3.7 upgrades still shown in net worth'],
+    [/free/i, '§3.8 free wild rearranging'],
+    [/scoop/i, 'scoop / last standing'],
+    [/rent is charged on a colour, not on a finished set/i, 'rent on incomplete sets'],
+    [/long-press/i, 'card details gesture'],
+    [/drag/i, 'the drag interaction'],
+  ];
+  for (const [re, what] of claims) assert.match(brief, re, `help never states: ${what}`);
+  // The numbers come from the engine's own constants, never a literal.
+  assert.match(brief, /HAND_LIMIT/, 'hand limit must be read from the shared constant');
+  assert.equal(HAND_LIMIT, 7);
+  assert.equal(SETS_TO_WIN, 3);
+});
+
+test('the help sheet is a keyboard-operable tablist (§0.9)', () => {
+  const brief = read('public/src/ui/help.js');
+  assert.match(brief, /role: 'tablist'/);
+  assert.match(brief, /role: 'tab'/);
+  assert.match(brief, /role: 'tabpanel'/);
+  assert.match(brief, /ArrowLeft|ArrowRight/, 'arrow keys must walk the rail');
+  assert.match(brief, /aria-selected/);
+});
+
+test('first-game hints never block input and never repeat', () => {
+  const hints = read('public/src/ui/hints.js');
+  const css = read('public/style/content.css');
+  assert.match(hints, /localStorage/, 'hints must be remembered across games');
+  assert.match(hints, /MAX_ON_SCREEN = 3/);
+  assert.match(css, /\.hints\s*\{[^}]*pointer-events:\s*none/s,
+    'the hint stack must be inert to the pointer');
+});
+
 test('animation timing goes through the one clock, never setInterval (§0.6)', () => {
   for (const file of modules.filter(f => f.includes('/anim/') || f.includes('/table/'))) {
     assert.doesNotMatch(source[file], /setInterval\s*\(/, file);

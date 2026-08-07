@@ -5,7 +5,7 @@
 // seconds text, both skipped when unchanged. Urgency fires once at 10s and once
 // at 5s, not per tick (§5).
 
-import { $, setText, setAttr, setHidden, setClass } from '../core/dom.js';
+import { $, qs, setText, setAttr, setHidden, setClass } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import { subscribe } from '../core/clock.js';
@@ -18,7 +18,7 @@ import * as pointer from '../interact/pointer.js';
 import * as audio from '../audio/engine.js';
 import { haptic, HAPTICS } from '../fx/index.js';
 import { toast, openSheet, closeSheet } from './screens.js';
-import { el } from '../core/dom.js';
+import { el, clear } from '../core/dom.js';
 
 let lastSeconds = -1;
 let urgency = 0;
@@ -58,6 +58,111 @@ function tickTimer() {
   }
 }
 
+/* ── final approach + attrition strip (§3.10 / §3.11) ────────────────────
+ *
+ * The engine hands the client everything this needs: getPlayerView exposes
+ * `armedIds`, per-player `finalApproach` / `finalApproachIn`
+ * (= turnsUntilCheckpoint: activeCount − turnsSinceArming), and the
+ * `deckCycle` / `deckCycleLimit` pair behind the §3.11 points ending. Nothing
+ * here is derived or guessed.
+ *
+ * It lives inside #hud as a wrapped second row rather than as a floating layer:
+ * a fixed overlay over a 390px table covers the opponent boards, which are
+ * exactly what you are being told to attack.
+ */
+let strip = null;
+let stripKey = '';
+
+function stripEl() {
+  if (strip?.isConnected) return strip;
+  strip = el('div', {
+    id: 'hud-strip', class: 'hud-strip',
+    attrs: { role: 'status', 'aria-live': 'polite' },
+  });
+  strip.hidden = true;
+  $('hud')?.appendChild(strip);
+  return strip;
+}
+
+function turnsText(n) {
+  if (n == null) return '';
+  if (n <= 0) return 'wins the moment their turn begins';
+  return `${n} turn${n === 1 ? '' : 's'} left`;
+}
+
+function renderStrip() {
+  const snap = store.snapshot;
+  const box = stripEl();
+  if (!snap || snap.phase !== 'playing') {
+    if (stripKey !== '') { stripKey = ''; clear(box); }
+    setHidden(box, true);
+    return;
+  }
+
+  const armed = (snap.players || []).filter(p => p.finalApproach && !p.eliminated);
+  const mineArmed = armed.filter(p => p.id === store.self.id);
+  const theirs = armed.filter(p => p.id !== store.self.id);
+  const cycle = snap.deckCycle || 0;
+  const limit = snap.deckCycleLimit || 0;
+  // Half the allowance is the point where an attrition finish stops being
+  // theoretical: healthy games spend 1.9 cycles (game.js DECK_CYCLE_LIMIT note).
+  const attrition = limit > 0 && cycle >= Math.ceil(limit / 2);
+
+  if (!armed.length && !attrition) {
+    if (stripKey !== '') { stripKey = ''; clear(box); }
+    setHidden(box, true);
+    return;
+  }
+
+  const key = [
+    mineArmed.map(p => p.finalApproachIn).join(','),
+    theirs.map(p => `${p.id}:${p.finalApproachIn}`).join(','),
+    attrition ? `${cycle}/${limit}` : '',
+  ].join('|');
+  if (key === stripKey) { setHidden(box, false); return; }
+  stripKey = key;
+
+  clear(box);
+  setClass(box, 'is-threat', theirs.length > 0);
+  setClass(box, 'is-mine', theirs.length === 0 && mineArmed.length > 0);
+
+  if (theirs.length) {
+    // Someone else can win. Name them, and say what to do about it.
+    box.appendChild(el('span', { class: 'strip-flag', text: 'BREAK THEM NOW' }));
+    box.appendChild(el('span', { class: 'strip-text' },
+      theirs.map((p, i) => el('span', { class: 'strip-who' }, [
+        el('b', { text: p.name }),
+        el('span', { text: ` on final approach — ${turnsText(p.finalApproachIn)}` }),
+        i < theirs.length - 1 ? el('span', { class: 'strip-sep', text: ' · ' }) : null,
+      ].filter(Boolean)))));
+    if (mineArmed.length) {
+      box.appendChild(el('span', {
+        class: 'chip strip-chip',
+        text: `You: ${turnsText(mineArmed[0].finalApproachIn)}`,
+      }));
+    }
+  } else if (mineArmed.length) {
+    const n = mineArmed[0].finalApproachIn;
+    box.appendChild(el('span', { class: 'strip-flag', text: 'FINAL APPROACH' }));
+    box.appendChild(el('span', {
+      class: 'strip-text',
+      text: n <= 0
+        ? 'HOLD THE LINE — you win when your turn begins.'
+        : `HOLD THE LINE — ${n} turn${n === 1 ? '' : 's'} of theirs to survive. `
+          + 'Lose a set and it is off.',
+    }));
+  }
+
+  if (attrition) {
+    box.appendChild(el('span', {
+      class: `chip strip-chip${cycle >= limit - 2 ? ' is-hot' : ''}`,
+      text: `DECK CYCLE ${cycle}/${limit}`,
+      attrs: { title: 'At the limit the game ends on points: most sets, then net worth.' },
+    }));
+  }
+  setHidden(box, false);
+}
+
 function render() {
   const snap = store.snapshot;
   setText($('hud-room'), store.room.code || '');
@@ -80,9 +185,25 @@ function render() {
   setAttr($('btn-end-turn'), 'disabled', !mine || snap.turnPhase !== 'play' ? true : null);
   setAttr($('btn-scoop'), 'disabled', snap.phase !== 'playing' ? true : null);
   setClass($('table'), 'surge-on', !!snap.surgeOps);
+  renderStrip();
+}
+
+/** The settings entry point. public/index.html is architect-owned (§1) and P6
+ *  adds exactly one control, so the node is built here instead. */
+function installSettingsButton() {
+  const right = qs('.hud-right');
+  if (!right || qs('[data-action="settings"]', right)) return;
+  const gear = el('button', {
+    class: 'btn btn-icon',
+    text: '⚙',
+    attrs: { type: 'button', 'aria-label': 'Sound and settings' },
+    dataset: { action: 'settings' },
+  });
+  right.insertBefore(gear, right.lastElementChild);
 }
 
 export function mount() {
+  installSettingsButton();
   pointer.registerActions({
     draw: () => { if (sel.canDraw()) send.draw(); },
     'end-turn': () => {

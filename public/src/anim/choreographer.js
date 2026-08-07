@@ -157,7 +157,21 @@ export function pending() { return queue.length; }
  *  pending() alone, and telling them apart is the whole of a stall diagnosis. */
 export function isRunning() { return running; }
 
-export function clear() { queue.length = 0; }
+/**
+ * Drop everything queued, and disown the job that is mid-performance.
+ *
+ * The queue was the easy half. A job already inside runJobAsync() is parked on
+ * a clock between beats, and it ENDS with `table.reconcile(job.snapshot)` — so
+ * a session torn down mid-animation (Leave room during the opening deal, a
+ * kick, a dead resume token) would come back one beat later and rebuild the
+ * dead game's cards onto a felt that had just been emptied. `epoch` is the
+ * disown: the job plays out its remaining beats against nodes that no longer
+ * exist, which is a no-op, and is refused the reconcile that would spawn them
+ * again. Nothing else may touch it — a job the CURRENT session queued must
+ * still finish, which is why this is not a flag on the module.
+ */
+export function clear() { queue.length = 0; epoch++; }
+let epoch = 0;
 
 /**
  * @param {object} snapshot
@@ -270,6 +284,7 @@ function safeApply(ev, snapshot, expected, animate) {
 
 async function runJobAsync(job) {
   const expected = job.carry || new Set();
+  const era = epoch;                       // see clear(): a torn-down session's job
   // Seat the boards and the deck BEFORE the first event runs (see table.prepare).
   table.prepare(job.snapshot);
   // `animate` means "this job is being PERFORMED", not "the player wants
@@ -332,7 +347,9 @@ async function runJobAsync(job) {
         ? Math.max(45, Math.min(MAX_STEP, stepFor(ev)) * 0.5)
         : Math.min(MAX_STEP, stepFor(ev));
     if (step > 0) await wait(step);
+    if (era !== epoch) return;             // the session this belonged to is over
   }
+  if (era !== epoch) return;
   table.reconcile(job.snapshot, { expected, count: true, animate });
   // The felt is now this snapshot, by construction. See CHOREO_SETTLED.
   bus.emit(CHOREO_SETTLED, job.snapshot);

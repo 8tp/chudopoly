@@ -17,7 +17,7 @@
  *   tools/fixtures/<moment>.json    one selected state + why it was selected
  *
  * Usage: node tools/record.mjs [--seed N] [--maxMs 300000] [--bots chud,chud]
- *                              [--verbose] [--only 3p|5p]
+ *                              [--verbose] [--only 3p|5p|passive|guest]
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,6 +33,8 @@ const seed = args.seed ? Number(args.seed) : SEED;
 const maxMs = args.maxMs ? Number(args.maxMs) : 300000;
 const verbose = !!args.verbose;
 const only = args.only || null;
+/** `--only X` runs pass X and nothing else; no flag runs every pass. */
+const runs = (tag) => !only || only === tag;
 
 ensureDir(FIXTURE_DIR);
 console.log(bold('record') + dim(`  seed=${seed} → ${path.relative(process.cwd(), FIXTURE_DIR)}/`));
@@ -75,7 +77,14 @@ async function session(server, cfg) {
   const res = await driveGame(client, {
     maxMs: cfg.maxMs,
     initialState: lobby[lobby.length - 1],
-    planOpts: { turnTimeout: cfg.turnTimeout, responseTimeout: cfg.responseTimeout },
+    planOpts: {
+      turnTimeout: cfg.turnTimeout,
+      responseTimeout: cfg.responseTimeout,
+      // See wsclient.planMoves: a seat that folds is the only camera angle from
+      // which the OPPONENTS get far enough to be worth photographing.
+      passive: !!cfg.passive,
+      opsec: cfg.passive ? false : undefined,
+    },
     onState: (msg) => {
       collected.push(msg);
       if (collected.length % 25 === 0) process.stdout.write(dim('.'));
@@ -286,6 +295,116 @@ const MOMENTS = [
   },
 ];
 
+/* ─────────────────── the OPPONENT half of the table ───────────────────
+ *
+ * Three renderings that only exist on a seat that is NOT yours — an upgrade
+ * lane, a second mat row, the ARMED treatment on a collapsed seat — and which
+ * no fixture in this directory had ever contained. Not because they are rare:
+ * because every transcript was recorded from a seat that plays as hard as it
+ * can, and that seat wins the race to all three. Across the committed 3-player
+ * game (137 broadcasts) the count of opponents who ever held an upgrade, ever
+ * reached six colours, or ever armed is zero, zero and zero.
+ *
+ * They come off a PASSIVE seat instead (wsclient.planMoves `passive`): still a
+ * real game, still every state server-validated, but with the camera holding
+ * still long enough for the bots to finish something.
+ */
+const nonEmptyColors = (p) => Object.values(p.properties || {}).filter((v) => (v || []).length).length;
+const upgradeCount = (p) => Object.values(p.upgrades || {}).flat().length;
+
+const OPPONENT_MOMENTS = [
+  {
+    name: 'opponent-upgrade',
+    description: 'An OPPONENT holds an Upgrade/FOC on a complete set — the seat\'s upgrade lane and its '
+      + 'corner geometry, which no recorded fixture had ever put on a seat that is not yours.',
+    pick: (states, selfId) => {
+      const score = (s) => {
+        if (s.game?.phase !== 'playing') return 0;
+        const foes = s.game.players.filter((p) => p.id !== selfId);
+        const ups = foes.reduce((n, p) => n + upgradeCount(p), 0);
+        if (!ups) return 0;
+        return ups * 1000 + boardCount(s.game);
+      };
+      const hits = states.filter((s) => score(s) > 0);
+      if (!hits.length) return null;
+      return hits.reduce((best, s) => (score(s) > score(best) ? s : best));
+    },
+  },
+  {
+    name: 'opponent-wide',
+    description: 'An OPPONENT holding six or more colours at once — the first state that pushes another '
+      + 'seat\'s mat onto a second row.',
+    pick: (states, selfId, picked) => {
+      const used = new Set(Object.values(picked || {}));
+      const width = (s) => (s.game?.phase !== 'playing' ? 0
+        : Math.max(0, ...s.game.players.filter((p) => p.id !== selfId).map(nonEmptyColors)));
+      // Prefer a state where NOBODY is armed: `opponent-armed` wants the
+      // busiest board too, and on the recorded transcript both landed on the
+      // same broadcast — two fixture names for one picture, which record.mjs
+      // has refused since P7 round 1. Separating them by subject also makes
+      // each shot about one thing.
+      const pool = states.filter((s) => width(s) >= 6 && !used.has(s));
+      const calm = pool.filter((s) => !(s.game.armedIds || []).length);
+      const hits = calm.length ? calm : pool;
+      if (!hits.length) return null;
+      // Widest, then busiest — the row break is the subject, so more of it is better.
+      return hits.reduce((best, s) => {
+        const d = width(s) - width(best);
+        return d > 0 || (d === 0 && boardCount(s.game) > boardCount(best.game)) ? s : best;
+      });
+    },
+  },
+  {
+    name: 'approach-called',
+    pair: true,
+    description: 'TWO consecutive broadcasts: the one before an opponent arms, and the one whose event '
+      + 'tail carries `final_approach`. Applied in order, the client raises ui/journal.js\'s full-width '
+      + '`.announce` banner — a surface that exists in no snapshot and that nothing had ever photographed.',
+    /**
+     * The banner is not state, it is a REACTION. journal.js announces off
+     * CHOREO_EVENT, so the only honest way to reach it is to make the event
+     * arrive — which means a fixture has to carry the broadcast BEFORE it too,
+     * or `lastSeq` swallows the difference. Every other fixture in this
+     * directory is one state, and that is exactly why this surface had no shot.
+     */
+    pick: (states, selfId) => {
+      const seqs = (s) => new Set((s.game?.events || []).map((e) => e.seq));
+      for (let i = 1; i < states.length; i++) {
+        const before = states[i - 1];
+        const after = states[i];
+        if (!after.game || !before.game) continue;
+        const known = seqs(before);
+        const fresh = (after.game.events || []).filter((e) => !known.has(e.seq));
+        if (!fresh.some((e) => e.t === 'final_approach' && e.actor !== selfId)) continue;
+        return [before, after];
+      }
+      return null;
+    },
+  },
+  {
+    name: 'opponent-armed',
+    description: 'An OPPONENT is on Final Approach and this seat is not — the ARMED treatment as a THREAT, '
+      + 'on somebody else\'s (collapsible) seat rather than on your own board.',
+    /**
+     * The `final-approach` selector in MOMENTS above claims to prefer "the
+     * threat view" and tests `armedIds[0] !== currentPlayerId`, which is a
+     * different question: the armed player is simply not the one on turn. It
+     * has always selected a state where the ARMED player IS the local seat, so
+     * the threat rendering — the only one that appears on a collapsed opponent
+     * seat — was never in the review set. This one tests against selfId.
+     */
+    pick: (states, selfId, picked) => {
+      const used = new Set(Object.values(picked || {}));
+      const hits = states.filter((s) => s.game?.phase === 'playing'
+        && (s.game.armedIds || []).some((id) => id !== selfId)
+        && !(s.game.armedIds || []).includes(selfId)
+        && !used.has(s));
+      if (!hits.length) return null;
+      return hits.reduce((best, s) => (boardCount(s.game) > boardCount(best.game) ? s : best));
+    },
+  },
+];
+
 /* ──────────────────────────────── run ────────────────────────────────── */
 
 let code = EXIT_PASS;
@@ -303,7 +422,7 @@ console.log(dim(`  server on ${server.url}`));
 try {
   /* ---- 3-player game, played to the end ---------------------------------- */
   let main = null;
-  if (only !== '5p') {
+  if (runs('3p')) {
     const bots = (args.bots ? String(args.bots).split(',') : ['chud', 'aggressive']).map((s) => s.trim());
     process.stdout.write(`  3p vs [${bots.join(', ')}] `);
     main = await session(server, {
@@ -391,7 +510,7 @@ try {
   }
 
   /* ---- 5-player table + a real lobby ------------------------------------- */
-  if (only !== '3p') {
+  if (runs('5p')) {
     process.stdout.write('  5p table ');
     const five = await session(server, {
       label: '5p', bots: ['conservative', 'neutral', 'aggressive', 'chud'], seed: seed + 1,
@@ -431,6 +550,91 @@ try {
       code = EXIT_FAIL;
     }
   }
+
+  /* ---- passive seat: the OPPONENT half of the table ----------------------- */
+  if (runs('passive')) {
+    process.stdout.write('  passive seat (4p) ');
+    const quiet = await session(server, {
+      label: 'passive', bots: ['aggressive', 'chud', 'neutral'], seed: seed + 2,
+      turnTimeout: 60, responseTimeout: 30, passive: true,
+      maxMs: Math.min(maxMs, Number(args.passiveMs || 180000)),
+    });
+    console.log(` ${dim(`${quiet.states.length} states, room ${quiet.code}`)}`);
+    const pickedOpp = {};
+    for (const m of OPPONENT_MOMENTS) {
+      const hit = m.pick(quiet.states, quiet.selfId, pickedOpp);
+      if (!hit) {
+        console.log(`  ${yellow('!')} ${m.name.padEnd(16)} ${dim('not reached in this game')}`);
+        missing.push(m.name);
+        continue;
+      }
+      const picked = Array.isArray(hit) ? hit : [hit];
+      const last = picked[picked.length - 1];
+      const clash = Object.entries(pickedOpp).find(([, s]) => s === last);
+      if (clash) {
+        console.log(`  ${red('✗')} ${m.name.padEnd(16)} ${red(`selects the SAME state as '${clash[0]}'`)}`);
+        code = EXIT_FAIL;
+      }
+      pickedOpp[m.name] = last;
+      const foe = last.game.players.filter((p) => p.id !== quiet.selfId);
+      write(m.name, {
+        $schema: 'chud-fixture/1',
+        name: m.name,
+        description: m.description,
+        seed: seed + 2, selfId: quiet.selfId, room: quiet.code,
+        recordedAt: new Date().toISOString(),
+        stateIndex: quiet.states.indexOf(last),
+        states: picked,
+      });
+      console.log(`  ${green('✓')} ${m.name.padEnd(16)} `
+        + dim(`${picked.length} state(s), ${boardCount(last.game)} cards on boards, widest foe `
+          + `${Math.max(0, ...foe.map(nonEmptyColors))} colours, `
+          + `foe upgrades ${foe.reduce((n, p) => n + upgradeCount(p), 0)}, armed ${(last.game.armedIds || []).length}`));
+    }
+  }
+
+  /* ---- a lobby seen from a GUEST -----------------------------------------
+   * `lobby.json` is recorded from the seat that CREATED the room, so with the
+   * §9 bridge finally handing the client its seat (`__CHUD.joinAs`) it renders
+   * the host's lobby — the room code, the bot picker, the ruleset toggles and
+   * Launch Mission. That is the right picture for that transcript, and it is
+   * also not the picture most players see. A guest's lobby is a different
+   * screen (`#lobby-host` hidden, `#ruleset-guest` shown, no per-seat Kick),
+   * and until now the harness had it only by accident — by failing to set the
+   * seat at all. An accident is not coverage, so it is recorded properly.     */
+  if (runs('guest')) {
+    process.stdout.write('  guest lobby ');
+    const host = new ChudClient(server.wsUrl, { name: 'HOST', verbose });
+    await host.connect();
+    await host.send({ type: 'create_room', name: 'HOST' });
+    const joined = await host.waitFor((m) => m.type === 'joined', 10000, 'joined');
+    for (const mode of ['neutral', 'aggressive']) {
+      await host.send({ type: 'add_bot', mode });
+      await host.waitFor((m) => m.type === 'state', 10000, 'lobby state');
+    }
+    const guest = new ChudClient(server.wsUrl, { name: 'SQUADMATE', verbose });
+    await guest.connect();
+    await guest.send({ type: 'join_room', code: joined.code, name: 'SQUADMATE' });
+    await guest.waitFor((m) => m.type === 'joined', 10000, 'guest joined');
+    const seen = await guest.waitFor((m) => m.type === 'state' && !m.game, 10000, 'guest lobby state');
+    guest.close();
+    host.close();
+    if (seen.hostId === guest.playerId) {
+      console.log(red('  ✗ the guest recorded itself as host — the fixture would be a second host lobby'));
+      code = EXIT_FAIL;
+    } else {
+      write('lobby-guest', {
+        $schema: 'chud-fixture/1',
+        name: 'lobby-guest',
+        description: 'The same room from a SECOND HUMAN seat: host block hidden, ruleset read-only, '
+          + 'no per-seat controls — the lobby most players actually see.',
+        seed, selfId: guest.playerId, room: joined.code,
+        recordedAt: new Date().toISOString(),
+        states: [seen],
+      });
+      console.log(`  ${green('✓')} ${'lobby-guest'.padEnd(16)} ${dim(`${seen.players.length} seats, host ${seen.hostId === joined.playerId ? 'is the creator' : '???'}`)}`);
+    }
+  }
 } catch (e) {
   console.log(red(`  ✗ ${e.stack || e.message}`));
   code = EXIT_FAIL;
@@ -438,8 +642,18 @@ try {
   await server.stop();
 }
 
+/** The opponent-side renderings, required of the passive pass for the same
+ *  reason: a fixture that is "not reached" is a gate that measures nothing. */
+const REQUIRED_PASSIVE = OPPONENT_MOMENTS.map((m) => m.name);
+const missedPassive = missing.filter((m) => REQUIRED_PASSIVE.includes(m));
+if (missedPassive.length && runs('passive')) {
+  console.log(red(bold(`  ✗ opponent moment(s) never reached: ${missedPassive.join(', ')}`)));
+  console.log(dim('    the opponent half of the table is ungated here — re-run with another --seed'));
+  code = EXIT_FAIL;
+}
+
 const missedRequired = missing.filter((m) => REQUIRED.includes(m));
-if (missedRequired.length && only !== '5p') {
+if (missedRequired.length && runs('3p')) {
   console.log(red(bold(`  ✗ required moment(s) never reached: ${missedRequired.join(', ')}`)));
   console.log(dim('    the review set and the gates that stage them are blind here — re-run with another --seed'));
   code = EXIT_FAIL;

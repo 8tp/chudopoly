@@ -143,9 +143,10 @@ function playSeededGame(seed, audit) {
     if (state.turnPhase === 'draw') { G.drawCards(state); continue; }
     const action = Bot._internal.decideBotPlay(state, cp.id, modeOf(cp.id));
     if (action) {
-      if (action.type === 'play_property') G.playProperty(state, cp.id, action.cardIndex, action.targetColor);
-      else if (action.type === 'play_money') G.playAsMoney(state, cp.id, action.cardIndex);
-      else G.playAction(state, cp.id, action.cardIndex, action);
+      // Through the bot's own executor, not a private copy of its switch: §3.8's free
+      // rearrange is a decision type this helper had no case for, so it fell through to
+      // playAction(), was refused, and the game never reached an ending.
+      Bot._internal.applyBotAction(state, cp.id, action);
       continue;
     }
     const discard = cp.hand.length > 7

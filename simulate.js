@@ -237,11 +237,25 @@ function runGame(playerConfigs, maxTurns = 500, seed, rules) {
               }
             }
             break;
+          // §3.8 — free rearranging. It costs no play, so nothing about the turn loop
+          // changes: the engine spends the per-turn rearrange budget and the bot comes
+          // straight back with the same plays in hand.
+          case 'rearrange':
+            result = G.moveProperty(state, cp.id, action.cardId, action.toColor);
+            actionName = 'rearrange';
+            break;
+          case 'swap':
+            result = G.swapProperties(state, cp.id, action.cardIdA, action.cardIdB);
+            actionName = 'swap';
+            break;
         }
 
         if (result?.ok) {
           tracker[cp.id][phase][actionName] = (tracker[cp.id][phase][actionName] || 0) + 1;
-          currentTurnPlays.push(actionName);
+          // A rearrange is not a play (§3.8), so it must not enter the plays-per-turn or
+          // first-play-of-turn distributions — those measure how a bot spends its three
+          // plays, and counting a free move as one would make every mode look busier.
+          if (actionName !== 'rearrange' && actionName !== 'swap') currentTurnPlays.push(actionName);
 
           // Record decision
           tracker[cp.id].decisions.push({

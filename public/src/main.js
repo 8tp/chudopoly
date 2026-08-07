@@ -40,6 +40,19 @@ function applyState(msg, opts = {}) {
   const result = store.applyState(msg, { snap: !!opts.snap, harness: !!opts.harness });
   table.setSelf(store.store.self.id);
   choreographer.setSelf(store.store.self.id);
+  /* A GAME THIS FELT HAS NEVER SHOWN GETS AN EMPTY FELT (owner bug).
+   *
+   * The last game's card nodes live on until something removes them, and the
+   * only thing that ever did was reconcile — which runs at the END of the
+   * choreographer's job. So the opening deal of a new game was dealt on top of
+   * the previous one's hand for 1.75 measured seconds. Same tick as the apply,
+   * before enqueue and before any paint, so there is no frame in which the two
+   * games are both on the table.
+   *
+   * choreographer.clear() first, for the same reason and one step earlier: a
+   * job queued by the game that just ended would otherwise reconcile ITS
+   * snapshot onto the new game's felt after we emptied it. */
+  if (result.fresh) { choreographer.clear(); table.clear(); }
   if (result.snapshot) choreographer.enqueue(result.snapshot, result.events, { snap: result.snap });
   return result;
 }
@@ -108,11 +121,12 @@ function wireNet() {
 
   bus.on(EVENTS.NET_NEED_PAYMENT, (msg) => interact.beginPayment(msg.amount || sel.owedAmount()));
 
+  // Being removed is a session ending, so it ends the same way every other one
+  // does — "there is exactly one way out of a session" (ui/screens.js). Its own
+  // hand-rolled teardown was the one that forgot the table: it reset the store
+  // and left the room's cards on the felt for the next game to deal onto.
   bus.on(EVENTS.NET_KICKED, () => {
-    socket.clearCreds();
-    store.reset();
-    store.setScreen('home');
-    screens.toast('You were removed from the room');
+    screens.endSession({ message: 'You were removed from the room' });
   });
 
   // §7 sound dispatch is structured-event driven — never log prose (§0.5).

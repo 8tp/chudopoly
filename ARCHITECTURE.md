@@ -435,6 +435,7 @@ ephemeral port, plus Node-only engine tools. Every tool exits nonzero on failure
 | `tools/audiotest.mjs` | OfflineAudioContext: peak ≤ 0dBFS, chime ladder monotonic, sour below chime-0, **every loss cue louder than shuffle/snap/timer**, `droppedPriority === 0`, match music below `card_slide` |
 | `tools/record.mjs` | fixtures from real seeded games; **fails if two moments select the same state** |
 | `tools/checkContrast.mjs` | §0.9 text contrast in **both themes plus the `[data-theme]` override**; ink from `getComputedStyle`, paper **refined from the rendered frame** where the CSS answer is fiction (`#btn-quick-play` reads 1.22:1 in CSS, 8.4:1 painted); occluded and sub-8px runs counted, never gated; proven to fail (`--prove` injects `#6a6f78` → 0→31) |
+| `tools/coverage.mjs` | **THE SURFACE CENSUS.** `lib/census.mjs` enumerates the client's own surface space FROM SOURCE — every `is-*`/`has-*` state class `public/style/` has a rule for and `public/src/` can produce, every attribute-VALUE selector, every shell layer `index.html` ships `hidden`, every screen, and `interact/`'s modes and `needs` steps (133 markers today; nobody maintains the number). `screenshot` and `touchtest` sample `observeMarkers` off the same settled frame they measure everything else on and drop a sidecar; this diffs the two in ~40ms of pure Node. **A marker no gate has ever visited is a FAILURE** — adding a screen without a shot breaks the build. Unholdable states (a 420ms shake, a card mid-flight) are EXEMPT with a reason each, and an exemption naming a marker that no longer exists is itself a failure. Also reports markers **styled but unreachable** (dead CSS), which nothing else can see. `--prove` |
 | `tools/grayscale.mjs` | ART §10 grayscale hierarchy in CIE L\*: bulk range ≥45 and ≥3 tonal tiers. Plain figure-ground was **tried and rejected** — ART §2 puts L\* 97 stock on L\* 88 concrete, so that assertion would fail the ratified design. Proven to fail (flat-grey and no-ink-slab mutations both red; both simulated themes green) |
 
 `tools/screenshot.mjs` additionally carries a **theme axis** (light+dark on a
@@ -445,8 +446,25 @@ reset** — two harness bugs that had been silently corrupting every byte-identi
 rule (the same seed produced 36.8 vs 86.9 L\*, and once-ever hints surviving
 `page.goto` produced two images 21,593 pixels apart from identical state).
 
+**Why the census exists, and it is the most expensive lesson in this table.** The
+twelve gates were measuring *what they could reach*, not *what a player sees*. Six
+surfaces reachable in ordinary play had been rendered by none of them, and each was
+found by a different agent tripping over it while doing something else: the **host
+lobby** (a lobby broadcast carries no `game`, and `game` was the only thing
+`store.applyState` could infer a seat from, so `store.self.id` stayed null and every
+`lobby@*.png` ever taken was the *guest* view); the **`myColor` wild-placement step**
+and the advice printed on the mats; an **opponent holding an Upgrade**; an **opponent
+at six colours**; an **ARMED opponent** (the `final-approach` selector claimed a
+"threat view" and tested `armedIds[0] !== currentPlayerId`, which is a different
+question — it had always selected the local seat); and both transient message layers,
+**`#toast`** and **`.announce`**. All six are now fixtured/driven and gated. A
+hand-written list of surfaces would have had the same holes, because it is written by
+the same people who write the gates — so the list is read out of the client instead,
+and `lib/stage.mjs` seats the client from the fixture's own `selfId` (`__CHUD.joinAs`,
+§9) so no tool can forget the step that hid the lobby.
+
 `npm run verify` chains: `check → test → checkAssets → checkClient → checkServer → simbalance →
-playtest → touchtest → screenshot → audiotest`. **Strict is the default** — a skipped gate
+playtest → touchtest → screenshot → checkContrast → coverage → audiotest`. **Strict is the default** — a skipped gate
 fails the run; `--allow-skips` is the loud escape hatch, `verify:fast` is for the inner loop.
 Review sets are for humans/critics, not pixel-gated (no imagediff until the design settles).
 
@@ -478,6 +496,13 @@ With `?harness=1`, the client exposes `window.__CHUD`:
   version: 1,
   ready: Promise,            // resolves when modules are up
   applyState(stateMsg),      // inject a full server state message (fixture)
+  joinAs(playerId, name),    // take a seat exactly as the server's `joined` does.
+                             // Added P9: a LOBBY broadcast carries no `game`, and
+                             // `game` was the only thing store.applyState could
+                             // infer a seat from — so every lobby capture in the
+                             // whole harness was the guest view of a transcript
+                             // recorded by the host. tools/lib/stage.mjs calls it
+                             // before every applyState, from the fixture's selfId.
   drainEvents(),             // run queued event animations instantly
   sfxLog: [],                // {name, t} — audio engine records instead of playing
   hapticLog: [],

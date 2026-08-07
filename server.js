@@ -5,7 +5,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const crypto = require('crypto');
-const fs = require('fs');            // hardLog() only — see "Death forensics" below
+const fs = require('fs');            // hardLog() + the __ORIGIN__ page substitution
 
 const pkg = require('./package.json');
 const G = require('./game');
@@ -16,6 +16,7 @@ const absent = require('./server/absent');
 const handlers = require('./server/handlers');
 const protocol = require('./server/protocol');
 const icon = require('./server/icon');
+const og = require('./server/og');
 
 /* ── App setup ─────────────────────────────────────────────────────── */
 
@@ -64,6 +65,34 @@ app.get('/icon-:key.png', (req, res, next) => {
   const png = icon.pngFor(req.params.key);
   if (!png) return next();
   res.type('image/png').set('Cache-Control', 'no-cache').send(png);
+});
+
+/* ── Link preview ──────────────────────────────────────────────────────
+   Same story as the icons: the og:image is generated from geometry the client
+   already ships (server/og.js) and served from a route, so §0.3 stays intact.
+   Crawlers cache an og:image for days, so this one may be cached too — the
+   ?v= on the meta tag is what busts it when the drawing changes. */
+app.get('/og.png', async (req, res, next) => {
+  try {
+    const png = await og.png('og');
+    if (!png) return next();
+    res.type('image/png').set('Cache-Control', 'public, max-age=86400').send(png);
+  } catch (err) { next(err); }
+});
+
+/* The page itself is served with __ORIGIN__ substituted, because og:image and
+   og:url must be ABSOLUTE (a relative og:image does not unfurl) and the same
+   static file ships to localhost, deal.8tp.dev and whatever domain comes next.
+   Crawlers do not execute JS, so the substitution has to happen server-side.
+   Registered above the static mount; read from disk per request (the file is
+   no-store anyway, and this keeps live-editing the shell working in dev). */
+const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
+app.get(['/', '/index.html'], (req, res, next) => {
+  fs.readFile(INDEX_PATH, 'utf8', (err, html) => {
+    if (err) return next(err);
+    res.type('html').set('Cache-Control', 'no-store')
+      .send(og.withOrigin(html, og.originOf(req, `localhost:${PORT}`)));
+  });
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -311,4 +340,10 @@ server.listen(PORT, () => {
   console.log(`\n  CHUDOPOLY — Air Force Card Game`);
   console.log(`  Server running on http://localhost:${PORT}`);
   console.log(`  icons generated in ${iconMs}ms (no binary in the tree — §0.3)\n`);
+  // The link preview too — async because it imports the client's own cardart
+  // module for the deck-mark geometry. Measured: ~140ms for both sizes, off
+  // the listen path, so boot is not the one that pays.
+  og.warm().then(
+    (ms) => console.log(`  link preview generated in ${ms}ms (served at /og.png)`),
+    (err) => console.error('[OG] preview generation failed:', err?.message || err));
 });

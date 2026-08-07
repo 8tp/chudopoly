@@ -48,7 +48,8 @@
     "tool:audiotest": "node tools/audiotest.mjs",
     "tool:contrast": "node tools/checkContrast.mjs",
     "tool:grayscale": "node tools/grayscale.mjs",
-    "tool:prove": "node tools/checkContrast.mjs --prove; node tools/grayscale.mjs --prove; node tools/touchtest.mjs --prove; node tools/screenshot.mjs --prove-theme"
+    "tool:prove": "node tools/checkContrast.mjs --prove; node tools/grayscale.mjs --prove; node tools/touchtest.mjs --prove; node tools/screenshot.mjs --prove-theme && node tools/touchtest.mjs --prove-surfaces",
+    "tool:coverage": "node tools/coverage.mjs"
   },
   "engines": {
     "node": ">=20 <25"

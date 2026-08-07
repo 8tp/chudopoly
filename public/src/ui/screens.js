@@ -11,6 +11,8 @@ import * as socket from '../net/socket.js';
 import * as store from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
 import * as transition from '../anim/transition.js';
+import * as table from '../table/index.js';
+import * as choreographer from '../anim/choreographer.js';
 
 const SCREENS = ['home', 'lobby', 'game'];
 let toastTimer = 0;
@@ -136,6 +138,16 @@ export function endSession({ message = '', error = '', farewell = null } = {}) {
   socket.clearCreds();
   store.store.connected = false;
   store.reset();
+  /* THE FELT GOES WITH THE SESSION (§10 — the snapshot is truth).
+   *
+   * store.reset() nulls the snapshot, and until this line that made the store
+   * and the screen disagree: every card node of the game just left stayed
+   * parented in its zone, invisible only because #screen-game is hidden, and
+   * came back into view the moment the next game unhid it. The choreographer
+   * goes first because a job queued by the game that is ending must not
+   * reconcile a dead snapshot onto an emptied table. */
+  choreographer.clear();
+  table.clear();
   closeSheet();
   setHidden($('win-overlay'), true);
   store.setScreen('home');

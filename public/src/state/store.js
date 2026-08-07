@@ -88,11 +88,27 @@ export function reset() {
  *        snap forces no animation (reconnect, fixture injection — §5).
  *        harness marks a state INJECTED by the §9 bridge: it still animates,
  *        but no player performed the screen change it causes.
- * @returns {{snapshot:object|null, events:Array, snap:boolean}}
+ * @returns {{snapshot:object|null, events:Array, snap:boolean, fresh:boolean}}
  */
 export function applyState(msg, opts = {}) {
   const game = msg?.game || null;
   const previousCode = store.room.code;
+  /* FIRST SIGHT OF A GAME THE FELT HAS NEVER SHOWN (owner bug: the last game's
+   * hand on a new game's table).
+   *
+   * `lastSeq` is exactly the "have I seen an event of THIS game" flag: it is 0
+   * before the first sighting and zeroed by every way of arriving at a
+   * different one — reset() on a leave or a kick, the room-code change below,
+   * and the rematch branch, which are the two places this flag is raised again
+   * further down. A reconnect into the same game keeps it, which is the
+   * distinction that matters: a resume's felt is still true, and clearing it
+   * would throw away the card identities the resume exists to preserve.
+   *
+   * Any live game has emitted its opening deal, so `eventSeq` ≥ 1 the first
+   * time we see one and this cannot latch twice for the same game. Consumed by
+   * main.js, which empties the felt before the new game's first job deals onto
+   * it. */
+  let firstSight = store.lastSeq === 0;
 
   // Fixtures and reconnects arrive without a preceding `joined`. The own-hand
   // view is the only field getPlayerView redacts per seat, so it identifies the
@@ -115,7 +131,9 @@ export function applyState(msg, opts = {}) {
 
   // A different room (fixture injection, rematch into a new room) shares no card
   // identities with the last one, so the event tail is meaningless: snap.
-  if (msg?.code && previousCode && msg.code !== previousCode) { snap = true; store.lastSeq = 0; }
+  if (msg?.code && previousCode && msg.code !== previousCode) {
+    snap = true; store.lastSeq = 0; firstSight = true;
+  }
 
   if (game) {
     const tail = Array.isArray(game.events) ? game.events : [];
@@ -129,6 +147,7 @@ export function applyState(msg, opts = {}) {
     } else if (seq < store.lastSeq) {
       snap = true;                                    // rematch: seq restarted
       store.lastSeq = 0;
+      firstSight = true;                              // …onto a felt holding the last game
     } else if (tail.length && tail[0].seq > store.lastSeq + 1) {
       snap = true;                                    // gap: we missed events
     }
@@ -143,7 +162,7 @@ export function applyState(msg, opts = {}) {
   setScreen(game ? 'game' : (store.room.code ? 'lobby' : 'home'),
     { snap: snap || !!opts.harness });
 
-  const payload = { snapshot: game, room: store.room, events, snap };
+  const payload = { snapshot: game, room: store.room, events, snap, fresh: !!game && firstSight };
   bus.emit(EVENTS.STATE_APPLIED, payload);
   return payload;
 }

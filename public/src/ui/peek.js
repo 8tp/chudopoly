@@ -27,13 +27,13 @@
 // for the full property name, the whole rent ladder as leader-dot rows, and a
 // paragraph of rule text, none of which fit on a 90px card. It renders from the
 // card DATA, so a card with no node on the table (a culled discard) still peeks.
-// `peek.setFaceRenderer(fn)` remains the seam; passing a non-function restores
-// the original behaviour of deep-cloning the live node.
+// `peek.setFaceRenderer(fn)` remains the seam. It no longer has a second job:
+// the clone-the-live-node path it used to fall back to had been unreachable
+// since this tier landed and has been deleted (see setFaceRenderer).
 
 import { $, el, clear, setClass, prefersReducedMotion } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
-import { getNode, buildFace } from '../table/cardnode.js';
 import { faceNode } from '../table/cardart.js';
 import { cardName, cardText, kindLabel, opsecFlag } from '../core/cards.js';
 import * as sel from '../state/selectors.js';
@@ -101,10 +101,22 @@ const DEFAULT_FACE = (card) => faceNode(card, 'peek', { rule: cardText(card) });
 
 let faceRenderer = DEFAULT_FACE;
 
-/** Swap in a different card-face renderer. Pass a non-function to fall back to
- *  cloning the live card node.
+/** Swap in a different card-face renderer. A non-function restores the shipped
+ *  one.
+ *
+ *  IT USED TO RESTORE THE CLONE PATH, and that was a regression wearing the
+ *  word "fallback". `faceRenderer` has defaulted to DEFAULT_FACE since the
+ *  cardart peek tier landed, so `null` was reachable only through this seam and
+ *  nothing in the client, the harness or the tests ever passed it — the clone
+ *  branches in faceOf() below were dead from their first line, and so were
+ *  content.css's four `.peek .card.is-peek` rules, which is how
+ *  tools/coverage.mjs came to list `class:is-peek` among its uncovered markers
+ *  (def3dd9). Restoring cloning would also have restored the two defects the
+ *  peek tier was built to fix: no canonical rule text, and nothing to clone for
+ *  a discard past DISCARD_VISIBLE. So the seam keeps its one real job — swap
+ *  the renderer — and has no path back to the worse one.
  *  @param {(card:object)=>Element|null} fn */
-export function setFaceRenderer(fn) { faceRenderer = typeof fn === 'function' ? fn : null; }
+export function setFaceRenderer(fn) { faceRenderer = typeof fn === 'function' ? fn : DEFAULT_FACE; }
 
 function container() {
   if (host?.isConnected) return host;
@@ -116,37 +128,12 @@ function container() {
 
 /* ── the face ──────────────────────────────────────────────────────────── */
 
-/** The live node, cloned and de-identified. Never the node itself: it is the
- *  one persistent object for that card id (§0.4) and reparenting it would take
- *  it off the table. */
+/** The face for this card. Never the live node itself: that is the one
+ *  persistent object for its id (§0.4) and reparenting it would take it off the
+ *  table — which is why the renderer draws from card DATA instead of borrowing
+ *  anything the table owns. */
 function faceOf(card) {
-  if (faceRenderer) return faceRenderer(card);
-  const live = getNode(card.id);
-  // A card with no live node is not a card with no face: table/reconcile()
-  // forgets every discard past DISCARD_VISIBLE, and ui/discard.js renders those
-  // from the same builder. Peeking one used to produce a body with no card at
-  // all. Same renderer, so it cannot drift from the table either way.
-  if (!live) {
-    const fresh = el('div', { class: 'card is-peek', attrs: { 'data-facing': 'up' },
-      dataset: { type: card.type || 'unknown' } });
-    fresh.appendChild(el('div', { class: 'card-inner' }, [buildFace(card)]));
-    const color = card.placedColor || card.color
-      || (card.colors && card.colors[0] !== 'any' ? card.colors[0] : null);
-    if (color) fresh.setAttribute('data-color', color);
-    if (card.action) fresh.setAttribute('data-action-kind', card.action);
-    return fresh;
-  }
-  const copy = live.cloneNode(true);
-  copy.removeAttribute('data-card-id');
-  copy.removeAttribute('data-targetable');
-  copy.removeAttribute('data-droppable');
-  copy.removeAttribute('data-payable');
-  copy.removeAttribute('tabindex');
-  copy.removeAttribute('style');            // --fx/--fy/--tilt/--fs are table poses
-  copy.setAttribute('data-facing', 'up');
-  copy.className = 'card is-peek';
-  for (const node of copy.querySelectorAll('[data-card-id]')) node.removeAttribute('data-card-id');
-  return copy;
+  return faceRenderer(card);
 }
 
 /** @param {Element|null} face  the face already built for this card, so the body

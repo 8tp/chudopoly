@@ -356,3 +356,56 @@ test('every sentence dropRefusal can print is one the engine would have sent', (
   assert.equal(G.moveProperty(state, 'p1', wild.id, 'darkblue').error,
     'Command already holds a full set (2)');
 });
+
+/* ── 4. a swap is only ever offered where a MOVE cannot go ─────────────────
+ *
+ * Owner, live play, on the round that shipped the atomic swap: "its literally
+ * forcing a swap ... when they were literally on the board".
+ *
+ * swapColors() — which decides what to MARK — always required `zoneFull`.
+ * interact/index.js's pick() calls swapPartners() to decide WHICH COMMAND to
+ * send, and swapPartners() did not. So a wild dropped into a zone with room
+ * that happened to hold a compatible wild was dispatched as a swap: two cards
+ * moved and two rearranges spent for a gesture that meant "put this here". The
+ * mats looked like an ordinary move right up until it was not one.
+ *
+ * The invariant is the one selectors.js already states for swapColors: the
+ * client OFFERS a swap only where a plain move cannot get there, so
+ * offer ⊆ accept in the direction §0.1 requires. */
+
+test('a zone with room offers NO swap partners — the move is the right command', async () => {
+  const state = fresh();
+  const [a] = state.players;
+  // darkblue holds 2 of 3 — room to spare — and one of them is a wild that
+  // could legally travel back to green. Before the fix this returned a partner.
+  const mover = putWild(state, a, 'green', pairWild('green', 'darkblue'));
+  putWild(state, a, 'darkblue', anyWild);   // a rainbow is legal in green, so it IS a partner
+  assert.ok(!G.zoneFull(a, 'darkblue'), 'the fixture must leave the zone with room');
+
+  const sel = await loadSel();
+  await stage(state);
+
+  assert.deepEqual(sel.swapPartners(mover.id, 'darkblue'), [],
+    'a zone with room must offer no swap — pick() reads this to choose the command');
+  assert.ok(sel.moveColors(mover).includes('darkblue'),
+    'and the plain move is still offered, which is what the player meant');
+  assert.deepEqual(G.moveProperty(state, 'p1', mover.id, 'darkblue'), { ok: true },
+    'the engine agrees the move is legal, so the client must not send a swap');
+});
+
+test('a FULL zone still offers the swap that §3.5 makes otherwise impossible', async () => {
+  const state = fresh();
+  const [a] = state.players;
+  const mover = putWild(state, a, 'green', pairWild('green', 'darkblue'));
+  putProperty(state, a, 'darkblue');
+  const partner = putWild(state, a, 'darkblue', anyWild);
+  assert.ok(G.zoneFull(a, 'darkblue'), 'darkblue must be full for this to be the swap case');
+
+  const sel = await loadSel();
+  await stage(state);
+
+  assert.deepEqual(sel.swapPartners(mover.id, 'darkblue').map(c => c.id), [partner.id],
+    'the deadlock case still offers its one partner');
+  assert.ok(!sel.moveColors(mover).includes('darkblue'),
+    'and the plain move is refused there, which is why the swap exists at all');
+});

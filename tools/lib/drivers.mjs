@@ -317,6 +317,149 @@ export const DRIVERS = {
     if (r.bottom <= 0 || r.top >= innerHeight) return `recap:offscreen ${beats}`;
     return `recap:${beats} beat${beats === 1 ? '' : 's'}`;
   },
+
+  /* ── P9 surfaces: reachable in ordinary play, visited by no gate ───────── */
+
+  /**
+   * THE HOST LOBBY. `#lobby-host` — the room code, the invite line, the bot
+   * picker, the ruleset toggles — plus `#btn-start`.
+   *
+   * This is not a driver so much as a REFUSAL TO BE LIED TO. Nothing has to be
+   * tapped to reach the host lobby: the state is the state. What was missing is
+   * that `store.self.id` was never set from a lobby broadcast (no `game`, and
+   * `game` is the only thing store.applyState infers a seat from), so
+   * `store.room.hostId === store.self.id` was false and every `lobby@*.png` on
+   * disk was the GUEST view of a transcript recorded by the HOST.
+   * lib/stage.mjs now hands the client its seat first; this asserts the seat
+   * arrived, because a shot that silently degrades to the other player's screen
+   * is precisely the "two names, one picture" failure screenshot.mjs exists for.
+   */
+  'lobby-host': async () => {
+    const host = document.getElementById('lobby-host');
+    const start = document.getElementById('btn-start');
+    const seen = (el) => !!el && !el.hidden && el.getBoundingClientRect().height > 0;
+    if (!seen(host)) return `lobby:not-host (selfId ${window.__CHUD.selfId || 'null'})`;
+    const kicks = document.querySelectorAll('#lobby-players [data-action="remove-bot"], '
+      + '#lobby-players [data-action="kick"]').length;
+    const r = start?.getBoundingClientRect();
+    // The CTA's position relative to the fold is the finding this surface was
+    // built for — report it in the reached string so a green run still carries
+    // the number, not just a pass.
+    const fold = r ? Math.round(r.bottom - innerHeight) : null;
+    return `lobby:host ${document.querySelectorAll('.lobby-row').length} seat(s), ${kicks} seat control(s), `
+      + `start ${seen(start) ? `${Math.round(r.width)}×${Math.round(r.height)}` : 'HIDDEN'}`
+      + `${fold != null && fold > 0 ? `, ${fold}px BELOW THE FOLD` : ''}`;
+  },
+
+  /** The same room from a second human seat: host block gone, ruleset read-only. */
+  'lobby-guest': async () => {
+    const seen = (el) => !!el && !el.hidden && el.getBoundingClientRect().height > 0;
+    if (seen(document.getElementById('lobby-host'))) {
+      return `lobby:host-block-visible-to-guest (selfId ${window.__CHUD.selfId || 'null'})`;
+    }
+    const note = seen(document.getElementById('ruleset-guest'));
+    const controls = document.querySelectorAll('#lobby-players [data-action]').length;
+    if (controls) return `lobby:guest-has-${controls}-seat-control(s)`;
+    return `lobby:guest ${document.querySelectorAll('.lobby-row').length} seat(s), read-only ruleset ${note ? 'shown' : 'MISSING'}`;
+  },
+
+  /**
+   * THE `myColor` STEP — the wild's placement question, answered on the mats.
+   *
+   * §3.8/§3.9's decision aid (`.mat-advice`, interact/index.js paintAdvice) is
+   * printed onto every legal column: the rent ladder, the landing rung, which
+   * column is BEST. It shipped measured only by the agent that wrote it —
+   * `drivers.mjs` had no entry for the step and `checkContrast` had no surface,
+   * so the one piece of rules text the game prints ON the table was outside
+   * every gate.
+   *
+   * Reached the way a player reaches it: tap a wild in hand, press Play. The
+   * client refuses to ask a question with one answer (playSelected's
+   * single-colour short circuit), so the assertion is on the step AND on the
+   * chits — a `myColor` step with no advice painted is the defect.
+   */
+  'wild-place': async () => {
+    const hand = () => [...document.querySelectorAll('#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]')];
+    for (const card of hand()) {
+      card.click();
+      await new Promise((r) => setTimeout(r, 100));
+      const play = document.querySelector('[data-action="play-card"]:not([disabled]):not(.is-refusing)');
+      if (play) { play.click(); await new Promise((r) => setTimeout(r, 220)); }
+      const mode = window.__CHUD.mode;
+      if (mode?.kind === 'target' && mode.needs?.[0] === 'myColor') {
+        const chits = document.querySelectorAll('.mat-advice').length;
+        // `[data-best="1"]`, which is what interact.css actually selects on —
+        // an `.is-best` class read reported 0 while the chit was marking one.
+        const best = document.querySelectorAll('.mat-advice [data-best="1"], .mat-advice[data-best="1"]').length;
+        // `data-targetable`, not `data-droppable`: interact/index.js mark()
+        // sets the first for a TAP step and drag.js sets the second only while
+        // a pointer is down, so counting droppables during a myColor step
+        // reported "0 mat(s), 8 advice chit(s)" — eight answers printed onto
+        // nothing.
+        const mats = document.querySelectorAll('.propcol[data-targetable="1"]').length;
+        if (!chits) return `myColor:no-advice ${mats} mat(s) marked but nothing printed on them`;
+        return `myColor:${mats} mat(s), ${chits} advice chit(s), ${best} marked best`;
+      }
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 70));
+    }
+    return `nowild:${hand().length} card(s) tried, mode ${window.__CHUD.mode?.kind || 'none'}`;
+  },
+
+  /**
+   * `#toast` — the client's only transient message surface, and one no shot had
+   * ever driven, so nothing had measured its contrast, its geometry or what it
+   * covers.
+   *
+   * Reached by the shortest real path there is: type a room code for a room
+   * that is not there and press Join. The server answers `Room not found`,
+   * main.js classes that as a dead session and ui/screens.js `endSession`
+   * toasts "That room is gone. Starting fresh." — fixed wording, no timing, no
+   * live game. `ZZZZ` satisfies home.js's own `[A-HJ-NP-Z2-9]{4}` format check,
+   * so the request actually leaves the client instead of stopping at the inline
+   * error (which is a different surface and not this one).
+   */
+  toast: async () => {
+    const name = document.getElementById('name-input');
+    if (name && !name.value) name.value = 'HARNESS';
+    const code = document.getElementById('code-input');
+    if (!code) return 'toast:no-code-input';
+    code.value = 'ZZZZ';
+    document.getElementById('btn-join-room')?.click();
+    // The server round trip is real; poll rather than guess at its latency.
+    for (let i = 0; i < 40; i++) {
+      const el = document.getElementById('toast');
+      if (el && el.classList.contains('is-on') && (el.textContent || '').trim()) {
+        const r = el.getBoundingClientRect();
+        return `toast:"${el.textContent.trim().slice(0, 40)}" ${Math.round(r.width)}×${Math.round(r.height)}`;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return `toast:absent (screen ${document.querySelector('.screen:not([hidden])')?.id || '?'})`;
+  },
+
+  /**
+   * `.announce` — ui/journal.js's full-width banner ("FINAL APPROACH", "BREAK
+   * THEM NOW", "SET SEIZED"). It is not in any snapshot: it is what the client
+   * DOES when an event arrives, so it can only be reached by making the event
+   * arrive (lib/stage.mjs `from`, which applies the previous broadcast first
+   * and lets the tail between the two replay).
+   *
+   * Nothing had photographed it, and it was found covering collapsed opponent
+   * seats 51% and 42% in portrait and 70% in landscape. Note this driver does
+   * NOT create the banner — the state transition does. It reports what is
+   * there, so "the announcement did not fire" and "the announcement fired and
+   * is fine" cannot be confused.
+   */
+  announce: async () => {
+    const el = document.querySelector('.announce');
+    if (!el || el.hidden) return 'announce:absent';
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return 'announce:zero-size';
+    const flag = el.querySelector('.announce-flag')?.textContent?.trim() || '';
+    const kind = [...el.classList].find((c) => c.startsWith('is-') && c !== 'is-in') || '?';
+    return `announce:${kind} "${flag}" ${Math.round(r.width)}×${Math.round(r.height)} at y${Math.round(r.top)}`;
+  },
 };
 
 /* ────────────────────────── host-side (real input) ─────────────────────── */
@@ -367,7 +510,12 @@ export const HOST = {
     return page.evaluate(() => {
       const p = document.querySelector('.peek');
       if (!p) return 'peek:absent';
-      const name = p.querySelector('.peek-name')?.textContent?.trim() || '';
+      /* `.peek-name` no longer exists: ui/peek.js defaults `faceRenderer` to the
+       * cardart face, which prints `.ca-title` instead, so this read had been
+       * returning '' and the reached string said `peek:open ""` while the gate
+       * passed on the prefix. Found by the surface census (tools/coverage.mjs)
+       * reporting `.is-peek` as never visited. */
+      const name = (p.querySelector('.peek-name, .ca-title')?.textContent || '').trim();
       const r = p.getBoundingClientRect();
       if (!r.width || !r.height) return 'peek:zero-size';
       return `peek:open "${name}" ${Math.round(r.width)}×${Math.round(r.height)}`;
@@ -402,7 +550,12 @@ export const HOST = {
     return page.evaluate(() => {
       const p = document.querySelector('.peek');
       if (!p) return 'peek:absent';
-      const name = p.querySelector('.peek-name')?.textContent?.trim() || '';
+      /* `.peek-name` no longer exists: ui/peek.js defaults `faceRenderer` to the
+       * cardart face, which prints `.ca-title` instead, so this read had been
+       * returning '' and the reached string said `peek:open ""` while the gate
+       * passed on the prefix. Found by the surface census (tools/coverage.mjs)
+       * reporting `.is-peek` as never visited. */
+      const name = (p.querySelector('.peek-name, .ca-title')?.textContent || '').trim();
       const r = p.getBoundingClientRect();
       if (!r.width || !r.height) return 'peek:zero-size';
       return `peek:open "${name}" ${Math.round(r.width)}×${Math.round(r.height)}`;

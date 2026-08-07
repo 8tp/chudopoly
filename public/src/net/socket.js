@@ -115,6 +115,19 @@ export function connect() {
  *  frame after the buffered data, so the write is not lost. */
 export function disconnect({ flushFirst = false } = {}) {
   wantConnection = false;
+  /* AN OUTAGE IS ONLY AN OUTAGE AFTER A FIRST OPEN — AND THIS IS A NEW FIRST.
+   *
+   * OWNER BUG, second half: "it says offline". Quick play calls connect() and
+   * send() in one tick (ui/home.js go()), so the message is queued before the
+   * socket can possibly be open. announceQueue() suppresses that on a fresh
+   * boot — but `everOpened` was per PAGE, not per session, so the SECOND game
+   * of a tab greeted a deliberate Quick Play with "Offline — held, and sent the
+   * moment the connection is back", measured 324ms after the leave. The player
+   * is not offline; they just pressed a button.
+   *
+   * A dropped socket never comes through here (only endSession does), so the
+   * mid-game outage this notice was written for is untouched. */
+  everOpened = false;
   clearTimeout(retryTimer);
   retryTimer = 0;
   if (flushFirst) flush();

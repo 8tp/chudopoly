@@ -7,7 +7,7 @@
 import { store, selfPlayer, playerById } from './store.js';
 import {
   COLOR_KEYS, isComplete, zoneFull, requisitionable, legalColorsFor,
-  upgradeKinds, upgradeCards, ACTION_NEEDS,
+  upgradeKinds, upgradeCards, rentFor, setSize, ACTION_NEEDS, COLORS,
 } from '../core/cards.js';
 
 export function snapshot() { return store.snapshot; }
@@ -157,6 +157,149 @@ export function rentColors(card) {
   const me = selfPlayer();
   const legal = card.colors?.[0] === 'any' ? COLOR_KEYS : (card.colors || []);
   return legal.filter(color => (me?.properties?.[color] || []).length > 0);
+}
+
+/* ── decision support for a `myColor` step (§3.8, §3.9) ────────────────────
+ *
+ * A wild is the one card whose value is entirely a function of WHERE you put
+ * it, and the client asked the player to answer that with nothing on screen but
+ * ten coloured mats. §3.8 says free rearranging is a first-class VISIBLE
+ * interaction and §3.9 says no rule may exist that we do not state; a set's
+ * size and its rent ladder are rules, and they were only ever legible by
+ * opening a card's details sheet mid-decision.
+ *
+ * Every number below comes out of core/cards.js `rentFor()`, which is the
+ * client mirror of game.js `calcRent()` (700-710) — the UI never re-derives a
+ * rent. That matters for two reasons the naive version gets wrong:
+ *   • `calcRent` adds +3 for a House and +4 for an FOC, so a ladder read
+ *     straight off `COLORS[color].rent` is the wrong number on any upgraded
+ *     set. Every rung here is a projection run back through `rentFor`, so the
+ *     upgrade is in the figure by construction rather than by remembering.
+ *   • the landing rung is computed from the zone's own length, not found by
+ *     scanning a ladder for a matching value — two rungs of the same set can
+ *     hold the same figure once an upgrade is on it, and a `find` lands on the
+ *     first of them.
+ *
+ * `kind` is what the step is actually asking:
+ *   place    a property/wild from the hand, or a wild rearranging (§3.8) —
+ *            the column GAINS this card
+ *   upgrade  an Upgrade/FOC moving between complete sets (§3.1b) — the column
+ *            gains the +3/+4 rider and no card
+ *   rent     a rent card choosing which colour to charge — nothing moves; the
+ *            question is what the column is worth right now
+ *
+ * @returns {Array<{color,size,kind,count,next,ladder,landing,rentNow,rentNext,
+ *                  gain,completes,best}>} one row per column, caller's order
+ */
+export function placementAdvice(card, colors, kind = 'place') {
+  const me = selfPlayer();
+  if (!me || !Array.isArray(colors) || !colors.length) return [];
+  const rules = activeRuleFlags();
+  // §3.1c: chargeAmount() (game.js:1046-1051) multiplies rent — and ONLY rent —
+  // by 2**stack. The stack rides on the snapshot as `surgeOps` (game.js:1912).
+  // A rent readout that ignores an armed surge is off by 2× or 4× on the one
+  // turn a player most wants the number.
+  const surge = kind === 'rent' ? 2 ** (snapshot()?.surgeOps || 0) : 1;
+
+  const zoneOf = (color) => me.properties?.[color] || [];
+  // rentFor() reads `properties[color].length` and `upgrades[color]` and
+  // nothing else, so a projection only has to get those two right.
+  const withZone = (color, cards) => ({
+    properties: { ...(me.properties || {}), [color]: cards },
+    upgrades: me.upgrades || {},
+  });
+
+  const rows = colors.map((color) => {
+    const size = setSize(color);
+    const held = zoneOf(color);
+    const rentNow = rentFor(me, color) * surge;
+
+    if (kind === 'upgrade') {
+      // upgradeMoveColors() only ever offers COMPLETE sets, so the column's
+      // card count does not move and the ladder is not the story: the two
+      // figures are what it charges now and what it would charge with this
+      // rider on it.
+      const proj = {
+        properties: me.properties || {},
+        upgrades: {
+          ...(me.upgrades || {}),
+          [color]: upgradeKinds(me, color).concat(card?.upgradeType || 'house'),
+        },
+      };
+      const rentNext = rentFor(proj, color);
+      return {
+        color, size, kind, count: held.length, next: held.length,
+        ladder: [rentNow, rentNext], landing: 2,
+        rentNow, rentNext, gain: rentNext - rentNow, completes: false, best: false,
+      };
+    }
+
+    const after = kind === 'rent' ? held : held.concat([card]);
+    // `new Array(n)` is a length and nothing else — see the rentFor() note above.
+    const ladder = [];
+    for (let n = 1; n <= size; n++) ladder.push(rentFor(withZone(color, new Array(n)), color) * surge);
+    const landing = Math.max(1, Math.min(after.length, size));
+    return {
+      color, size, kind,
+      count: held.length, next: after.length,
+      ladder, landing,
+      rentNow, rentNext: ladder[landing - 1] ?? 0,
+      gain: (ladder[landing - 1] ?? 0) - rentNow,
+      // isComplete(), not `length >= size`: under `pureSetRequired` a full zone
+      // of nothing but wilds is not a set (core/cards.js), and promising SET on
+      // a placement the engine will not count as one is the exact lie
+      // table/layout.js already had to fix on the mat's own tally.
+      completes: kind !== 'rent'
+        && isComplete(withZone(color, after), color, rules)
+        && !isComplete(me, color, rules),
+      best: false,
+    };
+  });
+
+  /**
+   * The BEST mark, ranked by rent gain as the owner specified.
+   *
+   * The ties are real and they have to break somewhere: on the mid-game fixture
+   * an "any" wild offers eight columns and three of them gain exactly 2M. The
+   * chain below is a total order and every step of it is a better play, not a
+   * coin toss — prefer the placement that completes a set (a set is a third of
+   * the win condition and it locks the zone against Midnight Requisition and
+   * TDY), then the higher resulting rent, then the column closest to done.
+   * The caller's order is the last resort so the mark cannot flicker between
+   * two identical snapshots.
+   *
+   * NOT ranked on net gain for a rearrange, deliberately: the card leaving its
+   * old column costs the same rent whichever column it lands in, so that term
+   * is a constant and cannot change the order. Computing it would only let the
+   * two numbers drift apart.
+   *
+   * One option needs no recommendation (and interact/index.js never asks —
+   * a one-answer choice is skipped, not prompted).
+   */
+  if (rows.length > 1) {
+    rows.slice().sort((a, b) =>
+      b.gain - a.gain
+      || (b.completes ? 1 : 0) - (a.completes ? 1 : 0)
+      || b.rentNext - a.rentNext
+      || (a.size - a.next) - (b.size - b.next)
+      || colors.indexOf(a.color) - colors.indexOf(b.color))[0].best = true;
+  }
+  return rows;
+}
+
+/** The whole of one advice row as a sentence, for the mat's accessible name
+ *  (§0.9 — this must be operable and legible without hover). */
+export function adviceSentence(row) {
+  if (!row) return '';
+  const name = COLORS[row.color]?.name || row.color;
+  const best = row.best ? ' Best rent gain.' : '';
+  if (row.kind === 'rent') return `${name} — charge ${row.rentNext}M.${best}`;
+  if (row.kind === 'upgrade') {
+    return `${name} — rent ${row.rentNext}M, up from ${row.rentNow}M.${best}`;
+  }
+  const set = row.completes ? ' Completes the set.' : '';
+  return `${name}, ${row.next} of ${row.size} — rent ${row.rentNext}M,`
+    + ` up from ${row.rentNow}M.${set}${best}`;
 }
 
 export function myCompleteSets({ needsHouse = false, needsNoHouse = false } = {}) {

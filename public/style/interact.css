@@ -213,6 +213,184 @@ body.is-dragging-card {
   filter: saturate(.5);
 }
 
+/* ── THE MAT'S ANSWER: wild placement, decided on the table ────────────────
+   §3.8 (free rearranging is a first-class VISIBLE interaction) + §3.9 (state
+   every rule) + ART §1 (hue is the SETS', signals own material).
+
+   Chudopoly has no modal colour picker: `mode.needs = ['myColor']` and the
+   prompt says "Tap the set column to place it on", so the question is asked BY
+   the mats and the answer has to be printed ON them. interact/index.js
+   paintAdvice() builds the chit; the composition and why each mark is there is
+   documented beside it.
+
+   MATERIAL. Not one drop of hue is spent, because there is none left to spend:
+   a mat is already a saturated set-colour ground with a 100%-strength nameplate
+   on it (table.css), and ART §1 bans hue-as-signal outright. So the chit is
+   CARD STOCK WITH INK ON IT — the same printed material as every card in the
+   game, and by ART §0's thesis ("the table changes, the objects don't") it is
+   the SAME material in both themes. That is the whole contrast argument in one
+   move: `--ink` on `--card-stock` is 17.08:1 and `--ink-mute` on it is 5.64:1,
+   both published in ART §2 and both verified for light AND dark at once,
+   over all ten mats, because the chit never touches the mat's colour.
+
+   MEASURED on the mid-game fixture, 390×844 and 1280×720 (both themes):
+     landing rung   17.1:1   ·   spent rungs    5.6:1
+     BEST landing   17.1:1   ·   BEST rungs     6.4:1   ·   BEST word 17.1:1
+   The two BEST figures are the inverted chit and are the only new pair.
+
+   `pointer-events: none` is load-bearing, not tidiness: the MAT is the 44px
+   target (§0.9) and tools/touchtest.mjs hit-tests occlusion by rect overlap
+   skipping `pointer-events:none`. A chit that could be hit would shadow the
+   thing the player is being told to tap. */
+.mat-advice {
+  --chit-bg: var(--card-stock);
+  --chit-ink: var(--ink);
+  --chit-mute: var(--ink-mute);          /* 5.64:1 on stock — ART §2 */
+
+  /* IT COSTS THE MAT NO HEIGHT, and that is not a nicety.
+     MEASURED at 390×844 on the mid-game fixture: as a row of its own the chit
+     took the self board from 254px of mats to 290 in a 254px scrollport, put
+     the last mat row under the prompt bar, and buried 5 text runs that were not
+     buried before — a decision aid that hides two of the eight options it is
+     describing. Laid over the top of the card zone instead: 254px, 0 buried,
+     8/8 options on screen.
+     `grid-area: props` is the NAME table.css declares for the card cell
+     ("head head" / "props ups", both above and below 1024px), so this is a
+     contract rather than a row number — and if that template is ever re-cut the
+     chit degrades to an auto-placed row, which is merely the taller version of
+     the same feature rather than a broken one.
+     It lies across the top of the cards, where a table-tier card face is a
+     solid colour band with NO TEXT on it (ART §6's tier degradation drops the
+     title below 60px and the mats render 46px cards) — verified by counting
+     occluded runs, which stayed at 0. The mat's own nameplate above it is
+     untouched, so the set is still named while the chit is up. */
+  grid-area: props;
+  align-self: start;
+  /* content-sized, not full-bleed: at 200px a desktop mat would otherwise carry
+     a cream banner across the top of its colour plate on all eight legal mats
+     at once, which is a lot of new surface for four figures. Centred over the
+     cards it reads as a marker PLACED on the mat, which is what it is. */
+  justify-self: center;
+  z-index: 3;
+  margin: 1px 0 0;
+  padding: 0 3px;
+  /* ART §4: paper casts a soft shadow, painted steel does not. The chit is a
+     printed chit lying ON the cards, so it gets the paper language — not the
+     hard offset, which that section reserves for pressables. */
+  /* …plus the card's own 1px `--card-edge` trim (ART §6). It is what stops the
+     inverted BEST chit from dissolving into a dark-theme mat: on stock the bone
+     hairline is nearly invisible and the chit is carried by its own value, on
+     ink it is the printed trim and gives the slab an edge. One rule, both
+     directions, no theme branch. */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 0 0 1px var(--card-edge);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 3px;
+  min-width: 0;
+
+  /* ART §4: figures are mono + tabular. A rent ladder is figures. */
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  /* px floor with an em above it: `--s` carries the a11y interface scale, so
+     the chit grows with the slider, but a mat is 54px wide on a 390px phone and
+     a 7px figure is not a figure. The same `max()` shape the mat's own
+     nameplate uses (table.css .propcol-name::after). */
+  font-size: max(9px, .56em);
+  /* 1.2, measured: the chit costs 12px of mat height at 1.2 and 15px at 1.45,
+     and a self board on a 390px phone has 248px of scrollport for 254px of mats
+     BEFORE this feature exists. Every px is a px of the last mat row. */
+  line-height: 1.2;
+  white-space: nowrap;
+
+  background-color: var(--chit-bg);
+  color: var(--chit-ink);
+  /* square corners: ART §6's technical-order style, and a chit is a printed
+     placard, not a pill. No border — ART §3.2 bans them on table furniture. */
+  border-radius: 0;
+  pointer-events: none;
+}
+
+/* A rung is one step of the set's rent ladder, so the ladder IS the progress
+   bar: it has exactly `size` rungs and the reversed-out one says which rung you
+   would be standing on. That is two of the four things this feature owes
+   (progress, and the rent row) paid for with one mark. */
+.mat-rung { padding: 0 1px; color: var(--chit-mute); }
+.mat-rung.is-landing {
+  /* ART §6's "solid black reverse-out chips used aggressively", and the card's
+     own value-coin vocabulary: ink disc, bone numerals. */
+  padding: 0 3px;
+  font-weight: 800;
+  background: var(--chit-ink);
+  color: var(--chit-bg);
+}
+
+/* SET / BEST. Weight, never tracking (ART §4) — and never colour. Held at 1em
+   deliberately: tools/checkContrast.mjs files a run under 8px as decorative and
+   stops gating it, and a word that carries the whole recommendation must be on
+   trial like everything else. At the phone tier that is 8.5px. */
+.mat-mark { font-family: var(--font-body); font-weight: 800; font-size: 1em; }
+
+/* BEST is a VALUE INVERSION of the same material, so it survives greyscale,
+   colourblindness and an 8px phone mat, and it reads at a glance across eight
+   mats without asking hue for anything. ART §1 files the achromatic ink slab as
+   "the primary action" — during a myColor step a mat IS the primary action, so
+   this is that vocabulary used for what it means, not a new one. */
+.mat-advice[data-best="1"] {
+  --chit-bg: var(--ink);
+  --chit-ink: var(--card-stock);
+  /* The same relationship the other way up. A LITERAL, and not a
+     `color-mix(in oklab, …)`, for a measured reason: getComputedStyle resolves
+     a mix to `oklab(…)`, and tools/lib/audit.mjs auditTextContrast() parses
+     `rgb()/rgba()` only — a mixed TEXT colour returns null and the run is
+     skipped, so the gate would report a pass over a figure it never read.
+     The value is ART §2's dark `--fg-mute`, which that table measures against
+     `--ground #15171C`; `--ink` is #14161A, so it carries over. Verified in
+     place at 6.18:1 on the inverted chit, both themes (the chit is card stock
+     and ink, so there is only one answer to verify). */
+  --chit-mute: #8E97A3;
+}
+
+/* COMPLETES THE SET: the printed double rule. `.propcol.is-complete
+   .propcol-head` already signs a finished set with a stock-coloured rule along
+   the bottom of its placard — "the double line a stamped placard uses" — so the
+   chit signs a placement that WOULD finish it the same way, in currentColor, so
+   it inverts along with everything else. */
+.mat-advice[data-complete="1"] {
+  padding-bottom: 3px;
+  background-image:
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor);
+  background-size: 100% 1px, 100% 1px;
+  background-position: 0 100%, 0 calc(100% - 2px);
+  background-repeat: no-repeat;
+}
+
+/* THE PHONE CUT, and what it drops.
+   MEASURED at 390×844 on the mid-game fixture: a self mat is 54px wide (61 at
+   the widest) with ~50px inside it. A 4-rung ladder in 9px mono is ~40px and
+   fits; a ladder AND a printed word does not, and a chit wider than its mat
+   drives `.propcol`'s min-content width, which reflows the whole 3-row board.
+   So when a WORD has to be printed the ladder collapses to the single rung the
+   word is about — the brief's own order of value (progress and BEST outrank the
+   ladder) applied literally. You lose the neighbouring rungs, i.e. what the set
+   would pay at other counts; you keep the figure you would actually charge, the
+   fact that it completes, and the recommendation. On a mat with no word — the
+   common case, 7 of 8 columns on the fixture — the full ladder still prints. */
+@media (max-width: 1023px) {
+  .mat-advice { font-size: 8.5px; gap: 2px; }
+  .mat-advice[data-marks="1"] .mat-rung:not(.is-landing) { display: none; }
+}
+
+/* A desktop mat is 200px wide and the readout can be read rather than
+   deciphered. Held BELOW the mat's own nameplate (.62em) on purpose: the set is
+   what the mat IS, the chit is what it would do. */
+@media (min-width: 1024px) {
+  .mat-advice { font-size: .72em; gap: 4px; }
+}
+
 /* ── the landing silhouette (ART §5.3) ──────────────────────────────────
    "dashed card ghost at the exact final position and rotation." Built by
    interact/drag.js into the hovered rank-0 target only — a ghost under a

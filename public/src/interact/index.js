@@ -10,13 +10,13 @@
 
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
-import { setAttr, setClass, qsa, prefersReducedMotion } from '../core/dom.js';
+import { el, setAttr, setClass, qsa, prefersReducedMotion } from '../core/dom.js';
 import * as send from '../net/send.js';
 import { store, selfPlayer, playerById } from '../state/store.js';
 import * as sel from '../state/selectors.js';
 import * as table from '../table/index.js';
 import { getNode } from '../table/cardnode.js';
-import { isPropertyCard, COLOR_KEYS } from '../core/cards.js';
+import { isPropertyCard, COLOR_KEYS, colorName, setSize } from '../core/cards.js';
 import * as pointer from './pointer.js';
 import * as drag from './drag.js';
 import { CUE, cueEl } from '../anim/cues.js';
@@ -133,6 +133,18 @@ export function playSelected() {
     mode.intent = 'action';
     const needs = sel.requirementsFor(card);
     if (!needs) { refuse('That card cannot be played now'); return; }
+    // The same rule the property branch above has always had, applied to the
+    // other card that asks the same question: never prompt for a decision with
+    // one answer. MEASURED on the mid-game fixture — a Fighters/Mobility rent
+    // card against a board holding only Mobility armed a myColor step with
+    // exactly ONE marked mat and the prompt "Tap the set column to place it
+    // on", so the player paid a tap and a sentence for a choice that did not
+    // exist. The commitment already happened when they pressed Play; a wild
+    // rent still stops for its `player` step, which is a real choice.
+    if (card.type === 'rent' && needs[0] === 'myColor') {
+      const colors = sel.rentColors(card);
+      if (colors.length === 1) { mode.picks.targetColor = colors[0]; needs.shift(); }
+    }
     mode.needs = needs;
   } else {
     refuse('Money cards are banked, not played');
@@ -180,8 +192,28 @@ export function beginMove(cardId) {
   mode.picks = {};
   mode.hint = found.isUpgrade
     ? 'Tap the complete set to move it onto'
-    : 'Tap the set column to move it to';
+    : `Tap the set column to move it to${leavingCost(found)}`;
   changed();
+}
+
+/**
+ * The one fact a rearrange cannot print on a mat (§3.8, §3.9).
+ *
+ * Every legal destination gets its own chit, but the COLUMN THE CARD LEAVES is
+ * not a target — moveColors() excludes it — so it carries no chit and cannot.
+ * That is fine for the ranking (the loss is the same whichever destination you
+ * pick, so it cannot reorder them) and it is not fine for the player, because
+ * one of these losses is not like the others: pulling a wild out of a COMPLETE
+ * set un-completes it, which costs a third of the win condition and re-opens
+ * the zone to Midnight Requisition and TDY Orders (core/cards.js
+ * requisitionable()). Any other departure just walks the source down its own
+ * rent ladder, which is visible on the mat's tally.
+ * So the sentence is spent only on the case that is worth a sentence.
+ */
+function leavingCost(found) {
+  if (found.isUpgrade || !found.from) return '';
+  if (!sel.myCompleteSets().includes(found.from)) return '';
+  return ` — that breaks your ${colorName(found.from)} set`;
 }
 
 export function beginPayment(amount) {
@@ -528,23 +560,34 @@ export function dropCommit(cardId, drop) {
 /* ── marks ─────────────────────────────────────────────────────────────── */
 
 function clearMarks() {
-  for (const el of qsa('[data-targetable="1"]')) el.removeAttribute('data-targetable');
-  for (const el of qsa('[data-payable="1"]')) {
-    el.removeAttribute('data-payable');
+  for (const node of qsa('[data-targetable="1"]')) node.removeAttribute('data-targetable');
+  // The mat's decision chit and the reach lent to the mat itself. Taken back
+  // together and unconditionally: clearMarks() runs first on every applyMarks()
+  // pass, so a mat that stops being a target in the same broadcast that made
+  // another one a target cannot keep a stale answer or a stale tab stop.
+  for (const node of qsa('.mat-advice')) node.remove();
+  for (const node of qsa('.propcol[role="button"]')) {
+    node.removeAttribute('role');
+    node.removeAttribute('tabindex');
+    node.removeAttribute('aria-label');
+  }
+  for (const node of qsa('[data-payable="1"]')) {
+    node.removeAttribute('data-payable');
     // cardnode.js parks every card at tabindex -1; selection modes are the only
     // time a card is a control in its own right, so the reach is lent, not kept.
-    if (el.getAttribute('tabindex') === '0') el.setAttribute('tabindex', '-1');
+    if (node.getAttribute('tabindex') === '0') node.setAttribute('tabindex', '-1');
   }
-  for (const el of qsa('.is-picked')) el.classList.remove('is-picked');
-  for (const el of qsa('.is-discarding')) el.classList.remove('is-discarding');
+  for (const node of qsa('.is-picked')) node.classList.remove('is-picked');
+  for (const node of qsa('.is-discarding')) node.classList.remove('is-discarding');
   // A card under the finger keeps its lift: applyMarks runs on every snapshot
   // and a mid-drag state broadcast would otherwise drop the card flat.
-  for (const el of qsa('.is-lifted')) {
-    if (!el.classList.contains('is-dragging')) el.classList.remove('is-lifted');
+  for (const node of qsa('.is-lifted')) {
+    if (!node.classList.contains('is-dragging')) node.classList.remove('is-lifted');
   }
 }
 
-function mark(el) { if (el) setAttr(el, 'data-targetable', '1'); }
+// `node`, not `el`: `el` is core/dom.js's element builder in this module now.
+function mark(node) { if (node) setAttr(node, 'data-targetable', '1'); }
 
 /* ── lending a card node keyboard focus (§0.9) ─────────────────────────────
  * table/cardnode.js parks every card at tabindex -1. Selection modes are the
@@ -572,7 +615,115 @@ function lendFocus(node) {
 function markPropColumns(ownerId, colors) {
   const board = table.boardEl(ownerId);
   if (!board) return;
-  for (const color of colors) mark(board.querySelector(`.propcol[data-color="${color}"]`));
+  for (const color of colors) {
+    const col = board.querySelector(`.propcol[data-color="${color}"]`);
+    mark(col);
+    // §0.9. A mat is the game's primary targeting surface and it was the only
+    // target class with no keyboard route at all: table/layout.js gives a BOARD
+    // `tabindex="0"` and cardnode.js parks cards at -1 for interact to lend
+    // back, but a `.propcol` had neither — so every rent colour, every wild
+    // rearrange and every set seizure was mouse-or-finger only, even though
+    // pointer.js's Enter/Space handler has always routed `[data-targetable]`.
+    // Lent for the step and taken back in clearMarks(), exactly like lendFocus.
+    // No size gate here: table.css floors a mat at `min-height: var(--tap)` on
+    // both axes, so unlike a 25px bank card it always clears §0.9's 44.
+    if (col) {
+      setAttr(col, 'role', 'button');
+      setAttr(col, 'tabindex', '0');
+      setAttr(col, 'aria-label', `${colorName(color)} — ${zoneTally(ownerId, color)}`);
+    }
+  }
+}
+
+/** "2 of 3" for a mat's accessible name, so the tally is spoken, not implied. */
+function zoneTally(ownerId, color) {
+  const player = playerById(ownerId);
+  return `${player?.properties?.[color]?.length || 0} of ${setSize(color)}`;
+}
+
+/* ── what each mat would DO with the card you are holding ──────────────────
+ *
+ * §3.8 (free rearranging is a first-class VISIBLE interaction) and §3.9 (state
+ * every rule) met on the same surface. Chudopoly has no modal colour picker —
+ * the choice is made by TAPPING A MAT (`mode.needs = ['myColor']`, HINTS.myColor
+ * "Tap the set column to place it on") — so the answer has to live on the mats,
+ * and there is nowhere else it could go without inventing the panel ART §3.2
+ * spends a whole clause refusing.
+ *
+ * THREE MARKS, no more, and each one is a thing the mat cannot already tell you:
+ *   1. the RENT LADDER with the rung you would land on reversed out. It is one
+ *      element doing two of the four jobs: which rung of how many IS the set
+ *      progress (a ladder has exactly `size` rungs), and the rung's figure is
+ *      the rent you would charge. The mat's own tally says where you ARE; this
+ *      says where you would BE.
+ *   2. SET, when the placement completes the set.
+ *   3. BEST, on the single highest rent gain (state/selectors.js ranks it).
+ * Everything else a player might want — the set name, the current tally, the
+ * cards — is already on the mat, and ART §3.2's "panel proliferation" note is
+ * about exactly this temptation.
+ *
+ * NO COLOUR IS SPENT (ART §1: hue belongs to set identity, and a mat is already
+ * a saturated ground). The chit is card stock with ink on it — the same printed
+ * material as every card in the game, IDENTICAL IN BOTH THEMES by ART §0's
+ * thesis, so one measured contrast figure (17.08:1) covers light and dark and
+ * all ten mats at once. The signals are value inversions of that same material:
+ * the landing rung is reversed out, the BEST chit is reversed out whole (ART §1
+ * files the achromatic ink slab as "the primary action" — during this step a mat
+ * IS the primary action), and a completing chit carries the printed double rule
+ * that `.propcol.is-complete .propcol-head` already uses for the same fact.
+ *
+ * It exists only while the step does: applyMarks() builds it, clearMarks()
+ * removes it, and clearMarks() runs first on every single pass.
+ */
+function paintAdvice(colors) {
+  const board = table.boardEl(store.self.id);
+  if (!board) return;
+  const kind = adviceKind();
+  const rows = sel.placementAdvice(mode.card, colors, kind);
+  for (const row of rows) {
+    const col = board.querySelector(`.propcol[data-color="${row.color}"]`);
+    if (!col) continue;
+    // The chit is a picture of the sentence; the sentence is the mat's own
+    // accessible name. Reading both aloud would be "Drone Ops one of two … one
+    // two SET BEST", which is worse than either.
+    setAttr(col, 'aria-label', sel.adviceSentence(row));
+    col.appendChild(buildChit(row));
+  }
+}
+
+function adviceKind() {
+  if (mode.card?.type === 'rent') return 'rent';
+  if (mode.intent === 'move' && sel.boardMoveTarget(mode.cardId)?.isUpgrade) return 'upgrade';
+  return 'place';
+}
+
+function buildChit(row) {
+  const marks = (row.completes ? 1 : 0) + (row.best ? 1 : 0);
+  const chit = el('div', {
+    class: 'mat-advice',
+    // NOT aria-hidden. The mat carries `role="button"` + `aria-label`, and an
+    // author-supplied name on a button role replaces its contents in the
+    // accessibility tree, so the figures are already not read out twice.
+    // aria-hidden would ALSO take them out of tools/lib/audit.mjs
+    // auditTextContrast(), whose vis() drops `aria-hidden="true"` — hiding new
+    // text from the contrast gate to solve a problem the label already solved.
+    attrs: {
+      'data-best': row.best ? '1' : null,
+      'data-complete': row.completes ? '1' : null,
+      // interact.css collapses the ladder to its landing rung when a WORD has
+      // to share a 48px phone mat with it (see the tier note there).
+      'data-marks': marks ? '1' : null,
+    },
+  });
+  for (let i = 0; i < row.ladder.length; i++) {
+    chit.appendChild(el('span', {
+      class: i + 1 === row.landing ? 'mat-rung is-landing' : 'mat-rung',
+      text: String(row.ladder[i]),
+    }));
+  }
+  if (row.completes) chit.appendChild(el('span', { class: 'mat-mark', text: 'SET' }));
+  if (row.best) chit.appendChild(el('span', { class: 'mat-mark', text: 'BEST' }));
+  return chit;
 }
 
 /* ── a target you cannot see is not a target (§P9 FEEL round 3, landscape) ──
@@ -658,6 +809,7 @@ export function applyMarks() {
         ? (sel.boardMoveTarget(mode.cardId)?.colors || [])
         : (mode.card?.type === 'rent' ? sel.rentColors(mode.card) : sel.placementColors(mode.card));
       markPropColumns(store.self.id, colors);
+      paintAdvice(colors);
     }
   }
 

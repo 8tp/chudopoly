@@ -18,7 +18,7 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
 2. **No build step.** The client ships as native ES modules served statically from `public/`.
    `npm start` must remain the entire deployment story (Railway, single instance).
    `<script type="module" src="/src/main.js?v=...">` — one entry, real imports below it.
-3. **Zero external binary assets, with TWO amendments.** No .png/.jpg/.glb — ever.
+3. **Zero external binary assets, with FOUR amendments.** No .png/.jpg/.glb — ever.
    Every texture, card face, card back and icon is generated in code (CSS, inline SVG /
    SVG data-URIs authored as text, canvas). Enforced by `tools/checkAssets.mjs`.
 
@@ -52,6 +52,12 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    fallbacks chosen so a swap does not reflow the table. `checkAssets.mjs` is narrowed to
    permit that directory and extension, and must fail on any binary elsewhere.
 
+   *Status 2026-08-07: this amendment is PERMISSION, not a description. `public/fonts/`
+   does not exist and there is no `@font-face` anywhere — the game still resolves
+   `--font-display` through the platform stack, so the screenshot gate is still measuring
+   whatever face the running machine supplies. The machine-independence claimed above is
+   available, not yet collected.*
+
    Note what this does **not** license: a **logo is drawn, not set.** The CHUDOPOLY wordmark
    stays hand-authored geometry. A wordmark typed in someone else's typeface is that
    typeface's identity, not ours, and it is the one mark that has to be ours.
@@ -72,7 +78,8 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    Samples would ship the *same* click 400 times.
 
    The music case is different in kind and the numbers say so. A 3-minute bed is ~1.5MB at
-   64k Opus against a **381KB gzipped client** — one track is four times the whole game — so
+   64k Opus against a **~550KiB gzipped client** (381KB was measured before the art, audio
+   and stats rounds landed; re-measure before quoting it) — one track is four times the whole game — so
    this is not a cheap amendment and it carries conditions:
    - **Nothing on first paint.** Lobby bed on first user gesture; match bed at game start;
      Final Approach bed prefetched when a seat reaches two sets. A session pays for one
@@ -81,7 +88,10 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
      (no dead air, no spinner) and they are the fallback when a fetch fails or the player is
      offline. `music.js` does not become a file player with synthesis deleted behind it.
    - `checkAssets.mjs` is narrowed, not weakened: it must still fail on any binary outside
-     that exact directory and extension, and must fail if the track count exceeds four.
+     that exact directory and extension, and must fail if the track count exceeds the cap in
+     amendment (c) — **six**. (This line said "four" until 2026-08-07: amendment (c) raised
+     the cap in the prose above and left the enforcement sentence behind it. `checkAssets.mjs`
+     had it right at `cap: 6`; the law was the thing out of date.)
 
    *Why the amendment, given the previous ruling went the other way:* the research found
    Gatecrash's music is 100% synthesised, which killed the "sampled sounds better" premise

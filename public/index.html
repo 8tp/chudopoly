@@ -123,7 +123,12 @@
            mistake these for cards in play (§0.4). -->
       <div class="home-table">
         <div id="home-deck" class="home-deck" aria-hidden="true"></div>
-        <p class="home-deck-tag">104 cards &middot; 2&ndash;5 seats</p>
+        <!-- 106, not 104: buildDeck() returns 106 and has for some time. The
+             literal was written by hand and then never re-read, which is the
+             whole argument for the deck above it now being built from
+             cardart.js rather than copied. A number nobody derives is a number
+             that drifts. -->
+        <p class="home-deck-tag">106 cards &middot; 2&ndash;5 seats</p>
       </div>
 
       <!-- the hold-short line and everything painted along it -->

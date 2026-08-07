@@ -2,7 +2,8 @@
 /**
  * tools/verify.mjs — the gate. §8, as extended in P7 round 1 and P8:
  *   check → test → checkAssets → checkClient → checkServer → statsfuzz → simbalance →
- *   playtest → touchtest → screenshot → checkContrast → coverage → grayscale → audiotest
+ *   playtest → tabaway → handoff → touchtest → screenshot → checkContrast → coverage →
+ *   grayscale → audiotest
  *
  * P8 adds the two COLOUR gates. ART-DIRECTION §10's ship gate lists "grayscale
  * mid-game@desktop: is hierarchy still readable?" and "both themes ≥4.5:1 on
@@ -66,6 +67,12 @@ if (!FAST) steps.push(['node', ['tools/playtest.mjs'], 'playtest']);
 // socket with it, and asserts both halves of coming back: the client catches up,
 // and there is still a game to catch up to.
 if (!FAST) steps.push(['node', ['tools/tabaway.mjs'], 'tabaway']);
+// The owner started a second game and got the first one's hand back for 1.75s,
+// under an outage notice for a connection they had just asked for. It plays two
+// real Quick Play sessions back to back and samples every frame of the handoff:
+// a defect that lasts a second and a half is invisible to a capture at a fixed
+// delay, which is how this one shipped past every other gate.
+if (!FAST) steps.push(['node', ['tools/handoff.mjs'], 'handoff']);
 steps.push(['node', ['tools/touchtest.mjs'], 'touchtest']);
 // The review set is now gated on its own honesty (duplicate shots, undriven
 // client modes, clipped text, theme pairs that come out identical) — not on

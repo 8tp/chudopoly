@@ -18,7 +18,7 @@
 import { orderChildren, setText, setAttr, setClass, prefersReducedMotion } from '../core/dom.js';
 import { COLOR_KEYS } from '../core/cards.js';
 import { hash1, clamp } from '../core/math.js';
-import { cardNode, getNode, allNodes, forgetNode, refresh, syncBacks, tilt, setRest } from './cardnode.js';
+import { cardNode, getNode, allNodes, forgetNode, refresh, syncBacks, releaseBack, tilt, setRest } from './cardnode.js';
 import * as layout from './layout.js';
 import * as hand from './hand.js';
 import * as flight from '../anim/flight.js';
@@ -783,6 +783,54 @@ function reflowApply() {
     flight.fly(node, { dx, dy, dur: REFLOW_MS, arc: 0, quiet: true, key: i });
   }
   rfNodes.length = 0;
+}
+
+/* ── the felt belongs to ONE game ──────────────────────────────────────────
+ *
+ * OWNER BUG: "when starting a new game it briefly shows your cards/hand from
+ * the last game (says offline) then syncs."
+ *
+ * MEASURED, headless Chromium, quick play → Leave game → quick play: the seven
+ * card nodes of the finished game were STILL PARENTED IN #zone-hand 300ms after
+ * the leave (store.snapshot was already null), the game screen unhid 55ms after
+ * the second Quick Play with all seven of them fanned face-up under a "Hand 0"
+ * label, and the new deal then flew ON TOP of them — 11, then 12 cards in a
+ * hand that holds 7. The last game stayed on the felt for 1.75s, until the
+ * choreographer's TERMINAL reconcile finally culled it.
+ *
+ * The cause is that nothing in the client had ever removed a card node except
+ * reconcile()'s step 2, and reconcile only runs when a NEW snapshot arrives —
+ * so the felt outlived the session that drew it. store.reset() nulls the
+ * snapshot; §10 says the snapshot is truth, so a null one has to mean an empty
+ * table, and until now it did not.
+ *
+ * Everything a game left behind goes: keyed nodes, pooled backs, lifts,
+ * flights, and the chrome that counts them. The boards themselves are
+ * layout.syncSeats()'s business — a new roster rebuilds them, an identical one
+ * (a rematch) keeps them and is repainted.
+ *
+ * Idempotent, and cheap on an already-empty felt: both callers may fire twice.
+ */
+export function clear() {
+  for (const id of [...lifts.keys()]) releaseCard(id, { tail: 0 });
+  flight.finishAll();
+  for (const id of [...allNodes().keys()]) {
+    const node = getNode(id);
+    if (node) { flight.cancel(node); hand.forget(node); }
+    forgetNode(id);
+  }
+  // Only [data-back] children: a zone's placeholders are CSS, but syncBacks()
+  // counts childElementCount and would happily "release" anything else there.
+  for (const key of [...layout.zoneKeys()]) {
+    const zone = layout.zoneEl(key);
+    if (!zone) continue;
+    for (const child of [...zone.children]) if (child.hasAttribute('data-back')) releaseBack(child);
+  }
+  hand.reset();
+  structuralPending = false;
+  setText(document.getElementById('deck-count'), '0');
+  setText(document.getElementById('discard-count'), '0');
+  setClass(document.getElementById('table'), 'deck-empty', false);
 }
 
 /* ── reconcile ─────────────────────────────────────────────────────────── */

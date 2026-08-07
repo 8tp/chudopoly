@@ -15,7 +15,7 @@ export const EVENTS = Object.freeze({
   NET_NEED_PAYMENT: 'net:need_payment',
   NET_SENT: 'net:sent',
 
-  STATE_APPLIED: 'state:applied',     // { snapshot, room, events, snap }
+  STATE_APPLIED: 'state:applied',     // { snapshot, room, events, snap, fresh }
   STATE_SCREEN: 'state:screen',       // 'home' | 'lobby' | 'game'
 
   CHOREO_EVENT: 'choreo:event',       // one engine event reached the table

@@ -63,8 +63,16 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    typeface's identity, not ours, and it is the one mark that has to be ours.
 
    **AMENDED 2026-08-07 — recorded music, and only music, may ship as files.** Scope:
-   `public/audio/*.opus`, at most **six** tracks (one lobby bed, two match beds, one Final
-   Approach bed, and a victory / defeat pair).
+   `public/audio/*.opus`, at most **eight** tracks (one lobby bed, **four** match beds, one
+   Final Approach bed, and a victory / defeat pair).
+
+   *Raised six → eight on 2026-08-07 (e), owner directive, and the load policy is what makes
+   it nearly free: **a session pays for ONE match bed no matter how many exist**, because the
+   bed is chosen at game start and never rotated inside a match. So the extra tracks cost
+   repository size and a first-fetch on the day a player happens to roll one — not per-session
+   payload. Four beds also fix the thing that prompted this: at two, a player sees the same
+   bed twice in a row 50% of the time, which reads as "there is only one track". At four with
+   no-immediate-repeat, never.*
 
    *The cap moved four → six on 2026-08-07 (c), owner directive, and the endgame pair is
    cheap in a way the beds are not: 40s rather than 3 minutes, so **322KB + 317KB** against

@@ -18,9 +18,34 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
 2. **No build step.** The client ships as native ES modules served statically from `public/`.
    `npm start` must remain the entire deployment story (Railway, single instance).
    `<script type="module" src="/src/main.js?v=...">` — one entry, real imports below it.
-3. **Zero external binary assets, with ONE amendment.** No .png/.jpg/.woff/.glb — ever.
+3. **Zero external binary assets, with TWO amendments.** No .png/.jpg/.glb — ever.
    Every texture, card face, card back and icon is generated in code (CSS, inline SVG /
    SVG data-URIs authored as text, canvas). Enforced by `tools/checkAssets.mjs`.
+
+   **AMENDED 2026-08-07 (b) — self-hosted webfonts are permitted.** `public/fonts/*.woff2`.
+   This rule was over-broad from the day it was written: it filed fonts alongside textures
+   and sounds, but a texture generated in code *is* the art, whereas a font generated in
+   code is just a worse font. The payload argument also died on the spot the moment this
+   same section accepted 5.2MB of music — a woff2 subset is 20–80KB, well under 2% of what
+   the audio costs.
+
+   The determinism argument runs the **opposite** way from how it was assumed, and this is
+   the real reason to make the change. `--font-display` currently resolves to `ui-rounded` /
+   `SF Pro Rounded` on macOS, `Segoe UI Variable Display` on Windows, and something else
+   again on Linux — so the game has no fixed letterform, and `tools/screenshot.mjs`, which
+   hashes PNGs, is measuring whatever font the machine that ran it happened to have.
+   **Self-hosting makes the screenshot gate machine-independent for the first time.**
+
+   Conditions: OFL / Apache-2.0 / similarly permissive licences **only** (verify and record
+   the licence per file — a font EULA that bars web embedding is the common trap); woff2,
+   subset to the glyphs actually used; `font-display: swap` with the existing system stack
+   as the fallback so a failed fetch degrades instead of blanking; and metric-compatible
+   fallbacks chosen so a swap does not reflow the table. `checkAssets.mjs` is narrowed to
+   permit that directory and extension, and must fail on any binary elsewhere.
+
+   Note what this does **not** license: a **logo is drawn, not set.** The CHUDOPOLY wordmark
+   stays hand-authored geometry. A wordmark typed in someone else's typeface is that
+   typeface's identity, not ours, and it is the one mark that has to be ours.
 
    **AMENDED 2026-08-07 — recorded music, and only music, may ship as files.** Scope:
    `public/audio/*.opus`, at most **four** tracks (one lobby bed, two match beds, one Final

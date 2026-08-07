@@ -227,9 +227,15 @@ export function paintBoard(player, snapshot) {
   const botTag = board.querySelector('.board-bot');
   if (botTag) {
     if (seat?.isBot) {
-      setText(botTag, botLabel(seat.botMode));
+      // OWNER DIRECTIVE 2026-08-07: a bot's PERSONALITY is not shown at the
+      // table. Knowing a seat is "aggressive" before it has done anything tells
+      // you how to play against it for free — you should have to read the table,
+      // not the label. The seat still says it is a bot (you can see it never
+      // hesitates); `data-bot` stays generic so styling and the long-press brief
+      // keep working without leaking the mode.
+      setText(botTag, 'BOT');
       botTag.hidden = false;
-      setAttr(board, 'data-bot', seat.botMode || 'bot');
+      setAttr(board, 'data-bot', 'bot');
     } else {
       botTag.hidden = true;
       setAttr(board, 'data-bot', null);

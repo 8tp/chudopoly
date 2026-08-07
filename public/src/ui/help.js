@@ -691,14 +691,17 @@ function pageBots() {
     p('Every bot plays the same rules you do. What changes is how hard it hits, what it '
       + 'bothers to block, and how fast it thinks.', 'brief-lede'),
   ];
+  // OWNER DIRECTIVE 2026-08-07: which personality a given seat is playing is NOT
+  // disclosed. The five personalities are still documented — knowing what the
+  // game can throw at you is fair, and it is what makes a bot's behaviour
+  // readable once you have watched it — but which seat is which is something you
+  // work out from play, not something the UI hands you before the first turn.
   if (seated.length) {
-    out.push(el('h5', { class: 'brief-sub', text: 'At this table' }));
-    out.push(rules(seated.map(x => [`${x.name} — ${botLabel(x.botMode)}`, botBlurb(x.botMode)])));
     out.push(el('h5', { class: 'brief-sub', text: 'Every personality' }));
   }
   out.push(rules(BOT_ORDER.map(mode => [BOT_LABEL[mode], BOT_BLURB[mode]])));
-  out.push(note('A seat a player leaves mid-game is taken over by a bot, and the server picks '
-    + 'its personality. The board says which one — long-press an opponent board to read it.'));
+  out.push(note('Which seat is playing which personality is never shown — read the table, not '
+    + 'the label. A seat a player leaves mid-game is taken over by a bot the same way.'));
   return out;
 }
 
@@ -706,11 +709,14 @@ function pageBots() {
 export function botBrief(playerId) {
   const seat = (store.room?.players || []).find(x => x.id === playerId) || null;
   if (!seat?.isBot) return null;
+  // The personality stays hidden here too — this used to be the one place you
+  // could look it up mid-game, which made every other concealment cosmetic.
   return {
-    title: `${seat.name} — ${botLabel(seat.botMode)}`,
+    title: seat.name,
     body: el('div', { class: 'details' }, [
       el('p', { class: 'details-kind', text: 'Bot opponent' }),
-      el('p', { class: 'details-rule', text: botBlurb(seat.botMode) }),
+      el('p', { class: 'details-rule', text: 'Its personality is not disclosed. Watch what it '
+        + 'blocks, what it hoards, and how fast it hits back.' }),
       note('All five personalities are in the brief under Bots.'),
     ]),
   };

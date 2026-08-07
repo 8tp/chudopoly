@@ -141,7 +141,24 @@
    never be confused at a glance or in a still frame. */
 .board.is-turn { outline: var(--ring); outline-offset: 3px; }
 .board-self.is-turn { outline: none; }
-.board.is-out { opacity: .45; filter: grayscale(.85); }
+/* ELIMINATED — the colour is gone, the seat is not.
+   MEASURED (checkContrast round 6, final-approach·light and payment·light): the
+   old `opacity: .45` composited every run in the seat toward the apron behind
+   it, so a mat nameplate that clears 5.07:1 on its own plate landed at 1.44:1
+   the moment its player was out — and a fifth of the table's text going illegal
+   for a state change is the wrong trade. `opacity` cannot be tuned out of it
+   either: at .75, the worst pair still computes 3.34:1.
+   Drain instead of fade. `grayscale(1)` on a seat whose ten mats are the only
+   saturated things in the region is a louder statement than a fade was — every
+   other seat still has its sets and this one has none — and it is a channel
+   that preserves every contrast ratio inside the subtree exactly. The plate
+   drops to the deep ground and the cut goes deeper, so the seat also reads as
+   out with the hue removed (§10 grayscale). */
+.board.is-out {
+  filter: grayscale(1);
+  background: var(--ground-deep);
+  box-shadow: var(--deboss-deep);
+}
 .board.is-winner { outline: 3px solid var(--foil); outline-offset: 3px; }
 
 .board-head {
@@ -287,12 +304,13 @@
      portrait, 41-54 × 17 landscape. */
   min-width: max(calc(var(--card-w) + .5em), calc(var(--tap) + .45em));
   min-height: var(--tap);
-  padding: 0 .22em .22em;
+  --mat-pad: .22em;
+  padding: 0 var(--mat-pad) var(--mat-pad);
   border-radius: var(--radius);
-  /* the mat wash + the 3px rail, in one background stack. No border anywhere. */
-  background:
-    linear-gradient(var(--rail), var(--rail)) top / 100% 4px no-repeat,
-    color-mix(in oklab, var(--band, var(--fg-mute)) var(--mat-alpha), var(--surface));
+  /* the mat wash. The rail is no longer painted here: .propcol-head IS the rail
+     now (see the nameplate note below), so a second bar under it was a second
+     stripe of the same colour with nothing between them. No border anywhere. */
+  background: color-mix(in oklab, var(--band, var(--fg-mute)) var(--mat-alpha), var(--surface));
   box-shadow: var(--deboss);
 }
 /* An empty colour is a PLACE on the mat — a printed card outline waiting for a
@@ -303,9 +321,7 @@
    it — same plate, half the wash, shallower cut. */
 .propcol[data-empty="1"] {
   position: relative;
-  background:
-    linear-gradient(var(--rail), var(--rail)) top / 100% 4px no-repeat,
-    color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) / 2), var(--surface));
+  background: color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) / 2), var(--surface));
   box-shadow: inset 0 1px 2px var(--shade);
 }
 /* The slot is PRINTED on the mat, and ROUND-5 changes WHAT is printed. It was
@@ -339,25 +355,58 @@
 /* A completed set signs itself in ITS OWN colour — the rail thickens and the
    wash comes up. Never in foil: foil is the victory modal and nothing else. */
 .propcol.is-complete {
-  background:
-    linear-gradient(var(--rail), var(--rail)) top / 100% 6px no-repeat,
-    color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) + 10%), var(--surface));
+  background: color-mix(in oklab, var(--band, var(--fg-mute)) calc(var(--mat-alpha) + 10%), var(--surface));
   box-shadow: var(--deboss-deep);
 }
-.propcol.is-complete .propcol-head { color: var(--fg); font-weight: 800; }
+/* A complete set signs itself with a HEAVIER NAMEPLATE, not a different colour:
+   the plate keeps the set hue and gains a stock-coloured rule along its bottom
+   edge — the same "double line" a stamped placard uses. Colour stays the set's;
+   material carries the state (§1). */
+.propcol.is-complete .propcol-head {
+  font-weight: 800;
+  box-shadow: inset 0 -2px 0 var(--band-ink), 0 1px 0 var(--shade-2);
+}
 
+/* ── THE NAMEPLATE IS THE RAIL ────────────────────────────────────────────
+   ROUND-6, and this is what put checkContrast into the red: the restored mat
+   name was `--fg-mute` painted on the mat WASH, and a wash is by construction a
+   value between the plate and the hue — the one background in the app whose
+   contrast is a function of two other decisions. MEASURED across the review set,
+   89 runs failed §0.9 on it, worst cases:
+       light  Command  #2E333B on rgb(128,134,155)  3.51:1
+       light  Bases    #2E333B on rgb(131,146,134)  3.88:1
+       dark   Mobility #ACB7C5 on rgb( 83, 81, 73)  3.91:1
+   and raising the wash to fix the dark theme lowers it in the light one, so
+   there is no alpha that satisfies both.
+
+   §2 already publishes a background whose contrast is verified for all ten sets
+   in BOTH themes and needs no mixing at all: the set colour itself, at 100%,
+   with `--band-ink` on it (worst case Mobility, 5.07:1). That is exactly the
+   material a card's own band is made of — so a mat is now labelled the way a
+   card is labelled, which is the vocabulary a player already learned from the
+   deck, and the 4px rail that used to sit here becomes the plate carrying its
+   own name instead of a bar next to one.
+
+   Second thing it buys, and the reason it is worth the ink: the LOOK review
+   measured six light-theme mats (Drone/T&E/Fighters/Mobility/Overseas/Intel)
+   rendering as one taupe, because a wash over an L*70 plate compresses ten hues
+   into four tones. A 100%-saturation plate does not compress — each mat now
+   carries its set at full strength, over the wash rather than instead of it, so
+   hue separation stops being a function of the ground it is painted on. */
 .propcol-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: .3em;
-  /* MEASURED (checkContrast, mid-game·dark): the tally sat ON the completed
-     set's rail — bone-on-rail at 1.82:1. The head starts below the rail at
-     every state, so the rail is a rail and the figure is on the mat. */
-  padding-top: 6px;
+  /* full-bleed to the mat's trim: the plate IS the top edge of the mat */
+  margin: 0 calc(-1 * var(--mat-pad));
+  padding: 2px calc(var(--mat-pad) + .12em);
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--band, var(--fg-mute));
+  color: var(--band-ink);
   font-size: .58em;
-  line-height: 1.35;
+  line-height: 1.3;
   white-space: nowrap;
-  color: var(--fg);
 }
 .propcol-count { font-weight: 700; flex: 0 0 auto; }
 /* ── §3.6, THE CAPS BUDGET — AND WHAT IT COST (round-5 correction) ─────────
@@ -386,7 +435,7 @@
      text, and it is right to. A name that does not fit wraps. */
   white-space: normal;
   overflow-wrap: break-word;
-  color: var(--fg-mute);
+  color: inherit;
 }
 /* The SHORT tag is the default and the full name is the desktop upgrade, not
    the other way round. MEASURED at 390×844: with "Overseas Bases" and "Elite
@@ -400,7 +449,6 @@
   line-height: 1.3;
   letter-spacing: 0;
 }
-.propcol.is-complete .propcol-name { color: var(--fg); }
 /* Below the desktop grid a mat is only ~53px wide (the tap floor plus a card),
    and a nameplate SHARING the line with the tally sets the mat's min-content
    width — measured at 390×844, that took .self-board from 226px of mats to 320
@@ -486,14 +534,29 @@
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
-  padding: 0 .55em;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .6em, #000 calc(100% - .6em), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 .6em, #000 calc(100% - .6em), transparent 100%);
+  /* ── WHY THE FEATHER IS 4px AND NOT 10 ──────────────────────────────────
+     MEASURED (checkContrast round 6, mid-game·light, payment·light,
+     final-approach·light): a mask ramp is alpha, and alpha over the apron is a
+     contrast reduction applied to the TEXT as well as to the plate under it.
+     The nameplate's own worst pair is 5.07:1 (bone on Mobility), and composited
+     at the ramp's own alpha it computes 4.37:1 at α=.95, 4.14 at α=.90 and
+     3.34 at α=.75 — i.e. there is no useful ramp width at which a label caught
+     under the feather is still legal. It bit exactly the mats the fade exists
+     for: BASES 3/4 and INTEL 1/2, the two at the right-hand end.
+     The feather stays, at .28em — narrower than a glyph, so a clipped label's
+     modal background is still its own plate and the reading is still the
+     reading — and the SIGNAL moves to the shade in the gutter, which is what
+     was carrying it anyway (see the `local` layers below: they can only appear
+     at an end that has content behind it). The gutter widens to .7em so the
+     shade has room to be a shade rather than a hairline. */
+  padding: 0 .7em;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .28em, #000 calc(100% - .28em), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 .28em, #000 calc(100% - .28em), transparent 100%);
   background:
-    linear-gradient(90deg, var(--surface) 40%, rgba(0, 0, 0, 0)) 0 0 / 1.2em 100% no-repeat local,
-    linear-gradient(-90deg, var(--surface) 40%, rgba(0, 0, 0, 0)) 100% 0 / 1.2em 100% no-repeat local,
-    linear-gradient(90deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / .9em 100% no-repeat,
-    linear-gradient(-90deg, var(--shade-2), rgba(0, 0, 0, 0)) 100% 0 / .9em 100% no-repeat;
+    linear-gradient(90deg, var(--surface) 46%, rgba(0, 0, 0, 0)) 0 0 / 1.4em 100% no-repeat local,
+    linear-gradient(-90deg, var(--surface) 46%, rgba(0, 0, 0, 0)) 100% 0 / 1.4em 100% no-repeat local,
+    linear-gradient(90deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 1.1em 100% no-repeat,
+    linear-gradient(-90deg, var(--shade-2), rgba(0, 0, 0, 0)) 100% 0 / 1.1em 100% no-repeat;
 }
 .opponents .board-props::-webkit-scrollbar { height: 0; }
 .opponents .propcol { flex: 0 0 auto; }
@@ -507,7 +570,8 @@
   flex: 0 0 auto;
   min-width: calc(var(--tap) + .2em);
   min-height: var(--tap);
-  padding: 0 .1em .12em;
+  --mat-pad: .1em;
+  padding: 0 var(--mat-pad) .12em;
   scroll-snap-align: start;
 }
 .opponents .board { scroll-snap-align: start; }
@@ -680,9 +744,19 @@
   justify-content: safe center;
   scrollbar-width: none;
 }
-.zone-hand:has(> .card:nth-child(6)) { --card-w: calc(var(--s) * 4.3); --fan-cover: .06; }
-.zone-hand:has(> .card:nth-child(7)) { --card-w: calc(var(--s) * 3.6); --fan-cover: .04; }
-.zone-hand:has(> .card:nth-child(8)) { --card-w: calc(var(--s) * 3.1); --fan-cover: .02; }
+/* The count ramp exists so a wide hand's NAMES are not occluded by the next card
+   (the fan overlaps from the right). But it was doing that job twice: the cover
+   shrinks as well, and by 8 cards the cover is .02 — almost no overlap left to
+   compensate for. The old ramp still took the card to 3.1s (~56px on a 1440p
+   desktop) while ~200px of table sat empty above the dock, which is the "hand is
+   way too small" the owner reported. Gentler steps, and a hard floor at the tap
+   size so a full hand can never fall below a thumb. */
+.zone-hand:has(> .card:nth-child(6)) { --card-w: max(var(--card-tap), calc(var(--s) * 4.8)); --fan-cover: .07; }
+.zone-hand:has(> .card:nth-child(7)) { --card-w: max(var(--card-tap), calc(var(--s) * 4.5)); --fan-cover: .05; }
+.zone-hand:has(> .card:nth-child(8)) { --card-w: max(var(--card-tap), calc(var(--s) * 4.2)); --fan-cover: .035; }
+/* Past the hand limit the fan is a temporary state (you are about to discard),
+   so it may tighten further rather than push the dock into the table. */
+.zone-hand:has(> .card:nth-child(10)) { --card-w: max(var(--card-tap), calc(var(--s) * 3.6)); --fan-cover: .02; }
 .zone-hand::-webkit-scrollbar { display: none; }
 .zone-hand .card { flex: 0 0 auto; }
 .zone-hand .card:not(:first-child) { margin-left: calc(-1 * var(--fan-cover) * var(--card-w)); }
@@ -930,7 +1004,8 @@
        board went from 291px of content in a 291px pane to 307 in 278 on
        final-approach@desktop — which is what put the sticky bank over the
        Command mat. Every px below was measured out of a specific box. */
-    padding: 0 3px 4px;
+    --mat-pad: 3px;
+    padding: 0 var(--mat-pad) 4px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "head head" "props ups";
@@ -1801,9 +1876,14 @@
           and it costs no JS and no scroll listener. It is painted BEHIND the
           mats, which is precisely why it needs the mask: the shade is only
           visible in the strip where the mats have faded out. */
+    /* ROUND-6: the 2.2em ramp is alpha over the mat nameplates, which now carry
+       the set at full strength and 5.07:1 worst case — see the .28em note on
+       .opponents .board-props for the arithmetic that says a feather wide
+       enough to "dissolve a whole mat edge" also takes that pair to 3.3:1. The
+       cue was never the feather; it is the `local` shade below. */
     padding: 0 2em;
-    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 2.2em, #000 calc(100% - 2.2em), transparent 100%);
-    mask-image: linear-gradient(90deg, transparent 0, #000 2.2em, #000 calc(100% - 2.2em), transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .4em, #000 calc(100% - .4em), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 .4em, #000 calc(100% - .4em), transparent 100%);
     background:
       linear-gradient(90deg, var(--ground) 40%, rgba(0, 0, 0, 0)) 0 0 / 3em 100% no-repeat local,
       linear-gradient(-90deg, var(--ground) 40%, rgba(0, 0, 0, 0)) 100% 0 / 3em 100% no-repeat local,
@@ -1820,7 +1900,8 @@
   .board-self .propcol {
     flex: 0 0 auto;
     min-width: calc(var(--card-tap) + 4px);
-    padding: 0 2px 2px;
+    --mat-pad: 2px;
+    padding: 0 var(--mat-pad) 2px;
     scroll-snap-align: start;
     min-height: var(--tap);
   }

@@ -409,7 +409,10 @@ function render() {
       el('span', { class: 'lobby-seat-name', text: player.name }),
       el('span', {
         class: 'lobby-seat-tag',
-        text: player.isBot ? `BOT · ${BOT_LABEL[player.botMode] || 'BOT'}`
+        // OWNER DIRECTIVE 2026-08-07: personalities are not disclosed, here or at
+        // the table — including to the host, whose own picks would otherwise be a
+        // seating chart everyone else is denied. Quick Play assigns them anyway.
+        text: player.isBot ? 'BOT'
           : (player.id === store.room.hostId ? 'HOST' : (player.connected ? '' : 'OFFLINE')),
       }),
     ]);
@@ -434,9 +437,10 @@ function render() {
     // and crushed every seat NAME to 8-18px of the 28-64px it needed — four clipped
     // runs on desktop and four on phone. The name is the thing that must never be
     // clipped, so the explanation goes on its own line beneath.
-    if (player.isBot) {
-      list.appendChild(el('p', { class: 'hint lobby-seat-why', text: botBlurb(player.botMode) }));
-    }
+    // The per-seat blurb is gone with the label it explained (owner directive):
+    // it named the personality in prose, so keeping it would have leaked exactly
+    // what the tag stopped showing. The five personalities are still documented
+    // in the brief under Bots — what is hidden is WHICH seat is which.
   }
 }
 

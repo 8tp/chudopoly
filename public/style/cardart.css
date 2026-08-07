@@ -223,13 +223,18 @@
    corner on the rent chassis. §6 says disc. A disc is `aspect-ratio: 1` plus a
    floor of 22% of the card width, and the numerals are centred in it rather
    than padding it out sideways. */
+/* ROUND-5 FIX: `min-width: 24cqw` is a floor for the SMALL tiers, where the coin
+   would otherwise collapse to a lozenge. It must never be the rule at peek tier:
+   the peek container is ~2.1x a hand card, so 24cqw there resolved to a ~90px
+   disc that forced the whole card taller than the viewport and painted a black
+   circle over the rules text. The floor is applied per tier below, not here. */
 .ca-val {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
   aspect-ratio: 1;
-  min-width: 24cqw;
+  min-width: 2.1em;
   padding: 0;
   font-family: var(--ca-mono);
   font-weight: 700;
@@ -572,7 +577,9 @@
 .ca-peek .ca-rule { margin: 0; font-weight: 500; font-size: 12.5px; line-height: 1.42; text-transform: none; }
 .ca-peek .ca-foot { margin-top: 8px; }
 .ca-peek .ca-serial { font-size: 8px; }
-.ca-peek .ca-val { font-size: 12px; padding: 2px 7px; }
+/* An explicit disc, in px — the peek is the one tier whose container is large
+   enough that any cqw-relative floor becomes a blot. */
+.ca-peek .ca-val { font-size: 12px; min-width: 26px; padding: 0; }
 .ca-peek .ca-mnum b { font-size: 58px; }
 .ca-peek .ca-mnum i { font-size: 17px; }
 .ca-peek.ca-money .ca-title { font-size: 11px; }

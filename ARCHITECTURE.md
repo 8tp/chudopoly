@@ -282,6 +282,16 @@ ephemeral port, plus Node-only engine tools. Every tool exits nonzero on failure
 | `tools/screenshot.mjs` | review set at desktop / phone / landscape. Client-side moments are **driven, not staged** (`drive` + `expect` per shot); every PNG is hashed and **two differently-named shots sharing an image is a failure**; `auditClippedText` runs in-page at every capture |
 | `tools/audiotest.mjs` | OfflineAudioContext: peak ≤ 0dBFS, chime ladder monotonic, sour below chime-0, **every loss cue louder than shuffle/snap/timer**, `droppedPriority === 0`, match music below `card_slide` |
 | `tools/record.mjs` | fixtures from real seeded games; **fails if two moments select the same state** |
+| `tools/checkContrast.mjs` | §0.9 text contrast in **both themes plus the `[data-theme]` override**; ink from `getComputedStyle`, paper **refined from the rendered frame** where the CSS answer is fiction (`#btn-quick-play` reads 1.22:1 in CSS, 8.4:1 painted); occluded and sub-8px runs counted, never gated; proven to fail (`--prove` injects `#6a6f78` → 0→31) |
+| `tools/grayscale.mjs` | ART §10 grayscale hierarchy in CIE L\*: bulk range ≥45 and ≥3 tonal tiers. Plain figure-ground was **tried and rejected** — ART §2 puts L\* 97 stock on L\* 88 concrete, so that assertion would fail the ratified design. Proven to fail (flat-grey and no-ink-slab mutations both red; both simulated themes green) |
+
+`tools/screenshot.mjs` additionally carries a **theme axis** (light+dark on a
+representative subset; a byte-identical pair fails **by name**, `--prove-theme`
+demonstrates it), **held-input shots** (mid-drag, peek) driven by real mouse/CDP
+touch across the shutter, and captures only **settled frames with client storage
+reset** — two harness bugs that had been silently corrupting every byte-identical
+rule (the same seed produced 36.8 vs 86.9 L\*, and once-ever hints surviving
+`page.goto` produced two images 21,593 pixels apart from identical state).
 
 `npm run verify` chains: `check → test → checkAssets → checkClient → checkServer → simbalance →
 playtest → touchtest → screenshot → audiotest`. **Strict is the default** — a skipped gate

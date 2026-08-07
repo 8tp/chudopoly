@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 /**
- * tools/verify.mjs — the gate. §8, as extended in P7 round 1:
+ * tools/verify.mjs — the gate. §8, as extended in P7 round 1 and P8:
  *   check → test → checkAssets → checkClient → checkServer → simbalance →
- *   playtest → touchtest → screenshot → audiotest
+ *   playtest → touchtest → screenshot → checkContrast → grayscale → audiotest
+ *
+ * P8 adds the two COLOUR gates. ART-DIRECTION §10's ship gate lists "grayscale
+ * mid-game@desktop: is hierarchy still readable?" and "both themes ≥4.5:1 on
+ * every text token" as checkboxes, and a checkbox nobody can run is a wish. Both
+ * are strict, both are calibrated against builds that fail (see each tool's
+ * header, and `--prove` on either one), and both were RED when they landed.
  *
  * EXIT CODE 2 IS A SKIP, NOT A PASS. It existed because P2 (the harness) landed
  * before P3 (the client): without it every tool reported red for work that had
@@ -14,8 +20,8 @@
  * The five round-1 critics all found defects that gates had reported PASS
  * through; a silently-skipped gate is the same failure with fewer steps.
  *
- * Flags: --fast (skip playtest/simbalance/screenshot), --allow-skips (restore
- *        the old lenient behaviour), --strict (kept as a no-op alias),
+ * Flags: --fast (skip playtest/simbalance/screenshot/grayscale), --allow-skips
+ *        (restore the old lenient behaviour), --strict (kept as a no-op alias),
  *        --games N (simbalance sample size)
  */
 import { spawn } from 'node:child_process';
@@ -53,8 +59,15 @@ if (!FAST) steps.push(['node', ['tools/simbalance.mjs', '--games', String(args.g
 if (!FAST) steps.push(['node', ['tools/playtest.mjs'], 'playtest']);
 steps.push(['node', ['tools/touchtest.mjs'], 'touchtest']);
 // The review set is now gated on its own honesty (duplicate shots, undriven
-// client modes, clipped text) — not on pixels, which §8 still forbids.
+// client modes, clipped text, theme pairs that come out identical) — not on
+// pixels, which §8 still forbids.
 if (!FAST) steps.push(['node', ['tools/screenshot.mjs'], 'screenshot']);
+// §0.9 / ART §10, both themes. Runs in the inner loop too: a contrast
+// regression is cheap to introduce and expensive to find by eye.
+steps.push(['node', ['tools/checkContrast.mjs'], 'checkContrast']);
+// ART §10's grayscale ship gate. Skipped by --fast only because it captures
+// its own frames and wants them settled.
+if (!FAST) steps.push(['node', ['tools/grayscale.mjs'], 'grayscale']);
 steps.push(['node', ['tools/audiotest.mjs'], 'audiotest']);
 
 const results = [];
@@ -91,7 +104,7 @@ if (skipped) {
 }
 
 if (FAST) {
-  console.log(yellow(bold('\n  ⚠  --fast: simbalance, playtest and screenshot did not run.')));
+  console.log(yellow(bold('\n  ⚠  --fast: simbalance, playtest, screenshot and grayscale did not run.')));
 }
 
 if (failed) {

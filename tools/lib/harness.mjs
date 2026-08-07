@@ -158,6 +158,67 @@ export async function requireBridge(page, timeoutMs = 8000) {
   return true;
 }
 
+/**
+ * Make every navigation in this context start from a first-time player's
+ * storage. Call once, right after openPage; it applies to every later goto.
+ *
+ * P8, measured with `screenshot --prove-theme`: two takes of `mid-game@desktop`
+ * from the same state and the same theme produced two DIFFERENT images, 21593
+ * pixels apart in one 432×50 band. The band was the coach hint. ui/hints.js
+ * shows each hint "once ever", backed by a localStorage key that survives
+ * `page.goto` inside a context — so the first shot of a run got a hint bubble
+ * and every later shot did not, and which shots those were depended on the
+ * order of the shot list. Both byte-identical rules (duplicate shots, theme
+ * pairs) and the contrast counts were being compared across frames that
+ * differed for a reason that had nothing to do with what they measure.
+ *
+ * Clearing rather than pre-seeding: the coach layer occluding a CTA was a
+ * round-1 finding, so the review set must keep showing it. LIFE_MS is 9s and a
+ * take completes in ~2s, so a cleared hint is reliably present, not racing.
+ */
+export async function pristineStorage(context) {
+  await context.addInitScript(() => {
+    try { localStorage.clear(); sessionStorage.clear(); } catch { /* private mode */ }
+  });
+}
+
+/**
+ * Screenshot the page only once the frame has STOPPED CHANGING.
+ *
+ * P8, measured: `grayscale.mjs` reported `mid-game@desktop` bulk tonal range as
+ * 36.8 L* on one run and 86.9 L* on the next, from the same seed and the same
+ * fixture, because a fixed `waitForTimeout(250)` sometimes caught the hand fan
+ * mid-layout and the card faces mid-build — 3% of the frame was card stock in
+ * one run and 5% in the other, and p95 sits exactly on that boundary. A colour
+ * gate that measures a half-drawn frame is worse than no gate: it produces a
+ * number, and the number is fiction.
+ *
+ * Two consecutive identical PNGs is the only settled-frame signal that does not
+ * require the client to cooperate. Returns the buffer plus how long it took, so
+ * a caller can report "never settled" instead of silently measuring churn.
+ */
+export async function stableScreenshot(page, opts = {}) {
+  const gap = opts.gap ?? 120;
+  const budgetMs = opts.budgetMs ?? 3000;
+  const shot = () => page.screenshot({ animations: 'disabled', timeout: 15000 });
+  const started = Date.now();
+  let prev = await shot();
+  let prevKey = prev.length + ':' + prev.subarray(0, 4096).toString('base64');
+  let frames = 1;
+  while (Date.now() - started < budgetMs) {
+    await page.waitForTimeout(gap);
+    const next = await shot();
+    frames++;
+    const key = next.length + ':' + next.subarray(0, 4096).toString('base64');
+    if (key === prevKey && next.equals(prev)) {
+      return { buffer: next, settled: true, ms: Date.now() - started, frames };
+    }
+    prev = next;
+    prevKey = key;
+  }
+  return { buffer: prev, settled: false, ms: Date.now() - started, frames };
+}
+
 export function readJSON(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }

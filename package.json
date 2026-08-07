@@ -19,7 +19,10 @@
     "tool:playtest": "node tools/playtest.mjs",
     "tool:touchtest": "node tools/touchtest.mjs",
     "tool:screenshot": "node tools/screenshot.mjs",
-    "tool:audiotest": "node tools/audiotest.mjs"
+    "tool:audiotest": "node tools/audiotest.mjs",
+    "tool:contrast": "node tools/checkContrast.mjs",
+    "tool:grayscale": "node tools/grayscale.mjs",
+    "tool:prove": "node tools/checkContrast.mjs --prove; node tools/grayscale.mjs --prove"
   },
   "engines": {
     "node": ">=20 <25"

@@ -352,6 +352,227 @@ export function shrinkViewportForKeyboard(kb) {
   return true;
 }
 
+/* ─────────────────────── text contrast (§0.9, ART §10) ─────────────────── */
+
+/**
+ * §0.9 / ART-DIRECTION §10: "Both themes ≥4.5:1 on every text token."
+ *
+ * P8 GAP: nothing measured contrast. ART §2 publishes pre-verified ratios for
+ * the token VALUES, but a token's published ratio is a claim about a pair
+ * (`--fg` on `--ground`); it says nothing about the pair a given string is
+ * ACTUALLY painted in. A dual-theme system multiplies the pairs by two and a
+ * screenshot review cannot read a ratio off a picture — the failure mode this
+ * catches is `--fg-mute` landing on `--ground-deep` in exactly one theme,
+ * which looks fine in the dark shot and is 3.1:1 in the light one.
+ *
+ * Method (WCAG 2.x, the same relative-luminance formula as ART §2):
+ *   • effective text colour  = own `color`, composited over the background
+ *     stack if the colour itself is translucent,
+ *   • effective background   = the ancestor `background-color` stack composited
+ *     down to the first opaque layer,
+ *   • threshold              = 3:1 for large text (≥24px, or ≥18.66px at ≥700),
+ *     4.5:1 otherwise — WCAG 1.4.3 as §0.9 cites it.
+ *
+ * `approx: true` marks a sample whose background stack included a
+ * `background-image` (the apron gradient, card art, hazard stripes, the
+ * metallic-gradient buttons ART §3.4 wants killed). For those the CSS stack
+ * bottoms out at whatever colour sits UNDER the image, which is routinely the
+ * page — measured on `home@desktop`, `#btn-quick-play` reads "1.22:1" against
+ * the body while the eye sees dark ink on a bright brass gradient. So this
+ * returns EVERY sample with its rect, and `checkContrast.mjs` re-derives the
+ * background of an `approx` sample from the rendered pixels. CSS supplies the
+ * ink; the frame supplies the paper.
+ *
+ * Fully transparent text is skipped, not failed: `color: transparent` on a
+ * buried card's band (table.css:654) is a deliberate *hiding*, and 39 of them
+ * would otherwise drown every real violation at a nominal 0:1.
+ */
+export function auditTextContrast() {
+  const parse = (c) => {
+    const m = String(c).match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    if (p.length < 3 || p.some((n) => Number.isNaN(n))) return null;
+    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  };
+  const over = (fg, bg) => ({
+    r: fg.r * fg.a + bg.r * (1 - fg.a),
+    g: fg.g * fg.a + bg.g * (1 - fg.a),
+    b: fg.b * fg.a + bg.b * (1 - fg.a),
+    a: 1,
+  });
+  const lin = (v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+  const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+  const ratio = (a, b) => {
+    const [hi, lo] = lum(a) >= lum(b) ? [lum(a), lum(b)] : [lum(b), lum(a)];
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  /** Composite every ancestor background-color down to the first opaque one. */
+  const backdrop = (el) => {
+    const stack = [];
+    let img = false;
+    for (let p = el; p; p = p.parentElement) {
+      const st = getComputedStyle(p);
+      if (st.backgroundImage !== 'none') img = true;
+      const c = parse(st.backgroundColor);
+      if (!c || c.a === 0) continue;
+      stack.push(c);
+      if (c.a >= 0.999) break;
+    }
+    // Canvas under everything. `html`'s own colour already entered the stack if
+    // it had one; this is the paper the last translucent layer sits on.
+    let out = { r: 255, g: 255, b: 255, a: 1 };
+    const html = parse(getComputedStyle(document.documentElement).backgroundColor);
+    if (html && html.a >= 0.999) out = html;
+    for (let i = stack.length - 1; i >= 0; i--) out = over(stack[i], out);
+    return { col: out, img };
+  };
+
+  const vis = (el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    if (Number(st.opacity) < 0.15) return false;          // faded-out layers are not text
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    for (let p = el; p; p = p.parentElement) {
+      if (p.hasAttribute?.('hidden')) return false;
+      if (Number(getComputedStyle(p).opacity) < 0.15) return false;
+    }
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return false;
+    return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  };
+
+  /**
+   * When a dialog is open, only the dialog is on trial.
+   *
+   * P8, measured: with the discard browser open, `win@light` reported 38
+   * violations, 36 of them property-mat labels UNDER the scrim — the CSS says
+   * ink on a light mat, the frame says ink on a dimmed mat, and neither is a
+   * defect because nobody is reading the table while a modal is up. Scoping to
+   * the topmost `aria-modal` subtree is also what the accessibility tree does,
+   * so the gate and the screen reader agree on what "the content" is.
+   */
+  const modal = [...document.querySelectorAll('[aria-modal="true"], dialog[open]')]
+    .filter((d) => !d.hasAttribute('hidden') && getComputedStyle(d).display !== 'none'
+      && d.getBoundingClientRect().width > 0)
+    .pop();
+  const scope = modal || document.body;
+
+  /**
+   * Cards are STACKED — the hand fan, bank stacks, property columns and the
+   * upgrade badges all overlap by design (table.css derives the overlap from
+   * the tap floor). A buried card's name and value band are still in the DOM
+   * with their computed colours, and sampling them measures ink against
+   * whatever shows through, which is a picture of nothing.
+   *
+   * Reported by the card-art agent (commit ac44aa4) after it hit-tested the
+   * 24 card-side violations remaining from its own fix: ALL 24 were covered.
+   * The entire card-side signal was noise.
+   *
+   * The test is paint order, not hit-testing policy: `elementFromPoint` skips
+   * `pointer-events: none`, and `.propcol-head, .zone-tag, .pile-label,
+   * .board-head` are all pointer-events:none by design (table.css:221) — they
+   * would every one report as "covered" and the gate would go blind to the
+   * chrome labels that are its real signal. So the rule is neutralised for the
+   * duration of the measurement and restored immediately. The frame has
+   * already been captured by the time this runs; nothing visual changes.
+   *
+   * But not neutralised EVERYWHERE. Measured: a blanket
+   * `*{pointer-events:auto}` handed every hit-test in the game to `#emotes`, a
+   * full-bleed decorative layer that is pointer-events:none precisely so it
+   * cannot eat anything — 1689 of 2163 runs came back "covered", every one of
+   * them by that one div. So the full-bleed pass-through layers are identified
+   * FIRST (already pointer-events:none, and covering ≥50% of the viewport) and
+   * keep their transparency; only the small suppressed labels get their hits
+   * back. The 50% test is a measurement, not a list: it catches `#emotes`,
+   * `#toast`, `.hints` and any fx layer added later without naming them.
+   */
+  const hitStyle = document.createElement('style');
+  const passthru = [];
+  for (const e of document.querySelectorAll('body *')) {
+    if (getComputedStyle(e).pointerEvents !== 'none') continue;
+    const b = e.getBoundingClientRect();
+    if (b.width * b.height < innerWidth * innerHeight * 0.5) continue;
+    e.setAttribute('data-chud-passthru', '');
+    passthru.push(e);
+  }
+  hitStyle.textContent = '*{pointer-events:auto !important}'
+    + '[data-chud-passthru]{pointer-events:none !important}';
+  document.head.appendChild(hitStyle);
+  /**
+   * A run is covered when the topmost element at its centre is in a DIFFERENT
+   * subtree — another card lying on top of it. Not when the hit is `el`'s own
+   * ancestor: `elementFromPoint` reports a pseudo-element as its originating
+   * element, and every card face in this client carries a `::after` stock sheen
+   * over its own text. Treating that as occlusion took the sample count from
+   * 2163 to 435 and the violation count to a meaningless zero.
+   */
+  const covered = (el, r) => {
+    const pts = [
+      [r.left + r.width / 2, r.top + r.height / 2],
+      [r.left + Math.min(6, r.width / 4), r.top + r.height / 2],
+      [r.right - Math.min(6, r.width / 4), r.top + r.height / 2],
+    ];
+    let tested = 0;
+    for (const [x, y] of pts) {
+      if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
+      tested++;
+      const hit = document.elementFromPoint(x, y);
+      if (!hit) continue;
+      if (hit === el || el.contains(hit) || hit.contains(el)) return false;
+    }
+    return tested > 0;
+  };
+
+  const out = [];
+  let hidden = 0;
+  const seen = new Set();
+  for (const el of scope.querySelectorAll('*')) {
+    if (seen.has(el)) continue;
+    seen.add(el);
+    // Own text only: a container's `color` is not what its children paint in.
+    const own = [...el.childNodes]
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.textContent)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!own) continue;
+    if (!vis(el)) continue;
+    const st = getComputedStyle(el);
+    const raw = parse(st.color);
+    if (!raw) continue;
+    // Painted-invisible text (see the header note) is hidden, not unreadable.
+    const fill = parse(st.webkitTextFillColor || st.color);
+    if (raw.a < 0.05 || (fill && fill.a < 0.05)) continue;
+    const { col: bg, img } = backdrop(el);
+    const fg = raw.a >= 0.999 ? raw : over(raw, bg);
+    const px = parseFloat(st.fontSize) || 16;
+    const wt = Number(st.fontWeight) || 400;
+    // WCAG 1.4.3 large text, which is the standard §0.9 names.
+    const large = px >= 24 || (px >= 18.66 && wt >= 700);
+    const r = el.getBoundingClientRect();
+    if (covered(el, r)) { hidden++; continue; }
+    out.push({
+      el: `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}`
+        + `.${String(el.className || '').trim().split(/\s+/)[0] || '?'}`,
+      text: own.slice(0, 34),
+      need: large ? 3 : 4.5,
+      px: Math.round(px),
+      fg: [Math.round(fg.r), Math.round(fg.g), Math.round(fg.b)],
+      bgCss: [Math.round(bg.r), Math.round(bg.g), Math.round(bg.b)],
+      ratioCss: Math.round(ratio(fg, bg) * 100) / 100,
+      approx: img,
+      rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+      scope: modal ? (modal.id || 'modal') : 'page',
+    });
+  }
+  hitStyle.remove();
+  for (const e of passthru) e.removeAttribute('data-chud-passthru');
+  return { samples: out, hidden, scope: modal ? (modal.id || 'modal') : 'page' };
+}
+
 /** Is the focused composer reachable above the keyboard line? */
 export function measureComposer(kb) {
   const line = innerHeight - kb;

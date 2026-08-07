@@ -3,79 +3,124 @@
  * tools/grayscale.mjs — ART-DIRECTION §10's grayscale ship gate, measured.
  *
  * The gate, verbatim from §10: "Grayscale `mid-game@desktop`: is hierarchy still
- * readable? Current: **fails**." §3 states the diagnosis: "everything sits
- * within ~8% luminance."
+ * readable?" §3 states the diagnosis: "everything sits within ~8% luminance."
  *
- * A checklist item nobody can run is a wish. This turns it into two numbers.
+ * Everything is in **CIE L\*** (perceptual lightness, 0–100), never in linear
+ * relative luminance. Linear Y is savagely compressed at the dark end — a dark
+ * apron's whole tonal life happens between Y 0.019 and Y 0.035, a 1.6% span that
+ * reads as "flat" in Y and as a visible 14 L\* to an eye — so a threshold in Y
+ * either passes everything dark or fails everything dark.
  *
- * ─── what is measured ────────────────────────────────────────────────────
- * The frame is converted to **CIE L\*** (perceptual lightness, 0–100), not to
- * linear relative luminance. Linear Y is savagely compressed at the dark end —
- * a dark apron's whole tonal life happens between Y 0.019 and Y 0.035, a 1.6%
- * span that reads as "flat" in Y and as a visible 14 L\* to an eye — so a
- * threshold in Y either passes everything dark or fails everything dark.
+ * ─── WHY THIS FILE WAS REWRITTEN (P8 round 2) ────────────────────────────
+ * The first version asserted two whole-frame numbers: a p5→p95 histogram spread,
+ * and a count of "tonal tiers" among five fixed screen regions averaged to one
+ * number each. A fresh LOOK critic desaturated the frames by hand instead of
+ * trusting it and found four things wrong, all reproduced here before the
+ * rewrite:
  *
- *   1. BULK TONAL RANGE — p5→p95 of the L\* histogram. How much of the
- *      lightness axis the frame actually uses, ignoring the 5% of pixels at
- *      each end so that a single white glyph cannot buy a pass.
- *   2. TONAL TIERS — the five key regions (cards, the primary action, the
- *      apron, the HUD, the property mats) are averaged, sorted, and clustered
- *      with a 12 L\* break. **At least three tiers** must survive. This is
- *      "hierarchy" stated as a number: a grayscale print needs a foreground, a
- *      middle and a ground, and 12 L\* is about where a step stops being a
- *      rendering artefact and starts being a decision.
+ *   1. IT WAS SPATIALLY BLIND. A histogram of the whole frame says nothing about
+ *      whether two things a player must tell apart are separable *where they
+ *      touch*. Measured on the light build it was passing: card 72.4 L\* on mat
+ *      81.1 L\* — a Δ of 8.7, below the file's OWN stated 12 L\* "this is a
+ *      decision, not a rendering artefact" threshold — and the verdict was pass.
+ *   2. THE TIERS CHAINED. Tiers were grown by comparing each region to the
+ *      running upper edge, so card 72.4 → mat 81.1 → chrome 91.4 all landed in
+ *      one "tier" spanning 19 L\*. Transitive adjacency is not a gap.
+ *   3. ONE ELEMENT BOUGHT THE PASS. In light, the third tier was supplied
+ *      entirely by the single black End-turn button. A hierarchy gate a lone
+ *      button can satisfy is not measuring hierarchy.
+ *   4. THE PRINTED DIAGNOSTIC WAS BACKWARDS. It averaged the cards (72.4) with
+ *      the ink slab (14.5) into "figure 43.5" and the apron/mats/chrome into
+ *      "ground 77.5", and printed `Δ 34.0` — telling every reader that the
+ *      figures were DARKER than the ground in a theme where the cards are the
+ *      lightest thing on screen.
  *
- * A flat |figure − ground| difference was tried FIRST and rejected: ART §0 says
- * the cards are cream stock in BOTH themes and only the table changes, so the
- * ratified light theme deliberately puts L\* 97 card stock on L\* 88 concrete.
- * A gate demanding 25 L\* of card-vs-table separation fails the design it is
- * supposed to protect. Separation in the light theme is carried by shadow and
- * edge (§4 "paper casts a soft shadow"), not by bulk lightness. The number is
- * still PRINTED, as a diagnostic, because it is worth seeing — it is just not
- * the assertion.
+ * ─── WHAT IS MEASURED NOW ────────────────────────────────────────────────
+ * One question per PAIR of things a player must tell apart, sampled from the
+ * geometry the client actually rendered (`getBoundingClientRect` + hit testing),
+ * never from fixed screen rectangles:
  *
- * ─── calibration (measured 2026-08-06, seed 1337, 1280×720, settled frames) ─
- * `--prove` re-measures the four synthetic rows on demand. Every number below
- * reproduced to ±0.0 over consecutive runs once frames were settled and client
- * storage was reset per capture (see harness.stableScreenshot / pristineStorage
- * — before those two fixes this tool reported bulk 36.8 on one run and 86.9 on
- * the next from the same seed and the same fixture).
+ *     a card against the mat it is lying on
+ *     a card against the dock/apron behind the hand
+ *     a mat against the apron
+ *     a chrome panel against what is painted next to it
+ *     the primary action against the bar it sits in
+ *     a text run against its own plate
  *
- *                                          bulk L\*   tiers   verdict
- *   mutation: every surface one flat grey        0.0     1     FAIL
- *   mutation: light apron, no §1 ink slab       58.0     2     FAIL
- *   build at 21:50, DARK                        93.7     2     FAIL
- *   build at 21:50, LIGHT                       58.3     1     FAIL
- *   build at 22:05, DARK                        93.4     3     pass
- *   build at 22:05, LIGHT                       62.8     3     pass
- *   ART §2 dark, simulated by stylesheet        91.4     4     pass
- *   ART §2 light, simulated by stylesheet       61.3     3     pass
+ * Each side of a pair is a MEDIAN L\*, not a mean. A card face is 15–25% ink and
+ * carries a §2 colour band; its mean is a number about nothing, and averaging a
+ * region is what destroyed the old metric's information. The median is the tone
+ * of the field, which is the thing being separated.
  *
- * Thresholds (bulk ≥ 45, tiers ≥ 3) sit between builds that fail and builds
- * that pass in BOTH directions, which is the only calibration worth anything.
- * The `no §1 ink slab` mutation is the important one: it is a *plausible,
- * pretty* light theme — cream cards on warm concrete — that still fails,
- * because prettiness is not hierarchy.
+ * Pairs are DIRECT comparisons, so nothing can chain (defect 2), and every pair
+ * must clear the bar on its own, so no single element can carry the frame
+ * (defect 3).
  *
- * ─── what the two build rows above mean ──────────────────────────────────
- * This gate was RED when it was written and GREEN fifteen minutes later,
- * without a line of it changing, because the art-direction agent landed ART §1
- * ("primary action = achromatic ink slab, solid `--ink` in light, `--paper` in
- * dark") in `public/style/` while it was being calibrated. That slab is exactly
- * what supplies the third tier:
+ * ─── TWO CHANNELS, BOTH MEASURED ─────────────────────────────────────────
+ * Separation can arrive two ways and this gate counts both, because ART ships
+ * both:
  *
- *   dark   END TURN L\* 22.2 → 87.3   tiers 2 → 3
- *   light  END TURN L\* 67.3 → 14.5   tiers 1 → 3
+ *   FIELD  |median(A) − median(B)| — the tonal step between the two surfaces.
+ *   EDGE   the p5→p95 tonal swing in a band straddling A's boundary, per side,
+ *          reported as the MEDIAN of the four sides. This is `--card-edge`
+ *          (#D9D2C4, L\* 84.4) and §4's "paper casts a soft shadow", and the
+ *          3px solid rail §2 gives every mat. Median-of-four, because an offset
+ *          drop shadow is real separation on two sides and nothing on the other
+ *          two, and a §2 colour band sits inside exactly one side — letting
+ *          either buy a pass alone would re-import defect 3 through the back
+ *          door.
  *
- * Recorded here rather than quietly deleted, because the failing rows are the
- * evidence that the gate discriminates on a REAL build and not only on the
- * synthetic ones. If either theme regresses to a coloured or ghost primary
- * button, this goes red again for the same nameable reason.
+ * `sep = max(field, edge)`, and the CARRIER is printed for every pair. That
+ * matters: "cream cards on warm concrete, separated only by a hairline and a
+ * shadow" and "cream cards on a mat you can see" are different designs with the
+ * same verdict, and the designer needs to know which one they have.
  *
- * (ART §10 states this gate's subject "currently fails" with "everything within
- * ~8% luminance". That diagnosis was already one wave stale by 21:50: the dark
- * apron and the cream card stock had landed and the frame's bulk range was
- * 93.7 L\*. The checkbox can now be ticked, with these numbers behind it.)
+ * A flat |figure − ground| assertion was tried in the first version and rejected
+ * for the right reason (§2 puts L\* 97.6 stock on L\* ~88 mats in light, so a
+ * 25 L\* demand fails the ratified design) — but the conclusion drawn from it,
+ * "therefore assert something global instead", was wrong. The right conclusion
+ * was to measure the edge channel instead of asserting it in a comment.
+ *
+ * SEP_MIN is 12 L\*, the same number the old header claimed and did not enforce:
+ * about where a step stops being a rendering artefact and starts being a
+ * decision. It is now applied per pair, to real adjacent geometry.
+ *
+ * BULK tonal range survives as a second, weaker assertion (p5→p95 ≥ 45 L\*).
+ * It is necessary, not sufficient: it catches "every surface is one grey" for
+ * one cheap number, and it is explicitly NOT the hierarchy test.
+ *
+ * ─── WHERE THE BUILD LANDS (measured 2026-08-06, seed 1337, 1280×720) ─────
+ * BOTH THEMES FAIL, and they fail on the same thing: the furniture layer does
+ * not separate from the apron. Every card, every card back, the ink slab and
+ * every text run clears 12 L\* comfortably in both themes; the mats and the
+ * chrome panels do not.
+ *
+ *                                             field  edge   sep
+ *   DARK   property mat on #table               1.9   8.1   8.1  FAIL
+ *          .board-opponent on #table            2.6   8.5   8.5  FAIL
+ *          #hud on what is next to it           0.1  10.7  10.7  FAIL
+ *   LIGHT  property mat on #table               1.0   5.3   5.3  FAIL
+ *          .board-opponent on #table            5.3   8.1   8.1  FAIL
+ *          .board-bank on .board                0.0  11.2  11.2  FAIL
+ *
+ * The measured tokens behind those rows:
+ *   light  stock 97.3 · surface/panels 94.2 · apron 87.8 · mats 86.9 · dock 82.6
+ *   dark   stock 97.3 · panels 14.1 · apron 13.8 · mats 11.9 · dock 3.6
+ *
+ * The dark apron is the surprise: `--ground` is #15171C (L\* 7.7) but `#table`
+ * PAINTS at 13.8, within 0.3 L\* of `--surface`. Panels and apron are the same
+ * tone in the dark build, whatever the tokens say.
+ *
+ * In light the constraint is structural: `--ground` at 90.0 leaves ten L\* of
+ * headroom before white, so nothing above the apron can ever reach a 12 L\*
+ * step. Light hierarchy has to step DOWN (or the apron has to come down to make
+ * room). `--prove`'s "light + a 12 L\* furniture step" row is a build that
+ * clears the gate — apron 90, panels 76, mats 60 — measured, not proposed.
+ *
+ * 9/12 (light) and 11/12 (dark) structural pairs are carried by edge treatment
+ * rather than by tone. The gate accepts that; it prints it because "the design
+ * rests on a hairline and a shadow" is a thing the designer should decide on
+ * purpose rather than discover from a critic.
  *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */
@@ -84,9 +129,10 @@ import { PNG } from 'pngjs';
 import {
   FIXTURE_DIR, DESKTOP, SEED,
   parseArgs, launchBrowser, openPage, requireBridge, readJSON, reporter,
-  stableScreenshot, pristineStorage, dim, EXIT_PASS, EXIT_FAIL,
+  stableScreenshot, pristineStorage, dim, yellow, EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
-import { lightnessField, lightnessStats, regionLightness } from './lib/pixels.mjs';
+import { lightnessField, lightnessStats, sampleRect, edgeSwing, inkOnPlate } from './lib/pixels.mjs';
+import * as audit from './lib/audit.mjs';
 import { applyTheme, THEMES } from './lib/theme.mjs';
 import { startServer } from './serve.mjs';
 
@@ -96,139 +142,479 @@ const seed = args.seed ? Number(args.seed) : SEED;
 /** §10 names one surface. Both themes of it, because §2 ships two. */
 const FIXTURE = 'mid-game';
 
-const MIN_BULK = 45;      // L*, p5→p95 of the whole frame
-const MIN_TIERS = 3;      // distinct tonal tiers among the key regions
-const TIER_BREAK = 12;    // L* gap that separates one tier from the next
+const MIN_BULK = 45;      // L*, p5→p95 of the whole frame — necessary, not sufficient
+const SEP_MIN = 12;       // L*, per adjacent pair, on the better of the two channels
+/**
+ * A gate that measured nothing must not report a pass. The flat-grey mutation
+ * paints a full-bleed layer over the whole frame; every surface is then inside a
+ * veil rect, every sample comes back empty, and `pairs.every(...)` on an empty
+ * list is vacuously true. It failed on bulk range alone, which is luck, not a
+ * gate. The real build resolves 16 pairs.
+ */
+const MIN_PAIRS = 8;
+const INSET = 4;          // px kept off a surface's own border when reading its field
+const EDGE_OUT = 6;       // px of the boundary band outside the rect
+const EDGE_IN = 6;        // px of it inside
 
 /**
- * Region selectors, first match wins per key. `figure` regions are the things a
- * player manipulates; `ground` regions are the furniture they sit on. The
- * figure/ground split is printed as a diagnostic only (see the header).
+ * The surfaces to find, by role. `sel` is tried against the live document; every
+ * match is a candidate and the least-occluded one becomes the pair's subject
+ * (see `collectSurfaces`). A role that matches nothing is a WARNING with the
+ * role named, never a silent skip — the old tool's `missing` list existed for
+ * the same reason and is kept.
  */
-const REGIONS = {
-  card: { role: 'figure', sel: ['#zone-hand [data-card-id]', '#self-board [data-card-id]', '[data-card-id]'] },
-  cta: { role: 'figure', sel: ['#btn-end-turn', '#prompt button', '.btn-primary'] },
-  apron: { role: 'ground', sel: ['#table-center', '#table'] },
-  chrome: { role: 'ground', sel: ['#hud'] },
-  mat: { role: 'ground', sel: ['#self-board .propcol', '#self-board'] },
-};
+const ROLES = [
+  { key: 'card', sel: '.card-face', what: 'card face' },
+  { key: 'back', sel: '.card-facedown', what: 'card back' },
+  { key: 'mat', sel: '.propcol', what: 'property mat' },
+  { key: 'panel', sel: '#hud, #hand-dock, .board-bank, .board-opponent, #prompt', what: 'chrome panel' },
+  { key: 'action', sel: '#btn-end-turn, .btn-primary, #prompt button, [data-action="end-turn"]', what: 'primary action' },
+];
 
-/** Sorted region means → tiers, split wherever the gap exceeds TIER_BREAK. */
-function tiersOf(tiers) {
-  const vals = Object.entries(tiers).sort((a, b) => a[1] - b[1]);
-  const groups = [];
-  for (const [key, v] of vals) {
-    const last = groups[groups.length - 1];
-    if (last && v - last.hi <= TIER_BREAK) { last.hi = v; last.keys.push(key); }
-    else groups.push({ lo: v, hi: v, keys: [key] });
+/**
+ * How many of a role's elements are measured per backdrop, and how uncovered one
+ * has to be to count.
+ *
+ * NOT one representative. Measured: `.card-face` medians on this fixture run
+ * from 39.3 to 97.3 L\* — a bank note is mostly ink, a property card is mostly
+ * stock — so "the card" is not a tone, and whichever element a picker happened
+ * to choose set the verdict. Every sufficiently-uncovered candidate is measured
+ * and the pair reports the WORST one: the hardest card to tell apart from the
+ * mat it is on is the one that decides whether the hierarchy reads.
+ */
+const MAX_PER_PAIR = 8;
+const MIN_CLEAR = 0.7;
+
+/**
+ * Text runs, measured against their OWN plate out of the same rect (the median
+ * of a text box is its background; the far tail is the ink). checkContrast.mjs
+ * owns the exhaustive WCAG sweep — these four exist so §10's question covers the
+ * "text against its own plate" case on the surfaces ART §1/§2 name by hand.
+ */
+const TEXT_ROLES = [
+  { key: 'card ink', sel: '.ca-title, .card-name, .ca-band-name' },
+  { key: 'action ink', sel: '#btn-end-turn, .btn-primary' },
+  { key: 'mat ink', sel: '.propcol-name, .zone-tag, .pile-label' },
+  { key: 'hud ink', sel: '.hud-turn, .chip, .board-name' },
+];
+
+/**
+ * Everything decorative that must not be measured AS a surface or counted
+ * against one. The coach layer is shown "once ever" out of localStorage, which
+ * `pristineStorage` resets, so it is reliably present in every take — and a
+ * transient teaching bubble is not the design's tonal hierarchy.
+ */
+const VEIL = '.hints, .hint-card, #toast, #emotes, .floaters, .floater, .burst, .fx, .fx-layer';
+
+/**
+ * IN-PAGE. Find each role's subject and its painted backdrop, from the geometry
+ * the client actually rendered.
+ *
+ * The backdrop is resolved by walking up to the nearest ancestor that PAINTS
+ * (opaque background-color or a background-image), which is how the browser
+ * itself decides what shows through: a `.card-face` in the fan resolves to
+ * `#hand-dock`, the same face in a property column resolves to `.propcol`, and a
+ * `.propcol` resolves to `#table`. Nothing here is a hardcoded pairing, so a
+ * layout change moves the pairs instead of silently measuring the wrong thing.
+ *
+ * Candidates that are mostly buried are dropped with the shared hit test
+ * (`audit.openHitTesting`, installed by `installPageHelpers`). Cards are stacked
+ * by design; measuring the field of a card with three-quarters of another card
+ * on top of it is measuring the other card. What survives is measured in full.
+ */
+function collectSurfaces([roles, textRoles, veilSel, maxPer, minClear]) {
+  const open = window.__chudHitTesting;
+  if (typeof open !== 'function') {
+    throw new Error('audit.installPageHelpers(context) was never called — no hit testing in this page');
   }
-  return groups;
+  const hit = open();
+  try {
+    const px = (el) => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
+    const name = (el) => {
+      if (!el) return '?';
+      const cls = (el.getAttribute?.('class') || '').trim().split(/\s+/).filter(Boolean)[0];
+      return `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls ? '.' + cls : ''}`;
+    };
+    /** Alpha out of any computed colour form Chromium prints, incl. oklab(… / a). */
+    const alphaOf = (c) => {
+      const s = String(c || '').trim();
+      if (!s || s === 'transparent' || s === 'none') return 0;
+      const rgba = s.match(/rgba?\(([^)]+)\)/);
+      if (rgba) {
+        const p = rgba[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+        return p.length > 3 ? p[3] : 1;
+      }
+      const slash = s.match(/\/\s*([\d.]+)(%?)\s*\)/);
+      if (slash) return slash[2] ? Number(slash[1]) / 100 : Number(slash[1]);
+      return 1;
+    };
+    const paints = (el) => {
+      const st = getComputedStyle(el);
+      return st.backgroundImage !== 'none' || alphaOf(st.backgroundColor) >= 0.5;
+    };
+    const vis = (el) => {
+      const st = getComputedStyle(el);
+      if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) < 0.1) return false;
+      for (let p = el; p; p = p.parentElement) {
+        if (p.hasAttribute?.('hidden')) return false;
+        if (Number(getComputedStyle(p).opacity) < 0.1) return false;
+      }
+      const r = el.getBoundingClientRect();
+      return r.width > 14 && r.height > 14
+        && r.top < innerHeight && r.bottom > 0 && r.left < innerWidth && r.right > 0;
+    };
+
+    const veils = [...document.querySelectorAll(veilSel)]
+      .filter((el) => {
+        const st = getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) < 0.05) return false;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return false;
+        // A layer that positions children and paints nothing is not in the way.
+        return alphaOf(st.backgroundColor) > 0.05 || st.backgroundImage !== 'none'
+          || (el.textContent || '').trim().length > 0;
+      })
+      .map(px);
+
+    const backdropOf = (el) => {
+      for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+        if (paints(p) && vis(p)) return p;
+      }
+      return document.body;
+    };
+    /** Rects of everything painted ON a backdrop, so its own field can be read. */
+    const litter = (b) => {
+      const out = [];
+      for (const e of b.querySelectorAll('*')) {
+        if (out.length >= 300) break;
+        if (!vis(e)) continue;
+        if (!paints(e) && !e.matches('.card, .card-face, .card-back, [data-card-id]')) continue;
+        out.push(px(e));
+      }
+      return out;
+    };
+
+    const surfaces = [];
+    const missing = [];
+    for (const role of roles) {
+      const els = [...document.querySelectorAll(role.sel)].filter(vis);
+      if (!els.length) { missing.push(role.key); continue; }
+      // One pair per (role, backdrop): "a card on a mat" and "a card on the
+      // dock" are two different questions and both get asked.
+      const groups = new Map();
+      for (const el of els) {
+        const clear = 1 - hit.coverage(el, el.getBoundingClientRect()).pct;
+        if (clear < minClear) continue;
+        const b = backdropOf(el);
+        const k = name(b);
+        if (!groups.has(k)) groups.set(k, { b, items: [], seen: 0 });
+        const g = groups.get(k);
+        g.seen++;
+        // Widest first: a bigger uncovered face is a more honest field read, and
+        // the cap only exists so a 40-card table does not cost 40 samplings.
+        g.items.push({ el, clear, rect: px(el) });
+      }
+      for (const [bname, g] of groups) {
+        g.items.sort((a, c) => (c.rect[2] * c.rect[3]) - (a.rect[2] * a.rect[3]));
+        surfaces.push({
+          role: role.key,
+          what: role.what,
+          plate: bname,
+          plateRect: px(g.b),
+          plateLitter: litter(g.b),
+          seen: g.seen,
+          items: g.items.slice(0, maxPer).map((it) => ({
+            el: name(it.el), rect: it.rect, clear: Math.round(it.clear * 100) / 100,
+          })),
+        });
+      }
+    }
+
+    /**
+     * Text is measured over the GLYPH box, not the element box.
+     *
+     * `span.board-name` is 731px wide on the self board and holds a six-letter
+     * name; its element rect is >98% plate, the ink never reaches the 1.5% floor
+     * `inkOnPlate` needs, and the gate reported white-on-charcoal chrome text as
+     * a 4.5 L\* violation. `Range.getBoundingClientRect()` over the element's
+     * contents is the box the browser actually painted glyphs into. Padded by
+     * 2px so the plate is still the modal population inside it.
+     */
+    const glyphBox = (el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const r = range.getBoundingClientRect();
+      range.detach?.();
+      if (!r.width || !r.height) return null;
+      return [r.left - 2, r.top - 2, r.width + 4, r.height + 4];
+    };
+
+    const texts = [];
+    for (const role of textRoles) {
+      const items = [];
+      for (const el of document.querySelectorAll(role.sel)) {
+        const st = getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) < 0.1) continue;
+        if (!(el.textContent || '').trim()) continue;
+        const box = glyphBox(el);
+        if (!box || box[2] < 14 || box[3] < 8) continue;
+        if (box[0] < 0 || box[1] < 0 || box[0] + box[2] > innerWidth || box[1] + box[3] > innerHeight) continue;
+        const clear = 1 - hit.coverage(el, el.getBoundingClientRect()).pct;
+        if (clear < minClear) continue;
+        items.push({ el: name(el), rect: box, clear: Math.round(clear * 100) / 100 });
+      }
+      if (!items.length) { missing.push(role.key); continue; }
+      items.sort((a, b) => (b.rect[2] * b.rect[3]) - (a.rect[2] * a.rect[3]));
+      texts.push({ role: role.key, items: items.slice(0, maxPer), seen: items.length });
+    }
+
+    return { surfaces, texts, veils, missing, dpr: devicePixelRatio, w: innerWidth };
+  } finally {
+    hit.close();
+  }
 }
 
-/** Rects for every region, in CSS px, measured in the page. */
-function collectRects(regions) {
-  const out = {};
-  for (const [key, spec] of Object.entries(regions)) {
-    for (const sel of spec.sel) {
-      const els = [...document.querySelectorAll(sel)].filter((e) => {
-        const r = e.getBoundingClientRect();
-        const st = getComputedStyle(e);
-        if (st.display === 'none' || st.visibility === 'hidden') return false;
-        return r.width > 6 && r.height > 6 && r.top < innerHeight && r.bottom > 0;
-      });
-      if (!els.length) continue;
-      out[key] = els.slice(0, 8).map((e) => {
-        const r = e.getBoundingClientRect();
-        return [r.left, r.top, r.width, r.height];
-      });
-      break;
-    }
-  }
-  return out;
+/**
+ * The backdrop measured from the pixels immediately OUTSIDE a surface, used when
+ * the DOM backdrop has no uncovered pixels of its own left to read.
+ *
+ * `#hud` and `#hand-dock` are full-bleed children of `#screen-game`; their DOM
+ * plate is 100% covered by them and their siblings, so its "own field" is empty.
+ * What a player actually sees next to the HUD is the apron, and that is what
+ * this reads. Reported as `(adjacent)` so nobody mistakes it for the DOM answer.
+ */
+function adjacentField(field, png, rect, scale, excludes) {
+  const [x, y, w, h] = rect;
+  const G = 3;                       // skip the element's own shadow/stroke
+  const D = 12;                      // depth of the band read as "next to it"
+  const bands = [
+    [x, y - G - D, w, D], [x, y + h + G, w, D],
+    [x - G - D, y, D, h], [x + w + G, y, D, h],
+  ];
+  const meds = bands
+    .map((b) => sampleRect(field, png, b, { scale, excludes, bleed: 0, maxSamples: 20000 }))
+    .filter((s) => s && s.n >= 60)
+    .map((s) => s.median)
+    .sort((a, b) => a - b);
+  if (!meds.length) return null;
+  return { median: meds[Math.floor((meds.length - 1) / 2)], n: meds.length, adjacent: true };
 }
 
 async function measure(page, extraCss) {
   if (extraCss) await page.addStyleTag({ content: extraCss });
   // Not a timeout: the fan lays out and the card faces build over several
-  // frames, and p95 sits exactly on the boundary of how much card stock is
-  // painted (see harness.stableScreenshot's note).
+  // frames, and a percentile sits exactly on the boundary of how much card stock
+  // is painted (see harness.stableScreenshot's note).
   const frame = await stableScreenshot(page);
   const png = PNG.sync.read(frame.buffer);
   const field = lightnessField(png);
   const stats = lightnessStats(field);
   const scale = png.width / (await page.evaluate(() => innerWidth));
-  const rects = await page.evaluate(collectRects, REGIONS);
+  const geo = await page.evaluate(collectSurfaces, [ROLES, TEXT_ROLES, VEIL, MAX_PER_PAIR, MIN_CLEAR]);
 
-  const tiers = {};
-  for (const [key, rs] of Object.entries(rects)) {
-    const vals = rs.map((r) => regionLightness(field, png, r, scale)).filter((v) => v != null);
-    if (vals.length) tiers[key] = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const pairs = [];
+  for (const s of geo.surfaces) {
+    /* The plate is measured ONCE per pair: it is the same surface for every
+     * candidate lying on it. Its own painted children are subtracted, or the
+     * mean of a mat with four cards on it is the mean of the cards. */
+    let plate = sampleRect(field, png, s.plateRect, {
+      scale, excludes: [...s.plateLitter, ...geo.veils], maxSamples: 40000,
+    });
+    let adjacent = false;
+    if (!plate || plate.n < 200) {
+      plate = adjacentField(field, png, s.items[0].rect, scale, geo.veils);
+      adjacent = true;
+    }
+    if (!plate) continue;
+
+    let worst = null;
+    let measured = 0;
+    for (const it of s.items) {
+      const own = sampleRect(field, png, it.rect, {
+        scale, inset: INSET, excludes: geo.veils, maxSamples: 40000,
+      });
+      if (!own) continue;
+      const edge = edgeSwing(field, png, it.rect, {
+        scale, out: EDGE_OUT, inn: EDGE_IN, excludes: geo.veils,
+      });
+      measured++;
+      const fieldDelta = Math.abs(own.median - plate.median);
+      const edgeDelta = edge.median ?? 0;
+      const sep = Math.max(fieldDelta, edgeDelta);
+      if (worst && sep >= worst.sep) continue;
+      worst = {
+        el: it.el, rect: it.rect, clear: it.clear,
+        a: own.median, field: fieldDelta, edge: edgeDelta, sides: edge.sides, sep,
+        carrier: fieldDelta >= edgeDelta ? 'field' : 'edge',
+      };
+    }
+    if (!worst) continue;
+    pairs.push({
+      ...worst,
+      label: `${s.what} on ${adjacent ? 'what is next to it' : s.plate}`,
+      b: plate.median,
+      of: measured,
+      seen: s.seen,
+      kind: 'surface',
+    });
   }
-  const mean = (keys) => {
-    const vs = keys.filter((k) => tiers[k] != null).map((k) => tiers[k]);
-    return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : null;
-  };
-  const figure = mean(Object.keys(REGIONS).filter((k) => REGIONS[k].role === 'figure'));
-  const ground = mean(Object.keys(REGIONS).filter((k) => REGIONS[k].role === 'ground'));
+
+  for (const t of geo.texts) {
+    let worst = null;
+    let measured = 0;
+    for (const it of t.items) {
+      const m = inkOnPlate(field, png, it.rect, { scale, excludes: geo.veils });
+      if (!m) continue;
+      measured++;
+      if (worst && m.delta >= worst.field) continue;
+      worst = { el: it.el, rect: it.rect, clear: it.clear, a: m.ink, b: m.plate, field: m.delta };
+    }
+    if (!worst) continue;
+    pairs.push({
+      ...worst,
+      label: `${t.role} on its plate`,
+      edge: 0,
+      sides: null,
+      sep: worst.field,
+      carrier: 'field',
+      of: measured,
+      seen: t.seen,
+      kind: 'text',
+    });
+  }
+
   return {
-    bulk: stats.bulk,
-    p5: stats.p5, p50: stats.p50, p95: stats.p95,
-    bins: stats.bins,
-    tiers,
-    figure, ground,
-    delta: figure != null && ground != null ? Math.abs(figure - ground) : null,
-    missing: Object.keys(REGIONS).filter((k) => tiers[k] == null),
+    bulk: stats.bulk, p5: stats.p5, p50: stats.p50, p95: stats.p95, bins: stats.bins,
+    pairs,
+    missing: geo.missing,
     settled: frame.settled,
     settleMs: frame.ms,
   };
 }
 
-/* The two simulations that prove the gate is satisfiable, expressed as the ART
- * §2 token values applied by brute force. They are NOT a proposed patch —
- * public/ is not ours (§1) — they are the calibration rig. */
-const SIM_DARK = `
-  #table, .table, #app, #table-center, .pile, #hand-dock, #hud, .opponents > *
-    { background: #15171C !important; }
-  .propcol { background: #20242B !important; }
-  .card, .card-face, .card-inner { background: #FBF8F1 !important; }
-  .card, .card * { color: #14161A !important; }
-  .btn-primary, #btn-end-turn { background: #F2EEE4 !important; color: #14161A !important; }`;
-const SIM_LIGHT = `
-  #table, .table, #app, #table-center, .pile, #hand-dock, #hud, .opponents > *
-    { background: #E8E2D4 !important; }
-  .propcol { background: #D5CDBB !important; }
+/* ─── the calibration rig (§8: a gate must be proven to fail) ───────────────
+ *
+ * These are NOT a proposed patch — public/ is not ours (§1). They are four
+ * synthetic builds whose verdict is known in advance, and the gate has to agree
+ * with all four or it is a decoration.
+ *
+ * Written in CSS `lab()`, where the first component IS CIE L\* — the same axis
+ * the gate measures — so each rule states its own expected number instead of
+ * hiding it in a hex. (`lab()` is D50 and the gate's L\* comes from sRGB
+ * relative luminance, so measured values land within ~1 L\* of the literal.)
+ */
+
+/**
+ * ART §2's LIGHT tokens exactly as ratified — and it FAILS, which is the single
+ * most useful row in this table.
+ *
+ * `--surface` 94.2, `--ground` 90.0, mats ~88, `--ground-deep` 82.6: the entire
+ * light furniture layer lives inside a 12 L\* window, and `--ground` at 90.0
+ * leaves only 10 L\* of headroom before white, so nothing above the apron can
+ * ever reach a 12 L\* step. Light-theme hierarchy under these tokens is carried
+ * by edge stroke and shadow alone. That is a real design position and it is
+ * exactly what the LOOK critic measured as 1.19:1 in colour — but it is not a
+ * tonal hierarchy, and this gate now says so with the palette in hand.
+ */
+const SIM_ART2_LIGHT = `
+  #table, .table, #app, #table-center, .pile, #screen-game { background: #E8E2D4 !important; }
+  #hud, .board, .board-opponent, .board-bank { background: #F3EEE3 !important; }
+  #hand-dock { background: #D5CDBB !important; }
+  .propcol { background: #DED7C8 !important; }
   .card, .card-face, .card-inner { background: #FBF8F1 !important; }
   .card, .card * { color: #14161A !important; }
   .btn-primary, #btn-end-turn { background: #14161A !important; color: #FBF8F1 !important; }`;
+
+/**
+ * The same design with a real furniture step, and it PASSES. This is the target
+ * the design agent can aim at, stated as four numbers instead of an adjective:
+ *
+ *   apron  L* 90   (--ground, unchanged)
+ *   panels L* 76   (boards + HUD: 14 L* below the apron, not 4 above it)
+ *   mats   L* 60   (16 L* below the panels they sit in, 30 below the apron)
+ *   stock  L* 97.6 (--card-stock, unchanged)
+ *
+ * The direction of travel matters and is forced by the palette: at `--ground`
+ * 90.0 there are only 10 L\* left above it, so every step in the light theme has
+ * to go DOWN. Either the apron comes down to make room upward, or the furniture
+ * goes down. Nothing else clears 12 L\*.
+ */
+const SIM_STEPPED_LIGHT = `
+  #table, .table, #app, #table-center, .pile, #screen-game { background: lab(90% 1 6) !important; }
+  #hud, .board, .board-opponent { background: lab(76% 1 7) !important; }
+  .propcol, .board-bank { background: lab(60% 1 7) !important; }
+  #hand-dock { background: lab(82% 1 6) !important; }
+  .card, .card-face, .card-inner { background: #FBF8F1 !important; }
+  .card, .card * { color: #14161A !important; }
+  .btn-primary, #btn-end-turn { background: #14161A !important; color: #FBF8F1 !important; }`;
+
+/**
+ * The same stepped structure in the dark theme, and it PASSES.
+ *
+ * The apron literals are 6 L\* below their measured result on purpose: whatever
+ * `#table` paints on top of its background colour in this build (grain/vignette)
+ * lifts `lab(8%)` to a measured 14.6, and the first attempt at this row —
+ * apron 8, panels 22 — came back 9.9 L\* apart and red. The rig is calibrated
+ * against the MEASUREMENT, not against the literal, which is the whole reason
+ * these rows exist.
+ */
+const SIM_STEPPED_DARK = `
+  #table, .table, #app, #table-center, .pile, #screen-game { background: lab(8% 0 -1) !important; }
+  #hud, .board, .board-opponent { background: lab(30% 0 -1) !important; }
+  .propcol, .board-bank { background: lab(46% 0 -1) !important; }
+  #hand-dock { background: lab(4% 0 -1) !important; }
+  .card, .card-face, .card-inner { background: #FBF8F1 !important; }
+  .card, .card * { color: #14161A !important; }
+  .btn-primary, #btn-end-turn { background: #F2EEE4 !important; color: #14161A !important; }`;
+/* Every surface one grey. The cheapest thing a broken theme can look like. */
 const SIM_FLAT = `
   *, *::before, *::after { background: #2a2d33 !important; color: #303338 !important;
-    box-shadow: none !important; border-color: #2a2d33 !important; text-shadow: none !important; }`;
-/* The failure mode the tier count exists to catch: a perfectly reasonable light
- * apron with cream cards on it and a primary action that is NOT the §1 ink
- * slab. Everything lands in one 12 L* band and grayscale has nothing to read. */
+    box-shadow: none !important; border-color: #2a2d33 !important; text-shadow: none !important;
+    outline: none !important; }`;
+/* A plausible, PRETTY light theme with no §1 ink slab: cream cards on warm
+ * concrete and a quiet primary action. It has to fail on the action pair. */
 const SIM_NO_SLAB = `
-  #table, .table, #app, #table-center, .pile, #hand-dock, #hud, .opponents > *
+  #table, .table, #app, #table-center, .pile, #hand-dock, #hud, .opponents > *, #screen-game
     { background: #E8E2D4 !important; }
-  .propcol { background: #DED7C8 !important; }
+  .propcol, .board-bank { background: #DED7C8 !important; }
   .card, .card-face, .card-inner { background: #FBF8F1 !important; }
-  .btn-primary, #btn-end-turn { background: #DCD5C6 !important; color: #4A4E56 !important; }`;
+  .btn-primary, #btn-end-turn { background: #DCD5C6 !important; color: #4A4E56 !important;
+    box-shadow: none !important; }`;
+/* The mutation the OLD gate could not see and this one exists for: the ratified
+ * light palette with its edge treatment removed. Bulk range is untouched, the
+ * ink slab is still there so the old tier count still found three — and a card
+ * on a mat is now a 9 L* field step with no stroke and no shadow to find it by.
+ * This is the "cream on concrete at 1.19:1" build with nothing holding it up. */
+const SIM_NO_EDGE = `
+  .card, .card-face, .card-inner, .card-back, .propcol, .board-bank, #hud, #hand-dock,
+  .chip, .board-worth, .pile, .cardzone, [data-card-id]
+    { box-shadow: none !important; border: 0 !important; outline: none !important;
+      filter: none !important; }
+  .propcol { background-image: none !important; }`;
 
 const r = reporter('grayscale');
 const server = await startServer({ seed });
 let browser = null;
 let code = EXIT_PASS;
 
-const line = (m) => `bulk p5→p95 ${m.bulk.toFixed(1)} L*  ·  ${tiersOf(m.tiers).length} tier(s)  ·  `
-  + Object.entries(m.tiers).map(([k, v]) => `${k} ${v.toFixed(0)}`).join(' ');
-const verdict = (m) => (m.bulk >= MIN_BULK && tiersOf(m.tiers).length >= MIN_TIERS ? 'pass' : 'fail');
+const verdict = (m) => (m.bulk >= MIN_BULK && m.pairs.length >= MIN_PAIRS
+  && m.pairs.every((p) => p.sep >= SEP_MIN) ? 'pass' : 'fail');
+const line = (m) => {
+  const worst = [...m.pairs].sort((a, b) => a.sep - b.sep)[0];
+  return `bulk ${m.bulk.toFixed(1)} L*  ·  ${m.pairs.length} pairs  ·  `
+    + `weakest ${worst ? `${worst.label} ${worst.sep.toFixed(1)} L* (${worst.carrier})` : '—'}`;
+};
 
 try {
   browser = await launchBrowser();
   const h = await openPage(browser, `${server.url}/?harness=1&seed=${seed}`, { viewport: DESKTOP, dpr: 1 });
   // Same reason as screenshot.mjs: the coach layer is shown "once ever" out of
   // localStorage, so without this the first surface measured carries a hint
-  // bubble and no other one does.
+  // bubble and no other one does. (Its rect is excluded from every sample too —
+  // reset for determinism, excluded because it is not the design's hierarchy.)
   await pristineStorage(h.context);
+  // The subject picker hit-tests candidates; that helper lives in the page.
+  await audit.installPageHelpers(h.context);
   await requireBridge(h.page, 8000);
 
   const states = (() => {
@@ -258,7 +644,7 @@ try {
   for (const theme of THEMES) {
     const m = await load(theme);
     const label = `${FIXTURE}@desktop ${theme.key}`;
-    if (m.missing.length) r.warn(`${label}: no region matched ${m.missing.join(', ')}`);
+    if (m.missing.length) r.warn(`${label}: no element matched ${m.missing.join(', ')}`);
     if (!m.settled) r.warn(`${label}: the frame never stopped changing in ${m.settleMs}ms — numbers below are of a moving target`);
 
     if (m.bulk >= MIN_BULK) r.pass(`${label} tonal range: ${m.bulk.toFixed(1)} L* ≥ ${MIN_BULK}`);
@@ -268,37 +654,71 @@ try {
         + 'in grayscale it is one tone (ART §3, §10)');
     }
 
-    const groups = tiersOf(m.tiers);
-    const shape = groups.map((g) => `${g.keys.join('+')} ${g.lo.toFixed(0)}${g.hi > g.lo ? `–${g.hi.toFixed(0)}` : ''}`).join('  |  ');
-    if (groups.length >= MIN_TIERS) r.pass(`${label} tonal tiers: ${groups.length} ≥ ${MIN_TIERS}   ${dim(shape)}`);
-    else {
-      r.fail(`${label} tonal tiers: ${groups.length} < ${MIN_TIERS} `
-        + `— in grayscale this frame has no foreground/middle/ground separation (ART §10)`);
-      r.info(`tiers found: ${shape}`);
+    const bad = m.pairs.filter((p) => p.sep < SEP_MIN);
+    if (m.pairs.length < MIN_PAIRS) {
+      r.fail(`${label} resolved only ${m.pairs.length} adjacent pair(s) (< ${MIN_PAIRS}) `
+        + '— nothing measurable was found, so the separation verdict below means nothing');
     }
-    r.info(Object.entries(m.tiers).map(([k, v]) => `${k} ${v.toFixed(1)}`).join('  ')
-      + `  ${dim(`[diagnostic: figure ${m.figure?.toFixed(1) ?? '—'} vs ground ${m.ground?.toFixed(1) ?? '—'}, `
-        + `Δ ${m.delta?.toFixed(1) ?? '—'}]`)}`
-      + dim(`  deciles ${m.bins.map((b) => Math.round(b * 100)).join('/')}`));
+    if (!bad.length) {
+      r.pass(`${label} adjacent-pair separation: all ${m.pairs.length} pairs ≥ ${SEP_MIN} L*`);
+    } else {
+      r.fail(`${label} adjacent-pair separation: ${bad.length}/${m.pairs.length} pair(s) below ${SEP_MIN} L* `
+        + '— with colour removed a player cannot tell these apart (ART §10)');
+    }
+
+    /* Every pair, every run. This is the block a human re-derives by hand:
+     * two medians, their difference, and the boundary swing per side.        */
+    for (const p of [...m.pairs].sort((a, b) => a.sep - b.sep)) {
+      const flag = p.sep < SEP_MIN ? '✗' : (p.carrier === 'edge' ? '~' : '·');
+      const sides = p.sides
+        ? ` [T${fmt(p.sides.top)} R${fmt(p.sides.right)} B${fmt(p.sides.bottom)} L${fmt(p.sides.left)}]`
+        : '';
+      const body = `${flag} ${p.label.padEnd(38)} ${p.a.toFixed(1).padStart(5)} vs ${p.b.toFixed(1).padStart(5)} L*  `
+        + `field ${p.field.toFixed(1).padStart(5)}  edge ${p.edge.toFixed(1).padStart(5)}${sides}  `
+        + `→ ${p.sep.toFixed(1)} by ${p.carrier}   `
+        + `${p.el} @${p.rect.map(Math.round).join(',')} (worst of ${p.of}/${p.seen})`;
+      if (p.sep < SEP_MIN) console.log(`      ${yellow(body)}`);
+      else r.info(body);
+    }
+
+    /* The number the designer aims at: the weakest FIELD step among the
+     * structural pairs, i.e. how much tonal separation the palette itself is
+     * providing before any stroke or shadow is counted.                      */
+    const structural = m.pairs.filter((p) => p.kind === 'surface');
+    const onEdge = structural.filter((p) => p.carrier === 'edge');
+    const weakField = structural.reduce((w, p) => (!w || p.field < w.field ? p : w), null);
+    if (weakField) {
+      r.info(dim(`palette alone: weakest field step is ${weakField.field.toFixed(1)} L* `
+        + `(${weakField.label}); ${onEdge.length}/${structural.length} structural pair(s) are `
+        + `carried by edge treatment rather than by tone`));
+    }
+    r.info(dim(`bulk p5→p95 ${m.p5.toFixed(1)}→${m.p95.toFixed(1)}  deciles ${m.bins.map((b) => Math.round(b * 100)).join('/')}`));
   }
 
   /* ── proof the gate discriminates (§8) ────────────────────────────────── */
   if (args.prove) {
-    console.log(dim('\n  ── --prove: the same two numbers on four synthetic builds ──'));
+    console.log(dim('\n  ── --prove: the same assertion on six synthetic builds ──'));
     for (const [name, theme, css, want] of [
       ['mutation: one flat grey', THEMES[0], SIM_FLAT, 'fail'],
       ['mutation: light apron, no ink slab', THEMES[1], SIM_NO_SLAB, 'fail'],
-      ['ART §2 dark, simulated', THEMES[0], SIM_DARK, 'pass'],
-      ['ART §2 light, simulated', THEMES[1], SIM_LIGHT, 'pass'],
+      ['mutation: light, edge+shadow removed', THEMES[1], SIM_NO_EDGE, 'fail'],
+      ['ART §2 light tokens, exactly as ratified', THEMES[1], SIM_ART2_LIGHT, 'fail'],
+      ['light + a 12 L* furniture step', THEMES[1], SIM_STEPPED_LIGHT, 'pass'],
+      ['dark + a 12 L* furniture step', THEMES[0], SIM_STEPPED_DARK, 'pass'],
     ]) {
       const m = await load(theme, css);
       const got = verdict(m);
       if (got === want) r.pass(`${name}: ${got} as expected  ${dim(line(m))}`);
-      else r.fail(`${name}: expected ${want}, measured ${got}  ${line(m)}`);
+      else {
+        r.fail(`${name}: expected ${want}, measured ${got}  ${line(m)}`);
+        for (const p of [...m.pairs].sort((a, b) => a.sep - b.sep).slice(0, 4)) {
+          r.info(`${p.label} ${p.a.toFixed(1)} vs ${p.b.toFixed(1)} field ${p.field.toFixed(1)} edge ${p.edge.toFixed(1)} → ${p.sep.toFixed(1)}`);
+        }
+      }
     }
   } else {
-    console.log(dim('  (run with --prove to re-measure the calibration rig: '
-      + 'a flat-grey mutation must go red, the two simulated ART §2 themes green)'));
+    console.log(dim('  (run with --prove to re-measure the calibration rig: flat-grey, '
+      + 'no-ink-slab and no-edge mutations must go red, the two simulated ART §2 themes green)'));
   }
 
   if (h.errors.length) r.warn(`${h.errors.length} console/page error(s) while measuring`);
@@ -312,6 +732,8 @@ try {
   if (browser) await browser.close().catch(() => {});
   await server.stop();
 }
+
+function fmt(v) { return v == null ? ' —' : v.toFixed(0).padStart(2); }
 
 r.finish('grayscale');
 process.exit(r.code === EXIT_PASS && code === EXIT_PASS ? EXIT_PASS : EXIT_FAIL);

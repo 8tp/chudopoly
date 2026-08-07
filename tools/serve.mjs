@@ -100,6 +100,17 @@ export async function startServer(opts = {}) {
     wsUrl: `ws://127.0.0.1:${port}`,
     proc,
     logs: () => out,
+    /**
+     * Null while the server is alive, otherwise its exit code/signal.
+     *
+     * P8 round 2: touchtest lost the server mid-run on roughly one run in four
+     * (every staged surface died on ERR_CONNECTION_REFUSED) and the tool had no
+     * way to say so — it reported the browser's error and then printed green
+     * summaries over the surfaces that had run before the death. A tool cannot
+     * distinguish "the client is broken" from "the thing under test exited"
+     * without asking, so every tool can now ask.
+     */
+    get died() { return exited !== null ? exited : proc.exitCode; },
     stop: async () => {
       if (proc.exitCode !== null) return;
       proc.kill('SIGTERM');

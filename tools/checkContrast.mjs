@@ -242,6 +242,9 @@ try {
   // localStorage, so without this the first surface measured carries a hint
   // bubble and no other one does.
   await pristineStorage(h.context);
+  // `auditTextContrast`'s buried-run filter runs on audit.openHitTesting, which
+  // lives in the page, not in this module — install it for every document.
+  await audit.installPageHelpers(h.context);
   await requireBridge(h.page, 8000);
 
   let totalSamples = 0;

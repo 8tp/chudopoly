@@ -45,6 +45,13 @@
  *     reach this surface" is precisely the two-names-one-picture failure this
  *     file exists to catch, and it is worth more said out loud than as a generic
  *     hash clash. `--prove-theme` demonstrates that verdict going red.
+ *   • Text buried under ANOTHER LAYER now fails, not just text that overflows
+ *     its own box. `five-player@phone.png` shipped with "DRONE" and "FIGH…"
+ *     under the deck/discard pile and `auditClippedText` passed it, because
+ *     overflow and z-order are two different ways to lose a word and only one
+ *     was measured. `auditOccludedText` is the z-order half, on the SAME hit
+ *     test `checkContrast.mjs` uses (`audit.openHitTesting`, installed once per
+ *     context) so the two cannot drift.
  *   • Every shot now waits for a SETTLED frame and resets client storage first.
  *     Without either, two takes of `mid-game@desktop` from the same state and
  *     the same theme differed by 21593 pixels (the coach layer is shown "once
@@ -200,6 +207,8 @@ let code = EXIT_PASS;
 const captured = [];
 const hashes = new Map();          // sha1 → first shot that produced it
 const clipped = [];                // {shot, items[]}
+const buried = [];                 // {shot, items[]} — text under another layer
+const veiled = [];                 // {shot, n} — text under a decorative layer
 const problems = [];
 const themePairs = new Map();      // `${shot}@${screen}` → {dark:{hash,fp}, light:{…}}
 const unsettled = [];              // shots whose frame never stopped changing
@@ -253,6 +262,14 @@ async function take(h, screen, shot, theme) {
     const clips = await h.page.evaluate(audit.auditClippedText);
     if (clips.length) clipped.push({ shot: label, items: clips });
 
+    /* ---- text z-order, measured in the same frame -----------------------
+     * A string can be lost two ways and this is the other one. Same hit test as
+     * checkContrast.mjs, so "covered" means the same thing in both gates.     */
+    const occl = await h.page.evaluate(audit.auditOccludedText);
+    const layout = occl.filter((o) => !o.veil);
+    if (layout.length) buried.push({ shot: label, items: layout });
+    if (occl.length - layout.length) veiled.push({ shot: label, n: occl.length - layout.length });
+
     /* ---- shoot a SETTLED frame ------------------------------------------
      * Not a timeout. `--prove-theme` found `mid-game@desktop` producing two
      * DIFFERENT images from the same state and the same theme, because the
@@ -285,7 +302,8 @@ async function take(h, screen, shot, theme) {
     captured.push({ name: `${shot.name} · ${screen.tag}${theme.tag}`, file });
     console.log(`  ${green('✓')} ${shot.name.padEnd(16)} `
       + `${dim(`${screen.tag}${theme.tag ? ` ${theme.key}` : ''}`)}`
-      + `${clips.length ? yellow(`  ${clips.length} clipped`) : ''}`);
+      + `${clips.length ? yellow(`  ${clips.length} clipped`) : ''}`
+      + `${layout.length ? yellow(`  ${layout.length} buried`) : ''}`);
   } catch (e) {
     fail(`${label} — ${e.message.split('\n')[0]}`);
   }
@@ -299,6 +317,10 @@ try {
     // Every take starts from a first-time player's storage, or the coach layer
     // appears in whichever shot happens to be first (see pristineStorage).
     await pristineStorage(h.context);
+    // Ships audit.openHitTesting into every document this context loads; the
+    // occlusion pass throws loudly if it is missing rather than measuring
+    // nothing. addInitScript, because every take does a fresh `goto`.
+    await audit.installPageHelpers(h.context);
     await requireBridge(h.page, 8000);
 
     for (const shot of SHOT_LIST) {
@@ -364,6 +386,31 @@ try {
     console.log(`  ${green('✓')} no clipped card/HUD text in any shot`);
   }
 
+  /* ---- buried text verdict ------------------------------------------------
+   * The other half of "a word you cannot finish reading". Reported with the
+   * coverage percentage and the occluder's ancestry, because "DRONE is 100%
+   * under #table-center" names the fix and "text is occluded" does not.        */
+  if (buried.length) {
+    const total = buried.reduce((n, c) => n + c.items.length, 0);
+    fail(`${total} text run(s) buried under another layer across ${buried.length} shot(s) `
+      + '— a label under a different layer is unreadable however well it fits its box');
+    for (const c of buried.slice(0, 8)) {
+      console.log(dim(`      ${c.shot}:`));
+      for (const it of c.items.slice(0, 4)) {
+        console.log(dim(`        ${it.el} "${it.text}" ${it.pct}% under ${it.byChain}`));
+      }
+    }
+  } else {
+    console.log(`  ${green('✓')} no card/HUD text buried under another layer`);
+  }
+  if (veiled.length) {
+    // Not a failure (see auditOccludedText's VEIL note) — but silence here is
+    // how "the coach layer is sitting on the board" stopped being visible.
+    const total = veiled.reduce((n, c) => n + c.n, 0);
+    console.log(`  ${yellow('!')} ${total} text run(s) under a decorative layer (hints/toast/fx) `
+      + `in ${veiled.length} shot(s) — transient, gated on CTAs only`);
+  }
+
   /* ---- frames that never settled -----------------------------------------
    * Not fatal — some of these shots are ABOUT a live moment. But an unsettled
    * frame is a shot whose bytes are a coin flip, so both byte-identical rules
@@ -426,6 +473,8 @@ try {
         })),
         shots: captured.map((c) => path.basename(c.file)),
         clipped,
+        buried,
+        veiled,
         problems,
       }, null, 1)
     );

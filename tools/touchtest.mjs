@@ -28,6 +28,44 @@
  *   §H offline         never measured. No reconnect affordance under a dead net.
  *   §I duplicate CTAs  never measured. Two enabled DRAW buttons, 57px apart.
  *
+ * P8 ROUND 2. A fresh mobile critic found the gate passing for the wrong
+ * reasons. Four of the five findings were about the gate's own integrity, not
+ * about coverage, and they are fixed here:
+ *
+ *   §D was INCAPABLE OF FAILING. This file never reset client storage, and
+ *      hints are shown once-ever out of `localStorage` — by the time the
+ *      `payment-pending` stage ran, `chud_hints_v1` already held
+ *      `["peek","drag","pay"]`, consumed by the live game ninety seconds
+ *      earlier in the same run. The layer §D exists to catch could not appear.
+ *      `openTouchPage` now clears storage per navigation (the mechanism
+ *      harness.mjs already shipped for screenshot.mjs), `auditOcclusion`'s CTA
+ *      list is a rule instead of a hand-maintained list of ids (it was missing
+ *      `.pile[data-action="open-discard"]`, a primary on-table control), and
+ *      `--prove` demonstrates §D going red.
+ *
+ *   §0.9 was ORDER-DEPENDENT. Same fixture, same viewport: applied as the FIRST
+ *      state the hand strips measure [46,46,46,44,42,42,42,56] — three under
+ *      44px — and applied after any other state they measure
+ *      [47,48,48,46,44,44,44,56] — none under. (A module-level `cssStep` cache
+ *      in the client only captures on a layout with no inline margin, so a hand
+ *      that has been tightened once holds a stale natural step; that bug is
+ *      being fixed separately.) This file staged payment and targeting before
+ *      discard-limit and therefore always measured the lucky branch. Every
+ *      staged surface is now measured COLD — fresh document, state applied
+ *      once, no interaction — and settled by geometry rather than by a sleep.
+ *
+ *   TAP TARGETS SKIPPED THE REAL HIT AREA. `auditTapTargets` dropped
+ *      `opacity: 0` elements, so the visually-hidden `<input>` that IS the
+ *      target of a 44×23 settings switch was never measured.
+ *
+ *   "EVERY INTERACTIVE ELEMENT IS ON-SCREEN" only tested the viewport, never
+ *      overflow scrollers — which is why it could not see three of the four
+ *      targetable opponent boards sitting at `visibleH 0` in landscape.
+ *
+ *   PENDING CLIENT WAS FLAKY: exit 2 on 2 of 6 runs with a second headless
+ *      Chromium live, from an 8s bridge budget. Now 30s, still strict about
+ *      real absence.
+ *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */
 import fs from 'node:fs';
@@ -36,12 +74,16 @@ import {
   FIXTURE_DIR, PHONE, PHONE_DPR, LANDSCAPE, SEED, parseArgs, launchBrowser,
   reporter, readJSON, green, red, dim, bold, EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
-import { openTouchPage, centre, KEYBOARD_PX } from './lib/touch.mjs';
+import {
+  openTouchPage, centre, settleLayout, waitForBridge, KEYBOARD_PX,
+} from './lib/touch.mjs';
 import * as audit from './lib/audit.mjs';
 import { startServer } from './serve.mjs';
 
 const args = parseArgs();
 const seed = args.seed ? Number(args.seed) : SEED;
+/** See waitForBridge: 8s was measuring the machine, not the client. */
+const BRIDGE_MS = 30000;
 
 const r = reporter(`touchtest  ${dim(`${PHONE.width}×${PHONE.height} DPR${PHONE_DPR} + ${LANDSCAPE.width}×${LANDSCAPE.height}, real touch only`)}`);
 const server = await startServer({ seed });
@@ -60,15 +102,13 @@ try {
   const h = await openTouchPage(browser, `${server.url}/?harness=1&seed=${seed}`);
   const page = h.page;
 
-  const bridged = await page.waitForFunction(() => !!window.__CHUD, null, { timeout: 8000 })
-    .then(() => true).catch(() => false);
-  if (!bridged) {
-    console.log('  PENDING CLIENT — window.__CHUD absent with ?harness=1');
+  const bridged = await waitForBridge(page, BRIDGE_MS);
+  if (!bridged.ok) {
+    console.log(`  PENDING CLIENT — window.__CHUD absent with ?harness=1 after ${bridged.ms}ms`);
     await h.close(); await browser.close(); await server.stop();
     process.exit(2);
   }
-  await page.evaluate(() => window.__CHUD.ready).catch(() => {});
-  r.pass('booted on an emulated iPhone with a real touchscreen');
+  r.pass(`booted on an emulated iPhone with a real touchscreen ${dim(`(bridge in ${bridged.ms}ms)`)}`);
 
   const sentCount = () => page.evaluate(() => (window.__CHUD.sentLog || []).length);
   const lastSent = () => page.evaluate(() => (window.__CHUD.sentLog || []).slice(-1)[0] || null);
@@ -82,11 +122,30 @@ try {
 
   /* ═══ §B/§C: one audit routine, run per surface ════════════════════════ */
   const surfaceIssues = [];
+  /**
+   * Staged surfaces that never got measured.
+   *
+   * P8 round 2, measured on one run in four: `§H` left the browser unable to
+   * reach the server, all five staged surfaces died on ERR_CONNECTION_REFUSED —
+   * and the run still printed "✓ tap targets ≥ 44px on all 9 measured
+   * surfaces", because the summaries below count what they were GIVEN. A green
+   * summary over a set that is missing the surfaces the run was about is the
+   * same defect as an assertion that cannot fail, so the summaries are now
+   * suppressed and the run is red whenever this list is non-empty.
+   */
+  const stagesFailed = [];
   async function measureSurface(label) {
+    // Settle by GEOMETRY, never by a sleep: the hand-fan verdict flipped between
+    // three-under-44px and none-under depending on when the measurement landed.
+    const s = await settleLayout(page);
+    if (!s.settled) r.warn(`[${label}] layout never stopped moving in ${s.ms}ms — the numbers below are of a moving target`);
     const t = await page.evaluate(audit.auditTapTargets);
     const occ = await page.evaluate(audit.auditOcclusion);
     const dup = await page.evaluate(audit.auditDuplicateCTAs);
-    const rec = { label, small: t.fatal, zones: t.zones, advisory: t.advisory, off: t.offscreen, occ, dup, t };
+    const rec = {
+      label, small: t.fatal, zones: t.zones, advisory: t.advisory,
+      off: t.offscreen, clipped: t.clipped, occ, dup, t,
+    };
     surfaceIssues.push(rec);
     if (t.scrollW > t.w + 1) {
       r.fail(`[${label}] page scrolls horizontally (${t.scrollW} > ${t.w})`);
@@ -191,6 +250,9 @@ try {
       ['settings sheet', '#hud [data-action="settings"]', '#sheet [data-action="close-sheet"]'],
       ['emote sheet', '#btn-emote', '#sheet [data-action="close-sheet"]'],
       ['scoop confirm', '#btn-scoop', '#sheet [data-action="close-sheet"]'],
+      // P8 round 2: the discard browser is opened by tapping the centre-table
+      // pile — a primary on-table control that was in NO gate's selector list.
+      ['discard browser', '[data-action="open-discard"]', '#sheet [data-action="close-sheet"]'],
       ['side panel', '#hud [data-action="toggle-side"]', '#side [data-action="toggle-side"]'],
     ];
     for (const [label, open, close] of surfaces) {
@@ -330,15 +392,62 @@ try {
     await page.waitForTimeout(600);
   }
 
+
   /* ═══════════════ fixture-staged flows (payment, target, discard, win) ═ */
-  const stage = async (name) => {
+  /**
+   * Stage a fixture from a KNOWN STARTING STATE and measure it before anything
+   * is touched.
+   *
+   * The cold measurement is the point. Every §0.9 number this file reported for
+   * a staged surface used to be taken after the surface had been interacted
+   * with, and the client's layout is not idempotent across those two paths — the
+   * hand fan measures [46,46,46,44,42,42,42,56] cold and
+   * [47,48,48,46,44,44,44,56] warm, i.e. red and green. A gate must not inherit
+   * whatever the previous stage happened to leave behind, so: fresh document,
+   * storage cleared by the init script, state applied exactly once, settle by
+   * geometry, measure. Interaction-driven measurements still happen afterwards
+   * and are labelled separately.
+   */
+  const stage = async (name, { cold = true } = {}) => {
     const state = fixture(name);
-    if (!state) { r.fail(`fixture ${name}.json missing — run npm run tool:record`); return false; }
-    await page.goto(`${server.url}/?harness=1&seed=${seed}&stage=${name}`, { waitUntil: 'load' });
-    await page.waitForFunction(() => !!window.__CHUD, null, { timeout: 8000 });
-    await page.evaluate(() => window.__CHUD.ready).catch(() => {});
+    if (!state) { r.fail(`fixture ${name}.json missing — run npm run tool:record`); stagesFailed.push(name); return false; }
+    /* §H leaves CDP network emulation behind on some runs, and a later stage
+     * then dies on ERR_CONNECTION_REFUSED — one aborted run in four. Clearing
+     * the emulation and retrying once distinguishes "the harness left the wire
+     * cut" from "the server is genuinely gone": the second failure is still
+     * reported and still fails the gate. */
+    const goStage = () => page.goto(`${server.url}/?harness=1&seed=${seed}&stage=${name}`, { waitUntil: 'load' });
+    try {
+      await goStage();
+    } catch (e) {
+      await h.setOffline(false).catch(() => {});
+      await page.waitForTimeout(300);
+      try {
+        await goStage();
+        r.warn(`stage ${name}: first navigation failed (${e.message.split('\n')[0]}), succeeded on retry`);
+      } catch (e2) {
+        /* Say WHICH side died. A Node-side fetch does not go through the page's
+         * CDP network emulation, so this separates "§H left the wire cut in the
+         * browser" from "the server process is gone" — one aborted run in four
+         * looked identical from inside the page and they need different fixes. */
+        const alive = await fetch(server.url, { method: 'GET' })
+          .then((res) => `server answered ${res.status}`)
+          .catch((err) => `server is down (${err.cause?.code || err.message})`);
+        r.fail(`stage ${name}: navigation failed — ${e2.message.split('\n')[0]}; ${alive}`
+          + (server.died !== null ? `; server.js exited ${server.died}` : ''));
+        if (server.died !== null && !stagesFailed.length) {
+          // Print it ONCE, on the first stage that noticed: the reason the
+          // server went away is in its own log and nowhere else.
+          for (const l of server.logs().trim().split('\n').slice(-8)) r.info(l);
+        }
+        stagesFailed.push(name);
+        return false;
+      }
+    }
+    const b = await waitForBridge(page, BRIDGE_MS);
+    if (!b.ok) { r.fail(`stage ${name}: the bridge never appeared in ${b.ms}ms`); return false; }
     await page.evaluate((s) => { window.__CHUD.applyState(s); window.__CHUD.drainEvents?.(); }, state);
-    await page.waitForTimeout(300);
+    if (cold) await measureSurface(`${name} (cold)`);
     return true;
   };
 
@@ -427,6 +536,17 @@ try {
     }
   }
 
+  /* ── §E landscape at FIVE players ──────────────────────────────────────
+   * Landscape was measured once, in whatever seat count the live game happened
+   * to have (3), and only as four zone heights. Five opponents is where the
+   * boards get pushed into a scroller — and the clipped-control check in the
+   * verdict below is the thing that can see that. */
+  await page.setViewportSize(LANDSCAPE);
+  if (await stage('five-player', { cold: false })) {
+    await measureSurface('landscape · five players (cold)');
+  }
+  await page.setViewportSize(PHONE);
+
   /* ── win overlay ──────────────────────────────────────────────────────── */
   if (await stage('finished')) {
     const shown = await page.evaluate(() => {
@@ -439,6 +559,14 @@ try {
   }
 
   /* ═══════════════ verdict over every surface measured ══════════════════ */
+  if (stagesFailed.length) {
+    r.fail(`${stagesFailed.length} staged surface(s) were never measured (${stagesFailed.join(', ')}) `
+      + '— every "all surfaces" verdict below is over an incomplete set and must not be read as green');
+  }
+  const complete = stagesFailed.length === 0;
+  /** A summary may only report success when it saw everything it claims to cover. */
+  const summary = (ok, msg) => (ok && complete ? r.pass(msg) : (ok ? r.info(`${msg} (incomplete set)`) : null));
+
   const smalls = surfaceIssues.filter((s) => s.small.length);
   if (smalls.length) {
     // Distinct signatures, not raw hits: one 20px .propcol repeated across ten
@@ -449,20 +577,30 @@ try {
     for (const s of smalls) {
       r.info(`${s.label}: ${[...new Set(s.small)].slice(0, 8).join(', ')}`);
     }
-  } else r.pass(`tap targets ≥ 44px on all ${surfaceIssues.length} measured surfaces`);
+  } else summary(true, `tap targets ≥ 44px on all ${surfaceIssues.length} measured surfaces`);
 
   const zoneHits = new Set(surfaceIssues.flatMap((s) => s.zones || []));
   if (zoneHits.size) {
     r.fail(`${zoneHits.size} distinct card zone(s) under 44px — §5 says tapping any zone zooms it, `
       + 'so a zone thinner than a thumb hides the data it is supposed to reveal');
     r.info([...zoneHits].slice(0, 10).join(', '));
-  } else r.pass('every card zone is at least 44px');
+  } else summary(true, 'every card zone is at least 44px');
 
   const offs = surfaceIssues.filter((s) => s.off.length);
   if (offs.length) {
     r.fail(`interactive elements outside the viewport on ${offs.length} surface(s)`);
     for (const s of offs) r.info(`${s.label}: ${s.off.slice(0, 5).join(', ')}`);
-  } else r.pass('every interactive element is on-screen on every surface');
+  } else summary(true, 'every interactive element is on-screen on every surface');
+
+  /* The other half of "on-screen": inside the viewport but scrolled out of its
+   * own overflow container, which the viewport test cannot see. */
+  const clips = surfaceIssues.filter((s) => (s.clipped || []).length);
+  if (clips.length) {
+    const total = new Set(surfaceIssues.flatMap((s) => s.clipped || [])).size;
+    r.fail(`${total} distinct control(s) clipped by a scrolling ancestor across ${clips.length} surface(s) `
+      + '— on-screen and still unreachable');
+    for (const s of clips) r.info(`${s.label}: ${[...new Set(s.clipped)].slice(0, 5).join(', ')}`);
+  } else summary(true, 'no control is clipped away by an overflow container');
 
   const occAll = surfaceIssues.filter((s) => s.occ.length);
   if (occAll.length) {
@@ -480,7 +618,134 @@ try {
     for (const e of h.errors.slice(0, 6)) console.log(red(`      ${e}`));
   } else r.pass('no console errors on phone');
 
+  /* ═══ --prove: §D and §0.9 must be able to go red (§8) ══════════════════
+   * §D passed every round while being structurally unable to fail (see the
+   * header). An assertion nobody has seen fail is a decoration, so this injects
+   * the exact defect it exists to catch — a pointer-events:none veil laid over
+   * the primary action — and requires the verdict to flip.                    */
+  if (args.prove) {
+    console.log(dim('\n  ── --prove: the same assertions against injected defects ──'));
+    await stage('payment-pending', { cold: false });
+    await settleLayout(page);
+
+    /* Half one: with a veil actually over a CTA, the verdict must flip. */
+    const clean = await page.evaluate(audit.auditOcclusion);
+    const injected = await page.evaluate(() => {
+      const vis = (el) => {
+        const st = getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) < 0.05) return false;
+        for (let p = el; p; p = p.parentElement) if (p.hasAttribute?.('hidden')) return false;
+        const r2 = el.getBoundingClientRect();
+        return r2.width > 20 && r2.height > 20 && r2.top < innerHeight && r2.bottom > 0;
+      };
+      const cta = [...document.querySelectorAll(
+        '[data-action]:not([disabled]), #prompt button, #hand-dock button, .btn-primary',
+      )].filter(vis)[0];
+      if (!cta) return null;
+      const r2 = cta.getBoundingClientRect();
+      const veil = document.createElement('div');
+      veil.className = 'hint-card';
+      veil.textContent = 'injected coach bubble';
+      Object.assign(veil.style, {
+        position: 'fixed', left: `${r2.left - 4}px`, top: `${r2.top - 4}px`,
+        width: `${r2.width + 8}px`, height: `${r2.height + 8}px`,
+        background: '#888', pointerEvents: 'none', zIndex: '9999',
+        // `.hint-card` ships `opacity: 0` and animates in via `.is-in`, so the
+        // first version of this injection produced an INVISIBLE veil and the
+        // demonstration failed for a reason that had nothing to do with §D.
+        opacity: '1', visibility: 'visible',
+      });
+      document.body.appendChild(veil);
+      return (cta.textContent || cta.dataset.action || cta.id || 'button').trim().slice(0, 24);
+    });
+    await page.waitForTimeout(120);
+    const veiled = await page.evaluate(audit.auditOcclusion);
+    if (!injected) {
+      r.fail('--prove §D: no visible CTA on the staged surface to cover — the demonstration cannot run');
+    } else if (veiled.length > clean.length) {
+      r.pass(`--prove §D: covering "${injected}" took the verdict ${clean.length} → ${veiled.length} `
+        + dim(`("${veiled[0].cta}" ${veiled[0].pct}% by ${veiled[0].by})`));
+    } else {
+      r.fail(`--prove §D: covering "${injected}" left the verdict at ${veiled.length} — §D cannot `
+        + 'distinguish a covered CTA from an uncovered one, so its green is a decoration');
+    }
+
+    /* Half two: prove the STORAGE half, which is what made §D unfalsifiable.
+     *
+     * A/B on the one variable: a freshly staged surface builds coach nodes,
+     * and the same surface with `chud_hints_v1` pre-seeded as "all seen" builds
+     * none. That second state is exactly what every stage inherited before this
+     * run cleared storage — the layer §D exists to catch could not be created,
+     * so §D was green by construction. The seeding init script is added AFTER
+     * the pristine one and therefore wins; --prove is the end of the run.     */
+    const countHints = () => page.evaluate(
+      () => document.querySelectorAll('.hints .hint-card, .hint-card').length,
+    );
+    const withPristine = await countHints();
+    await h.context.addInitScript(() => {
+      try {
+        localStorage.setItem('chud_hints_v1',
+          JSON.stringify(['peek', 'drag', 'pay', 'play', 'bank', 'discard', 'target', 'end']));
+      } catch { /* private mode */ }
+    });
+    await stage('payment-pending', { cold: false });
+    await settleLayout(page);
+    const withSpent = await countHints();
+    if (withPristine > 0 && withSpent === 0) {
+      r.pass(`--prove: the coach layer is storage-gated — ${withPristine} node(s) on pristine storage, `
+        + `${withSpent} once the once-ever keys are spent. Not clearing storage is what made §D unfalsifiable.`);
+    } else {
+      r.fail(`--prove: pristine ${withPristine} hint node(s) vs spent ${withSpent} — the storage fix `
+        + 'cannot be shown to change what §D is able to see');
+    }
+  }
+
   await h.close();
+
+  /* ═══ ART §2 ships TWO appearances; this file measured one ══════════════
+   * `openTouchPage` hardcoded `colorScheme: 'dark'`, so the light theme had no
+   * mobile gate at all. A full second pass would double a slow gate for little
+   * return — light and dark are geometrically identical in this build, which is
+   * a claim worth CHECKING rather than assuming, so the light pass is cold
+   * measurements only (tap targets, occlusion, clipping) over the surfaces most
+   * likely to differ, and any divergence from the dark numbers is reported.  */
+  {
+    const lh = await openTouchPage(browser, `${server.url}/?harness=1&seed=${seed}`, { colorScheme: 'light' });
+    const lb = await waitForBridge(lh.page, BRIDGE_MS);
+    if (!lb.ok) r.fail('light-theme pass: the bridge never appeared');
+    else {
+      for (const name of ['mid-game', 'discard-limit', 'five-player']) {
+        const state = fixture(name);
+        if (!state) continue;
+        await lh.page.goto(`${server.url}/?harness=1&seed=${seed}&stage=${name}&theme=light`, { waitUntil: 'load' });
+        if (!(await waitForBridge(lh.page, BRIDGE_MS)).ok) continue;
+        await lh.page.evaluate((s) => { window.__CHUD.applyState(s); window.__CHUD.drainEvents?.(); }, state);
+        await settleLayout(lh.page);
+        const t = await lh.page.evaluate(audit.auditTapTargets);
+        const occ = await lh.page.evaluate(audit.auditOcclusion);
+        surfaceIssues.push({
+          label: `${name} (cold, light)`, small: t.fatal, zones: t.zones, advisory: t.advisory,
+          off: t.offscreen, clipped: t.clipped, occ, dup: [], t,
+        });
+      }
+      const dk = (n) => surfaceIssues.find((s) => s.label === `${n} (cold)`);
+      let diverged = 0;
+      for (const name of ['mid-game', 'discard-limit', 'five-player']) {
+        const a = dk(name);
+        const b = surfaceIssues.find((s) => s.label === `${name} (cold, light)`);
+        if (!a || !b) continue;
+        if (a.small.join('|') !== b.small.join('|')) {
+          diverged++;
+          r.fail(`[${name}] the light theme has DIFFERENT tap targets from dark — `
+            + `${a.small.length} under 44px in dark, ${b.small.length} in light`);
+        }
+      }
+      if (!diverged) r.pass('light and dark are geometrically identical on the surfaces measured');
+      if (lh.errors.length) r.fail(`${lh.errors.length} console/page error(s) in the light theme`);
+    }
+    await lh.close();
+  }
+
   code = r.code;
 } catch (e) {
   console.log(red(`  ✗ ${e.stack || e.message}`));

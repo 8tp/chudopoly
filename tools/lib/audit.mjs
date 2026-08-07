@@ -30,9 +30,20 @@
  */
 export function auditTapTargets() {
   const MIN = 44;
+  /**
+   * P8 round 2 GAP (mobile critic): this used to drop any element with
+   * `opacity: 0`, and the 44×23 settings switches passed because of it. The
+   * pattern is the standard one — a visually-hidden `<input>` laid over a styled
+   * track — so the element with `opacity: 0` IS the hit target, and refusing to
+   * measure it means refusing to measure the control.
+   *
+   * An element's OWN transparency is therefore allowed, as long as it still
+   * takes pointer events. An ANCESTOR at opacity 0 is different: the whole
+   * subtree is invisible, which is a closed/faded surface, not a control.
+   */
   const vis = (el) => {
     const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
     if (st.pointerEvents === 'none') return false;
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) return false;
@@ -41,9 +52,36 @@ export function auditTapTargets() {
     for (let p = el.parentElement; p; p = p.parentElement) {
       const ps = getComputedStyle(p);
       if (ps.display === 'none' || ps.visibility === 'hidden') return false;
+      if (Number(ps.opacity) === 0) return false;
       if (p.hasAttribute('hidden')) return false;
     }
     return true;
+  };
+
+  /**
+   * The rect a finger can actually reach, after every scrolling/clipping
+   * ancestor has had its say.
+   *
+   * P8 round 2 GAP: "every interactive element is on-screen" only compared the
+   * element to the VIEWPORT, so a control scrolled out of an `overflow: auto`
+   * panel measured as perfectly placed. That is why three of the four targetable
+   * opponent boards in landscape — `visibleH 0`, clipped by their own scroller —
+   * were invisible to this gate.
+   */
+  const clipRect = (el) => {
+    const r = el.getBoundingClientRect();
+    let l = r.left; let t = r.top; let rt = r.right; let b = r.bottom;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const st = getComputedStyle(p);
+      const clips = (v) => v === 'hidden' || v === 'clip' || v === 'auto' || v === 'scroll';
+      if (!clips(st.overflowX) && !clips(st.overflowY)) continue;
+      const pr = p.getBoundingClientRect();
+      if (clips(st.overflowX)) { l = Math.max(l, pr.left); rt = Math.min(rt, pr.right); }
+      if (clips(st.overflowY)) { t = Math.max(t, pr.top); b = Math.min(b, pr.bottom); }
+    }
+    l = Math.max(l, 0); t = Math.max(t, 0);
+    rt = Math.min(rt, innerWidth); b = Math.min(b, innerHeight);
+    return { w: Math.max(0, rt - l), h: Math.max(0, b - t) };
   };
   const label = (el) => {
     const cls = String(el.className || '').trim().split(/\s+/).filter(Boolean)[0] || '';
@@ -67,6 +105,7 @@ export function auditTapTargets() {
   const zones = [];
   const advisory = [];
   const offscreen = [];
+  const clipped = [];
   const seen = new Set();
 
   const consider = (el, kind) => {
@@ -75,6 +114,16 @@ export function auditTapTargets() {
     const r = el.getBoundingClientRect();
     if (r.right > innerWidth + 2 || r.left < -2 || r.bottom > innerHeight + 2 || r.top < -2) {
       offscreen.push(`${label(el)} ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}×${Math.round(r.height)}`);
+    }
+    // Clipped by a scroller rather than by the viewport. Only interesting when
+    // the element itself is big enough — a 20px control is already fatal above,
+    // and reporting it twice buries the different defect.
+    if (kind !== 'advisory') {
+      const c = clipRect(el);
+      if ((r.width >= MIN - 0.5 && c.w < MIN - 0.5) || (r.height >= MIN - 0.5 && c.h < MIN - 0.5)) {
+        clipped.push(`${label(el)} is ${Math.round(r.width)}×${Math.round(r.height)} but only `
+          + `${Math.round(c.w)}×${Math.round(c.h)} of it is reachable (clipped by a scrolling ancestor)`);
+      }
     }
     let w = r.width;
     // Fanned hand: your thumb only gets the strip left uncovered by the next card.
@@ -101,11 +150,141 @@ export function auditTapTargets() {
   document.querySelectorAll('[data-card-id]').forEach((el) => consider(el, 'advisory'));
 
   return {
-    fatal, zones, advisory, offscreen,
+    fatal, zones, advisory, offscreen, clipped,
     scrollW: document.documentElement.scrollWidth,
     scrollH: document.documentElement.scrollHeight,
     w: innerWidth, h: innerHeight,
   };
+}
+
+/* ─────────────────────────── z-order hit testing ───────────────────────── */
+
+/**
+ * ONE implementation of "what is actually painted on top of this element", used
+ * by every gate that needs it (`auditTextContrast`'s buried-run filter,
+ * `auditOccludedText`'s shot gate, `grayscale.mjs`'s hero picker). A second
+ * copy would drift from this one's two calibration traps, which cost a day each:
+ *
+ * TRAP 1 — `elementFromPoint` skips `pointer-events: none`, and
+ * `.propcol-head, .zone-tag, .pile-label, .board-head` are all
+ * pointer-events:none by design (table.css:221). Left alone, every one of them
+ * reports as "covered" and the gates go blind to the chrome labels that are
+ * their real signal. So the rule is neutralised for the duration of the
+ * measurement and restored immediately — the frame has already been captured by
+ * the time this runs, and nothing visual changes.
+ *
+ * TRAP 2 — but NOT neutralised everywhere. Measured: a blanket
+ * `*{pointer-events:auto}` handed every hit test in the game to `#emotes`, a
+ * full-bleed decorative layer that is pointer-events:none precisely so it cannot
+ * eat anything — 1689 of 2163 text runs came back "covered", every one of them
+ * by that one div. So the full-bleed pass-through layers are identified FIRST
+ * (already pointer-events:none, and covering ≥50% of the viewport) and keep
+ * their transparency; only the small suppressed labels get their hits back. The
+ * 50% test is a measurement, not a list: it catches `#emotes`, `#toast`,
+ * `.hints` and any fx layer added later without anyone naming it here.
+ *
+ * TRAP 3 — a hit on the element's OWN ancestor is not occlusion.
+ * `elementFromPoint` reports a pseudo-element as its originating element, and
+ * every card face in this client carries a `::after` stock sheen over its own
+ * text. Treating that as occlusion took the contrast sample count from 2163 to
+ * 435 and the violation count to a meaningless zero.
+ *
+ * Everything else in this file is shipped to the page one function at a time by
+ * `page.evaluate`, which serialises the function and NOT its module scope — so a
+ * helper shared between two of them cannot simply be imported. This one is
+ * installed into the page as `window.__chudHitTesting` by `installPageHelpers`
+ * (an `addInitScript`, so it survives every `goto`), and its consumers look it
+ * up and throw loudly if it is absent. Copy-pasting it into a caller instead is
+ * how the three traps above get lost.
+ *
+ * Usage (always in a try/finally, or the page keeps the injected style):
+ *   const hit = window.__chudHitTesting();
+ *   try { hit.coverage(el, el.getBoundingClientRect()); } finally { hit.close(); }
+ */
+export function openHitTesting() {
+  const style = document.createElement('style');
+  const passthru = [];
+  for (const e of document.querySelectorAll('body *')) {
+    if (getComputedStyle(e).pointerEvents !== 'none') continue;
+    const b = e.getBoundingClientRect();
+    if (b.width * b.height < innerWidth * innerHeight * 0.5) continue;
+    e.setAttribute('data-chud-passthru', '');
+    passthru.push(e);
+  }
+  style.textContent = '*{pointer-events:auto !important}'
+    + '[data-chud-passthru]{pointer-events:none !important}';
+  document.head.appendChild(style);
+
+  /**
+   * Coverage of `el` over a grid of points inside `r`.
+   *
+   * `covered` keeps the original 3-point centre/left/right verdict byte for byte
+   * so `auditTextContrast`'s calibrated counts do not move; `pct` is the finer
+   * grid the shot gate needs to say "half-buried" with a number. `by` names the
+   * topmost foreign element at the first covered point.
+   */
+  const coverage = (el, r) => {
+    const inside = (hit) => !!hit && (hit === el || el.contains(hit) || hit.contains(el));
+    const at = (x, y) => (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight
+      ? undefined : document.elementFromPoint(x, y));
+
+    // The historical verdict: centre, then a point in from each side.
+    const spine = [
+      [r.left + r.width / 2, r.top + r.height / 2],
+      [r.left + Math.min(6, r.width / 4), r.top + r.height / 2],
+      [r.right - Math.min(6, r.width / 4), r.top + r.height / 2],
+    ];
+    let spineTested = 0;
+    let spineClear = false;
+    for (const [x, y] of spine) {
+      const h = at(x, y);
+      if (h === undefined) continue;
+      spineTested++;
+      if (inside(h)) { spineClear = true; break; }
+    }
+
+    // The area grid: 5 across × 3 down, inset so a 1px border is not the answer.
+    let tested = 0;
+    let hits = 0;
+    let by = null;
+    for (let iy = 0; iy < 3; iy++) {
+      for (let ix = 0; ix < 5; ix++) {
+        const x = r.left + (r.width * (ix + 0.5)) / 5;
+        const y = r.top + (r.height * (iy + 0.5)) / 3;
+        const h = at(x, y);
+        if (h === undefined) continue;
+        tested++;
+        if (h && !inside(h)) { hits++; if (!by) by = h; }
+      }
+    }
+    return {
+      covered: spineTested > 0 && !spineClear,
+      pct: tested ? hits / tested : 0,
+      tested,
+      by,
+    };
+  };
+
+  return {
+    coverage,
+    close() {
+      style.remove();
+      for (const e of passthru) e.removeAttribute('data-chud-passthru');
+    },
+  };
+}
+
+/**
+ * NODE SIDE. Install `openHitTesting` above into a browser context as
+ * `window.__chudHitTesting`, for every document it will ever load.
+ *
+ * `addInitScript` rather than `addScriptTag` because every gate in tools/ does a
+ * full `page.goto` per take (screenshot.mjs: "state bleeds between shots"), and
+ * a script tag added to one document is gone from the next one. Call it once,
+ * right after `openPage`, next to `pristineStorage`.
+ */
+export async function installPageHelpers(context) {
+  await context.addInitScript(`window.__chudHitTesting = ${openHitTesting.toString()};`);
 }
 
 /* ─────────────────────────────── occlusion ─────────────────────────────── */
@@ -123,10 +302,21 @@ export function auditTapTargets() {
  */
 export function auditOcclusion() {
   const MAX_COVER = 0.25;                       // >25% of a CTA hidden is a defect
-  const CTA = '#prompt button, #hand-dock button, #win-overlay button, .btn-primary, '
-    + '[data-action="confirm-payment"], [data-action="confirm-discard"], '
-    + '[data-action="respond-accept"], [data-action="respond-opsec"], '
-    + '[data-action="draw"], [data-action="end-turn"], [data-action="begin-payment"]';
+  /**
+   * P8 round 2 GAP (mobile critic): this was a hand-maintained list of button
+   * ids, so every control added since it was written was exempt — including
+   * `.pile[data-action="open-discard"]`, a primary on-table control. A list of
+   * the CTAs someone remembered is not a measurement.
+   *
+   * Now it is the rule instead: anything the player is being asked to act on —
+   * every enabled `[data-action]`, every button in a decision surface, and every
+   * live drop/target marker. `.propcol` and card nodes are deliberately absent:
+   * they are covered by other cards constantly and by design, and that noise is
+   * what buried the real finding last time.
+   */
+  const CTA = '[data-action]:not([disabled]), #prompt button, #hand-dock button, '
+    + '#win-overlay button, #sheet button, .btn-primary, '
+    + '[data-droppable="1"], [data-targetable="1"], .is-targetable';
   const VEIL = '.hints, .hint-card, #toast, #emotes, .floaters, .floater, .burst, '
     + '.fx, .fx-layer, .overlay, .scrim, .coach, .tip, .tooltip';
 
@@ -278,6 +468,187 @@ export function auditClippedText() {
       // and it adds nothing the measured overflow above does not already
       // catch (that same label overflows 116px into 89px and IS reported).
     }
+  }
+  return out;
+}
+
+/* ──────────────────────── text buried under a layer ────────────────────── */
+
+/**
+ * P8 round 2 GAP: `five-player@phone.png` shipped with "DRONE" and "FIGH…"
+ * half-buried under the deck/discard layer, and the shot gate passed, because
+ * `auditClippedText` measures text OVERFLOW — does the string fit its own box —
+ * and says nothing about whether that box is on top. Two different failures with
+ * the same symptom (a word you cannot finish reading), and only one was gated.
+ *
+ * This is the z-order half, on the same hit test the contrast gate uses
+ * (`openHitTesting`) so the two cannot drift apart.
+ *
+ * The whole difficulty is that this client STACKS ON PURPOSE. The hand fan, the
+ * bank stacks and the property columns all overlap by design — table.css derives
+ * the overlap from the tap floor — so "a card's name is covered" is the normal
+ * case, not a defect. What is a defect is a label covered by a DIFFERENT layer:
+ * a property-column card buried under `#table-center`'s piles has no stacking
+ * relationship with its occluder, nobody chose that, and it reads as a bug in
+ * the screenshot because it is one.
+ *
+ * So the rule is cross-LAYER coverage, where a layer is the nearest zone/panel
+ * ancestor. Same layer (a sibling card in the same fan) → silent. Different
+ * layer → measured, with the occluder named.
+ */
+export function auditOccludedText() {
+  const SCOPES = ['[data-card-id]', '#hud', '#prompt', '.propcol', '#win-overlay',
+    '#hand-dock', '#sheet', '#lobby-players', '#side'];
+  const LAYER = '.cardzone, .propcol, .pile, .board, .hints, #hud, #prompt, #hand-dock, '
+    + '#side, #sheet, #toast, #emotes, #win-overlay, #table-center, #lobby-players';
+  /**
+   * 34%, not 50%. "Half-buried" is how the critic described DRONE/FIGH, but a
+   * label with a third of it under another layer is already a word you cannot
+   * read, and the grid below is 15 points — 5/15 is the first count that cannot
+   * be a rounding artefact of the inset.
+   */
+  const MAX_BURIED = 0.34;
+
+  const shown = (el) => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) < 0.5) return false;
+    if (el.hasAttribute('hidden')) return false;
+    return el.getBoundingClientRect().width > 0;
+  };
+  /**
+   * When something is UP, only the thing that is up is on trial — the same
+   * scoping rule as auditTextContrast, and the same reason: nobody is reading
+   * the table behind an open panel, so 36 mat labels under it are not 36
+   * defects.
+   *
+   * `aria-modal` alone was not enough. Measured on the first run of this gate:
+   * `side-log@phone` reported 66 buried runs and `peek-hold@phone` 56, every
+   * one of them the table sitting behind `#side` (z 60, 74% of the viewport) or
+   * `.peek` (z 92, 41%) — two panels that are open on purpose and are not
+   * marked `aria-modal`. So an open panel is MEASURED rather than listed:
+   * positioned, an explicit z-index ≥ 10, opaque, and covering ≥15% of the
+   * viewport. Every in-flow surface in this client (`#table`, `#hand-dock`, the
+   * boards) is `z-index: auto` or 1, and `#emotes` is z 80 but paints nothing,
+   * so the test separates them without naming any of them.
+   */
+  const PANEL_Z = 10;
+  const PANEL_AREA = 0.15;
+  const opaque = (el) => {
+    const st = getComputedStyle(el);
+    if (st.backgroundImage !== 'none') return true;
+    const m = String(st.backgroundColor).match(/rgba?\(([^)]+)\)/);
+    if (!m) return false;
+    const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    return (p.length > 3 ? p[3] : 1) >= 0.5;
+  };
+  const fronts = [...document.querySelectorAll('body *')].filter((el) => {
+    const st = getComputedStyle(el);
+    if (st.position !== 'fixed' && st.position !== 'absolute') return false;
+    const z = Number(st.zIndex);
+    if (!Number.isFinite(z) || z < PANEL_Z) return false;
+    if (!shown(el) || !opaque(el)) return false;
+    const r = el.getBoundingClientRect();
+    return r.width * r.height >= innerWidth * innerHeight * PANEL_AREA;
+  });
+  const modals = [...document.querySelectorAll('[aria-modal="true"], dialog[open]')].filter(shown);
+  const modal = [...modals, ...fronts].pop();
+
+  const layerOf = (el) => (el && el.closest ? el.closest(LAYER) : null);
+  // getAttribute, not `.className`: on an SVG element className is an
+  // SVGAnimatedString and stringifies to '[object SVGAnimatedString]'.
+  const name = (el) => {
+    if (!el) return '?';
+    const cls = (el.getAttribute?.('class') || '').trim().split(/\s+/).filter(Boolean)[0];
+    return `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${cls ? '.' + cls : ''}`;
+  };
+  const chain = (el) => {
+    const out = [];
+    for (let p = el; p && out.length < 4; p = p.parentElement) out.push(name(p));
+    return out.join(' < ');
+  };
+  /**
+   * The decorative layers. A coach bubble over a mat label is a real occlusion
+   * and it is REPORTED, but it is not the same defect as the layout putting the
+   * deck on top of an opponent's property head: it is transient, it is aimed at
+   * the player on purpose, and `auditOcclusion` already gates the case that
+   * matters (a veil over a CTA) at 25%. Gating text on it too would make every
+   * phone shot red for the coach layer doing its job and bury the structural
+   * finding underneath — which is how the structural finding got missed in the
+   * first place. So: veil → warn, layout → fail, and the split is printed.
+   */
+  const VEIL = '.hints, .hint-card, #toast, #emotes, .floaters, .floater, .burst, '
+    + '.fx, .fx-layer, .coach, .tip, .tooltip';
+
+  const roots = [];
+  for (const s of SCOPES) {
+    (modal || document).querySelectorAll(s).forEach((e) => roots.push(e));
+  }
+  if (modal) roots.push(modal);
+
+  const out = [];
+  const seen = new Set();
+  if (typeof window.__chudHitTesting !== 'function') {
+    throw new Error('audit.installPageHelpers(context) was never called — no hit testing in this page');
+  }
+  const hit = window.__chudHitTesting();
+  try {
+    for (const root of roots) {
+      const st0 = getComputedStyle(root);
+      if (st0.display === 'none' || st0.visibility === 'hidden') continue;
+      for (const el of [root, ...root.querySelectorAll('*')]) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+        if (modal && !modal.contains(el)) continue;
+        const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!txt) continue;
+        // Leaf-ish only: a container "covered" is its children's story to tell.
+        if ([...el.children].some((c) => (c.textContent || '').trim())) continue;
+        const st = getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) < 0.05) continue;
+        if (el.getAttribute('aria-hidden') === 'true') continue;
+        let faded = false;
+        for (let p = el; p; p = p.parentElement) {
+          if (p.hasAttribute?.('hidden') || Number(getComputedStyle(p).opacity) < 0.05) { faded = true; break; }
+        }
+        if (faded) continue;
+        const r = el.getBoundingClientRect();
+        // Off-screen is auditDeadSpace/auditTapTargets' subject, not this one.
+        if (r.width < 8 || r.height < 6) continue;
+        if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) continue;
+
+        const mine = layerOf(el);
+        const c = hit.coverage(el, r);
+        if (!c.tested || c.pct <= MAX_BURIED) continue;
+        const theirs = layerOf(c.by);
+        // Same stack → by design. Also skip when the occluder's layer contains
+        // this run's layer (a panel painting over its own contents is that
+        // panel's own composition, e.g. a zone tag over its cardzone).
+        if (theirs && mine && (theirs === mine || theirs.contains(mine) || mine.contains(theirs))) continue;
+        if (!theirs && !mine) continue;
+        // CARD OVER CARD is the documented by-design case wherever it happens,
+        // not only inside one zone. The hand fan, the bank stacks, the property
+        // columns and a card held mid-drag over the table are all one card lying
+        // on another, and `drag-mid@phone` reported 17 of them. The rule that
+        // matters is the one the critic found: a label buried under something
+        // that is NOT a card and has no stacking relationship with it.
+        const myCard = el.closest('[data-card-id], .card');
+        const theirCard = c.by?.closest?.('[data-card-id], .card');
+        if (myCard && theirCard && myCard !== theirCard) continue;
+        out.push({
+          el: name(el),
+          text: txt.slice(0, 40),
+          pct: Math.round(c.pct * 100),
+          by: name(c.by),
+          byLayer: name(theirs),
+          layer: name(mine),
+          byChain: chain(c.by),
+          veil: !!(c.by && c.by.closest && c.by.closest(VEIL)),
+          rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+        });
+      }
+    }
+  } finally {
+    hit.close();
   }
   return out;
 }
@@ -470,60 +841,14 @@ export function auditTextContrast() {
    * 24 card-side violations remaining from its own fix: ALL 24 were covered.
    * The entire card-side signal was noise.
    *
-   * The test is paint order, not hit-testing policy: `elementFromPoint` skips
-   * `pointer-events: none`, and `.propcol-head, .zone-tag, .pile-label,
-   * .board-head` are all pointer-events:none by design (table.css:221) — they
-   * would every one report as "covered" and the gate would go blind to the
-   * chrome labels that are its real signal. So the rule is neutralised for the
-   * duration of the measurement and restored immediately. The frame has
-   * already been captured by the time this runs; nothing visual changes.
-   *
-   * But not neutralised EVERYWHERE. Measured: a blanket
-   * `*{pointer-events:auto}` handed every hit-test in the game to `#emotes`, a
-   * full-bleed decorative layer that is pointer-events:none precisely so it
-   * cannot eat anything — 1689 of 2163 runs came back "covered", every one of
-   * them by that one div. So the full-bleed pass-through layers are identified
-   * FIRST (already pointer-events:none, and covering ≥50% of the viewport) and
-   * keep their transparency; only the small suppressed labels get their hits
-   * back. The 50% test is a measurement, not a list: it catches `#emotes`,
-   * `#toast`, `.hints` and any fx layer added later without naming them.
+   * The hit test and its two calibration traps live in `openHitTesting` — read
+   * that comment before changing anything here.
    */
-  const hitStyle = document.createElement('style');
-  const passthru = [];
-  for (const e of document.querySelectorAll('body *')) {
-    if (getComputedStyle(e).pointerEvents !== 'none') continue;
-    const b = e.getBoundingClientRect();
-    if (b.width * b.height < innerWidth * innerHeight * 0.5) continue;
-    e.setAttribute('data-chud-passthru', '');
-    passthru.push(e);
+  if (typeof window.__chudHitTesting !== 'function') {
+    throw new Error('audit.installPageHelpers(context) was never called — no hit testing in this page');
   }
-  hitStyle.textContent = '*{pointer-events:auto !important}'
-    + '[data-chud-passthru]{pointer-events:none !important}';
-  document.head.appendChild(hitStyle);
-  /**
-   * A run is covered when the topmost element at its centre is in a DIFFERENT
-   * subtree — another card lying on top of it. Not when the hit is `el`'s own
-   * ancestor: `elementFromPoint` reports a pseudo-element as its originating
-   * element, and every card face in this client carries a `::after` stock sheen
-   * over its own text. Treating that as occlusion took the sample count from
-   * 2163 to 435 and the violation count to a meaningless zero.
-   */
-  const covered = (el, r) => {
-    const pts = [
-      [r.left + r.width / 2, r.top + r.height / 2],
-      [r.left + Math.min(6, r.width / 4), r.top + r.height / 2],
-      [r.right - Math.min(6, r.width / 4), r.top + r.height / 2],
-    ];
-    let tested = 0;
-    for (const [x, y] of pts) {
-      if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
-      tested++;
-      const hit = document.elementFromPoint(x, y);
-      if (!hit) continue;
-      if (hit === el || el.contains(hit) || hit.contains(el)) return false;
-    }
-    return tested > 0;
-  };
+  const hit = window.__chudHitTesting();
+  const covered = (el, r) => hit.coverage(el, r).covered;
 
   const out = [];
   let hidden = 0;
@@ -568,8 +893,7 @@ export function auditTextContrast() {
       scope: modal ? (modal.id || 'modal') : 'page',
     });
   }
-  hitStyle.remove();
-  for (const e of passthru) e.removeAttribute('data-chud-passthru');
+  hit.close();
   return { samples: out, hidden, scope: modal ? (modal.id || 'modal') : 'page' };
 }
 

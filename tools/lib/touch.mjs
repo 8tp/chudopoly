@@ -106,7 +106,9 @@ export async function openTouchPage(browser, url, opts = {}) {
     isMobile: true,
     hasTouch: true,
     userAgent: opts.userAgent || PHONE_UA,
-    colorScheme: 'dark',
+    // P8 round 2: this was hardcoded 'dark', so the light theme was never
+    // touch-tested at all — half of ART §2 had no mobile gate.
+    colorScheme: opts.colorScheme || 'dark',
     reducedMotion: opts.reducedMotion || 'no-preference',
     locale: 'en-US',
     timezoneId: 'UTC',
@@ -115,6 +117,24 @@ export async function openTouchPage(browser, url, opts = {}) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console.error: ${m.text()}`); });
+  /**
+   * P8 round 2 GAP (mobile critic): touchtest never reset client storage, and
+   * hints are shown ONCE EVER out of `localStorage`. Instrumented at the
+   * `payment-pending` stage, `chud_hints_v1` already held `["peek","drag","pay"]`
+   * — consumed by the live game ninety seconds earlier in the same run. So §D's
+   * "no decorative layer covers a primary CTA" was asserting against a build
+   * where the decorative layer could no longer appear: an assertion structurally
+   * incapable of failing.
+   *
+   * harness.mjs documented this exact trap for screenshot.mjs and shipped
+   * `pristineStorage` for it; this file simply never called it. Same init-script
+   * approach here so it survives every `page.goto` a stage does.
+   */
+  if (opts.pristine !== false) {
+    await context.addInitScript(() => {
+      try { localStorage.clear(); sessionStorage.clear(); } catch { /* private mode */ }
+    });
+  }
   const cdp = await context.newCDPSession(page);
   await page.goto(url, { waitUntil: 'load', timeout: 45000 });
   return {
@@ -128,6 +148,54 @@ export async function openTouchPage(browser, url, opts = {}) {
     }))),
     close: () => context.close(),
   };
+}
+
+/**
+ * Wait until layout has stopped moving, then measure. Returns how long it took.
+ *
+ * P8 round 2: the hand-fan tap-target verdict moved between runs and between
+ * settle times — `[46,46,46,44,42,42,42,56]` on one pass and
+ * `[47,48,48,46,44,44,44,56]` on another — so `waitForTimeout(300)` was deciding
+ * whether the gate was red. A fixed sleep is a guess about a machine's load; two
+ * consecutive identical geometry reads are a fact about the layout. Same
+ * argument as harness.stableScreenshot, one level up.
+ */
+export async function settleLayout(page, { gap = 120, budgetMs = 3000 } = {}) {
+  const read = () => page.evaluate(() => [...document.querySelectorAll(
+    '#zone-hand [data-card-id], [data-zone="hand"] [data-card-id], .propcol, button, #sheet, #side',
+  )].map((e) => {
+    const r = e.getBoundingClientRect();
+    return `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`;
+  }).join('|'));
+  const started = Date.now();
+  let prev = await read();
+  while (Date.now() - started < budgetMs) {
+    await page.waitForTimeout(gap);
+    const next = await read();
+    if (next === prev) return { settled: true, ms: Date.now() - started };
+    prev = next;
+  }
+  return { settled: false, ms: Date.now() - started };
+}
+
+/**
+ * The §9 bridge, waited for HONESTLY.
+ *
+ * P8 round 2: touchtest returned `PENDING CLIENT` (exit 2, which strict verify
+ * treats as failure) on 2 of 6 runs whenever a second headless Chromium was
+ * live — an 8s budget on a loaded machine is a measurement of the machine, not
+ * of the client. The budget is now 30s, which is not leniency about real
+ * absence: `window.__CHUD` either gets defined by module evaluation or it never
+ * does, and a client that has not shipped it still reports absent. What changes
+ * is that "slow" stops being reported as "not implemented".
+ */
+export async function waitForBridge(page, budgetMs = 30000) {
+  const started = Date.now();
+  const found = await page.waitForFunction(() => !!window.__CHUD, null, { timeout: budgetMs })
+    .then(() => true).catch(() => false);
+  if (!found) return { ok: false, ms: Date.now() - started };
+  await page.evaluate(() => window.__CHUD.ready).catch(() => {});
+  return { ok: true, ms: Date.now() - started };
 }
 
 /** Centre + geometry of the nth match, or null if absent/zero-sized. */

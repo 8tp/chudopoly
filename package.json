@@ -22,7 +22,7 @@
     "tool:audiotest": "node tools/audiotest.mjs",
     "tool:contrast": "node tools/checkContrast.mjs",
     "tool:grayscale": "node tools/grayscale.mjs",
-    "tool:prove": "node tools/checkContrast.mjs --prove; node tools/grayscale.mjs --prove"
+    "tool:prove": "node tools/checkContrast.mjs --prove; node tools/grayscale.mjs --prove; node tools/touchtest.mjs --prove; node tools/screenshot.mjs --prove-theme"
   },
   "engines": {
     "node": ">=20 <25"

@@ -130,6 +130,25 @@ function ringPath(cx, cy, R, r) {
        + `M${cx} ${cy - r} A${r} ${r} 0 1 1 ${cx} ${cy + r} A${r} ${r} 0 1 1 ${cx} ${cy - r} Z`;
 }
 
+/** A solid arc band (annulus segment) from a0° to a1°, screen-clockwise. */
+function bandArc(cx, cy, R, r, a0, a1) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const P = (a, rr) => (cx + rr * Math.cos(rad(a))).toFixed(2) + ' ' + (cy + rr * Math.sin(rad(a))).toFixed(2);
+  const la = a1 - a0 > 180 ? 1 : 0;
+  return `M${P(a0, R)} A${R} ${R} 0 ${la} 1 ${P(a1, R)} L${P(a1, r)} A${r} ${r} 0 ${la} 0 ${P(a0, r)} Z`;
+}
+
+/** A solid triangular arrowhead riding an arc at radius m, pointing clockwise. */
+function arcHead(cx, cy, m, a, len, halfw) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const ux = Math.cos(rad(a)), uy = Math.sin(rad(a));
+  const tx = -Math.sin(rad(a)), ty = Math.cos(rad(a));
+  const bx = cx + m * ux, by = cy + m * uy;
+  const p = (x, y) => x.toFixed(2) + ' ' + y.toFixed(2);
+  return `M${p(bx + ux * halfw, by + uy * halfw)} L${p(bx + tx * len, by + ty * len)}`
+       + ` L${p(bx - ux * halfw, by - uy * halfw)} Z`;
+}
+
 /** One hard-edged wedge of the ten-colour wheel, as an SVG path. */
 function wedge(cx, cy, R, i, n) {
   const a0 = -Math.PI / 2 + (i * 2 * Math.PI) / n;
@@ -164,21 +183,27 @@ const SET_GLYPHS = {
     <path d="M35 9.5 L38.5 13 L13 38.5 L9.5 35 Z"/>
     <rect x="17.5" y="17.5" width="13" height="13" rx="3"/>
     ${[[12, 12], [36, 12], [12, 36], [36, 36]]
-      .map(([x, y]) => `<path d="${ringPath(x, y, 8, 4.3)}"/>`).join('')}`,
+      .map(([x, y]) => `<path d="${ringPath(x, y, 8, 4.8)}"/>`).join('')}`,
 
   /* Training — three chevrons (rank / instruction), NOT a winged shape */
   lightblue: `
     <path d="M24 6 L42 20 L42 27 L24 13 L6 27 L6 20 Z"/>
     <path d="M24 19 L42 33 L42 40 L24 26 L6 40 L6 33 Z"/>`,
 
-  /* Space Force — a solid delta rising THROUGH a thin orbit ring. Both the ring
-     weight and its height were wrong twice: an equal-weight ring merged with the
-     delta into one blob at 14px, and a ring centred on the delta swallowed the
-     triangle entirely. It now sits low, crossing only the delta's base. */
+  /* Space Force — a solid delta with the orbit passing BEHIND it. This is the
+     THIRD construction: an equal-weight ring merged with the delta into one
+     blob at 14px, a centred ring swallowed the triangle, and the "fixed" low
+     thin ring thresholded into the brim of a WITCH HAT (the 1-bit panel is
+     merciless). Now the full tilted annulus is drawn first, an expanded knock
+     delta erases its middle, and the true delta sits on top — so at 1-bit the
+     orbit survives as two chunky lobes emerging from the delta's flanks with a
+     clean gap, which can only be read as a ring passing behind. */
   pink: `
-    <path d="M24 3 L40 31 L8 31 Z"/>
-    <path d="M24 26 A21 6.6 0 1 0 24 39.2 A21 6.6 0 1 0 24 26 Z
-             M24 29.4 A17.4 3.2 0 1 1 24 35.8 A17.4 3.2 0 1 1 24 29.4 Z" transform="rotate(-9 24 32.6)"/>`,
+    <path d="M24 18 A23.5 9 0 1 0 24 36 A23.5 9 0 1 0 24 18 Z
+             M24 24.5 A14.5 2.5 0 1 1 24 29.5 A14.5 2.5 0 1 1 24 24.5 Z"
+      transform="rotate(-10 24 27)"/>
+    <path d="M24 0 L44.5 43 L3.5 43 Z" fill="var(--ca-knock)"/>
+    <path d="M24 4 L40 39 L8 39 Z"/>`,
 
   /* Test & Eval — calibration reticle: heavy ring, four spikes, centre pip */
   orange: `
@@ -206,12 +231,13 @@ const SET_GLYPHS = {
     <rect x="36.1" y="23" width="4.4" height="6.6" rx="2"/>
     <rect x="13" y="36.5" width="22" height="5.2" rx="2.4"/>`,
 
-  /* Elite Programs — four-ship diamond */
+  /* Elite Programs — the ART §6 four-point star whose hull is the diamond.
+     Two attempts at a literal four-ship Thunderbirds diamond died in the 1-bit
+     panel — even 17-unit ships threshold to scattered specks at 14px, because
+     four small triangles can never each get enough pixels. One bold sparkle
+     keeps the diamond formation's geometry and survives at any size. */
   green: `
-    <path d="M24 4 L30.4 15.5 H17.6 Z"/>
-    <path d="M11.5 18.5 L17.9 30 H5.1 Z"/>
-    <path d="M36.5 18.5 L42.9 30 H30.1 Z"/>
-    <path d="M24 33 L30.4 44.5 H17.6 Z"/>`,
+    <path d="M24 2 L29.3 18.7 L46 24 L29.3 29.3 L24 46 L18.7 29.3 L2 24 L18.7 18.7 Z"/>`,
 
   /* Command — solid pentagon with the star punched out */
   darkblue: `
@@ -238,52 +264,80 @@ const SET_GLYPHS = {
    itself the signal"). Solid-first for the same silhouette reason. */
 
 const ACTION_GLYPHS = {
-  /* PCS Orders — an order sheet and a move arrow */
+  /* PCS Orders — TWO order sheets, fanned. The effect is "draw 2", so the
+     glyph is two of the thing. The old single-sheet-plus-move-arrow collapsed
+     into clutter at 14px, and its transfer arrow was one more arrow in a
+     family that needs its arrows scarce (the RENT medallion owns opposed
+     arrows). A knock outline separates the front sheet from the back one. */
   pcs_orders: `
-    <path d="M12 4 h16 l8 8 v18 h-24 z M28 4 v8 h8 Z" />
+    <path d="M18 4 h13.5 l7.5 7.5 v15.5 h-21 z"/>
+    <path d="M6 10.5 h19 l9 9 v24 h-28 z" fill="var(--ca-knock)"/>
+    <path d="M9 13.5 h13.5 l8.5 8.5 v18.5 h-22 z"/>
+    <path d="M22.5 13.5 l8.5 8.5 h-8.5 z" fill="var(--ca-knock)"/>
     <g fill="var(--ca-knock)">
-      <rect x="16" y="15" width="16" height="2.6" rx="1.3"/>
-      <rect x="16" y="20" width="16" height="2.6" rx="1.3"/>
-      <rect x="16" y="25" width="9" height="2.6" rx="1.3"/>
-    </g>
-    <path d="M8 34.5 h22 v-5 l10 7.8 -10 7.8 v-5 h-22 z"/>`,
-
-  /* OPSEC — a shield with a keeper bar */
-  opsec: `
-    <path d="M24 3.5 L41 9.5 V22.5 C41 34.5 24 44.5 24 44.5 S7 34.5 7 22.5 V9.5 Z"/>
-    <rect x="14" y="19.5" width="20" height="6.4" rx="1.6" fill="var(--ca-knock)"/>
-    <rect x="20.8" y="25" width="6.4" height="7" rx="1.6" fill="var(--ca-knock)"/>`,
-
-  /* Midnight Requisition — a crescent over a footlocker */
-  midnight_requisition: `
-    <path d="M29 3 A14.5 14.5 0 1 0 29 32 A18.5 18.5 0 0 1 29 3 Z"/>
-    <path d="M23 28 h20 v14 h-20 z"/>
-    <g fill="var(--ca-knock)">
-      <rect x="23" y="33.4" width="20" height="2.2"/>
-      <rect x="31.9" y="28" width="2.2" height="14"/>
+      <rect x="13.5" y="26" width="13" height="3.6" rx="1.8"/>
+      <rect x="13.5" y="33" width="8.5" height="3.6" rx="1.8"/>
     </g>`,
 
-  /* TDY Orders — a two-way exchange cycle */
+  /* OPSEC — a shield with one heavy DENIED bar knocked through it. The old
+     bar-plus-stub knockout merged into an ambiguous "T" at 14px; a single fat
+     horizontal slot is the universal "blocked" and survives thresholding. */
+  opsec: `
+    <path d="M24 3.5 L41 9.5 V22.5 C41 34.5 24 44.5 24 44.5 S7 34.5 7 22.5 V9.5 Z"/>
+    <rect x="13.5" y="18" width="21" height="7" rx="2" fill="var(--ca-knock)"/>`,
+
+  /* Midnight Requisition — the supply crate WALKING OFF on its own two legs,
+     motion dashes trailing. The previous crescent-over-footlocker was two
+     disconnected blobs at 14px (a "C" over a tiny window) and said nothing
+     about theft; "the crate grew legs overnight" is the actual joke the phrase
+     means, it is one connected silhouette, and nothing else in the family is a
+     box on legs. The crescent survives as a stencil knocked out of the crate
+     face — at hand size it says midnight, at 14px it closes gracefully. */
+  midnight_requisition: `
+    <path d="M8 11 h32 v21 h-32 z"/>
+    <path d="M15 32 L21.5 32 L18.5 41.5 L12 41.5 Z"/>
+    <path d="M8 40.5 h10.5 v5 h-10.5 z"/>
+    <path d="M26.5 32 L33 32 L36 41.5 L29.5 41.5 Z"/>
+    <path d="M29.5 40.5 h10.5 v5 h-10.5 z"/>
+    <path d="M1.5 14.5 h4.5 v4.5 h-4.5 z M1.5 23 h4.5 v4.5 h-4.5 z"/>
+    <circle cx="30" cy="20.5" r="5" fill="var(--ca-knock)"/>
+    <circle cx="32.5" cy="18.5" r="5"/>`,
+
+  /* TDY Orders — the two-way trade as two heavy arc bands with solid heads,
+     built geometrically (bandArc/arcHead) instead of the old hand-sketched
+     curls, whose thin tails and merged heads thresholded into a broken "S" at
+     14px. Deliberately circular so it cannot be confused with the RENT
+     medallion's straight opposed arrows. */
   tdy_orders: `
-    <path d="M9 21 A15 15 0 0 1 33.5 10.5 L37 6.5 L38.5 19 L26 17 L29.6 13
-             A10.5 10.5 0 0 0 14 21 Z"/>
-    <path d="M39 27 A15 15 0 0 1 14.5 37.5 L11 41.5 L9.5 29 L22 31 L18.4 35
-             A10.5 10.5 0 0 0 34 27 Z"/>`,
+    <path d="${bandArc(24, 24, 20, 13, 195, 318)}"/>
+    <path d="${arcHead(24, 24, 16.5, 322, 11.5, 8)}"/>
+    <path d="${bandArc(24, 24, 20, 13, 15, 138)}"/>
+    <path d="${arcHead(24, 24, 16.5, 142, 11.5, 8)}"/>`,
 
-  /* Finance Office — a banknote with a coin */
+  /* Finance Office — a banknote: solid note, knocked side slots, centre disc
+     with the M drawn as a PATH. The old one had two invisible edges (zero-width
+     `M9 17 v14` subpaths contribute nothing to a fill) and set its M in <text>,
+     which made the mark font-dependent — it read as a camera badge at 1-bit. */
   finance_office: `
-    <path d="M4 12 h40 v24 h-40 z M9 17 v14 M39 17 v14" />
-    <circle cx="24" cy="24" r="7.6" fill="var(--ca-knock)"/>
-    <text x="24" y="27.8" text-anchor="middle" font-size="11" font-weight="800"
-      fill="currentColor" font-family="inherit">M</text>`,
+    <path d="M3.5 12 h41 v24 h-41 z"/>
+    <g fill="var(--ca-knock)">
+      <rect x="9.5" y="16.5" width="4.5" height="15" rx="1.6"/>
+      <rect x="34" y="16.5" width="4.5" height="15" rx="1.6"/>
+      <circle cx="24" cy="24" r="8.8"/>
+    </g>
+    <path d="M18.9 28.9 v-9.8 h3.2 l1.9 3.3 1.9 -3.3 h3.2 v9.8 h-3 v-4.4 l-2.1 3.2 -2.1 -3.2 v4.4 z"/>`,
 
-  /* Roll Call — a rank of three figures over a line */
+  /* Roll Call — a RANK: three identical figures at identical height over the
+     line. The old staggered trio (centre head raised, shoulders interleaved)
+     thresholded into a mushy middle; a formation stands at attention, so equal
+     heights are also the honest drawing. Shoulders overlap into one scalloped
+     mass on purpose — three heads over one rank reads at any size. */
   roll_call: `
-    <circle cx="12" cy="15" r="4.6"/><circle cx="24" cy="12.5" r="4.6"/><circle cx="36" cy="15" r="4.6"/>
-    <path d="M4 31 a8 8.5 0 0 1 16 0 z"/>
-    <path d="M16 28.5 a8 8.5 0 0 1 16 0 z"/>
-    <path d="M28 31 a8 8.5 0 0 1 16 0 z"/>
-    <rect x="5" y="36.5" width="38" height="4" rx="2"/>`,
+    <circle cx="11" cy="13.5" r="4.8"/><circle cx="24" cy="13.5" r="4.8"/><circle cx="37" cy="13.5" r="4.8"/>
+    <path d="M3.5 31.5 a7.5 8.5 0 0 1 15 0 z"/>
+    <path d="M16.5 31.5 a7.5 8.5 0 0 1 15 0 z"/>
+    <path d="M29.5 31.5 a7.5 8.5 0 0 1 15 0 z"/>
+    <rect x="4" y="36.5" width="40" height="4.5" rx="2.2"/>`,
 
   /* Upgrade (House) — a house with a plus */
   upgrade: `
@@ -294,14 +348,17 @@ const ACTION_GLYPHS = {
   /* FOC (Hotel) — the same house with a star: the upgrade ABOVE the upgrade */
   foc: `
     <path d="M24 6 L42 23 H36 V41 H12 V23 H6 Z"/>
-    <path d="${starPath(24, 31, 8.4, 3.4)}" fill="var(--ca-knock)"/>`,
+    <path d="${starPath(24, 31, 9, 3.7)}" fill="var(--ca-knock)"/>`,
 
-  /* Inspector General — a magnifier with a star lens */
+  /* Inspector General — a magnifier whose lens is a SOLID disc with the IG
+     star knocked out of it, plus a heavier handle. The old open ring put a
+     solid star inside it and the two merged into a crusted "Q" at 14px; a
+     solid lens keeps the magnifier mass and the star survives as a white
+     stencil at every size. */
   inspector_general: `
-    <path d="M20 3 A17 17 0 1 0 20 37 A17 17 0 1 0 20 3 Z
-             M20 9 A11 11 0 1 1 20 31 A11 11 0 1 1 20 9 Z"/>
-    <rect x="28.5" y="30" width="15" height="6.4" rx="3.2" transform="rotate(45 28.5 30)"/>
-    <path d="${starPath(20, 20, 8, 3.2)}"/>`,
+    <circle cx="20" cy="20" r="16"/>
+    <path d="${starPath(20, 20, 9.5, 3.8)}" fill="var(--ca-knock)"/>
+    <rect x="29.5" y="29" width="15.5" height="7" rx="3.5" transform="rotate(45 32 32)"/>`,
 
   /* Surge Ops — a bolt (the ×2 rides as a caption, not as glyph text) */
   surge_ops: `

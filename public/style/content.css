@@ -633,9 +633,35 @@
   background: var(--surface);
   white-space: nowrap;
 }
+/* ── THE FLAG WEARS THE HAZARD; IT IS NOT PRINTED ON IT ──────────────────
+   MEASURED by checkContrast on `opponent-armed · dark` and `announce · dark`,
+   the first frames any gate has ever taken of either surface (def3dd9):
+   "BREAK THEM NOW" in --card-stock knocked out of --hazard-fine reads
+   rgb(251,248,241) on rgb(254,140,84) = 2.18:1, against §0.9's 4.5:1 — on the
+   string a player has the least time to read, at the loudest moment in the
+   game.
+
+   NO KNOCKOUT INK CAN FIX IT, and that is why this is a material change rather
+   than a colour one. --hazard-fine is a TWO-TONE material (--danger 5px /
+   --ink 5px). In the dark theme --danger is a light orange (#FF8C53, relative
+   luminance .406) and --ink is near-black (.007), so an ink clearing 4.5:1 on
+   the dark stripe needs L ≥ .206 and one clearing 4.5:1 on the vermillion
+   needs L ≤ .051. The two conditions do not intersect: no colour reads on
+   this material in the dark theme. Light passes only because there --danger is
+   dark (#AB2707, L .101), so bone clears both tones at 6.40:1 — an accident of
+   which end of the ramp the token sits at, not a decision anyone made.
+
+   So the flag takes the ruling .prompt-why already carries in this file: "a
+   stripe is a graphical object and text still owes 4.5:1". The hazard becomes
+   a rule struck down the flag's edge and the type sits beside it in
+   --danger-ink, on the strip's own ground. Nothing is darkened and nothing is
+   lightened — the vermillion is at full strength and full width, it is simply
+   no longer underneath the letters, which is the same trade .prompt-why made
+   for the refusal sentence. 2.18 → 8.86 dark, 6.40 → 7.51 light. */
 .hud-strip.is-threat .strip-flag {
-  color: var(--card-stock);
-  background: var(--hazard-fine);
+  color: var(--danger-ink);
+  background: var(--hazard-fine) left / 5px 100% no-repeat, var(--ground);
+  padding-left: .8em;
 }
 .hud-strip.is-mine .strip-flag { color: var(--act-fg); background: var(--act); }
 /* Two lines, hard. tools/lib/audit.mjs exempts a line-clamped box from the
@@ -838,10 +864,18 @@ body:has(#prompt:not([hidden])) .hints {
     repeating-linear-gradient(90deg, var(--stencil-hi) 0 8px, transparent 8px 14px) 0 100% / 100% 2px no-repeat,
     var(--ground);
 }
+/* The third instance of .strip-flag's defect, found while fixing that one and
+   fixed here because no gate has photographed this tag on a dark frame yet:
+   --card-stock on solid --danger is 2.12:1 in the dark theme, and §1 bans a
+   plain coloured chip for danger anyway. The alarm channel is already spent —
+   the row this tag appears on wears the hazard rail (.is-hit above) — so the
+   tag itself is type, in the ink danger uses for type. 8.86 dark, 7.51 light
+   on the row's own --ground. */
 #chud-feed .feed-stack .feed-you {
   border-radius: 0;
-  background: var(--danger);
-  color: var(--card-stock);
+  padding: 0;
+  background: none;
+  color: var(--danger-ink);
   letter-spacing: 0;
 }
 #chud-feed .feed-stack .feed-mark { opacity: 1; color: var(--fg-mute); }
@@ -1203,23 +1237,14 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 }
 .peek.is-in { opacity: 1; transform: scale(1); }
 
-/* The cloned card, at a size you can actually read. Every table pose variable
-   is neutralised: the clone carries no --fx/--fy/--tilt (ui/peek.js strips the
-   style attribute) and must not inherit a zone's layout rules. */
-.peek .card.is-peek {
-  position: relative;
-  flex: 0 0 auto;
-  inset: auto;
-  width: calc(var(--card-w) * 2.1);
-  height: auto;
-  aspect-ratio: 5 / 7;
-  transform: none;
-  margin: 0;
-  z-index: 0;
-  box-shadow: var(--card-drop-air), var(--emboss);
-}
-.peek .card.is-peek .card-inner { transform: none; }
-.peek .card.is-peek .card-back { display: none; }
+/* DELETED: four `.peek .card.is-peek` rules that neutralised a cloned table
+   node's pose variables. Nothing has cloned a node into the peek since
+   ui/peek.js defaulted its renderer to the cardart PEEK tier — the face it
+   builds is `.ca.ca-peek`, sized by cardart.css, and `is-peek` had no producer
+   left at all. tools/coverage.mjs (def3dd9) is what said so out loud: it listed
+   `class:is-peek` among its uncovered markers, which is a marker the
+   stylesheets style and the source can no longer make. Both halves are gone,
+   so the marker is too. */
 
 .peek-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .3em; }
 .peek-kind {
@@ -1239,7 +1264,6 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   /* One column on a phone: 30em beside a card does not fit 390px, and the
      hold-peek is anchored above the thumb where height is the scarce axis. */
   .peek { flex-direction: column; align-items: center; width: min(21em, 88vw); gap: .5em; }
-  .peek .card.is-peek { width: calc(var(--card-w) * 2.6); }
   .peek-body { width: 100%; }
   .peek-name { text-align: center; }
 }
@@ -1600,7 +1624,14 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   background: var(--surface);
   box-shadow: inset 0 0 0 2px var(--danger), var(--card-drop-air);
 }
-.announce.is-bad .announce-flag { background: var(--hazard-fine); color: var(--card-stock); }
+/* The same 2.18:1 as .strip-flag, from the same cause, on the same words —
+   `announce · dark` reported both runs in one frame. Same fix: the hazard is a
+   rule at the edge, the type is --danger-ink on the flag's own ground. */
+.announce.is-bad .announce-flag {
+  color: var(--danger-ink);
+  background: var(--hazard-fine) left / 5px 100% no-repeat, var(--ground);
+  padding-left: .85em;
+}
 .announce.is-mine,
 .announce.is-good {
   background: var(--surface);

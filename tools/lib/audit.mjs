@@ -45,10 +45,37 @@ export function auditTapTargets() {
     const st = getComputedStyle(el);
     if (st.display === 'none' || st.visibility === 'hidden') return false;
     if (st.pointerEvents === 'none') return false;
+    /**
+     * THE GATE COULD NOT SEE THE ONE THING IT EXISTS TO FIND.
+     *
+     * This line used to read `if (r.bottom <= 0 || r.top >= innerHeight || ...)
+     * return false`, annotated "off-screen surfaces (a closed sheet translated
+     * away) are not on trial here" — and it is the reason a control pushed
+     * ENTIRELY below the fold was invisible to every off-viewport assertion in
+     * this file. `offscreen` below tests `r.bottom > innerHeight + 2`, so it
+     * caught a control hanging half off the bottom and dropped the one that
+     * had been pushed clear of it, which is the worse defect and the exact
+     * class def3dd9 was written about. The P9 lobby agent had to read the rect
+     * by hand, outside the audit, to assert that Launch Mission was on screen.
+     *
+     * The exclusion it was written for is already paid for twice over and does
+     * not need geometry: every closed surface in this client is closed with the
+     * `hidden` ATTRIBUTE (`#sheet`, `#side`, `#win-overlay`, `#prompt`, every
+     * `.screen`), which the ancestor walk below already rejects.
+     *
+     * `checkVisibility()` is the third guard and it is not decoration. A closed
+     * `<details>` renders its contents into the layout tree — MEASURED on
+     * `lobby (host)`, Chromium 151: `details.ruleset-adv` is 44px tall and its
+     * closed `.adv-body` still reports 355×1386, carrying twelve
+     * `input.rule-input` at y1075–1718. They are not focusable and not painted
+     * (`checkVisibility()` false, `.focus()` no-op), so they are skipped
+     * content that a naive rect walk would have reported as twelve brand-new
+     * off-viewport controls the moment this rejection came out. Geometry could
+     * not tell them apart from the real thing; this can.
+     */
+    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return false;
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) return false;
-    // Off-screen surfaces (a closed sheet translated away) are not on trial here.
-    if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) return false;
     for (let p = el.parentElement; p; p = p.parentElement) {
       const ps = getComputedStyle(p);
       if (ps.display === 'none' || ps.visibility === 'hidden') return false;
@@ -334,9 +361,42 @@ export function auditOcclusion() {
   const VEIL = '.hints, .hint-card, #toast, #emotes, .floaters, .floater, .burst, '
     + '.fx, .fx-layer, .overlay, .scrim, .coach, .tip, .tooltip, .announce';
 
-  const box = (el) => {
+  /**
+   * The CTA's PAINTED rect, after every clipping ancestor and the viewport have
+   * had their say — the same walk auditTapTargets does, for the same reason,
+   * and it belongs here because the two audits were disagreeing about the same
+   * element on the same frame.
+   *
+   * MEASURED on `landscape · five players`, 844×390: this reported
+   * `"Shadow BOT 0/3 SETS 17M ARMED 4" 36% by div.feed-row` while
+   * auditTapTargets, twenty lines up in this file, reported the identical
+   * control as "228×44 but only 228×0 of it is reachable". Both were reading
+   * `getBoundingClientRect`, but only one of them clipped it. `#opponents` is a
+   * 103px scroller holding 190px of seats, so Shadow's toggle lays out at
+   * y196–240 and PAINTS NOTHING — the feed ticker at y220–239 is sitting on
+   * bare concrete below the rail, covering a rectangle that is not on the
+   * screen. An occluder can only occlude what is drawn, so the overlap is now
+   * computed against what is drawn.
+   *
+   * This is not a softening: a control clipped to nothing is still a defect and
+   * is still reported, by the gate that can say what is actually wrong with it.
+   * Reporting it twice, under a heading that names the wrong culprit, is how
+   * `.feed-row` came to be blamed for a scroller's overflow.
+   */
+  const painted = (el) => {
     const r = el.getBoundingClientRect();
-    return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height };
+    let l = r.left; let t = r.top; let rt = r.right; let b = r.bottom;
+    const clips = (v) => v === 'hidden' || v === 'clip' || v === 'auto' || v === 'scroll';
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const st = getComputedStyle(p);
+      if (!clips(st.overflowX) && !clips(st.overflowY)) continue;
+      const pr = p.getBoundingClientRect();
+      if (clips(st.overflowX)) { l = Math.max(l, pr.left); rt = Math.min(rt, pr.right); }
+      if (clips(st.overflowY)) { t = Math.max(t, pr.top); b = Math.min(b, pr.bottom); }
+    }
+    l = Math.max(l, 0); t = Math.max(t, 0);
+    rt = Math.min(rt, innerWidth); b = Math.min(b, innerHeight);
+    return { l, t, r: rt, b, w: Math.max(0, rt - l), h: Math.max(0, b - t) };
   };
   const shown = (el) => {
     const st = getComputedStyle(el);
@@ -360,11 +420,11 @@ export function auditOcclusion() {
   const hits = [];
   document.querySelectorAll(CTA).forEach((cta) => {
     if (!shown(cta) || cta.disabled) return;
-    const c = box(cta);
+    const c = painted(cta);
     if (!c.w || !c.h) return;
     for (const v of veils) {
       if (v.contains(cta) || cta.contains(v)) continue;
-      const b = box(v);
+      const b = painted(v);
       const ow = Math.max(0, Math.min(c.r, b.r) - Math.max(c.l, b.l));
       const oh = Math.max(0, Math.min(c.b, b.b) - Math.max(c.t, b.t));
       const pct = (ow * oh) / (c.w * c.h);

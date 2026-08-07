@@ -313,6 +313,27 @@ body.is-dragging-card {
   pointer-events: none;
 }
 
+/* ── AND THE CELL IT SHARES ────────────────────────────────────────────────
+   The chit costs the MAT no height and that measurement still holds — but it
+   was measured on the mat, and the thing that moved was the CELL.
+
+   `grid-area: props` puts the chit in the same grid area as the mat's card
+   zone, so the two share a row. A grid item stretches to its row by default, so
+   on an EMPTY mat — no cards, nothing to be laid over — the zone stopped being
+   0px tall and became exactly as tall as the chit. MEASURED by touchtest on
+   `wild placement (cold)`, 390×844, the first frames any gate has taken of the
+   myColor step (def3dd9): `div.cardzone 46×11` and `div.cardzone 52×11`, both
+   under §0.9's 44px floor, on the brown/orange/red mats the wild could go to.
+
+   Zero was never a defect and 11 is, which is the whole shape of this bug: an
+   empty zone is invisible to the audit (no height, nothing to tap, nothing to
+   zoom) while an 11px one is a control a thumb cannot hit. table.css floors
+   `.board .cardzone:not(:empty)` at 44px on purpose and deliberately leaves
+   `:empty` alone; this restores that. The propcol itself is untouched — it is
+   the 44px drop target (min-height: var(--tap)) and it was never the thing
+   under the floor. */
+.propcol:has(> .mat-advice) > .cardzone:empty { align-self: start; }
+
 /* A rung is one step of the set's rent ladder, so the ladder IS the progress
    bar: it has exactly `size` rungs and the reversed-out one says which rung you
    would be standing on. That is two of the four things this feature owes

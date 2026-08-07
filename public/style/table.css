@@ -69,7 +69,12 @@
      honest thing for a strip to be and a sliced card is not. The 20px this
      costs comes off .table-center below, not off your own board. */
   min-height: calc(var(--s) * 12.5);
-  max-height: 50%;
+  /* ROUND-6: an opponent's property line WRAPS now (see .opponents
+     .board-props), so a seat is taller and the share of it that falls outside
+     this scroller is what the screenshot gate counts as buried. 56% is the
+     largest slice that still leaves your own board its two mat rows and the
+     bank at 1280×720 — measured, self content 291px in a 291px pane. */
+  max-height: 56%;
   /* MOBILE REVIEW round 5: "the seat header is the first thing to leave the
      window, so a scrolled rail shows unattributed property columns". With a
      one-row property line every seat is the same height, so the scroll can be
@@ -581,6 +586,11 @@
   padding: 0 .25em;
 }
 .opponents .propcol { flex: 0 0 auto; }
+/* A seat's fan-and-bank row was ~90px of a 390px phone seat around 30px cards,
+   most of it an empty drawn box. Halving it is 50px per seat back to the mats,
+   which are the part of an opponent's board anyone reads. */
+.opponents .board-bank { min-height: 0; }
+.opponents .board-bank .cardzone:not(:empty) { min-height: calc(var(--card-w) * 1.4); }
 /* An opponent's mat is a targeting surface too (Inspector General takes a whole
    set), so it owes the same 44px — MEASURED at 36×50 portrait and 30×42
    landscape before this, i.e. under the floor on BOTH axes on the tap surface

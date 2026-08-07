@@ -298,6 +298,10 @@ function dragEnd(x, y) {
   if (!live) return;
   const hit = resolve(x, y);
   const { node, cardId, plan } = live;
+  // Step 1a's mat, if that is what refused this drop — the ONE refusal this
+  // file can name better than the plan can, because the plan's `reason` is
+  // about the card and this one is about the column under the finger.
+  const refusedMat = hit ? null : live.refused;
   teardown();
   live = null;
   // The clipping chain stays open on a tail timer (table.releaseCard) so the
@@ -316,7 +320,13 @@ function dragEnd(x, y) {
   // "card_landed","denied"]. The refusal is the reason the card is travelling.
   cue(CUE_DENIED, x, y);
   springBack(node, cardId, plan.source);
-  if (plan.reason) bus.emit(EVENTS.TOAST, plan.reason);
+  // §P7.3 — a refusal is a sentence, never a shrug. The mat the finger was on
+  // outranks the card-level reason: the player aimed somewhere specific.
+  const said = refusedMat
+    ? api?.dropRefusal?.(cardId, refusedMat.getAttribute('data-color'))
+    : '';
+  const reason = said || plan.reason;
+  if (reason) bus.emit(EVENTS.TOAST, reason);
 }
 
 function dragCancel() {
@@ -396,6 +406,10 @@ function nearestPrecise(x, y, within) {
 
 function resolve(x, y) {
   if (!live) return null;
+  // Cleared on EVERY pass, before any early return: a stale mat from a pointer
+  // that has since moved on (or gone home) must not put words in dragEnd's
+  // mouth. Only step 1a sets it, and only for the pass that refused.
+  live.refused = null;
 
   // 0 — PUT IT BACK. A drag that ends where it started is a change of mind, and
   // this has to be decided before anything else because the rule that follows
@@ -425,6 +439,32 @@ function resolve(x, y) {
   // 1 — standing inside a precise target.
   if (best && dist === 0) return best;
 
+  // 1a — AIM BEATS FORGIVENESS on a mat this drag has already drawn as REFUSED.
+  //
+  // MEASURED (mid-game fixture, the rainbow wild sitting in Space Force): the
+  // player releases dead centre on COMMAND, which is a complete 2/2 set and so
+  // is refused by §3.5's zone cap — and the client sent
+  // `move_property → lightblue`. Step 1b's hysteresis and step 3's snap radius
+  // both look for the nearest LEGAL target, the mats are a ten-cell grid, and
+  // every neighbour is well inside 120px. So an unambiguous aim at a refused
+  // colour silently became a real move to a colour the player never chose. That
+  // is worse than any refusal: the board changes, and it changes wrongly.
+  //
+  // Steps 2/3 exist for the NEAR MISS — "a release one pixel outside a 20px
+  // column strip" — and this is not one. It is the same principle this file
+  // already states for regions ("you cannot be near something you are standing
+  // inside"), applied to the mats markIllegal() paints for exactly this reason.
+  //
+  // Scoped to a plan that is CHOOSING A COLOUR (it has mat targets of its own).
+  // An action or a money card released over a mat still means "my board", and
+  // step 2 must keep routing it to the bank.
+  const over = document.elementFromPoint(x, y);
+  const refusedMat = over && over.closest ? over.closest('.propcol[data-drop-illegal="1"]') : null;
+  if (refusedMat && live.plan.targets.some(t => t.rank === 0 && t.el.classList?.contains('propcol'))) {
+    live.refused = refusedMat;
+    return null;
+  }
+
   // 1b — HYSTERESIS. Nothing is standing inside anything, so the target that
   // is already committed keeps the drop while the pointer is anywhere near it.
   const held = live.hover ? live.plan.targets.find(t => t.el === live.hover) : null;
@@ -434,8 +474,7 @@ function resolve(x, y) {
   }
 
   // 2 — standing inside a region: route to the nearest precise target it holds.
-  const el = document.elementFromPoint(x, y);
-  const hitEl = el && el.closest ? el.closest('[data-droppable="1"]') : null;
+  const hitEl = over && over.closest ? over.closest('[data-droppable="1"]') : null;
   const hit = hitEl ? live.plan.targets.find(t => t.el === hitEl) : null;
   if (hit && hit.rank === 0) return hit;
   if (hit) {

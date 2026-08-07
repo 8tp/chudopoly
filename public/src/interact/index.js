@@ -16,7 +16,10 @@ import { store, selfPlayer, playerById } from '../state/store.js';
 import * as sel from '../state/selectors.js';
 import * as table from '../table/index.js';
 import { getNode } from '../table/cardnode.js';
-import { isPropertyCard, COLOR_KEYS, colorName, setSize } from '../core/cards.js';
+import {
+  isPropertyCard, COLOR_KEYS, COLORS, colorName, setSize,
+  legalColorsFor as coreLegalColors,
+} from '../core/cards.js';
 import * as pointer from './pointer.js';
 import * as drag from './drag.js';
 import { CUE, cueEl } from '../anim/cues.js';
@@ -177,7 +180,11 @@ export function bankSelected() {
 export function beginMove(cardId) {
   const found = sel.boardMoveTarget(cardId);
   if (!found) return;
-  if (!sel.canPlay()) { refuse(sel.cannotPlayReason(), getNode(cardId)); return; }
+  // canRearrange(), NOT canPlay(): §3.8's rearrange costs no play and game.js
+  // moveProperty() never looks at `playsRemaining`. Gating it on canPlay() made
+  // every wild on the board dead for the rest of any turn whose three plays
+  // were spent — see the note over canRearrange() in state/selectors.js.
+  if (!sel.canRearrange()) { refuse(sel.cannotRearrangeReason(), getNode(cardId)); return; }
   if (!found.colors.length) {
     refuse(found.isUpgrade
       ? 'Nowhere legal to move it — you need a second complete set that has room for it'
@@ -430,8 +437,10 @@ export function dragCandidate(cardId) {
   if (inHand) return sel.canPlay() ? { source: 'hand', card: inHand } : null;
   // A wild (§3.8) or an Upgrade/FOC (§3.1b) already on my board — both are
   // free rearranges over the same command.
+  // A board card is picked up under the REARRANGE window, not the play window
+  // (sel.canRearrange()) — a spent play must not weld a wild to its mat.
   const mine = sel.boardMoveTarget(cardId);
-  if (mine && sel.canPlay() && mine.colors.length) {
+  if (mine && sel.canRearrange() && mine.colors.length) {
     return { source: 'board', card: mine.card, from: mine.from };
   }
   return null;
@@ -555,6 +564,47 @@ export function dropCommit(cardId, drop) {
   if (mode.kind === 'strip') return false;                 // refused, still selected
   if (drop.step) pick(drop.step, drop.value);
   return true;
+}
+
+/**
+ * Why THAT mat said no — drag.js step 1a, for a drop released on a column this
+ * drag had already drawn as refused (`data-drop-illegal`).
+ *
+ * Only the machine can answer it: the reason lives in the engine's rules, not
+ * in the DOM. The sentences are game.js moveProperty()'s own (1997-2001) and
+ * playProperty()'s zone check, so the toast the player reads is the error the
+ * server would have sent had the client fired the move anyway.
+ *
+ * @param {number} cardId  the card that was being dragged
+ * @param {string} color   the refused column's colour key
+ * @returns {string} a sentence, or '' when there is nothing specific to say
+ */
+export function dropRefusal(cardId, color) {
+  if (!color || !COLORS[color]) return '';
+  const name = colorName(color);
+  const me = selfPlayer();
+  const size = setSize(color);
+  const held = me?.properties?.[color]?.length || 0;
+
+  const board = sel.boardMoveTarget(cardId);
+  if (board) {
+    if (color === board.from) return '';                     // 'Already in that set' — a no-op, not a refusal
+    if (board.isUpgrade) {
+      return `${name} cannot take that — an Upgrade moves only onto another complete set that has room for it`;
+    }
+    if (!coreLegalColors(board.card).includes(color)) {
+      return `That wild cannot go on ${name}`;
+    }
+    if (held >= size) return `${name} already holds a full set (${size})`;
+    return '';
+  }
+
+  const hand = sel.handCard(cardId);
+  if (hand && isPropertyCard(hand)) {
+    if (!coreLegalColors(hand).includes(color)) return `That card cannot go on ${name}`;
+    if (held >= size) return `${name} already holds a full set (${size})`;
+  }
+  return '';
 }
 
 /* ── marks ─────────────────────────────────────────────────────────────── */
@@ -864,7 +914,7 @@ function interruptedBy() {
 }
 
 export function mount() {
-  drag.mount({ dragPlan, dropCommit, dragCandidate, refreshMarks: applyMarks, yanked });
+  drag.mount({ dragPlan, dropCommit, dragCandidate, dropRefusal, refreshMarks: applyMarks, yanked });
   pointer.onEscape(() => cancel());
   pointer.onTargetTap((el) => handleTargetTap(el));
   pointer.onCardTap((id, node) => {
@@ -878,10 +928,31 @@ export function mount() {
     // tap so beginMove() can SAY why it cannot move (§P7.3); an Upgrade only
     // claims it when it has somewhere to go — most of the time it does not, and
     // a refusal there would just be a wall in front of the rules card.
+    //
+    // The claim is gated on rearrangeWindowOpen() — my turn, play phase — and
+    // NOT on canRearrange(), so the one in-window refusal the engine can still
+    // give (the spent rearrange budget) arrives as beginMove()'s sentence
+    // instead of silently opening the rules card. Off-turn the rules card is
+    // the better answer, so the tap is not claimed at all.
     const movable = sel.boardMoveTarget(id);
-    if (movable && sel.canPlay() && (!movable.isUpgrade || movable.colors.length)) {
+    if (movable && sel.rearrangeWindowOpen() && (!movable.isUpgrade || movable.colors.length)) {
       beginMove(id);
       return;
+    }
+
+    // Mid colour-choice, and the tap landed on a card sitting in one of MY
+    // columns that is not on offer. MEASURED: aiming a wild at a complete 2/2
+    // Command set did nothing at all — the mat is not `data-targetable`, so
+    // pointer.js routed the tap to the card inside it and the rules sheet
+    // opened over the decision. §P7.3 says a refusal is a sentence; this is
+    // drag.js step 1a's answer given to the other route, in the same words.
+    if (mode.kind === 'target' && mode.needs[0] === 'myColor') {
+      const col = node.closest ? node.closest('.propcol') : null;
+      if (col && col.getAttribute('data-owner') === store.self.id
+          && col.getAttribute('data-targetable') !== '1') {
+        const why = dropRefusal(mode.cardId, col.getAttribute('data-color'));
+        if (why) { refuse(why, col); return; }
+      }
     }
     bus.emit(EVENTS.UI_DETAILS, id);
   });

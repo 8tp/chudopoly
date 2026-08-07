@@ -127,6 +127,66 @@ export function canPlay() {
     && snap.currentPlayerId === store.self.id && snap.playsRemaining > 0;
 }
 
+/* ── the FREE rearrange window (§3.8) ──────────────────────────────────────
+ *
+ * A rearrange is NOT a play and must never be gated like one. game.js
+ * moveProperty() (1971-1984) checks exactly four things before it will move a
+ * wild — phase, whose turn it is, `turnPhase === 'play'`, and the per-turn
+ * rearrange budget — and `playsRemaining` is deliberately NOT among them.
+ *
+ * canPlay() was standing in for all of that, and it carries
+ * `playsRemaining > 0`. So on every turn where the player spent all three
+ * plays — the common case, and a state the engine happily sits in until End
+ * Turn — the client killed a move the server would have accepted: the wild
+ * would not lift for a drag (dragCandidate returned null) and a tap fell
+ * through to the rules sheet with no refusal at all. MEASURED on the mid-game
+ * fixture with `playsRemaining: 0`: all three board wilds dead on both routes,
+ * zero `move_property` sent, while game.js returned `{ok:true}` for the same
+ * move. That is the "sometimes it won't let me swap" — the "sometimes" is
+ * whether you had a play left.
+ *
+ * The budget runs the other way: the engine refuses past 12 accepted moves in
+ * a turn and the client did not know the number existed, so the 13th mat still
+ * glowed and answered with a server error frame. It rides on the snapshot
+ * (game.js getPlayerView: `rearrangesRemaining`), so the client can say it.
+ */
+
+/** My own turn, in the play phase — the window in which a rearrange is even a
+ *  question. Everything moveProperty() tests except the budget. */
+export function rearrangeWindowOpen() {
+  const snap = store.snapshot;
+  return !!snap && snap.phase === 'playing' && snap.turnPhase === 'play'
+    && snap.currentPlayerId === store.self.id;
+}
+
+/** Mirror of game.js rearrangesLeft() (1962-1965): a snapshot with no such
+ *  field (an old recorded fixture, a server predating the budget) reads as a
+ *  FULL allowance, never as zero — the client must not invent a refusal. */
+function rearrangesLeft() {
+  const left = store.snapshot?.rearrangesRemaining;
+  return Number.isFinite(left) ? left : Infinity;
+}
+
+/** Would game.js moveProperty() take a free rearrange from me right now? */
+export function canRearrange() {
+  return rearrangeWindowOpen() && rearrangesLeft() > 0;
+}
+
+/** Why not, in the engine's own words — same order moveProperty() rejects in. */
+export function cannotRearrangeReason() {
+  const snap = store.snapshot;
+  if (!snap || snap.phase !== 'playing') return 'The game is not running';
+  if (snap.currentPlayerId !== store.self.id) {
+    return `It is ${playerById(snap.currentPlayerId)?.name || 'someone else'}'s turn`;
+  }
+  if (snap.pendingAction) return 'Resolve the card on the table first';
+  if (snap.turnPhase !== 'play') return 'You cannot rearrange right now';
+  if (rearrangesLeft() <= 0) {
+    return 'No free rearranges left this turn — end your turn to reset them';
+  }
+  return 'You cannot rearrange right now';
+}
+
 /**
  * DEAD as of the automatic turn draw (game.js beginTurn, 65e36ef): the engine
  * draws for every seat inside the same synchronous call that starts the turn,

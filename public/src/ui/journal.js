@@ -39,6 +39,8 @@ import { buildFace, refresh } from '../table/cardnode.js';
 import * as pointer from '../interact/pointer.js';
 import { openSheet, sheetOpen } from './screens.js';
 import { detailBody } from './details.js';
+import * as recorder from '../state/recorder.js';
+import { stats } from '../state/stats.js';
 
 /* ── the record ───────────────────────────────────────────────────────────── */
 
@@ -53,10 +55,22 @@ export function reset() {
   maxSeq = 0;
   gaps = 0;
   turn = 0;
+  // The logbook's per-game latch hangs off the same reset the record does: a
+  // rematch reuses the room code AND restarts `eventSeq`, so "a new game began"
+  // is a fact only this module holds. See state/recorder.js `newGame()`.
+  recorder.newGame();
 }
 
-/** Merge a broadcast's event tail. Idempotent, ordered, and honest about gaps. */
-function ingest(snapshot) {
+/**
+ * Merge a broadcast's event tail. Idempotent, ordered, and honest about gaps.
+ *
+ * EXPORTED for test/stats-logbook.test.js, which replays real games out of
+ * `logs/games.jsonl` a broadcast at a time. The logbook is folded from this
+ * accumulator, so a test that reimplemented the merge would be proving a copy
+ * correct rather than this. The rest of the client still reaches it only via the
+ * STATE_APPLIED subscription in `mount()`.
+ */
+export function ingest(snapshot) {
   const tail = Array.isArray(snapshot?.events) ? snapshot.events : [];
   const seq = Number(snapshot?.eventSeq) || 0;
   // A rematch restarts `eventSeq` at 0; so does a different room.
@@ -601,8 +615,24 @@ export function mount() {
 
   installLogButton();
 
+  // Read the logbook off disk ONCE, at boot. `recordGame` would load it lazily
+  // anyway, but a panel that reads `stats.data` before the first game of the
+  // session would then be reading defaults over a full record. Never throws.
+  stats.ensure();
+
   bus.on(EVENTS.STATE_APPLIED, ({ snapshot }) => {
     ingest(snapshot);
+    // AFTER ingest, so the row is folded from the whole accumulated stream and
+    // not from the 120-event tail this broadcast happened to carry. Latched and
+    // exception-proof inside; a finished game re-broadcasts on every rematch
+    // vote and host change.
+    recorder.observe({
+      snapshot,
+      room: store.room,
+      selfId: store.self.id,
+      beats,
+      gaps,
+    });
     renderDrawer();
     installLogButton();
     if (isOpen()) paintSheet();

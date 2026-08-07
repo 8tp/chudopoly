@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * tools/verify.mjs — the gate. §8, as extended in P7 round 1 and P8:
- *   check → test → checkAssets → checkClient → checkServer → simbalance →
+ *   check → test → checkAssets → checkClient → checkServer → statsfuzz → simbalance →
  *   playtest → touchtest → screenshot → checkContrast → grayscale → audiotest
  *
  * P8 adds the two COLOUR gates. ART-DIRECTION §10's ship gate lists "grayscale
@@ -54,6 +54,10 @@ const steps = [
   // Node-only, never skips: proves the WS error handling and the ping/pong
   // heartbeat stay wired (a single anonymous frame used to end the process).
   ['node', ['tools/checkServer.mjs'], 'checkServer'],
+  // Node-only, ~2s: fuzzes the logbook's `sanitize` and drives a real seeded
+  // game end-to-end into the store. It runs in the inner loop because a save
+  // system that throws is invisible until it happens to somebody else's phone.
+  ['node', ['tools/statsfuzz.mjs', '--game'], 'statsfuzz'],
 ];
 if (!FAST) steps.push(['node', ['tools/simbalance.mjs', '--games', String(args.games || 400)], 'simbalance']);
 if (!FAST) steps.push(['node', ['tools/playtest.mjs'], 'playtest']);

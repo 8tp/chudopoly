@@ -1,12 +1,12 @@
 {
  "$schema": "chud-fixture/1",
- "name": "targeting",
- "description": "This seat is on turn holding a TARGETED card (rent/steal/swap) with legal victims on the table — the state tools/screenshot.mjs then DRIVES into target mode before capturing.",
+ "name": "opsec-decision",
+ "description": "The LOCAL seat is under attack AND holds an OPSEC card — the state where \"Accept / OPSEC\" is a real decision rather than a formality.",
  "seed": 1337,
  "selfId": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
  "room": "ZAED",
  "recordedAt": "2026-08-07T01:41:56.898Z",
- "stateIndex": 51,
+ "stateIndex": 44,
  "states": [
   {
    "type": "state",
@@ -38,27 +38,19 @@
    "hostId": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
    "game": {
     "phase": "playing",
-    "turnPhase": "play",
-    "currentPlayerId": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
-    "playsRemaining": 3,
-    "deckCount": 59,
+    "turnPhase": "action_response",
+    "currentPlayerId": "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
+    "playsRemaining": 2,
+    "deckCount": 63,
     "discardTop": {
-     "id": 61,
+     "id": 67,
      "type": "action",
-     "action": "opsec",
-     "name": "OPSEC",
-     "value": 4,
-     "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+     "action": "tdy_orders",
+     "name": "TDY Orders",
+     "value": 3,
+     "description": "Swap one of your properties for one of another player's"
     },
     "discardPile": [
-     {
-      "id": 61,
-      "type": "action",
-      "action": "opsec",
-      "name": "OPSEC",
-      "value": 4,
-      "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
-     },
      {
       "id": 67,
       "type": "action",
@@ -135,8 +127,24 @@
       "description": "Draw 2 extra cards from the deck"
      }
     ],
-    "pendingAction": null,
-    "responders": [],
+    "pendingAction": {
+     "type": "swap",
+     "action": "tdy_orders",
+     "sourceId": "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
+     "myCardId": 19,
+     "targetCardId": 4,
+     "targetId": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
+     "targets": [
+      {
+       "id": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
+       "depth": 0,
+       "responderId": "114ca9dc-3332-4b0e-9bae-687b35d36e31"
+      }
+     ]
+    },
+    "responders": [
+     "114ca9dc-3332-4b0e-9bae-687b35d36e31"
+    ],
     "winner": null,
     "endReason": null,
     "armedIds": [],
@@ -145,13 +153,13 @@
     "setsToWin": 3,
     "deckCycle": 0,
     "deckCycleLimit": 16,
-    "turnNumber": 12,
+    "turnNumber": 10,
     "stats": {
-     "turns": 13,
+     "turns": 11,
      "cardsPlayed": {
       "114ca9dc-3332-4b0e-9bae-687b35d36e31": 12,
       "8942246c-dd67-4bd8-9c31-d87a5002f7cf": 6,
-      "6149dfbd-fbaa-4600-84ea-b5a85ec74d84": 12
+      "6149dfbd-fbaa-4600-84ea-b5a85ec74d84": 9
      },
      "payments": {
       "count": 4,
@@ -163,6 +171,15 @@
      }
     },
     "log": [
+     "HARNESS's turn",
+     "HARNESS drew 2 cards.",
+     "HARNESS plays Midnight Requisition on Iceman's Wild: Elite/Command",
+     "HARNESS requisitioned Wild: Elite/Command from Iceman",
+     "HARNESS played Goodfellow AFB on Training",
+     "HARNESS charges 3M rent on Command",
+     "Coyote has nothing to pay!",
+     "Iceman paid 4M to HARNESS",
+     "Coyote's turn",
      "Coyote drew 2 cards.",
      "Coyote played F-35 Lightning II on Fighters",
      "Coyote played C-130 Hercules on Mobility",
@@ -193,16 +210,7 @@
      "HARNESS banked 1M (1M)",
      "Coyote's turn",
      "Coyote drew 2 cards.",
-     "Coyote plays TDY Orders on HARNESS — property swap!",
-     "HARNESS plays OPSEC! Coyote can counter...",
-     "HARNESS's OPSEC stands — Coyote's TDY Orders is blocked.",
-     "Iceman's turn",
-     "Iceman drew 2 cards.",
-     "Iceman banked 1M (1M)",
-     "Iceman banked Rent: green/darkblue (1M)",
-     "Iceman banked 1M (1M)",
-     "HARNESS's turn",
-     "HARNESS drew 2 cards."
+     "Coyote plays TDY Orders on HARNESS — property swap!"
     ],
     "stalemateBasis": null,
     "events": [
@@ -1119,130 +1127,23 @@
        "description": "Swap one of your properties for one of another player's"
       },
       "action": "tdy_orders"
-     },
-     {
-      "seq": 79,
-      "t": "opsec",
-      "actor": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
-      "against": "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
-      "depth": 1,
-      "target": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
-      "action": "tdy_orders",
-      "card": {
-       "id": 61,
-       "type": "action",
-       "name": "OPSEC",
-       "value": 4,
-       "action": "opsec",
-       "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
-      }
-     },
-     {
-      "seq": 80,
-      "t": "action_blocked",
-      "source": "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
-      "target": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
-      "action": "tdy_orders",
-      "depth": 1
-     },
-     {
-      "seq": 81,
-      "t": "turn_end",
-      "actor": "8942246c-dd67-4bd8-9c31-d87a5002f7cf"
-     },
-     {
-      "seq": 82,
-      "t": "turn_start",
-      "actor": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
-      "plays": 3,
-      "finalApproach": false
-     },
-     {
-      "seq": 83,
-      "t": "draw",
-      "to": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
-      "count": 2
-     },
-     {
-      "seq": 84,
-      "t": "play_money",
-      "actor": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
-      "card": {
-       "id": 39,
-       "type": "money",
-       "name": "1M",
-       "value": 1
-      }
-     },
-     {
-      "seq": 85,
-      "t": "play_money",
-      "actor": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
-      "card": {
-       "id": 98,
-       "type": "rent",
-       "name": "Rent: green/darkblue",
-       "value": 1,
-       "colors": [
-        "green",
-        "darkblue"
-       ]
-      }
-     },
-     {
-      "seq": 86,
-      "t": "play_money",
-      "actor": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
-      "card": {
-       "id": 40,
-       "type": "money",
-       "name": "1M",
-       "value": 1
-      }
-     },
-     {
-      "seq": 87,
-      "t": "turn_end",
-      "actor": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84"
-     },
-     {
-      "seq": 88,
-      "t": "turn_start",
-      "actor": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
-      "plays": 3,
-      "finalApproach": false
-     },
-     {
-      "seq": 89,
-      "t": "draw",
-      "to": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
-      "count": 2,
-      "cards": [
-       {
-        "id": 21,
-        "type": "property",
-        "name": "Air Force One",
-        "value": 4,
-        "color": "darkblue"
-       },
-       {
-        "id": 65,
-        "type": "action",
-        "name": "TDY Orders",
-        "value": 3,
-        "action": "tdy_orders",
-        "description": "Swap one of your properties for one of another player's"
-       }
-      ]
      }
     ],
-    "eventSeq": 89,
+    "eventSeq": 78,
     "players": [
      {
       "id": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
       "name": "HARNESS",
-      "handCount": 6,
+      "handCount": 5,
       "hand": [
+       {
+        "id": 61,
+        "type": "action",
+        "action": "opsec",
+        "name": "OPSEC",
+        "value": 4,
+        "description": "Counter any action card played against you. Can itself be countered by another OPSEC."
+       },
        {
         "id": 86,
         "type": "action",
@@ -1272,21 +1173,6 @@
         "type": "money",
         "name": "4M",
         "value": 4
-       },
-       {
-        "id": 21,
-        "type": "property",
-        "color": "darkblue",
-        "name": "Air Force One",
-        "value": 4
-       },
-       {
-        "id": 65,
-        "type": "action",
-        "action": "tdy_orders",
-        "name": "TDY Orders",
-        "value": 3,
-        "description": "Swap one of your properties for one of another player's"
        }
       ],
       "bank": [
@@ -1449,7 +1335,7 @@
      {
       "id": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
       "name": "Iceman",
-      "handCount": 3,
+      "handCount": 4,
       "bank": [
        {
         "id": 46,
@@ -1474,28 +1360,6 @@
         "name": "Upgrade (House)",
         "value": 3,
         "description": "Add to a complete set: +3M rent"
-       },
-       {
-        "id": 39,
-        "type": "money",
-        "name": "1M",
-        "value": 1
-       },
-       {
-        "id": 98,
-        "type": "rent",
-        "colors": [
-         "green",
-         "darkblue"
-        ],
-        "name": "Rent: green/darkblue",
-        "value": 1
-       },
-       {
-        "id": 40,
-        "type": "money",
-        "name": "1M",
-        "value": 1
        }
       ],
       "properties": {
@@ -1529,17 +1393,17 @@
       "finalApproachIn": null,
       "opponentTurnsRemaining": null,
       "checkpointTurn": null,
-      "bankValue": 9,
+      "bankValue": 6,
       "propertyValue": 5,
       "upgradeValue": 0,
-      "payableValue": 14,
-      "netWorth": 14
+      "payableValue": 11,
+      "netWorth": 11
      }
     ]
    },
    "turnTimer": {
     "timeout": 60,
-    "startedAt": 1786066862009
+    "startedAt": 1786066856090
    },
    "responseTimer": null
   }

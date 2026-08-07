@@ -251,16 +251,22 @@ ephemeral port, plus Node-only engine tools. Every tool exits nonzero on failure
 | Tool | Asserts |
 |---|---|
 | `tools/checkAssets.mjs` | no binary assets anywhere in repo (allowlist: none) |
-| `tools/checkClient.mjs` | no `innerHTML` writes in `table/`/`anim/`; no `on*=` in html; no `Math.random` outside `core/rng.js` usage in table layout paths; entry is cache-busted |
+| `tools/checkClient.mjs` | no `innerHTML` writes in `table/`/`anim/`; no `on*=` in html; entry cache-busted; **safe-area insets owned by exactly one container** — resolved against a parsed `index.html` tree so shell-level owners (`#sheet`, `#toast`, `.hints`) are not false-flagged |
+| `tools/checkServer.mjs` | 7 raw-socket WS abuse vectors + ping/pong liveness. **A `[FATAL] uncaught exception` in the log fails the gate even though the process survives** — a liveness-only check passes 4/4 while every vector escapes (proven by mutation test) |
 | `tools/simbalance.mjs` | winrate matrix per §3 bounds, prints table for README |
-| `tools/playtest.mjs` | full seeded game vs bots to the win screen, zero console errors, zero missed reconciles (bridge counts drift corrections; must be 0 except reconnect) |
-| `tools/touchtest.mjs` | touch-only playthrough of core actions on emulated 390×844 DPR3: drag-play a card, pay rent, target a steal; HUD fits; no 300ms ghosts |
-| `tools/screenshot.mjs` | 30+ shot review set from fixtures (desktop 1280×720 + phone 390×844): home, lobby, mid-game, targeting, payment, OPSEC chain, big hand, 5-player table, win. Writes `shots/` + `contactsheet.png` |
-| `tools/audiotest.mjs` | OfflineAudioContext render: peak ≤ 0dBFS, chime ladder monotonic, sour cue below chime-0 |
+| `tools/playtest.mjs` | full seeded game to the win screen, zero console errors, drift 0 — **in both instant and animated passes** (`--cadence 120`, `setInstant(false)`), plus every big-moment `seq` must carry a `CHOREO_SFX` (`isBigMoment` is read out of the client so the gate cannot drift from it) |
+| `tools/touchtest.mjs` | **real CDP `Input.dispatchTouchEvent`** (synthetic PointerEvents never consult `touch-action`); drag-play vertical AND horizontal-first; tap targets across 11 surfaces incl. `.propcol`, live drop targets, inputs and exposed hand-card strips; occlusion by **rect overlap** (hit-testing skips `pointer-events:none`); landscape; soft-keyboard composer; offline/reconnect; duplicate CTAs |
+| `tools/screenshot.mjs` | review set at desktop / phone / landscape. Client-side moments are **driven, not staged** (`drive` + `expect` per shot); every PNG is hashed and **two differently-named shots sharing an image is a failure**; `auditClippedText` runs in-page at every capture |
+| `tools/audiotest.mjs` | OfflineAudioContext: peak ≤ 0dBFS, chime ladder monotonic, sour below chime-0, **every loss cue louder than shuffle/snap/timer**, `droppedPriority === 0`, match music below `card_slide` |
+| `tools/record.mjs` | fixtures from real seeded games; **fails if two moments select the same state** |
 
-`npm run verify` chains: `check → test → checkAssets → checkClient → simbalance → playtest →
-touchtest → audiotest`. Screenshot review sets are for humans/critics, not gated on pixels
-(no imagediff until the design settles; add it in P7).
+`npm run verify` chains: `check → test → checkAssets → checkClient → checkServer → simbalance →
+playtest → touchtest → screenshot → audiotest`. **Strict is the default** — a skipped gate
+fails the run; `--allow-skips` is the loud escape hatch, `verify:fast` is for the inner loop.
+Review sets are for humans/critics, not pixel-gated (no imagediff until the design settles).
+
+**A gate must be proven to fail.** Before a new assertion is trusted, break the fix it guards
+(mutation) and watch it go red — an assertion nobody has seen fail is a decoration.
 
 ## §9 The `__CHUD` bridge (test-only contract)
 

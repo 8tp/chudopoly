@@ -3,43 +3,43 @@
  "name": "early-game",
  "description": "First play phase of the opening turn — small hands, empty boards, full deck.",
  "seed": 1337,
- "selfId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
- "room": "FC5J",
- "recordedAt": "2026-08-06T22:04:40.041Z",
- "stateIndex": 1,
+ "selfId": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
+ "room": "ZAED",
+ "recordedAt": "2026-08-07T01:41:56.894Z",
+ "stateIndex": 0,
  "states": [
   {
    "type": "state",
-   "code": "FC5J",
+   "code": "ZAED",
    "phase": "playing",
    "players": [
     {
-     "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+     "id": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
      "name": "HARNESS",
      "connected": true,
      "isBot": false,
      "botMode": null
     },
     {
-     "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
-     "name": "Blaze",
+     "id": "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
+     "name": "Coyote",
      "connected": true,
      "isBot": true,
      "botMode": "chud"
     },
     {
-     "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
-     "name": "Phoenix",
+     "id": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
+     "name": "Iceman",
      "connected": true,
      "isBot": true,
      "botMode": "aggressive"
     }
    ],
-   "hostId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+   "hostId": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
    "game": {
     "phase": "playing",
     "turnPhase": "play",
-    "currentPlayerId": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+    "currentPlayerId": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
     "playsRemaining": 3,
     "deckCount": 89,
     "discardTop": null,
@@ -66,28 +66,29 @@
      "propertiesStolen": {}
     },
     "log": [
-     "Game started! HARNESS, Blaze, Phoenix are playing.",
+     "Game started! HARNESS, Coyote, Iceman are playing.",
      "HARNESS drew 2 cards."
     ],
+    "stalemateBasis": null,
     "events": [
      {
       "seq": 1,
       "t": "game_start",
       "order": [
-       "e785093c-63dd-4eb4-8d55-23f60a5324fa",
-       "b6de82a0-2f76-4e41-825a-083546eea5cb",
-       "963e0e0b-3e66-4188-9dfa-63bd342dde8f"
+       "114ca9dc-3332-4b0e-9bae-687b35d36e31",
+       "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
+       "6149dfbd-fbaa-4600-84ea-b5a85ec74d84"
       ],
       "names": {
-       "e785093c-63dd-4eb4-8d55-23f60a5324fa": "HARNESS",
-       "b6de82a0-2f76-4e41-825a-083546eea5cb": "Blaze",
-       "963e0e0b-3e66-4188-9dfa-63bd342dde8f": "Phoenix"
+       "114ca9dc-3332-4b0e-9bae-687b35d36e31": "HARNESS",
+       "8942246c-dd67-4bd8-9c31-d87a5002f7cf": "Coyote",
+       "6149dfbd-fbaa-4600-84ea-b5a85ec74d84": "Iceman"
       }
      },
      {
       "seq": 2,
       "t": "deal",
-      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
       "count": 5,
       "cards": [
        {
@@ -132,26 +133,26 @@
      {
       "seq": 3,
       "t": "deal",
-      "to": "b6de82a0-2f76-4e41-825a-083546eea5cb",
+      "to": "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
       "count": 5
      },
      {
       "seq": 4,
       "t": "deal",
-      "to": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
+      "to": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
       "count": 5
      },
      {
       "seq": 5,
       "t": "turn_start",
-      "actor": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "actor": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
       "plays": 3,
       "finalApproach": false
      },
      {
       "seq": 6,
       "t": "draw",
-      "to": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "to": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
       "count": 2,
       "cards": [
        {
@@ -177,7 +178,7 @@
     "eventSeq": 6,
     "players": [
      {
-      "id": "e785093c-63dd-4eb4-8d55-23f60a5324fa",
+      "id": "114ca9dc-3332-4b0e-9bae-687b35d36e31",
       "name": "HARNESS",
       "handCount": 7,
       "hand": [
@@ -243,6 +244,8 @@
       "eliminated": false,
       "finalApproach": false,
       "finalApproachIn": null,
+      "opponentTurnsRemaining": null,
+      "checkpointTurn": null,
       "bankValue": 0,
       "propertyValue": 0,
       "upgradeValue": 0,
@@ -250,8 +253,8 @@
       "netWorth": 0
      },
      {
-      "id": "b6de82a0-2f76-4e41-825a-083546eea5cb",
-      "name": "Blaze",
+      "id": "8942246c-dd67-4bd8-9c31-d87a5002f7cf",
+      "name": "Coyote",
       "handCount": 5,
       "bank": [],
       "properties": {},
@@ -260,6 +263,8 @@
       "eliminated": false,
       "finalApproach": false,
       "finalApproachIn": null,
+      "opponentTurnsRemaining": null,
+      "checkpointTurn": null,
       "bankValue": 0,
       "propertyValue": 0,
       "upgradeValue": 0,
@@ -267,8 +272,8 @@
       "netWorth": 0
      },
      {
-      "id": "963e0e0b-3e66-4188-9dfa-63bd342dde8f",
-      "name": "Phoenix",
+      "id": "6149dfbd-fbaa-4600-84ea-b5a85ec74d84",
+      "name": "Iceman",
       "handCount": 5,
       "bank": [],
       "properties": {},
@@ -277,6 +282,8 @@
       "eliminated": false,
       "finalApproach": false,
       "finalApproachIn": null,
+      "opponentTurnsRemaining": null,
+      "checkpointTurn": null,
       "bankValue": 0,
       "propertyValue": 0,
       "upgradeValue": 0,
@@ -287,7 +294,7 @@
    },
    "turnTimer": {
     "timeout": 60,
-    "startedAt": 1786053715322
+    "startedAt": 1786066833463
    },
    "responseTimer": null
   }

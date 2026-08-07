@@ -134,25 +134,55 @@ const MOMENTS = [
   },
   {
     name: 'targeting',
-    description: 'This seat is on turn holding a card that needs an on-table target, with legal targets present.',
-    pick: (states, selfId) => states.find((s) => {
-      const g = s.game;
-      if (!g || g.pendingAction || g.currentPlayerId !== selfId || g.turnPhase !== 'play') return false;
-      const me = g.players.find((p) => p.id === selfId);
-      const needsTarget = (me?.hand || []).some(
-        (c) => c.type === 'rent' || ['midnight_requisition', 'chud', 'finance_office', 'inspector_general', 'tdy_orders'].includes(c.action)
-      );
-      const foesHaveStuff = g.players.some((p) => p.id !== selfId && propCount(p) > 0);
-      return needsTarget && foesHaveStuff;
-    }) || null,
+    driven: true,   // screenshot/touchtest DRIVE this into a client-side mode before capture
+    description: 'This seat is on turn holding a TARGETED card (rent/steal/swap) with legal victims on the '
+      + 'table — the state tools/screenshot.mjs then DRIVES into target mode before capturing.',
+    /**
+     * P7 round-1 defect this selector fixes: the old predicate was satisfied by
+     * almost any play-phase state, so it selected the SAME state as `big-hand`
+     * and `targeting@*.png` came out byte-identical to `big-hand@*.png` (md5
+     * verified). The targeting/selection foil moment therefore had zero visual
+     * evidence in the entire review set while the gate reported PASS.
+     *
+     * Targeting is a CLIENT-SIDE mode — no server state can encode it — so the
+     * honest fixture is "a state from which target mode is one tap away, and
+     * which is not the state any other fixture already uses". Ranking by number
+     * of targeted cards × number of victims makes that a different state than
+     * "biggest hand" in practice, and `avoid` makes it one by construction.
+     */
+    pick: (states, selfId, picked) => {
+      const TARGETED = ['midnight_requisition', 'chud', 'finance_office', 'inspector_general', 'tdy_orders'];
+      const score = (s) => {
+        const g = s.game;
+        if (!g || g.pendingAction || g.currentPlayerId !== selfId || g.turnPhase !== 'play') return 0;
+        if (!(g.playsRemaining > 0)) return 0;
+        const me = g.players.find((p) => p.id === selfId);
+        const targeted = (me?.hand || []).filter(
+          (c) => c.type === 'rent' || TARGETED.includes(c.action)
+        ).length;
+        const victims = g.players.filter((p) => p.id !== selfId && propCount(p) > 0).length;
+        if (!targeted || !victims) return 0;
+        return targeted * 10 + victims;
+      };
+      const used = new Set(Object.values(picked || {}));
+      const pool = states.filter((s) => score(s) > 0 && !used.has(s));
+      if (!pool.length) return states.find((s) => score(s) > 0) || null;
+      return pool.reduce((best, s) => (score(s) > score(best) ? s : best));
+    },
   },
   {
     name: 'opsec-chain',
-    description: 'A pending action with a live OPSEC counter-chain — the deepest chain recorded.',
-    pick: (states) => {
-      // P1 shape: pendingAction.targets[] = {id, depth, responderId}; depth is
-      // the OPSEC counter-chain length. (The pre-rewrite shape used
-      // opsecChains/_opsecChain — read both so old transcripts still select.)
+    driven: true,   // screenshot/touchtest DRIVE this into a client-side mode before capture
+    description: 'A pending action the LOCAL seat must answer, at the deepest OPSEC chain recorded — '
+      + 'the state where OPSEC / counter-OPSEC is actually the local player\'s decision.',
+    /**
+     * P7 round-1 defect this selector fixes: the old predicate ranked on chain
+     * depth alone and selected a state whose `responders` was `[Blaze]` — a BOT.
+     * The local seat had nothing to answer, so no tool and no screenshot ever
+     * drove an OPSEC chain from the player's side; the deepest, most dramatic
+     * rules moment in the game had no coverage while the gate said PASS.
+     */
+    pick: (states, selfId) => {
       const depth = (s) => {
         const pa = s.game?.pendingAction;
         if (!pa) return 0;
@@ -160,19 +190,81 @@ const MOMENTS = [
         const fromChains = Object.values(pa.opsecChains || {}).map((c) => c.chain || 1);
         return Math.max(pa._opsecChain || 0, 0, ...fromTargets, ...fromChains);
       };
-      const hits = states.filter((s) => depth(s) > 0);
+      const mine = (s) => Array.isArray(s.game?.responders) && s.game.responders.includes(selfId);
+      const holdsOpsec = (s) => (s.game?.players.find((p) => p.id === selfId)?.hand || [])
+        .some((c) => c.action === 'opsec' || c.action === 'just_say_no');
+      // Strictly ordered preference — never silently fall back to a bot-only
+      // chain, because that is the exact lie this fixture used to tell.
+      const tiers = [
+        (s) => mine(s) && depth(s) > 0 && holdsOpsec(s),
+        (s) => mine(s) && depth(s) > 0,
+        (s) => mine(s) && s.game?.pendingAction && holdsOpsec(s),
+      ];
+      for (const ok of tiers) {
+        const hits = states.filter(ok);
+        if (hits.length) return hits.reduce((best, s) => (depth(s) > depth(best) ? s : best));
+      }
+      return null;
+    },
+  },
+  {
+    name: 'opsec-decision',
+    driven: true,   // captured with the prompt bar live; the choice is the picture
+    description: 'The LOCAL seat is under attack AND holds an OPSEC card — the state where '
+      + '"Accept / OPSEC" is a real decision rather than a formality.',
+    // Split out from opsec-chain in P7 round 1. `opsec-chain` guarantees chain
+    // DEPTH; this guarantees the local player has both buttons. Neither alone
+    // proves the OPSEC UI works from the player's side, which is why the round-1
+    // review set — one bot-only chain — showed nothing.
+    pick: (states, selfId, picked) => {
+      const used = new Set(Object.values(picked || {}));
+      const ok = (s) => {
+        const g = s.game;
+        if (!g?.pendingAction) return false;
+        if (!Array.isArray(g.responders) || !g.responders.includes(selfId)) return false;
+        return (g.players.find((p) => p.id === selfId)?.hand || []).some((c) => c.action === 'opsec');
+      };
+      const pool = states.filter((s) => ok(s) && !used.has(s));
+      const hits = pool.length ? pool : states.filter(ok);
       if (!hits.length) return null;
-      return hits.reduce((best, s) => (depth(s) > depth(best) ? s : best));
+      // A theft hurts more than a bill: prefer the non-payment attacks.
+      const steal = hits.filter((s) => s.game.pendingAction.type !== 'payment');
+      return (steal.length ? steal : hits)[0];
+    },
+  },
+  {
+    name: 'discard-limit',
+    driven: true,   // screenshot/touchtest DRIVE this into a client-side mode before capture
+    description: 'This seat is over the hand limit on its own turn — tapping END TURN here opens the '
+      + 'discard-to-limit selection, the one flow no fixture used to stage.',
+    pick: (states, selfId) => {
+      const excess = (s) => {
+        const g = s.game;
+        if (!g || g.pendingAction || g.currentPlayerId !== selfId) return 0;
+        if (g.turnPhase !== 'play') return 0;
+        const me = g.players.find((p) => p.id === selfId);
+        return (me?.hand || []).length - (g.handLimit || 7);
+      };
+      const hits = states.filter((s) => excess(s) > 0);
+      if (!hits.length) return null;
+      return hits.reduce((best, s) => (excess(s) > excess(best) ? s : best));
     },
   },
   {
     name: 'big-hand',
     description: 'Largest hand this seat ever held — the fan-layout worst case (hand limit is 7 plus draws).',
-    pick: (states, selfId) => {
+    pick: (states, selfId, picked) => {
       const size = (s) => (s.game?.players.find((p) => p.id === selfId)?.hand || []).length;
-      const hits = states.filter((s) => size(s) >= 8);
-      if (!hits.length) return null;
-      return hits.reduce((best, s) => (size(s) > size(best) ? s : best));
+      // Must not be a state another fixture already owns: `discard-limit` wants
+      // the same "hand over the limit" shape, and when both landed on the same
+      // state the review set carried two names for one picture.
+      const used = new Set(Object.values(picked || {}));
+      const pool = states.filter((s) => !used.has(s));
+      for (const floor of [8, 7]) {
+        const hits = pool.filter((s) => size(s) >= floor);
+        if (hits.length) return hits.reduce((best, s) => (size(s) > size(best) ? s : best));
+      }
+      return null;
     },
   },
   {
@@ -197,6 +289,14 @@ const MOMENTS = [
 /* ──────────────────────────────── run ────────────────────────────────── */
 
 let code = EXIT_PASS;
+/**
+ * Moments the review set and the gates are BUILT on. A missing one is not a
+ * "this game didn't happen to reach it" — it is a hole in the evidence, and the
+ * P7 round-1 critics found every hole. Re-run with another --seed until the
+ * game reaches them, or fix the selector.
+ */
+const REQUIRED = ['early-game', 'mid-game', 'payment-pending', 'targeting', 'opsec-chain', 'opsec-decision', 'big-hand', 'discard-limit', 'finished'];
+const missing = [];
 const server = await startServer({ seed });
 console.log(dim(`  server on ${server.url}`));
 
@@ -225,9 +325,14 @@ try {
     // Six evenly spaced states from the same real game. The full transcript is
     // 2.5MB and gitignored; this is the committed slice the shot list uses, so
     // a fresh clone can regenerate the review set without recording first.
-    if (main.states.length >= 6) {
-      const step = (main.states.length - 1) / 5;
-      const arc = Array.from({ length: 6 }, (_, i) => main.states[Math.round(i * step)]);
+    if (main.states.length >= 8) {
+      // Sample the INTERIOR of the game, not the endpoints. Sampling from 0
+      // made `arc-1-opening` byte-identical to the `early-game` shot (caught by
+      // screenshot.mjs's hash detector), and sampling to the last state would
+      // do the same to `arc-6` and `win`. The arc's job is the middle.
+      const FRACTIONS = [0.08, 0.24, 0.40, 0.56, 0.72, 0.88];
+      const last = main.states.length - 1;
+      const arc = FRACTIONS.map((f) => main.states[Math.round(f * last)]);
       write('arc', {
         $schema: 'chud-fixture/1',
         name: 'arc',
@@ -247,9 +352,31 @@ try {
       states: main.states,
     });
 
+    /**
+     * Two named fixtures resolving to the SAME state is not a curiosity, it is
+     * the failure that made `targeting@*.png` byte-identical to
+     * `big-hand@*.png` for an entire review round. Recording is the only place
+     * that can see it before it becomes a screenshot, so it fails here too.
+     */
+    const picked = {};
     for (const m of MOMENTS) {
-      const hit = m.pick(main.states, main.selfId);
-      if (!hit) { console.log(`  ${yellow('!')} ${m.name.padEnd(16)} ${dim('not reached in this game')}`); continue; }
+      const hit = m.pick(main.states, main.selfId, picked);
+      if (!hit) {
+        console.log(`  ${yellow('!')} ${m.name.padEnd(16)} ${dim('not reached in this game')}`);
+        missing.push(m.name);
+        continue;
+      }
+      const clash = Object.entries(picked).find(([, s]) => s === hit);
+      // Two `driven` moments may share a state: each is captured after being
+      // driven into a DIFFERENT client-side mode, so the pictures differ even
+      // though the snapshot does not. screenshot.mjs's hash detector is what
+      // proves that claim; here we only refuse the un-driven collisions.
+      const bothDriven = clash && m.driven && MOMENTS.find((x) => x.name === clash[0])?.driven;
+      if (clash && !bothDriven) {
+        console.log(`  ${red('✗')} ${m.name.padEnd(16)} ${red(`selects the SAME state as '${clash[0]}' — the two fixtures would render identical shots`)}`);
+        code = EXIT_FAIL;
+      }
+      picked[m.name] = hit;
       write(m.name, {
         $schema: 'chud-fixture/1',
         name: m.name,
@@ -309,6 +436,13 @@ try {
   code = EXIT_FAIL;
 } finally {
   await server.stop();
+}
+
+const missedRequired = missing.filter((m) => REQUIRED.includes(m));
+if (missedRequired.length && only !== '5p') {
+  console.log(red(bold(`  ✗ required moment(s) never reached: ${missedRequired.join(', ')}`)));
+  console.log(dim('    the review set and the gates that stage them are blind here — re-run with another --seed'));
+  code = EXIT_FAIL;
 }
 
 console.log(dim(`  ${written.length} fixture file(s):`));

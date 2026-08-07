@@ -27,6 +27,12 @@ export const EXIT_SKIP = 2;
 
 export const DESKTOP = { width: 1280, height: 720 };
 export const PHONE = { width: 390, height: 844 };
+/**
+ * The same phone rotated. Added P7 round 1: the mobile critic found
+ * `.self-board { height: 0 }` at 844×390 — the game was completely unplayable
+ * in landscape and no gate looked, because every tool measured portrait only.
+ */
+export const LANDSCAPE = { width: 844, height: 390 };
 export const PHONE_DPR = 3;
 export const PHONE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 ' +

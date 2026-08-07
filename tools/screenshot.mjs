@@ -1,60 +1,156 @@
 #!/usr/bin/env node
 /**
- * tools/screenshot.mjs — the §8 human/critic review set.
+ * tools/screenshot.mjs — the §8 human/critic review set, and (new in P7 round 1)
+ * a gate on the review set's own honesty.
  *
- * Every shot is a recorded fixture (§9) pushed through __CHUD.applyState +
- * drainEvents, captured at desktop 1280×720 and phone 390×844. NOT pixel-gated
- * — §8 says review sets are for humans, imagediff arrives in P7.
+ * Round-1 finding this tool now blocks:
  *
- * Output: tools/shots/<name>@<w>x<h>.png plus tools/shots/contactsheet.png,
- * composited with pngjs (pure JS, no native/binary dependency — §0.3 applies to
- * shipped assets, and these are gitignored build output either way).
+ *   • `targeting@desktop.png` was BYTE-IDENTICAL to `big-hand@desktop.png`
+ *     (md5 verified), because targeting is a CLIENT-SIDE mode that no recorded
+ *     server snapshot can encode. Two names, one picture, and the entire review
+ *     round had zero visual evidence of the targeting/selection moment. Fixed
+ *     three ways: shots may now DRIVE the client into a mode before capture and
+ *     must ASSERT they got there (`drive` + `expect`); every PNG is hashed and
+ *     any two differently-named shots sharing a hash FAIL the gate.
+ *   • The look critic found truncated text in every single in-game shot
+ *     ('Midnigh Requisi', 'ACTIO', 'YOU…'). Nothing measured text fit, so it
+ *     shipped. Now each shot runs tools/lib/audit.mjs's clipped-text pass in the
+ *     page and any card/HUD string that does not fit its box FAILS.
+ *   • Six surfaces had no shot at all: settings, side panel/log, emote, discard,
+ *     the armed board at both viewports, and landscape. All added.
+ *
+ * Output: tools/shots/<name>@<screen>.png plus contactsheet.png.
+ * §8 still says the review set is not PIXEL-gated (no imagediff) — these
+ * assertions are about the set being complete and truthful, not about pixels.
  *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { PNG } from 'pngjs';
 import {
-  FIXTURE_DIR, SHOT_DIR, DESKTOP, PHONE, PHONE_DPR, PHONE_UA, SEED,
+  FIXTURE_DIR, SHOT_DIR, DESKTOP, PHONE, PHONE_DPR, PHONE_UA, LANDSCAPE, SEED,
   parseArgs, ensureDir, launchBrowser, openPage, requireBridge, readJSON,
   green, red, yellow, dim, bold, EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
+import * as audit from './lib/audit.mjs';
 import { startServer } from './serve.mjs';
 
 const args = parseArgs();
 const seed = args.seed ? Number(args.seed) : SEED;
 
+/* ─────────────────────── in-page drivers (client-side modes) ──────────────
+ * These run inside the page after the fixture is applied. They exist because
+ * some of the most important moments in this game are not server state:
+ * targeting, payment selection, discard picking, sheets and overlays are all
+ * client modes. A "fixture" for them is a state plus a gesture.
+ * Each returns a string describing what it reached; screenshot.mjs compares it
+ * to the shot's `expect` and FAILS the shot if it does not match.
+ * ------------------------------------------------------------------------ */
+const DRIVERS = {
+  /** Tap hand cards until one enters target mode, then stop and hold it. */
+  targeting: async () => {
+    const hand = [...document.querySelectorAll('#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]')];
+    for (const card of hand) {
+      card.click();
+      await new Promise((r) => setTimeout(r, 80));
+      const play = document.querySelector('[data-action="play-card"]:not([disabled])');
+      if (play) { play.click(); await new Promise((r) => setTimeout(r, 140)); }
+      if (window.__CHUD.mode?.kind === 'target') {
+        return `target:${window.__CHUD.mode.needs?.[0] || '?'}`;
+      }
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    return `stuck:${window.__CHUD.mode?.kind || 'none'}`;
+  },
+  /** Open payment selection and select cards, so the confirm bar is live. */
+  payment: async () => {
+    const begin = document.querySelector('[data-action="begin-payment"]');
+    if (begin) { begin.click(); await new Promise((r) => setTimeout(r, 180)); }
+    const cards = [...document.querySelectorAll('[data-payable="1"], [data-zone="bank"] [data-card-id]')];
+    for (const c of cards.slice(0, 3)) { c.click(); await new Promise((r) => setTimeout(r, 60)); }
+    return `mode:${window.__CHUD.mode?.kind || 'none'}`;
+  },
+  /** End turn over the hand limit → discard picker. */
+  discard: async () => {
+    const et = document.getElementById('btn-end-turn');
+    if (et) { et.click(); await new Promise((r) => setTimeout(r, 220)); }
+    const cards = [...document.querySelectorAll('#zone-hand [data-card-id], [data-zone="hand"] [data-card-id]')];
+    if (window.__CHUD.mode?.kind === 'discard' && cards[0]) {
+      cards[0].click(); await new Promise((r) => setTimeout(r, 80));
+    }
+    return `mode:${window.__CHUD.mode?.kind || 'none'}`;
+  },
+  settings: async () => {
+    document.querySelector('#hud [data-action="settings"]')?.click();
+    await new Promise((r) => setTimeout(r, 320));
+    return document.getElementById('sheet')?.hidden === false ? 'sheet:open' : 'sheet:closed';
+  },
+  emote: async () => {
+    document.getElementById('btn-emote')?.click();
+    await new Promise((r) => setTimeout(r, 320));
+    return document.getElementById('sheet')?.hidden === false ? 'sheet:open' : 'sheet:closed';
+  },
+  side: async () => {
+    document.querySelector('#hud [data-action="toggle-side"]')?.click();
+    await new Promise((r) => setTimeout(r, 320));
+    return document.getElementById('side')?.hidden === false ? 'side:open' : 'side:closed';
+  },
+  help: async () => {
+    document.querySelector('#hud [data-action="help"], [data-action="help"]')?.click();
+    await new Promise((r) => setTimeout(r, 360));
+    return document.getElementById('sheet')?.hidden === false ? 'sheet:open' : 'sheet:closed';
+  },
+};
+
 /**
- * §8 shot list. `fixture` names a file in tools/fixtures/; `at` optionally
- * picks a state INDEX inside a transcript so one recorded game yields many
- * moments without re-recording. `screen` restricts a shot to one viewport.
+ * §8 shot list. `fixture` names a file in tools/fixtures/; `at` picks a state
+ * INDEX inside a transcript; `screen` restricts a shot to one viewport;
+ * `drive` names a DRIVERS entry run after the state is applied; `expect` is a
+ * prefix the driver's return value must start with or the shot FAILS.
  */
 const SHOTS = [
   { name: 'home', route: '/?harness=1', fixture: null },
-  { name: 'help', route: '/?harness=1#help', fixture: null },
+  { name: 'help', fixture: null, drive: 'help', expect: 'sheet:open' },
   { name: 'lobby', fixture: 'lobby' },
   { name: 'early-game', fixture: 'early-game' },
   { name: 'mid-game', fixture: 'mid-game' },
   { name: 'big-hand', fixture: 'big-hand' },
-  { name: 'targeting', fixture: 'targeting' },
-  { name: 'payment', fixture: 'payment-pending' },
+  // The four client-side moments the round-1 set could not show at all.
+  { name: 'targeting', fixture: 'targeting', drive: 'targeting', expect: 'target:' },
+  { name: 'payment', fixture: 'payment-pending', drive: 'payment', expect: 'mode:payment' },
+  { name: 'discard', fixture: 'discard-limit', drive: 'discard', expect: 'mode:discard' },
+  { name: 'opsec-decision', fixture: 'opsec-decision' },
   { name: 'opsec-chain', fixture: 'opsec-chain' },
+  // Chrome surfaces that had no shot at all.
+  { name: 'settings', fixture: 'mid-game', drive: 'settings', expect: 'sheet:open' },
+  { name: 'side-log', fixture: 'mid-game', drive: 'side', expect: 'side:open' },
+  { name: 'emote', fixture: 'mid-game', drive: 'emote', expect: 'sheet:open' },
   { name: 'five-player', fixture: 'five-player' },
   { name: 'final-approach', fixture: 'final-approach' },
   { name: 'win', fixture: 'finished' },
+  // Landscape — the viewport where `.self-board` was 0px tall and no shot looked.
+  { name: 'landscape-mid', fixture: 'mid-game', screen: 'landscape' },
+  { name: 'landscape-armed', fixture: 'final-approach', screen: 'landscape' },
   // Arc slices: one real game, six moments (§9 — reachable states only).
-  { name: 'arc-1-opening', fixture: 'arc', at: 0 },
+  { name: 'arc-1', fixture: 'arc', at: 0 },
   { name: 'arc-2', fixture: 'arc', at: 1 },
   { name: 'arc-3', fixture: 'arc', at: 2 },
   { name: 'arc-4', fixture: 'arc', at: 3 },
-  { name: 'arc-5-late', fixture: 'arc', at: 4 },
+  { name: 'arc-5', fixture: 'arc', at: 4 },
+  { name: 'arc-6-late', fixture: 'arc', at: 5 },
 ];
 
 const SCREENS = [
   { tag: 'desktop', viewport: DESKTOP, dpr: 1 },
   { tag: 'phone', viewport: PHONE, dpr: PHONE_DPR, isMobile: true, hasTouch: true, userAgent: PHONE_UA },
+  { tag: 'landscape', viewport: LANDSCAPE, dpr: 2, isMobile: true, hasTouch: true, userAgent: PHONE_UA },
 ];
+
+/** Shots that only exist on one screen still have to be asked for by name. */
+const screenTakes = (shot, tag) => (shot.screen ? shot.screen === tag : tag !== 'landscape');
 
 console.log(bold('screenshot') + dim(`  ${SHOTS.length} shots × ${SCREENS.length} screens → tools/shots/`));
 
@@ -70,6 +166,11 @@ const server = await startServer({ seed });
 let browser = null;
 let code = EXIT_PASS;
 const captured = [];
+const hashes = new Map();          // sha1 → first shot that produced it
+const clipped = [];                // {shot, items[]}
+const problems = [];
+
+const fail = (m) => { code = EXIT_FAIL; problems.push(m); console.log(`  ${red('✗')} ${m}`); };
 
 try {
   browser = await launchBrowser();
@@ -79,12 +180,12 @@ try {
     await requireBridge(h.page, 8000);
 
     for (const shot of SHOTS) {
-      if (shot.screen && shot.screen !== screen.tag) continue;
+      if (!screenTakes(shot, screen.tag)) continue;
+      const label = `${shot.name}@${screen.tag}`;
       try {
         // Every shot gets a full page reload on a unique URL. Without it, state
-        // bleeds between shots — a #help hash left by one shot kept the sheet
-        // open over every later capture (removing a hash is a same-document
-        // navigation; the page never reloads).
+        // bleeds between shots — a sheet left open by one shot stayed open over
+        // every later capture.
         const u = new URL(shot.route || '/?harness=1', server.url);
         u.searchParams.set('seed', seed);
         u.searchParams.set('shot', shot.name);
@@ -93,7 +194,7 @@ try {
         if (shot.fixture) {
           const states = loadStates(shot.fixture);
           if (!states?.length) {
-            console.log(`  ${yellow('!')} ${shot.name.padEnd(14)} ${dim(`fixture ${shot.fixture}.json missing`)}`);
+            fail(`${label} — fixture ${shot.fixture}.json missing; run npm run tool:record`);
             continue;
           }
           const idx = shot.at == null ? states.length - 1 : (shot.at < 0 ? states.length + shot.at : shot.at);
@@ -102,24 +203,63 @@ try {
             window.__CHUD.applyState(s);
             window.__CHUD.drainEvents?.();
           }, state);
+          await h.page.waitForTimeout(120);
         }
+
+        /* ---- drive into the client-side mode this shot is ABOUT ---------- */
+        if (shot.drive) {
+          const reached = await h.page.evaluate(DRIVERS[shot.drive]);
+          if (shot.expect && !String(reached).startsWith(shot.expect)) {
+            // Capture anyway — the picture of the failure is the evidence — but
+            // the gate is red. A shot that silently degrades to "whatever the
+            // fixture looked like" is exactly the round-1 targeting lie.
+            fail(`${label} — driver '${shot.drive}' reached '${reached}', expected '${shot.expect}*'`);
+          }
+        }
+
         await h.page.waitForTimeout(180);
-        const file = path.join(SHOT_DIR, `${shot.name}@${screen.tag}.png`);
+
+        /* ---- text fit, measured in the page at capture time -------------- */
+        const clips = await h.page.evaluate(audit.auditClippedText);
+        if (clips.length) clipped.push({ shot: label, items: clips });
+
+        const file = path.join(SHOT_DIR, `${label}.png`);
         await h.page.screenshot({ path: file, animations: 'disabled', timeout: 15000 });
+        const hash = crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex');
+        if (hashes.has(hash)) {
+          fail(`${label} is BYTE-IDENTICAL to ${hashes.get(hash)} — two names, one picture`);
+        } else {
+          hashes.set(hash, label);
+        }
         captured.push({ name: `${shot.name} · ${screen.tag}`, file });
-        console.log(`  ${green('✓')} ${shot.name.padEnd(14)} ${dim(screen.tag)}`);
+        console.log(`  ${green('✓')} ${shot.name.padEnd(16)} ${dim(screen.tag)}${clips.length ? yellow(`  ${clips.length} clipped`) : ''}`);
       } catch (e) {
-        console.log(`  ${red('✗')} ${shot.name.padEnd(14)} ${dim(`${screen.tag}: ${e.message.split('\n')[0]}`)}`);
-        code = EXIT_FAIL;
+        fail(`${label} — ${e.message.split('\n')[0]}`);
       }
     }
 
     if (h.errors.length) {
-      console.log(`  ${red('✗')} ${h.errors.length} console/page error(s) on ${screen.tag}`);
+      fail(`${h.errors.length} console/page error(s) on ${screen.tag}`);
       for (const e of h.errors.slice(0, 5)) console.log(red(`      ${e}`));
-      code = EXIT_FAIL;
     }
     await h.close();
+  }
+
+  /* ---- clipped text verdict ----------------------------------------------
+   * The look critic read 'Midnigh Requisi' and 'ACTIO' off shipped shots. A
+   * screenshot review cannot be trusted to catch this every round; measurement
+   * can. Reported per shot with the string and the pixels it needed.            */
+  if (clipped.length) {
+    const total = clipped.reduce((n, c) => n + c.items.length, 0);
+    fail(`${total} clipped/overflowing text run(s) across ${clipped.length} shot(s) — card and HUD text must fit its box`);
+    for (const c of clipped.slice(0, 8)) {
+      console.log(dim(`      ${c.shot}:`));
+      for (const it of c.items.slice(0, 4)) {
+        console.log(dim(`        ${it.el} "${it.text}" needs ${it.need}px, has ${it.have}px (${it.axis})`));
+      }
+    }
+  } else {
+    console.log(`  ${green('✓')} no clipped card/HUD text in any shot`);
   }
 
   /* ---- contact sheet ------------------------------------------------------ */
@@ -159,12 +299,18 @@ try {
     fs.writeFileSync(sheetFile, PNG.sync.write(sheet));
     fs.writeFileSync(
       path.join(SHOT_DIR, 'index.json'),
-      JSON.stringify({ seed, generatedAt: new Date().toISOString(), shots: captured.map((c) => path.basename(c.file)) }, null, 1)
+      JSON.stringify({
+        seed,
+        generatedAt: new Date().toISOString(),
+        shots: captured.map((c) => path.basename(c.file)),
+        clipped,
+        problems,
+      }, null, 1)
     );
     console.log(`  ${green('✓')} contactsheet.png ${dim(`${COLS}×${rows}, ${captured.length} tiles`)}`);
+    console.log(`  ${green('✓')} ${hashes.size} distinct image(s) from ${captured.length} shot(s)`);
   } else {
-    console.log(red('  ✗ nothing captured'));
-    code = EXIT_FAIL;
+    fail('nothing captured');
   }
 } catch (e) {
   console.log(red(`  ✗ ${e.stack || e.message}`));
@@ -174,5 +320,5 @@ try {
   await server.stop();
 }
 
-console.log(code === EXIT_PASS ? green(bold('screenshot: PASS')) : red(bold('screenshot: FAIL')));
+console.log(code === EXIT_PASS ? green(bold('screenshot: PASS')) : red(bold(`screenshot: FAIL (${problems.length})`)));
 process.exit(code);

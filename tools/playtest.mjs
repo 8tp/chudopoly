@@ -17,9 +17,11 @@
  *
  * Exits 2 (PENDING CLIENT) until public/src/ exposes window.__CHUD (§9).
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import {
-  SEED, parseArgs, launchBrowser, openPage, requireBridge, reporter,
-  green, red, yellow, dim, bold, EXIT_PASS, EXIT_FAIL,
+  FIXTURE_DIR, SEED, parseArgs, launchBrowser, openPage, requireBridge, reporter,
+  readJSON, green, red, yellow, dim, bold, EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
 import { startServer } from './serve.mjs';
 import { ChudClient, driveGame } from './lib/wsclient.mjs';
@@ -27,6 +29,11 @@ import { ChudClient, driveGame } from './lib/wsclient.mjs';
 const args = parseArgs();
 const seed = args.seed ? Number(args.seed) : SEED;
 const maxMs = Number(args.maxMs || 240000);
+/** Broadcast cadence for the ANIMATED pass. 120ms is the measured floor a fast
+ *  bot table produces, and the cadence at which the motion agent measured 6
+ *  drift corrections and 42% of sfx dropped. */
+const cadence = Number(args.cadence || 120);
+const animMs = Number(args.animMs || 40000);
 
 const r = reporter(`playtest  ${dim(`seed=${seed}`)}`);
 const server = await startServer({ seed });
@@ -109,6 +116,168 @@ try {
   } else r.pass('zero console/page errors across the whole game');
 
   await h.close();
+
+  /* ══════════════════════ ANIMATED PASS (P7 round 1) ═══════════════════════
+   *
+   * Everything above runs under `setInstant(true)` — the choreographer places
+   * cards instead of performing them, its queue is never more than one job
+   * deep, and its backpressure/collapse path is NEVER ENTERED. So `driftCount
+   * === 0` above proves the reconcile logic is sound and proves nothing at all
+   * about the code path a player actually sees.
+   *
+   * The motion agent measured what that hid, on the same transcript at a 120ms
+   * cadence with animation ON: 6 drift corrections and 42% of all sfx dropped,
+   * including HALF the game's set completions and both `final_approach` cues —
+   * §3.10's dramatic peak, silent. The gate said PASS through all of it.
+   *
+   * This pass replays a recorded transcript at a fixed fast cadence with
+   * `setInstant(false)` and asserts two things:
+   *   1. driftCount is still 0 — collapsing may drop MOTION, never TRUTH (§10)
+   *   2. every BIG-moment event still gets a cue — collapsing may drop MOTION,
+   *      never MEANING. The BIG set is read out of the client itself so this
+   *      assertion cannot drift from the implementation it gates.
+   * ---------------------------------------------------------------------- */
+  const transcript = (() => {
+    for (const name of ['session-3p.json', 'arc.json']) {
+      const f = path.join(FIXTURE_DIR, name);
+      if (fs.existsSync(f)) {
+        const j = readJSON(f);
+        const states = Array.isArray(j) ? j : j.states;
+        if (states?.length >= 6) return { name, states };
+      }
+    }
+    return null;
+  })();
+
+  if (!transcript) {
+    r.fail('no transcript fixture to replay — run npm run tool:record (the animated pass cannot run)');
+  } else {
+    const budgetStates = Math.max(6, Math.floor(animMs / cadence));
+    const states = transcript.states.slice(0, budgetStates);
+    console.log(dim(`  animated pass: ${states.length}/${transcript.states.length} states from ${transcript.name} at ${cadence}ms, setInstant(false)`));
+
+    const a = await openPage(browser, `${server.url}/?harness=1&seed=${seed}&mode=animated`);
+    await requireBridge(a.page, 8000);
+    await a.page.evaluate(() => window.__CHUD.setInstant(false));
+
+    // Instrument BEFORE any state lands. CHOREO_SFX carries the engine event it
+    // came from, so cue survival is measured per-event-seq rather than by
+    // counting sounds — a count can be met by the wrong sounds.
+    const instrumented = await a.page.evaluate(async () => {
+      try {
+        const bus = await import('/src/core/bus.js');
+        const ch = await import('/src/anim/choreographer.js');
+        window.__CHUD_MOTION = {
+          cued: new Set(), sfxByType: {},
+          isBig: (t) => !!ch.isBigMoment?.(t),
+          pending: () => (ch.pending ? ch.pending() : 0),
+        };
+        bus.on(bus.EVENTS.CHOREO_SFX, (d) => {
+          const seq = d?.ev?.seq;
+          if (seq != null) window.__CHUD_MOTION.cued.add(seq);
+          const t = d?.ev?.t || '?';
+          window.__CHUD_MOTION.sfxByType[t] = (window.__CHUD_MOTION.sfxByType[t] || 0) + 1;
+        });
+        return typeof ch.isBigMoment === 'function';
+      } catch (e) { return `err:${e.message}`; }
+    });
+    if (instrumented !== true) {
+      r.fail(`cannot read the choreographer's big-moment set (${instrumented}) — `
+        + 'anim/choreographer.js must export isBigMoment(t) so this gate cannot drift from it');
+    }
+
+    const started = Date.now();
+    for (const s of states) {
+      await a.page.evaluate((st) => window.__CHUD.applyState(st), s);
+      await a.page.waitForTimeout(cadence);
+    }
+    // Let the queue finish honestly — no drainEvents(), which would clear it.
+    await a.page.waitForFunction(
+      () => (window.__CHUD_MOTION?.pending?.() ?? 0) === 0, null, { timeout: 4000 },
+    ).catch(() => {});
+    await a.page.waitForTimeout(1500);
+
+    const seen = new Map();          // seq → t, every event the server broadcast
+    for (const s of states) for (const ev of s.game?.events || []) {
+      if (ev.seq != null) seen.set(ev.seq, ev.t);
+    }
+
+    const anim = await a.page.evaluate((entries) => {
+      const M = window.__CHUD_MOTION;
+      const missed = [];
+      const bigTotal = { n: 0 };
+      for (const [seq, t] of entries) {
+        if (!M?.isBig(t)) continue;
+        bigTotal.n++;
+        if (!M.cued.has(seq)) missed.push(`${t}#${seq}`);
+      }
+      return {
+        drift: window.__CHUD.driftCount,
+        driftLog: (window.__CHUD.driftLog || []).slice(0, 8),
+        lastError: window.__CHUD.lastError ? String(window.__CHUD.lastError) : null,
+        sfx: (window.__CHUD.sfxLog || []).length,
+        fx: (window.__CHUD.fxLog || []).length,
+        bigTotal: bigTotal.n,
+        missed,
+        sfxByType: M?.sfxByType || {},
+        // §7 voice cap: a big moment must never lose its voice to a card
+        // slide. audiotest asserts the same counter against a synthetic burst;
+        // this is the live one, over a real event stream at a real cadence.
+        audio: window.__CHUD.audio?.stats ? (() => {
+          const st = window.__CHUD.audio.stats();
+          return { droppedPriority: st.droppedPriority, dropped: st.dropped, peakVoices: st.peakVoices };
+        })() : null,
+      };
+    }, [...seen.entries()]);
+
+    const secs = ((Date.now() - started) / 1000).toFixed(1);
+    if (anim.drift === 0) {
+      r.pass(`[animated ${secs}s] driftCount 0 with animation ON at ${cadence}ms (§10)`);
+    } else {
+      r.fail(`[animated] driftCount ${anim.drift} at ${cadence}ms with animation ON — `
+        + 'the collapse path corrupts the table (§10 requires 0)');
+      for (const d of anim.driftLog) r.info(typeof d === 'string' ? d : JSON.stringify(d));
+    }
+
+    if (anim.bigTotal === 0) {
+      r.fail('[animated] the replayed transcript contains no big-moment events — '
+        + 'cue survival is unproven; re-record a longer transcript');
+    } else if (anim.missed.length) {
+      r.fail(`[animated] ${anim.missed.length}/${anim.bigTotal} big-moment event(s) produced NO cue `
+        + 'under collapse — collapsing may drop motion, never meaning (§7)');
+      r.info(anim.missed.slice(0, 12).join(', '));
+    } else {
+      r.pass(`[animated] all ${anim.bigTotal} big-moment event(s) kept their cue under collapse`);
+    }
+
+    if (anim.audio && anim.audio.peakVoices === 0) {
+      // No AudioContext without a user gesture (§7), and the harness never
+      // makes one — so the live voice budget was never exercised and the
+      // counter is trivially 0. Saying PASS here would be the same species of
+      // lie this whole round is about. audiotest asserts the same rule offline,
+      // where OfflineAudioContext needs no gesture.
+      r.warn('[animated] the live voice budget never engaged (no AudioContext without a gesture) — '
+        + 'droppedPriority is vacuous here; audiotest asserts it offline');
+    } else if (anim.audio && anim.audio.droppedPriority > 0) {
+      r.fail(`[animated] ${anim.audio.droppedPriority} priority voice(s) dropped during a real game — `
+        + 'a big moment lost its sound to a card slide (§7 voice cap)');
+    } else if (anim.audio) {
+      r.pass(`[animated] droppedPriority 0 over the whole replay ${dim(`(peak voice load ${anim.audio.peakVoices}, ${anim.audio.dropped} non-priority dropped)`)}`);
+    } else {
+      r.warn('[animated] __CHUD.audio.stats() absent — the live priority-drop counter was not read');
+    }
+
+    if (anim.sfx === 0) r.fail('[animated] no sfx at all reached the recorder');
+    if (anim.fx === 0) r.fail('[animated] no fx cue at all reached the recorder (§5 juice path dead)');
+    if (anim.lastError) r.fail(`[animated] __CHUD.lastError: ${anim.lastError}`);
+    if (a.errors.length) {
+      r.fail(`[animated] ${a.errors.length} console/page error(s) with animation on`);
+      for (const e of a.errors.slice(0, 6)) console.log(red(`      ${e}`));
+    } else r.pass('[animated] zero console/page errors with animation on');
+
+    await a.close();
+  }
+
   code = r.code;
 } catch (e) {
   console.log(red(`  ✗ ${e.stack || e.message}`));

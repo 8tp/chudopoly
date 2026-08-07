@@ -58,6 +58,16 @@ export function countWord(n) {
   return ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'][n] || String(n);
 }
 
+/** Ordinal, for "your third set". `countWord(n) + 'th'` printed "threeth". */
+export function ordinalWord(n) {
+  const words = ['zeroth', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh'];
+  if (words[n]) return words[n];
+  const rem100 = n % 100;
+  const suffix = (rem100 >= 11 && rem100 <= 13) ? 'th'
+    : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${suffix}`;
+}
+
 export const WIN_RULE_NAMES = Object.freeze({
   finalApproach: 'Final Approach',
   mdFaithful: 'MD Faithful',
@@ -240,7 +250,7 @@ export function winRuleSummary(rules = activeRules()) {
   switch (rules.winRule) {
     // game.js syncSets(): winRule 'instant' → finishGame the moment the count lands.
     case 'instant':
-      return `Completing your ${countWord(n)}th set wins the game on the spot, `
+      return `Completing your ${ordinalWord(n)} set wins the game on the spot, `
         + 'on anyone\'s turn. There is no grace window and nothing is ever armed.';
     // checkpointThreshold(): 'mdFaithful' → 1, i.e. any LATER own turn start.
     case 'mdFaithful':

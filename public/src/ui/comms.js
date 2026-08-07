@@ -139,7 +139,12 @@ export function mount() {
     document.querySelector('[data-action="send-chat"]')?.click();
   });
 
-  bus.on(EVENTS.CHOREO_EVENT, (ev) => { if (ev.t === 'game_start') resetLog(); });
+  // NOT on game_start: the choreographer replays that event AFTER the journal has
+  // already ingested the same broadcast, so resetting here deleted every beat of
+  // the opening — the drawer came up empty for any single-broadcast fixture.
+  // The journal owns its own reset (it detects a seq restart); chat is what this
+  // module is responsible for clearing when a room changes.
+  bus.on(EVENTS.STATE_APPLIED, ({ snap }) => { if (snap) resetLog(); });
   bus.on(EVENTS.NET_CHAT, (msg) => pushChat(msg.msg));
   bus.on(EVENTS.NET_CHAT_HISTORY, (msg) => {
     const key = msg.scope === 'global' ? 'global' : 'room';

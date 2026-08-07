@@ -169,6 +169,23 @@ first-player advantage measured and reported).
    exploit — a player whose only cards are zero-value cards must surrender them when they
    cannot otherwise pay ("pay with everything you have" already exists; make zero-value cards
    count as "something").
+
+   > **OWNER RULING 2026-08-07 — KEPT, knowing it is the minority position.** A survey of
+   > six other Monopoly Deal implementations votes **3–1 the other way**: the field treats
+   > zero-value cards as *immune* — you may not pay with them and may not be forced to
+   > surrender them, and one implementation prints "Immune" on the card face. Coopoly agrees
+   > with the field, though only by accident: its guards test card *value*, so a 0-value card
+   > is simply invisible to them.
+   >
+   > We depart deliberately. Under the immune reading, a player holding nothing but rainbow
+   > wilds pays **nothing** and **keeps everything**, which makes the most flexible card in
+   > the deck also the safest — a card that is dead weight by design becomes armour. Our rule
+   > counts *cards*, not value (`game.js:1473-1477`), so "pay with everything you have" means
+   > everything. The owner's words: *"if you cant pay you do have to give up your 0cost
+   > wilds… and should just be forced to do so."*
+   >
+   > Recorded here so it reads as a choice rather than an oversight to the next person who
+   > checks us against the field.
 5. **Overstacking**: a color zone holds at most `set size` property cards. Extra copies must
    go to a different legal zone (wilds) or stay in hand. Kills the armor exploit.
 6. **Stalemate end**: when the deck and discard are both empty and a full round passes with no

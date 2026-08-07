@@ -1,32 +1,193 @@
-# Chudopoly
+<p align="center">
+  <img src="docs/wordmark.svg" alt="Chudopoly" width="520">
+</p>
 
-An Air Force-themed, real-time multiplayer property card game for 2-5 players. It supports private room codes, five bot personalities, bot takeover after disconnects, turn and response timers, chat, and mobile layouts.
+<p align="center">
+  <a href="https://chudopoly.deal"><strong>chudopoly.deal</strong></a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
+  <a href="ART-DIRECTION.md">Art direction</a> ·
+  <a href="BOT-STRATEGY.md">Bot strategy</a>
+</p>
 
-## Run locally
+---
 
-Requires Node.js 20-24.
+Chudopoly is a real-time multiplayer card game for 2–5 players — a Monopoly Deal variant with
+US Air Force theming, played in the browser with no install and no account. Private room codes,
+five bot personalities that take over when someone drops, turn and response timers, chat, and a
+table that works the same on a phone as on a desktop. The server is authoritative; the client
+renders and asks permission.
+
+It is also, deliberately, an odd piece of engineering. There is no build step, the client draws
+every card and icon in code rather than shipping images, and a fourteen-stage gate chain has to
+go green before anything lands. If that is the part you came for, skip to
+[what's unusual about it](#whats-unusual-about-it).
+
+<p align="center">
+  <img src="docs/screen-home.png" alt="The Chudopoly home screen: the wordmark on a dark apron, a fanned deck showing an F-22 property card and an Inspector General action card, and controls for quick play, creating a room, or joining with a code." width="900">
+</p>
+
+## Run it
+
+Requires Node.js 20–24. Two runtime dependencies, `express` and `ws`.
 
 ```sh
 npm ci
 npm start
 ```
 
-Open `http://localhost:3000`. Use **Quick Play vs Bots** for a solo game or create a room and share its invite link.
+Open `http://localhost:3000` and hit **Quick play vs bots**, or create a room and share the
+invite link. There is nothing to compile and nothing to watch — `npm start` is the entire
+deployment story.
+
+## What's unusual about it
+
+**No build step, and it is load-bearing.** The client is native ES modules served straight off
+disk: 56 files under `public/src/`, one `<script type="module" src="/src/main.js?v=1">` entry,
+real `import` statements below it. No bundler, no transpiler, no config file for either. What
+you read in `public/src/` is byte-for-byte what the browser runs, which makes a stack trace a
+real address and a git blame the whole story. It costs about 546 KiB gzipped for the client
+(1.5 MB raw), which is more than a bundler would produce and is the price being paid on purpose.
+
+**The client ships essentially no binary assets.** Every card face, card back, set glyph, icon,
+texture and animation is generated in code — CSS, canvas, and SVG authored as text. The only
+binaries anywhere under `public/` are six `.opus` music beds (5.8 MiB, none of it fetched before
+first paint). There is not a single PNG, JPEG, or icon font in the client. This is enforced, not
+merely intended: `tools/checkAssets.mjs` walks the tree on every verify run, checks extensions,
+sniffs magic bytes, catches base64 data-URIs hiding in source, and fails on anything outside a
+two-entry allowlist. Every sound *effect* is synthesised at play time, which is also why a click
+heard 400 times a match does not turn into a woodpecker — pitch and timing jitter per call.
+
+**A structured event channel drives everything you see and hear.** The engine appends typed
+events to the game state as it mutates (`{seq, t, ...payload}` — 35 event types today), and the
+broadcast carries the tail. The client animates only unseen events, in order, then reconciles the
+DOM against the state snapshot. The snapshot is always truth; animation is only presentation, and
+a `driftCount` of anything but zero fails the playtest gate. Nothing dispatches off log prose —
+every card that moves, every sound that fires, and every haptic traces to an event id. Redaction
+is part of the contract: events must leak nothing the per-player view hides, so a draw carries
+card ids only in the drawer's own copy and `{count}` in everyone else's.
+
+**Cards are objects, not markup.** Every card on screen is a persistent DOM node keyed by
+`data-card-id`, and it moves between zones by reparenting plus a FLIP transform. Rebuilding a
+zone with `innerHTML` is banned outright and scanned for, because it would kill the animation,
+the scroll position and the focus ring in one move.
+
+**Balance came out of simulation, not vibes.** `simulate.js` runs bot-only games with the network
+layer bypassed, which makes ten thousand games cheap. The five personalities — random,
+conservative, neutral, aggressive, chud — currently sit at 13.3% / 26.1% / 33.6% / 38.2% / 13.8%
+in mixed four-player games, inside the 8–60% band the architecture requires, with first-player
+advantage at 23.1% against a 25.0% fair share (10,000 games, all decided). The starting point was
+a two-horse race: aggressive won 55%, chud won 0 of 100. `tools/simbalance.mjs` is wired into the
+gate chain and fails the build if any personality leaves the band.
+[BOT-STRATEGY.md](BOT-STRATEGY.md) is the long version, including the tuning that did not work.
+
+**Fourteen gates, and a rule about gates.** `npm run verify` chains `check → test → checkAssets →
+checkClient → checkServer → statsfuzz → simbalance → playtest → tabaway → touchtest → screenshot
+→ checkContrast → grayscale → audiotest`. Strict is the default: a *skipped* gate fails the run,
+because a chain that quietly drops a link is the same failure with fewer steps. Beyond the usual
+suspects, these assert things that are awkward to assert — real CDP touch events (synthetic
+pointer events never consult `touch-action`), text contrast measured from the rendered frame
+rather than from CSS, a grayscale tonal-hierarchy floor in CIE L\*, peak levels and cue ordering
+in an `OfflineAudioContext`, and a review screenshot set gated on *its own honesty*: two
+differently-named shots that hash identically are a failure, because that is what happens when a
+client-side mode never actually got driven.
+
+The house rule is the interesting part: **a gate must be proven to fail.** Before an assertion is
+trusted, the fix it guards gets broken deliberately and the gate has to go red — several tools
+carry a `--prove` flag that does exactly that. An assertion nobody has watched fail is a
+decoration. The corollary, learned the hard way more than once, is that a summary may not report
+success over a set it did not fully measure; one run printed "✓ tap targets ≥ 44px on all 9
+measured surfaces" while all five staged surfaces had failed to load.
+
+**The table changes between themes; the cards do not.** Light is an airfield apron in daylight,
+dark is the same apron at night, and the cards stay cream printed stock in both — like real cards
+in a lit room and a dark room. Colour and material are kept as two independent channels: card
+sets own colour, interface signals own material, so ten set hues and four semantic hues never
+have to share a 360° circle.
+
+<p align="center">
+  <img src="docs/screen-table-dark.png" alt="A mid-game table in the dark theme: two bot opponents' property columns along the top, ten colour-coded set columns across the middle, the deck and discard at left, the player's bank and hand at the bottom." width="440">
+  <img src="docs/screen-table-light.png" alt="The identical game state in the light theme. The table surface has shifted from near-black to warm concrete, while every card remains the same cream printed stock." width="440">
+</p>
+<p align="center"><em>The same game state, both themes. The apron changes; the stock does not.</em></p>
+
+## The rules are not quite Monopoly Deal
+
+Three complete sets wins, but reaching three does not end the game on the spot — it arms **final
+approach**, and every other player gets one turn to break the set before the win resolves. That
+turns out to be faithful to the original rather than a departure: the official rule makes you
+wait until your own turn to declare.
+
+The deck is 106 cards by default and a custom lobby can edit thirteen of the counts, clamped and
+resolved server-side. Four presets ship, including `mdFaithful`, which lands on Monopoly Deal's
+category-for-category composition. Rulings that depart from the source, and the measurements or
+research that produced them, are recorded in [ARCHITECTURE.md §3](ARCHITECTURE.md) — including
+the ones where we knowingly took the minority position.
+
+## Repo map
+
+| Path | What lives there |
+|---|---|
+| `game.js` | The engine — rules, deck, state, the event channel. Pure, seedable, no network. |
+| `bot.js`, `simulate.js` | Bot decision-making and the headless simulation harness. |
+| `server.js`, `server/` | Express + `ws`, protocol validation, timers, reconnect, per-player redaction. |
+| `public/src/` | The client: `core/ net/ state/ table/ anim/ interact/ ui/ audio/ fx/`. |
+| `public/style/` | Design system CSS. One file holds literal colours; the rest read tokens. |
+| `test/` | 340 cases across 19 files, `node:test`, no framework. |
+| `tools/` | The gate chain, plus the Playwright harness and fixture recorder. |
+| `docs/` | Brand assets for this README. Nothing here is served to a player. |
+
+## Documentation
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — the binding constitution. Non-negotiables, directory
+  ownership, the event vocabulary, the gate table, and a running log of hard-won invariants with
+  the incident that earned each one.
+- **[ART-DIRECTION.md](ART-DIRECTION.md)** — "APRON": the ratified visual identity, measured
+  colour tokens with their real contrast ratios, and the reasoning behind colour-versus-material.
+- **[BOT-STRATEGY.md](BOT-STRATEGY.md)** — how the AI was built, from a 0%-win personality to a
+  balanced field, with the simulation data at each step.
+
+Both of the first two are law for anyone working in this repo, and they are written to be argued
+with: push back with measurements, not opinions.
 
 ## Configuration
 
-Copy `.env.example` into your hosting provider's environment settings. `GIPHY_KEY` is optional. In production, same-origin WebSockets are accepted automatically; `ALLOWED_ORIGINS` adds explicitly trusted origins.
+Copy `.env.example` into your host's environment settings. `GIPHY_KEY` is optional. Same-origin
+WebSockets are accepted automatically in production; `ALLOWED_ORIGINS` adds explicitly trusted
+origins.
 
-## Quality checks
+Rooms live in process memory, so run a single instance unless that state is moved to shared
+storage — a restart or a deploy ends active matches. `GET /health` answers readiness checks.
 
-```sh
-npm run check
-npm test
-npm audit --audit-level=high
-```
+## Status, honestly
 
-The game server is authoritative. Client commands are schema-validated and rate-limited, player reconnects require private resume tokens, and engine state is checked for duplicate or missing cards before broadcasts.
+This is a personal project in the middle of a large revamp, not a finished product, and a few
+things are worth saying plainly rather than leaving to be discovered:
 
-## Deployment notes
+- The full `npm run verify` chain is the real bar; `npm test` and `npm run check` alone are the
+  inner loop. Several gates need Playwright and a few minutes.
+- The architecture document has drifted from the code in places — it documents 24 event types
+  where the engine emits 35, and describes a ten-stage chain that is now fourteen. The code is
+  the truth where they disagree.
+- The screenshots above are generated by the harness, not hand-cropped:
+  `npm run tool:screenshot` writes the full review set to `tools/shots/`, and the three images in
+  `docs/` are `home@desktop`, `mid-game@desktop` and `mid-game@desktop-light` copied from it.
+  Regenerating them is a one-liner, which is the point.
+- The ship gate defined in ARCHITECTURE §11 — independent critics scoring five axes ≥8/10 with
+  cited evidence — has not been recorded here yet. When it has been, the numbers go in this
+  section, good or bad.
 
-Rooms currently live in process memory. Run a single application instance unless room state is moved to shared storage. A restart or deploy ends active matches. `GET /health` provides a basic readiness response.
+## Contributing
+
+Issues and pull requests are welcome, with one warning: `ARCHITECTURE.md` genuinely is binding,
+and a change that violates §0 will be sent back regardless of how well it works. Read it first —
+it is short, and it explains itself.
+
+## Licence and attribution
+
+Chudopoly is an original game that borrows its core mechanics from Hasbro's **Monopoly Deal**.
+Game mechanics are not copyrightable, and every card name, card face, glyph, and piece of art in
+this repository is original work. *Monopoly* and *Monopoly Deal* are trademarks of Hasbro, Inc.
+This project is not affiliated with, endorsed by, or sponsored by Hasbro; the references above
+are descriptive, to say plainly what kind of game this is.
+
+See [LICENSE](LICENSE) for terms.

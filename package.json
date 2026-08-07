@@ -1,7 +1,31 @@
 {
   "name": "chudopoly",
   "version": "1.0.0",
-  "description": "Air Force themed Monopoly Deal card game - multiplayer web edition",
+  "description": "Real-time multiplayer card game for 2-5 players: an Air Force themed Monopoly Deal variant that ships with no build step and draws every card in code.",
+  "keywords": [
+    "card-game",
+    "monopoly-deal",
+    "multiplayer",
+    "multiplayer-game",
+    "websocket",
+    "realtime",
+    "browser-game",
+    "no-build",
+    "vanilla-js",
+    "es-modules",
+    "game-ai",
+    "nodejs"
+  ],
+  "homepage": "https://chudopoly.deal",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/8tp/chudopoly.git"
+  },
+  "bugs": {
+    "url": "https://github.com/8tp/chudopoly/issues"
+  },
+  "license": "MIT",
+  "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,6 +38,7 @@
     "tool:assets": "node tools/checkAssets.mjs",
     "tool:client": "node tools/checkClient.mjs",
     "tool:server": "node tools/checkServer.mjs",
+    "tool:statsfuzz": "node tools/statsfuzz.mjs --game --size",
     "tool:record": "node tools/record.mjs",
     "tool:simbalance": "node tools/simbalance.mjs",
     "tool:playtest": "node tools/playtest.mjs",

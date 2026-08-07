@@ -1,4 +1,4 @@
-// bot.js — Bot AI engine for Chudopoly GO with 5 personality modes
+// bot.js — Bot AI engine for Chudopoly with 5 personality modes
 const G = require('./game');
 
 /* ── Randomness ─────────────────────────────────────────────────────── */

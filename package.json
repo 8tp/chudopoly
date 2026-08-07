@@ -1,5 +1,5 @@
 {
-  "name": "chudopoly-go",
+  "name": "chudopoly",
   "version": "1.0.0",
   "description": "Air Force themed Monopoly Deal card game - multiplayer web edition",
   "main": "server.js",

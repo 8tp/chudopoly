@@ -1,4 +1,4 @@
-# CHUDOPOLY GO — ARCHITECTURE (LAW)
+# CHUDOPOLY — ARCHITECTURE (LAW)
 
 This document is **binding for every agent** working on the card-table revamp. You may push
 back on any rule — but only with measurements in hand, in your final report, and you may not

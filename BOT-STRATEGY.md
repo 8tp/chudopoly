@@ -1,6 +1,6 @@
 # Bot Strategy: How We Built the AI
 
-This document covers the research, simulation pipeline, data analysis, and iterative tuning process behind the AI opponents in Chudopoly GO. The goal was to create bots that play strategically and feel human — not by guessing at good play, but by running hundreds of simulated games and analyzing what actually wins.
+This document covers the research, simulation pipeline, data analysis, and iterative tuning process behind the AI opponents in Chudopoly. The goal was to create bots that play strategically and feel human — not by guessing at good play, but by running hundreds of simulated games and analyzing what actually wins.
 
 ## Table of Contents
 

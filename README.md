@@ -1,4 +1,4 @@
-# Chudopoly GO
+# Chudopoly
 
 An Air Force-themed, real-time multiplayer property card game for 2-5 players. It supports private room codes, five bot personalities, bot takeover after disconnects, turn and response timers, chat, and mobile layouts.
 

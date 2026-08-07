@@ -1,4 +1,4 @@
-// game.js — Card definitions, deck builder, and all game rules for Chudopoly GO
+// game.js — Card definitions, deck builder, and all game rules for Chudopoly
 
 const COLORS = {
   brown:     { name:'Drone Ops',       bg:'#8B4513', fg:'#fff', size:2, rent:[1,2] },

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// simulate.js — Deep-analysis bot simulation harness for Chudopoly GO
+// simulate.js — Deep-analysis bot simulation harness for Chudopoly
 // Captures per-turn decision data, early/mid/late game splits, targeting patterns,
 // combo detection, card holdings at victory, and play sequencing.
 
@@ -441,7 +441,7 @@ function tally(mixed, mode) {
 
 function runAndAnalyze(numGames = 500) {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`  CHUDOPOLY GO — BOT STRATEGY ANALYSIS`);
+  console.log(`  CHUDOPOLY — BOT STRATEGY ANALYSIS`);
   console.log(`  ${numGames} simulated games, 5 bot modes`);
   console.log(`${'='.repeat(60)}\n`);
 

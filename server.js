@@ -1,4 +1,4 @@
-// server.js — Chudopoly GO entry point
+// server.js — Chudopoly entry point
 
 const express = require('express');
 const http = require('http');
@@ -308,7 +308,7 @@ server.listen(PORT, () => {
   // Build every icon raster before the first request rather than making the
   // first tab paint pay for it. Measured: 29ms for the SVG + all five PNGs.
   const iconMs = icon.warm();
-  console.log(`\n  CHUDOPOLY GO — Air Force Card Game`);
+  console.log(`\n  CHUDOPOLY — Air Force Card Game`);
   console.log(`  Server running on http://localhost:${PORT}`);
   console.log(`  icons generated in ${iconMs}ms (no binary in the tree — §0.3)\n`);
 });

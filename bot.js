@@ -813,7 +813,8 @@ function decideBotPlay(state, botId, mode) {
   if (plan && plan.type === 'play_action' && state.playsRemaining >= 2) {
     const chosen = bot.hand[plan.cardIndex];
     if (chosen && chosen.type === 'rent' && rnd() < (ORDER_ATTENTION[mode] ?? 1)) {
-      const booster = findChargeBooster(state, bot, bot.hand, plan);
+      const booster = findChargeBooster(state, bot, bot.hand, plan)
+        || findCompletingPlay(bot, bot.hand);
       if (booster) return booster;
     }
   }
@@ -1756,6 +1757,32 @@ function randomRentColor(bot, card) {
  */
 const ORDER_ATTENTION = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3, random: 0.12 };
 
+// A play from this hand that would COMPLETE a set right now. Used by the ordering pass:
+// the owner's round-9 report — "if bots are going to finish a set that turn, have them
+// finish the set before they play any rent cards" — names the CROSS-colour case, which is
+// worth zero millions (verified: OPSEC responses never consume plays, completing our set
+// changes nothing about how a payer answers, and armedAtTurn is the turnCounter, identical
+// at play 1 and play 3 of the same turn) but is the order a human expects to see. A wild is
+// allowed onto any colour it completes — finishing a set is never a bad wild placement.
+function findCompletingPlay(bot, hand) {
+  for (let i = 0; i < hand.length; i++) {
+    const c = hand[i];
+    if (c.type !== 'property' && c.type !== 'wild_property') continue;
+    for (const color of G.legalColorsFor(c)) {
+      if (!G.COLORS[color] || G.zoneFull(bot, color)) continue;
+      const zone = bot.properties[color] || (bot.properties[color] = []);
+      zone.push(c);
+      const completes = G.isSetComplete(bot, color);
+      zone.pop();
+      if (!completes) continue;
+      return c.type === 'property'
+        ? { type: 'play_property', cardIndex: i }
+        : { type: 'play_property', cardIndex: i, targetColor: color };
+    }
+  }
+  return null;
+}
+
 function findChargeBooster(state, bot, hand, rentPlay) {
   const color = rentPlay.targetColor;
   if (!color || !G.COLORS[color]) return null;
@@ -2320,7 +2347,7 @@ module.exports = {
   _internal: {
     decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards, setRng, rnd,
     planRearrange, boardScore, minimalCover, applyBotAction,
-    REARRANGE_BIAS, REARRANGE_CONSOLIDATES, payWeight, ORDER_ATTENTION, findChargeBooster,
+    REARRANGE_BIAS, REARRANGE_CONSOLIDATES, payWeight, ORDER_ATTENTION, findChargeBooster, findCompletingPlay,
     BREAK_URGENCY, BREAK_OVERPAY, disposableValue, tryBreakFinalApproach,
     getAllPayableCardIds, chooseDiscards, findResponder: function(state) {
       return G.pendingResponders(state)[0] || null;

@@ -1241,3 +1241,82 @@ Reported against the bot-relevant subset (`bot-economy`, `bot-finalapproach`, `g
 ones fail on `c881960`, the two guards pin the last-play and wild-hijack invariants). The
 full-suite total is noisy this hour from another agent's mid-edit work in `server/icon.js` /
 `server/raster.js`, which is outside bot ownership.
+
+---
+
+## Round 9 (2026-08-07) — finish the set first: one case already fixed, one worth four lines, one measured and rejected
+
+Owner, watching the round-8 build: *"if bots are going to finish a set that turn (have them
+finish the set before they play any rent cards as long as its in hand)."*
+
+The request splits into three different questions, and they got three different answers.
+
+### Same colour: already covered, with the measurement to say so
+
+A completing property IS the biggest ladder climb there is, so round 8's `findChargeBooster`
+already takes it before the rent. Measured over 400 four-player games: rents fired with a
+same-colour completing play still in hand are 0.13% (neutral) and 0.29% (conservative) of all
+rents — extinct for the planners, residual entirely the deliberate last-play guard and the
+chaos seats' attention roll.
+
+### Cross colour: worth zero millions — and shipped anyway, priced as an eyesore
+
+What the owner actually saw is the cross-colour case (1.2–4.0% of rents fire with a
+completing play of a *different* colour in hand). Before building anything, the three
+mechanisms that could make the order matter were each checked against the engine:
+
+- **OPSEC chains never consume plays** — `respondToAction` does not touch `playsRemaining`,
+  so a blocked rent cannot cost the bot the play the property needed.
+- **Completing our set changes nothing about how a payer answers** — §3.1's protections are
+  the payer's, evaluated on the payer's board.
+- **Arming is turn-granular** — `armedAtTurn` is the `turnCounter`, identical at play 1 and
+  play 3 of the same turn, so completing earlier in the turn starts no earlier clock.
+
+**Cross-colour ordering is worth zero millions.** It is, however, exactly the kind of
+visible wrongness round 8 existed to remove, and the fix reuses that machinery: when the
+plan is a rent and `findChargeBooster` finds nothing on the rent's own colour,
+`findCompletingPlay` puts any set-completing property (or a wild onto any colour it
+completes — finishing a set is never a bad wild placement) down first. Same guards: never on
+the last play, §3.10 break branch exempt, `ORDER_ATTENTION` keeps chud at 30% and random at
+12%. Measured after: neutral's cross-colour rents-before-completion went 9 → **0** per 400
+games, aggressive 39 → 9, conservative 21 → 7 (the residue is the last-play guard, which is
+correct — the planner's chosen charge outranks tidiness when only one play remains).
+
+Note what the guard test enshrines: at one play left, *aggressive* fires the rent — but
+*neutral* plays the property, because neutral's own priorities put building before charging.
+That is the personality split working as designed, not a gap in the pass.
+
+### Completion as a strategy: measured, and rejected
+
+The genuinely separate question — is finishing a set worth prioritising above rent and
+attacks for §3.10 reasons, not ladder reasons? Frequency first: the planners already play a
+held completing card the same turn **86–96%** of the time, and a *third*-set completer is
+left in hand only 0.02–0.10 times per bot per game. Then the A/B anyway, since it is cheap:
+a temporary variant in which any completing play outranks the whole personality plan for
+the three planning modes, 10,000 games against a same-seed control at 4 players:
+
+| | control | completion-first |
+|---|---|---|
+| neutral | 31.76 | 32.96 (+1.2) |
+| aggressive | 36.96 | **36.21 (−0.75)** |
+| conservative | 28.38 | 28.43 |
+| random / chud | 13.55 / 14.35 | 13.25 / 14.15 |
+
+No net gain, borderline significance on both movers — and the sign on aggressive says
+forcing build-before-charge *hurts* the personality whose style is to charge first, which is
+the owner's own parenthetical ("depending on bot type") read back as data. There is also a
+real §3.10 reason not to force it: a completed third set can be broken during the grace
+cycle; a hand card cannot be stolen at all. **Not shipped.** The variant was a temporary
+patch, measured and reverted; nothing of it remains in `bot.js`.
+
+### Validation
+
+Paired-seed matrices vs round 8 (≥500/matchup): every personality within ±1 point at 3, 4
+and 5 players, all inside 8–60%; turns, p90, shot-down flat; **canary 6.76% → 6.84%** at 5
+players (watch line ~8.4%); 100% decided. Quick Play bench seat-0 unchanged (±0.3). Fixed
+pre-round-7 bot vs the new table: 21.1/22.3/19.0% — same envelope as rounds 7–8, difficulty
+not moved. Bot-relevant test subset **157/157** (21 in `bot-economy` — the cross-colour
+positive fails on `8ea52aa`, and a guard pins that the completing play never eats the last
+play the charge needed). A transient red reported in `bot-economy` against the full tree
+was another agent's mid-edit churn: the file was green in isolation and the full suite reads
+417/417 at this tree.

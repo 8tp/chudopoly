@@ -88,19 +88,55 @@ function tickTimer() {
  * It lives inside #hud as a wrapped second row rather than as a floating layer:
  * a fixed overlay over a 390px table covers the opponent boards, which are
  * exactly what you are being told to attack.
+ *
+ * ── THE ROW IS RESERVED, NOT GROWN (P8, motion agent hand-off) ─────────────
+ *
+ * MEASURED before this change, mid-game fixture → final-approach fixture:
+ *
+ *   desktop 1280×720   #hud 55→93   #opponents y 62→100, h 147→118
+ *   phone   390×844    #hud 54→96   #opponents y 59→101, h 209→132
+ *   landscape 844×390  #hud 52→80   #opponents y 56→84,  h 217→190
+ *
+ * i.e. the whole felt jumped down 38/42/28px at the exact moment the player is
+ * being told to read the table — and it happens FOUR times a game (arm, break,
+ * arm, break). Worse, the box was unbounded: with three armed players and the
+ * attrition chip the strip measured **589px tall on a 390px-wide phone** (hud
+ * 651px — the header ate the entire screen).
+ *
+ * Two fixes, together:
+ *   1. The strip is always in the layout and toggles `visibility` (`is-empty`),
+ *      so the row's box exists from the first paint and nothing below it moves.
+ *   2. Its height is FIXED (content.css `.hud-strip`) and its content is
+ *      bounded: at most one named opponent plus a "+N" chip, and a two-line
+ *      clamp on the sentence. The full sentence stays in `title`, and the strip
+ *      is a control — tapping it opens the Goal page of the brief, which is the
+ *      only explanation route a phone has (it cannot hover a title).
  */
 let strip = null;
 let stripKey = '';
 
 function stripEl() {
   if (strip?.isConnected) return strip;
+  // A DIV, not a button. It was a button (tap → the Goal page of the brief) for
+  // exactly one touchtest run: at its reserved height it measured 379×12 …
+  // 379×34, i.e. a control under §0.9's 44px floor on every surface, and
+  // growing it to 44 would have doubled the permanent reserve this whole change
+  // exists to minimise. The long sentence still has two phone-reachable routes:
+  // ui/journal.js announces it full-length at the moment of arming, and the ?
+  // button (a real 44px control) opens the brief's Goal page.
   strip = el('div', {
-    id: 'hud-strip', class: 'hud-strip',
+    id: 'hud-strip', class: 'hud-strip is-empty',
     attrs: { role: 'status', 'aria-live': 'polite' },
   });
-  strip.hidden = true;
   $('hud')?.appendChild(strip);
   return strip;
+}
+
+/** Reserved-but-blank, never `hidden`: `display:none` is what made the felt jump. */
+function stripBlank(box) {
+  if (stripKey !== '') { stripKey = ''; clear(box); }
+  setClass(box, 'is-empty', true);
+  setAttr(box, 'title', null);
 }
 
 /* ── the countdown that is allowed to print a number (§P7.17) ──────────────
@@ -152,14 +188,36 @@ function countdownText(player, mine) {
     : 'Converts at their own turn start, once every seat has had a turn.';
 }
 
+/**
+ * The SHORT form, for the fixed-height row — ONE LINE at 390px.
+ *
+ * The long sentence is not lost: countdownText() puts it on the row's `title`
+ * for a pointer, ui/journal.js announces it in full over the felt at the moment
+ * of arming (which is where a phone actually reads it), and the brief's Goal
+ * page has the rule. The reason it is this short is measured, twice:
+ *   • unbounded, three armed players + attrition rendered a 589px strip on a
+ *     390px phone;
+ *   • at a two-line reserve, tools/touchtest.mjs measured `.self-board` 42px in
+ *     landscape and 25px exposed bank cards in payment — the reserve was
+ *     squeezing the whole table below §0.9's 44px floor.
+ * Same numbers, same source (`opponentTurnsRemaining`), fewer words.
+ */
+function stripLine(player, mine) {
+  const n = opponentTurns(player);
+  if (mine) {
+    if (n === 0) return 'You win at your next turn start';
+    if (n != null) return `${n} opponent turn${n === 1 ? '' : 's'} to survive`;
+    return 'Converts at your next own turn';
+  }
+  if (n === 0) return 'wins next turn — last chance';
+  if (n != null) return `${n} turn${n === 1 ? '' : 's'} left to break them`;
+  return 'converts at their own turn start';
+}
+
 function renderStrip() {
   const snap = store.snapshot;
   const box = stripEl();
-  if (!snap || snap.phase !== 'playing') {
-    if (stripKey !== '') { stripKey = ''; clear(box); }
-    setHidden(box, true);
-    return;
-  }
+  if (!snap || snap.phase !== 'playing') { stripBlank(box); return; }
 
   const armed = (snap.players || []).filter(p => p.finalApproach && !p.eliminated);
   const mineArmed = armed.filter(p => p.id === store.self.id);
@@ -171,11 +229,12 @@ function renderStrip() {
   // The threshold lives in core/cards.js so ui/help.js can promise the same one.
   const attrition = limit > 0 && cycle >= deckCycleNotice(limit);
 
-  if (!armed.length && !attrition) {
-    if (stripKey !== '') { stripKey = ''; clear(box); }
-    setHidden(box, true);
-    return;
-  }
+  if (!armed.length && !attrition) { stripBlank(box); return; }
+
+  // The urgent one is the one with the fewest turns left. Only that one is
+  // NAMED — three named opponents wrapped the row to 589px on a 390px phone.
+  const urgency = (p) => { const n = opponentTurns(p); return n == null ? 99 : n; };
+  const worst = theirs.slice().sort((a, b) => urgency(a) - urgency(b))[0] || null;
 
   const stamp = (p) => `${p.id}:${opponentTurns(p)}`;
   const key = [
@@ -183,22 +242,28 @@ function renderStrip() {
     theirs.map(stamp).join(','),
     attrition ? `${cycle}/${limit}` : '',
   ].join('|');
-  if (key === stripKey) { setHidden(box, false); return; }
+  if (key === stripKey) { setClass(box, 'is-empty', false); return; }
   stripKey = key;
 
   clear(box);
+  setClass(box, 'is-empty', false);
   setClass(box, 'is-threat', theirs.length > 0);
   setClass(box, 'is-mine', theirs.length === 0 && mineArmed.length > 0);
 
-  if (theirs.length) {
+  if (worst) {
     // Someone else can win. Name them, and say what to do about it.
     box.appendChild(el('span', { class: 'strip-flag', text: 'BREAK THEM NOW' }));
-    box.appendChild(el('span', { class: 'strip-text' },
-      theirs.map((p, i) => el('span', { class: 'strip-who' }, [
-        el('b', { text: p.name }),
-        el('span', { text: ` on final approach — ${countdownText(p, false)}` }),
-        i < theirs.length - 1 ? el('span', { class: 'strip-sep', text: ' · ' }) : null,
-      ].filter(Boolean)))));
+    box.appendChild(el('span', { class: 'strip-text' }, [
+      el('b', { text: worst.name }),
+      el('span', { text: ` ${stripLine(worst, false)}` }),
+    ]));
+    if (theirs.length > 1) {
+      box.appendChild(el('span', {
+        class: 'chip strip-chip',
+        text: `+${theirs.length - 1} armed`,
+        attrs: { title: theirs.slice(1).map(p => `${p.name}: ${countdownText(p, false)}`).join(' · ') },
+      }));
+    }
     if (mineArmed.length) {
       box.appendChild(el('span', {
         class: 'chip strip-chip',
@@ -206,15 +271,18 @@ function renderStrip() {
         attrs: { title: countdownText(mineArmed[0], true) },
       }));
     }
+    setAttr(box, 'title', `${worst.name} on final approach — ${countdownText(worst, false)}`);
   } else if (mineArmed.length) {
     box.appendChild(el('span', { class: 'strip-flag', text: 'FINAL APPROACH' }));
-    // The caveat lives inside countdownText — repeating it here printed
+    // The caveat lives inside stripLine — repeating it here printed
     // "unless you lose a set first. Lose a set and it is off." (measured on the
     // final-approach phone shot).
-    box.appendChild(el('span', {
-      class: 'strip-text',
-      text: `HOLD THE LINE — ${countdownText(mineArmed[0], true)}`,
-    }));
+    // No "HOLD THE LINE —" prefix: the flag chip beside it already says
+    // FINAL APPROACH, and the words were costing a whole line at 390px.
+    box.appendChild(el('span', { class: 'strip-text', text: stripLine(mineArmed[0], true) }));
+    setAttr(box, 'title', countdownText(mineArmed[0], true));
+  } else {
+    setAttr(box, 'title', null);
   }
 
   if (attrition) {
@@ -224,7 +292,6 @@ function renderStrip() {
       attrs: { title: 'At the limit the game ends on points: most sets, then net worth.' },
     }));
   }
-  setHidden(box, false);
 }
 
 /* §P7.12 — connection loss was an 8×8px dot whose only explanation lived in a

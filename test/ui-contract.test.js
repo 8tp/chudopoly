@@ -75,8 +75,15 @@ test('no module writes innerHTML anywhere in the client (§0.4)', () => {
 test('chat and log build text nodes, never markup', () => {
   const comms = read('public/src/ui/comms.js');
   assert.match(comms, /text:\s*msg\.text/);
-  assert.match(comms, /text:\s*lines\[i\]/);
   assert.doesNotMatch(comms, /innerHTML/);
+  // P8: the Mission Log moved out of comms.js into ui/journal.js, which builds
+  // it from the structured event stream. Both the beat text and the verbatim
+  // server prose still go through el()'s `text:` and nothing else — player
+  // names and log lines are the two strings a server can put words into.
+  const journal = read('public/src/ui/journal.js');
+  assert.match(journal, /text:\s*line\b/, 'the prose transcript must use el() text');
+  assert.match(journal, /text:\s*d\.text/, 'beat text must use el() text');
+  assert.doesNotMatch(journal, /innerHTML/);
   // el() is the only text path and it uses textContent.
   assert.match(read('public/src/core/dom.js'), /node\.textContent = String\(props\.text\)/);
 });

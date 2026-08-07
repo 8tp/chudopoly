@@ -12,9 +12,10 @@ import { el, clear, setAttr, setClass } from '../core/dom.js';
 import * as pointer from '../interact/pointer.js';
 import { openSheet } from './screens.js';
 import {
-  COLORS, COLOR_KEYS, HAND_LIMIT, SETS_TO_WIN, ACTION_RULES, ACTION_COUNTS,
+  COLORS, COLOR_KEYS, HAND_LIMIT, ACTION_RULES, ACTION_COUNTS,
   RENT_COUNTS, colorName, opsecFlag, DECK_CYCLE_LIMIT, deckCycleNotice,
 } from '../core/cards.js';
+import { activeRules, winRuleSummary, countWord, WIN_RULE_NAMES } from './ruleset.js';
 
 /* ── small builders ──────────────────────────────────────────────────────── */
 
@@ -42,103 +43,192 @@ function swatch(color) {
   return el('span', { class: 'brief-swatch', dataset: { color } });
 }
 
-/* ── page: goal & final approach ─────────────────────────────────────────── */
+/* ── page: goal & the ACTIVE win rule ─────────────────────────────────────
+ *
+ * P8: this page used to describe Final Approach unconditionally. The engine
+ * resolves a per-game ruleset (game.js resolveRules) and broadcasts `winRule` +
+ * `setsToWin`, so a game of Blitz was being explained to its own players as a
+ * game of Chudopoly — §3.9's bar inverted. ui/ruleset.js reads the live values;
+ * every branch below names the game.js function that implements it. */
 
 /**
- * The armed state, drawn. Three complete sets do not win (game.js syncSets sets
- * player.finalApproach instead of finishing); the win resolves at the armed
- * player's own turn start once a full cycle has passed
- * (resolveFinalApproach → checkpointReached: turnsSinceArming >= activeCount).
+ * Which ruleset this page is describing, stated out loud. Without it the brief
+ * silently changes its own content between games and the player has no way to
+ * tell whether it is describing THIS table or the default.
  */
-function approachDiagram() {
-  const step = (kind, tag, text) => el('li', { class: `fa-step is-${kind}` }, [
-    el('span', { class: 'fa-tag', text: tag }),
-    el('span', { class: 'fa-text', text }),
+function ruleBadge(active) {
+  const bits = [WIN_RULE_NAMES[active.winRule], `${active.setsToWin} sets to win`];
+  if (active.pureSetRequired) bits.push('no wilds in a winning set');
+  if (active.passGoRestartsTurn) bits.push('PCS Orders restarts your plays');
+  return el('p', { class: 'brief-note' }, [
+    el('b', { text: active.live ? 'THIS GAME: ' : 'DEFAULT RULES: ' }),
+    el('span', { text: bits.join(' · ') }),
+    el('span', {
+      text: active.live ? '' : ' — the table you join decides; this page follows it.',
+    }),
   ]);
+}
 
-  const board = el('div', { class: 'fa-board' }, [
+/** The set-breaking cards. Shared by every win rule: under 'instant' they are
+ *  the only defence there is, under the grace rules they are the counter-play. */
+function breakBullets() {
+  return bullets([
+    // playAction 'chud' has no zoneRequisitionable guard, and nothing goes
+    // back the other way — that, not "can reach a complete set", is what is
+    // unique about it (§3.1 P7 ruling).
+    'THE CHUD CARD — takes a property straight out of a complete set and gives nothing '
+    + 'back. The only card that robs one.',
+    // executeEntry 'steal_set'.
+    'Inspector General — seizes the whole set, Upgrade and FOC included.',
+    // playAction 'tdy_orders' has no complete-set guard either, and
+    // executeEntry 'swap' splices out of whatever colour holds the card.
+    'TDY Orders — trades INTO a complete set: their set card for one of yours. Both '
+    + 'boards resync, so it can break a set on either side.',
+    // processPayment: propCards come out of properties, then syncSets(payer).
+    'Charge them more than their bank covers, so they must pay with a set card.',
+    // playAction 'midnight_requisition' → zoneRequisitionable(): n > 0 && n < size.
+    'Midnight Requisition cannot — it refuses any zone that is already a complete set.',
+  ]);
+}
+
+/** The armed board, drawn at whatever `setsToWin` this game is played to. */
+function armedBoard(n) {
+  // Enough distinct colours for any setsToWin the engine offers (3 or 5 today);
+  // COLOR_KEYS is the fallback so a larger number still draws something true.
+  const palette = ['red', 'darkblue', 'base', 'green', 'intel', 'orange', 'pink'];
+  const colors = (palette.length >= n ? palette : COLOR_KEYS).slice(0, n);
+  return el('div', { class: 'fa-board' }, [
     el('span', { class: 'fa-board-label', text: 'ARMED BOARD' }),
-    el('div', { class: 'fa-cols' }, ['red', 'darkblue', 'base'].map((color) =>
+    el('div', { class: 'fa-cols' }, colors.map((color) =>
       el('div', { class: 'fa-col is-complete', dataset: { color } }, [
         el('span', { class: 'fa-col-name', text: COLORS[color].short }),
         el('span', { class: 'fa-col-pips' },
           Array.from({ length: COLORS[color].size }, () => el('i'))),
         el('span', { class: 'fa-col-tick', text: 'SET' }),
       ]))),
-    el('span', { class: 'fa-board-count', text: '3 / 3 COMPLETE' }),
+    el('span', { class: 'fa-board-count', text: `${n} / ${n} COMPLETE` }),
   ]);
+}
 
+const faStep = (kind, tag, text) => el('li', { class: `fa-step is-${kind}` }, [
+  el('span', { class: 'fa-tag', text: tag }),
+  el('span', { class: 'fa-text', text }),
+]);
+
+/**
+ * The armed state, drawn. `setsToWin` complete sets do not win under the two
+ * grace rules (game.js syncSets sets player.finalApproach instead of
+ * finishing); the win resolves at the armed player's own turn start once
+ * checkpointThreshold() turns have passed — activeCount for 'finalApproach',
+ * exactly 1 for 'mdFaithful'.
+ */
+function approachDiagram(rules) {
+  const n = rules.setsToWin;
+  const md = rules.winRule === 'mdFaithful';
   return el('div', { class: 'fa-diagram' }, [
-    board,
+    armedBoard(n),
     el('ol', { class: 'fa-steps' }, [
-      step('arm', 'ARMED', 'Your third set completes. You do NOT win yet.'),
-      // checkpointReached(): turnCounter − armedAtTurn >= activeCount. Arming on
-      // someone else's turn puts one of YOUR OWN turns inside that window, and
-      // that turn does not convert — so the opponents get a second one each.
-      step('wait', 'CYCLE', 'Every other player gets at least one full turn to break you — '
-        + 'up to two each if you armed on someone else\'s turn.'),
-      step('break', 'OR BREAK', 'Lose any set in that window and you are disarmed. '
+      faStep('arm', 'ARMED', `Your ${countWord(n)}th set completes. You do NOT win yet.`),
+      // checkpointReached(): turnCounter − armedAtTurn >= checkpointThreshold().
+      md
+        ? faStep('wait', 'ONE TURN', 'The table gets the rest of the round. You may not '
+          + 'declare on someone else\'s turn — that is the actual Monopoly Deal rule.')
+        : faStep('wait', 'CYCLE', 'Every other player gets at least one full turn to break '
+          + 'you — up to two each if you armed on someone else\'s turn.'),
+      faStep('break', 'OR BREAK', 'Lose any set in that window and you are disarmed. '
         + 'Rebuild it and you re-arm — the count restarts at zero.'),
-      // beginTurn() → resolveFinalApproach(): the FIRST own-turn start at or
-      // after armedAtTurn + activeCount, which is not always the very next one.
-      step('win', 'CHECKPOINT', 'The first of your own turns to start after that full '
-        + `cycle. Still holding ${SETS_TO_WIN}? That is the win.`),
+      // beginTurn() → resolveFinalApproach().
+      faStep('win', 'CHECKPOINT', md
+        ? `The start of your very next own turn. Still holding ${n}? That is the win.`
+        : 'The first of your own turns to start after that full cycle. '
+          + `Still holding ${n}? That is the win.`),
+    ]),
+  ]);
+}
+
+/** winRule 'instant' (Blitz): syncSets() finishes the game inline, from every
+ *  path that can change a set count — so it can land on anyone's turn. */
+function instantDiagram(n) {
+  return el('div', { class: 'fa-diagram' }, [
+    armedBoard(n),
+    el('ol', { class: 'fa-steps' }, [
+      faStep('arm', 'COMPLETE', `Your ${countWord(n)}th set completes — anywhere, `
+        + 'on anyone\'s turn.'),
+      faStep('win', 'WIN', 'The game ends immediately. No grace window, no banner, '
+        + 'no chance to break it.'),
     ]),
   ]);
 }
 
 function pageGoal() {
+  const active = activeRules();
+  const n = active.setsToWin;
+  const head = [
+    p(`Complete ${n} property sets. ${winRuleSummary(active)}`, 'brief-lede'),
+    ruleBadge(active),
+  ];
+
+  if (active.winRule === 'instant') {
+    return [
+      ...head,
+      instantDiagram(n),
+      rules([
+        // syncSets(): the 'instant' branch returns before finalApproach is ever set.
+        ['Nothing is ever armed',
+          'There is no final approach under this ruleset, so there is no banner, no '
+          + 'countdown and no window in which to break anybody.'],
+        // syncSets() is called from playProperty, moveProperty, processPayment, both
+        // steals and swap.
+        ['It can land off your turn',
+          'A set completed by a payment you received, a steal or a swap wins the game the '
+          + 'instant it completes — it does not wait for your turn.'],
+        ['Which means: break sets EARLY',
+          'The only defence is not letting anyone reach the last card of a set. Once it '
+          + 'lands, it is over.'],
+      ]),
+      el('h5', { class: 'brief-sub', text: 'How you break a set before it finishes' }),
+      breakBullets(),
+    ];
+  }
+
+  const md = active.winRule === 'mdFaithful';
   return [
-    p(`Complete ${SETS_TO_WIN} property sets. Completing the third does not win the game — `
-      + 'it arms your FINAL APPROACH.', 'brief-lede'),
-    approachDiagram(),
+    ...head,
+    approachDiagram(active),
     rules([
-      // syncSets(): sets >= SETS_TO_WIN && !finalApproach → arm + emit final_approach.
+      // syncSets(): sets >= setsToWin && !finalApproach → arm + emit final_approach.
       ['Arming is public',
-        'The moment you hold three complete sets the whole table is told, and a banner '
+        `The moment you hold ${n} complete sets the whole table is told, and a banner `
         + 'names you until it resolves.'],
-      // checkpointReached(): turnsSinceArming >= activeCount — a whole cycle, so
-      // arming on the seat before yours still gives everyone a turn.
-      ['The grace is a full cycle',
-        'Not "one turn" — every other player is guaranteed a turn to answer, no matter '
-        + 'when in the round you armed.'],
+      // checkpointThreshold(): activeCount, or 1 under mdFaithful.
+      md
+        ? ['The grace is one turn',
+          'You win at your own next turn start. Everyone between you and it gets exactly '
+          + 'one turn to answer — no more.']
+        : ['The grace is a full cycle',
+          'Not "one turn" — every other player is guaranteed a turn to answer, no matter '
+          + 'when in the round you armed.'],
       // resolveFinalApproach() is called from beginTurn() and drawCards().
       ['The win lands on your turn start',
-        'If you still hold three complete sets when your own next turn begins after that '
-        + 'cycle, the game ends there.'],
+        `If you still hold ${n} complete sets when your own next turn begins after that `
+        + (md ? 'turn' : 'cycle') + ', the game ends there.'],
       // The question every armed player asks. turnsSinceArming counts EVERY
       // seat's turn, so an own-turn inside the window is spent, not cashed.
-      ['"Why didn\'t I win on my own turn?"',
+      ...(md ? [] : [['"Why didn\'t I win on my own turn?"',
         'Because the cycle was not finished yet. Arm on somebody else\'s turn and one of '
         + 'your own turns falls inside the grace window — that turn passes without '
         + 'converting, and you win on the NEXT one. The banner never counts your own '
-        + 'turns as answers.'],
-      // syncSets(): sets < SETS_TO_WIN && finalApproach → disarm, delete armedAtTurn.
+        + 'turns as answers.']]),
+      // syncSets(): sets < setsToWin && finalApproach → disarm, delete armedAtTurn.
       ['Breaking resets everything',
-        'Drop below three and you are disarmed. Build back up and you re-arm, but the '
-        + 'grace cycle starts over from zero.'],
+        `Drop below ${n} and you are disarmed. Build back up and you re-arm, but the `
+        + 'grace window starts over from zero.'],
       // armedPlayers() is a list; first player whose beginTurn passes the check wins.
       ['Several can be armed at once',
-        'The first one to reach their own checkpoint still holding three wins.'],
+        `The first one to reach their own checkpoint still holding ${n} wins.`],
     ]),
     el('h5', { class: 'brief-sub', text: 'How you break someone on final approach' }),
-    bullets([
-      // playAction 'chud' has no zoneRequisitionable guard, and nothing goes
-      // back the other way — that, not "can reach a complete set", is what is
-      // unique about it (§3.1 P7 ruling).
-      'THE CHUD CARD — takes a property straight out of a complete set and gives nothing '
-      + 'back. The only card that robs one.',
-      // executeEntry 'steal_set'.
-      'Inspector General — seizes the whole set, Upgrade and FOC included.',
-      // playAction 'tdy_orders' has no complete-set guard either, and
-      // executeEntry 'swap' splices out of whatever colour holds the card.
-      'TDY Orders — trades INTO a complete set: their set card for one of yours. Both '
-      + 'boards resync, so it can break a set on either side.',
-      // processPayment: propCards come out of properties, then syncSets(payer).
-      'Charge them more than their bank covers, so they must pay with a set card.',
-      // playAction 'midnight_requisition' → zoneRequisitionable(): n > 0 && n < size.
-      'Midnight Requisition cannot — it refuses any zone that is already a complete set.',
-    ]),
+    breakBullets(),
   ];
 }
 
@@ -426,13 +516,20 @@ function pageOpsec() {
 /* ── page: endings ───────────────────────────────────────────────────────── */
 
 function pageEndings() {
+  const active = activeRules();
+  const n = active.setsToWin;
   return [
     p('Three ways a game ends. Only one of them is a race to sets.', 'brief-lede'),
     rules([
-      // finishGame(state, id, 'sets', …) from resolveFinalApproach().
-      ['Final approach converted',
-        `An armed player reaches their own turn start still holding ${SETS_TO_WIN} complete `
-        + 'sets. The usual ending.'],
+      // finishGame(state, id, 'sets', …) — from syncSets() under 'instant',
+      // from resolveFinalApproach() under the two grace rules.
+      active.winRule === 'instant'
+        ? ['Someone completes their last set',
+          `A player reaches ${n} complete sets and the game ends on the spot, on whoever's `
+          + 'turn it happened to be. The usual ending.']
+        : ['Final approach converted',
+          `An armed player reaches their own turn start still holding ${n} complete `
+          + 'sets. The usual ending.'],
       // scoop() → activePlayers.length === 1 → finishGame(…, 'last_standing').
       ['Last one standing',
         'Scooping discards everything you own and takes you out for good. If everyone else '

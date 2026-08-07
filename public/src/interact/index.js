@@ -181,12 +181,65 @@ export function beginPayment(amount) {
   changed();
 }
 
+/* ── the end-of-turn discard (§P8, owner: "make it obviously easy") ─────────
+ *
+ * Before: beginDiscard set a mode, hand cards toggled, a Confirm button
+ * appeared. Nothing said how many had to go, nothing said how many were chosen,
+ * the confirm looked identical whether it would work or refuse, and there was
+ * no default — every discard was N taps of arithmetic at the end of a turn.
+ *
+ * Now: the count is stated and live (ui/prompt.js), the confirm carries its own
+ * refusal (§P7.3 — never `disabled`, always a sentence + shake + cue), the
+ * chosen cards read as LEAVING rather than merely picked (`is-discarding`), and
+ * one tap fills a sensible default the player can then adjust.
+ */
 export function beginDiscard(excess) {
   mode.kind = 'discard';
   mode.excess = excess;
   mode.selected = new Set();
   mode.hint = `Discard ${excess} card${excess === 1 ? '' : 's'} to reach the hand limit`;
   changed();
+}
+
+/**
+ * "Discard my cheapest N" — the one-tap default.
+ *
+ * Face value ascending is the obvious rule and it is wrong on its own: the
+ * `any` wild is 0M and is the single most valuable card in the deck, so a pure
+ * value sort would offer it up first every time. So cards split into two bands
+ * and the PROTECTED band is only touched when the unprotected one runs out:
+ *   protected — properties and wilds (they are how you win) and OPSEC (it is
+ *               the only card that answers an attack on someone else's turn)
+ *   the rest  — money, rent, every other action: cheapest first
+ * Within a band, ties break toward the card with the least reach (a rent card
+ * for colours you do not own goes before one you can charge with).
+ * It is a SUGGESTION: it fills the selection, and every card stays toggleable.
+ */
+export function suggestDiscard() {
+  if (mode.kind !== 'discard') return;
+  const protectedCard = (c) =>
+    isPropertyCard(c) || (c.type === 'action' && c.action === 'opsec');
+  const reach = (c) => (c.type === 'rent' ? sel.rentColors(c).length : 1);
+  const ranked = sel.myHand().slice().sort((a, b) =>
+    (protectedCard(a) ? 1 : 0) - (protectedCard(b) ? 1 : 0)
+    || (a.value || 0) - (b.value || 0)
+    || reach(a) - reach(b)
+    || a.id - b.id);
+  mode.selected = new Set(ranked.slice(0, mode.excess).map(c => c.id));
+  changed();
+}
+
+/** The sentence the confirm refuses with, or '' when it will go through. */
+export function discardBlockedReason() {
+  const need = mode.excess;
+  const have = mode.selected.size;
+  if (have === need) return '';
+  if (have < need) {
+    const short = need - have;
+    return `Choose ${short} more card${short === 1 ? '' : 's'} — ${have} of ${need} picked.`;
+  }
+  const over = have - need;
+  return `That is ${over} too many — the engine takes exactly ${need}. Tap ${over} back.`;
 }
 
 /* ── selection ─────────────────────────────────────────────────────────── */
@@ -236,9 +289,12 @@ export function confirmPayment() {
 
 export function confirmDiscard() {
   if (mode.kind !== 'discard') return;
-  if (mode.selected.size !== mode.excess) {
-    refuse(`Choose exactly ${mode.excess} card${mode.excess === 1 ? '' : 's'} to discard `
-      + `— ${mode.selected.size} chosen`, document.getElementById('prompt'));
+  const why = discardBlockedReason();
+  if (why) {
+    // §P7.3: the button is never `disabled`, so the refusal can shake, sound
+    // and say what is wrong instead of being a dead control.
+    refuse(why, document.querySelector('[data-action="confirm-discard"]')
+      || document.getElementById('prompt'));
     return;
   }
   send.endTurn([...mode.selected]);
@@ -349,6 +405,8 @@ export function dragCandidate(cardId) {
  * 20px column strip "feels terrible").
  * An empty target list is legal: the card is draggable but nothing it could do
  * is legal right now, and `reason` says why.
+ * `myBoard` rides along so interact/drag.js can mark the columns that are NOT
+ * targets as illegal (ART §5.1) without re-deriving the seat.
  */
 export function dragPlan(cardId) {
   const cand = dragCandidate(cardId);
@@ -368,7 +426,7 @@ export function dragPlan(cardId) {
 
   if (cand.source === 'board') {
     for (const color of sel.moveColors(card, cand.from)) push(col(color), { kind: 'move', value: color });
-    return { source: 'board', card, targets, reason: '' };
+    return { source: 'board', card, targets, reason: '', myBoard };
   }
 
   // `reason` is '' only when the card can be PLAYED. Money always has one
@@ -412,7 +470,7 @@ export function dragPlan(cardId) {
     push(bankEl(), { kind: 'bank' });
     push(myBoard, { kind: 'bank' }, 1);
   }
-  return { source: 'hand', card, targets, reason };
+  return { source: 'hand', card, targets, reason, myBoard };
 }
 
 function bankEl() {
@@ -454,8 +512,14 @@ export function dropCommit(cardId, drop) {
 
 function clearMarks() {
   for (const el of qsa('[data-targetable="1"]')) el.removeAttribute('data-targetable');
-  for (const el of qsa('[data-payable="1"]')) el.removeAttribute('data-payable');
+  for (const el of qsa('[data-payable="1"]')) {
+    el.removeAttribute('data-payable');
+    // cardnode.js parks every card at tabindex -1; selection modes are the only
+    // time a card is a control in its own right, so the reach is lent, not kept.
+    if (el.getAttribute('tabindex') === '0') el.setAttribute('tabindex', '-1');
+  }
   for (const el of qsa('.is-picked')) el.classList.remove('is-picked');
+  for (const el of qsa('.is-discarding')) el.classList.remove('is-discarding');
   // A card under the finger keeps its lift: applyMarks runs on every snapshot
   // and a mid-drag state broadcast would otherwise drop the card flat.
   for (const el of qsa('.is-lifted')) {
@@ -464,6 +528,29 @@ function clearMarks() {
 }
 
 function mark(el) { if (el) setAttr(el, 'data-targetable', '1'); }
+
+/* ── lending a card node keyboard focus (§0.9) ─────────────────────────────
+ * table/cardnode.js parks every card at tabindex -1. Selection modes are the
+ * only time a card is a control in its own right, so the reach is lent for the
+ * mode and taken back in clearMarks().
+ *
+ * MEASURED: lending it unconditionally turned tools/touchtest.mjs's tap-target
+ * scan red — a payment surface promoted 25×53 and 38×53 bank cards to controls
+ * (§0.9 floor is 44), and landscape promoted 31×45 property cards. A card that
+ * is too small to be a tap target must not become one by being focusable, so
+ * the promotion is gated on the box the player would actually have to hit.
+ * The hand cards the discard flow needs are 58px+ on a 390px phone and always
+ * qualify. REQUEST to the table agent: `.zone-bank` cards expose a 23–25px
+ * strip at the -0.35em overlap and `.opponents`/landscape `.propcol` cards run
+ * to 31px — until those clear 44, payment selection has no keyboard route.
+ */
+const TAP_FLOOR = 44;
+
+function lendFocus(node) {
+  if (!node) return;
+  const r = node.getBoundingClientRect();
+  if (Math.min(r.width, r.height) >= TAP_FLOOR) setAttr(node, 'tabindex', '0');
+}
 
 function markPropColumns(ownerId, colors) {
   const board = table.boardEl(ownerId);
@@ -512,6 +599,7 @@ export function applyMarks() {
       const node = getNode(card.id);
       if (!node) continue;
       setAttr(node, 'data-payable', '1');
+      lendFocus(node);
       setClass(node, 'is-picked', mode.selected.has(card.id));
     }
   }
@@ -520,8 +608,14 @@ export function applyMarks() {
     for (const card of sel.myHand()) {
       const node = getNode(card.id);
       if (!node) continue;
+      const picked = mode.selected.has(card.id);
       setAttr(node, 'data-payable', '1');
-      setClass(node, 'is-picked', mode.selected.has(card.id));
+      lendFocus(node);
+      setClass(node, 'is-picked', picked);
+      // A payment selection and a discard selection are different promises: one
+      // buys you out of a demand, the other throws the card away. They must not
+      // look the same (interact.css `.card.is-discarding`).
+      setClass(node, 'is-discarding', picked);
     }
   }
 }

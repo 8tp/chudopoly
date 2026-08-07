@@ -10,13 +10,18 @@ import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import * as send from '../net/send.js';
 import { store, seatName } from '../state/store.js';
-import { COLORS, COLOR_KEYS, SETS_TO_WIN } from '../core/cards.js';
+import { COLORS, COLOR_KEYS } from '../core/cards.js';
+import { activeRules } from './ruleset.js';
 import * as pointer from '../interact/pointer.js';
 import * as screens from './screens.js';
 import { closeSheet, sheetOpen } from './screens.js';
 import * as help from './help.js';
 import * as settings from './settings.js';
 import * as hints from './hints.js';
+// main.js is architect-owned (§1) and already delegates the ui/ sub-mounts to
+// this file (help, settings, hints). The P8 surfaces join them here.
+import * as discard from './discard.js';
+import * as journal from './journal.js';
 
 /**
  * finishGame() stamps state.endReason with 'sets' | 'last_standing' |
@@ -104,12 +109,24 @@ function endingCopy(snap) {
       basis: stalemateBasis(snap),
     };
   }
-  // 'sets' — resolveFinalApproach() at the armed player's own turn start.
+  // 'sets' — syncSets() under 'instant', resolveFinalApproach() at the armed
+  // player's own turn start under the two grace rules. P8: the screen used to
+  // claim "FINAL APPROACH HELD" for every set win, including Blitz games where
+  // nothing was ever armed.
+  const active = activeRules();
+  if (active.winRule === 'instant') {
+    return {
+      title: mine ? 'MISSION ACCOMPLISHED' : `${seatName(winner)} WINS`,
+      tag: 'SETS COMPLETE',
+      reason: `Completed ${active.setsToWin} sets. Under this ruleset that ends the game `
+        + 'the moment it happens — there was no window to break it.',
+    };
+  }
   return {
     title: mine ? 'MISSION ACCOMPLISHED' : `${seatName(winner)} WINS`,
     tag: 'FINAL APPROACH HELD',
-    reason: `Held ${SETS_TO_WIN} complete sets through a full turn cycle and converted at `
-      + 'their own turn start. Nobody broke the approach.',
+    reason: `Held ${active.setsToWin} complete sets through the whole grace window and `
+      + 'converted at their own turn start. Nobody broke the approach.',
   };
 }
 
@@ -223,6 +240,12 @@ function renderWin(payload) {
     summary.appendChild(boardRow(player, { points: !!copy.points, winner: snap.winner }));
   }
 
+  // §P8 recap: "how did that actually go?" — the turning points, and, if this
+  // player was ever armed, what happened to that approach. Built from the
+  // accumulated event journal, not from the 40-line prose tail.
+  const recap = journal.recap();
+  if (recap) summary.appendChild(recap);
+
   const stats = snap.stats;
   if (stats) {
     summary.appendChild(el('div', {
@@ -249,6 +272,8 @@ export function mount() {
   help.mount();
   settings.mount();
   hints.mount();
+  discard.mount();
+  journal.mount();
 
   pointer.registerActions({
     help: () => help.show(),

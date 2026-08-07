@@ -32,7 +32,7 @@
 import { $, el, clear, setClass } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
-import { getNode } from '../table/cardnode.js';
+import { getNode, buildFace } from '../table/cardnode.js';
 import { cardName, cardText, kindLabel, opsecFlag } from '../core/cards.js';
 import * as sel from '../state/selectors.js';
 import { contextRows } from './details.js';
@@ -74,7 +74,20 @@ function container() {
 function faceOf(card) {
   if (faceRenderer) return faceRenderer(card);
   const live = getNode(card.id);
-  if (!live) return null;
+  // A card with no live node is not a card with no face: table/reconcile()
+  // forgets every discard past DISCARD_VISIBLE, and ui/discard.js renders those
+  // from the same builder. Peeking one used to produce a body with no card at
+  // all. Same renderer, so it cannot drift from the table either way.
+  if (!live) {
+    const fresh = el('div', { class: 'card is-peek', attrs: { 'data-facing': 'up' },
+      dataset: { type: card.type || 'unknown' } });
+    fresh.appendChild(el('div', { class: 'card-inner' }, [buildFace(card)]));
+    const color = card.placedColor || card.color
+      || (card.colors && card.colors[0] !== 'any' ? card.colors[0] : null);
+    if (color) fresh.setAttribute('data-color', color);
+    if (card.action) fresh.setAttribute('data-action-kind', card.action);
+    return fresh;
+  }
   const copy = live.cloneNode(true);
   copy.removeAttribute('data-card-id');
   copy.removeAttribute('data-targetable');
@@ -198,13 +211,20 @@ export function isOpen() { return !!showing; }
 
 /* ── wiring ────────────────────────────────────────────────────────────── */
 
+/** `[data-peek-card]` is the identity-free hook: ui/discard.js renders real
+ *  card faces that deliberately carry no `data-card-id` (§0.4 — one node per
+ *  id), and they must still be readable on hover. */
 function cardUnder(target) {
   const el2 = target instanceof Element ? target : null;
-  return el2 ? el2.closest('[data-card-id]') : null;
+  return el2 ? el2.closest('[data-card-id],[data-peek-card]') : null;
+}
+
+function peekId(node) {
+  return Number(node.getAttribute('data-card-id') ?? node.getAttribute('data-peek-card'));
 }
 
 function armHover(node) {
-  const id = Number(node.getAttribute('data-card-id'));
+  const id = peekId(node);
   if (!Number.isInteger(id)) return;
   if (showing === id) return;
   clearTimeout(inTimer);

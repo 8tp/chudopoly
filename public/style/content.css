@@ -450,17 +450,61 @@
 .hud { flex-wrap: wrap; }
 .hud-mid { flex: 1 1 0; }
 
+/* ── the row is RESERVED, never grown (P8) ──────────────────────────────────
+   MEASURED before this: arming moved #opponents from y62→y100 (desktop),
+   y59→y101 (phone), y56→y84 (landscape) and shrank the opponents strip
+   147→118 / 209→132 / 217→190 — four times a game, at the exact moment the
+   player is being told to read the table. And it was unbounded: three armed
+   players + the attrition chip measured a 589px-tall strip inside a 651px-tall
+   #hud on a 390px phone.
+
+   `height` (not min-height) plus a two-line clamp on the sentence makes the box
+   a constant, and `.is-empty` keeps that constant in the layout with the paint
+   turned off — ui/hud.js never sets `hidden` on it, because `display:none` is
+   what made the felt jump. Cost: a permanently reserved band, measured
+   28px desktop / 34px phone / 22px landscape (see .hud-strip height below). */
 .hud-strip {
   flex: 1 1 100%;
   display: flex;
   align-items: center;
   gap: .45em;
   min-width: 0;
+  /* ONE line of .strip-text (.72em × 1.25 line-height = .9em) + padding.
+     Fixed, so no amount of content can move the felt — and ONE line, because a
+     two-line reserve measurably squeezed the rest of the table: 34px on a
+     390px phone against 21px here. ui/hud.js stripLine() is written to this
+     budget and tools/lib/audit.mjs's clipped-text pass gates the claim. */
+  height: calc(.9em + .56em);
   padding: .28em .5em;
   margin-top: .18em;
+  overflow: hidden;
   border-radius: var(--radius);
   background: linear-gradient(180deg, rgba(31, 51, 80, .8), rgba(9, 18, 32, .9));
   box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .16);
+}
+.hud-strip.is-empty {
+  /* still occupies its box — that is the entire point */
+  visibility: hidden;
+  pointer-events: none;
+}
+/* LANDSCAPE PHONE TAKES THE JUMP, DELIBERATELY. 844×390 is the one viewport
+   with no vertical slack at all: at HEAD `.self-board` is 77px there, and
+   reserving even a single 17px row took it to 54 and dragged the property
+   cards to 31px — under §0.9's 44px floor, which tools/touchtest.mjs failed on.
+   So in landscape ONLY the strip floats over the top of the felt instead of
+   reserving a row: the arming beat still shifts what is UNDER it there, and
+   that is the stated trade. Same query table.css uses for its landscape pass. */
+@media (orientation: landscape) and (max-height: 560px) and (max-width: 1024px) {
+  .hud { position: relative; }
+  .hud-strip {
+    position: absolute;
+    left: .5em;
+    right: .5em;
+    top: 100%;
+    height: auto;
+    margin-top: 0;
+    z-index: 8;
+  }
 }
 .hud-strip.is-threat {
   background: linear-gradient(180deg, rgba(122, 26, 20, .72), rgba(30, 8, 6, .9));
@@ -491,6 +535,10 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(208, 52, 44, .55); }
   50%      { box-shadow: 0 0 0 .3em rgba(208, 52, 44, 0); }
 }
+/* Two lines, hard. tools/lib/audit.mjs exempts a line-clamped box from the
+   clipped-text gate precisely because a clamp is a decision, not a rendering
+   accident — the full sentence is on the row's `title` and one tap away in the
+   brief's Goal page. */
 .strip-text {
   flex: 1 1 8em;
   min-width: 0;
@@ -498,10 +546,14 @@
   font-weight: 700;
   line-height: 1.25;
   color: var(--ink-100);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
-.strip-who b { color: var(--danger-lit); }
+.strip-text b, .strip-who b { color: var(--danger-lit); }
+.hud-strip.is-mine .strip-text b { color: var(--gold-hi); }
 .hud-strip.is-mine .strip-who b { color: var(--gold-hi); }
 .strip-sep { color: var(--steel-400); }
 .chip.strip-chip { flex: 0 0 auto; font-size: .62em; }
@@ -904,3 +956,339 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   .op-who { flex-basis: 3.6em; }
   .settings-label { flex-basis: 4.2em; }
 }
+
+/* ── discard browser (ui/discard.js) ──────────────────────────────────────
+   The pile grid is sized so a phone shows FIVE cards per row at ≥58px wide —
+   measured against §0.9's 44px floor with the 8px gutter, which is why the
+   card is the tap target and not a 28px mini. A 60-card pile is then twelve
+   rows of scroll instead of a wall of unreadable thumbnails. */
+
+.pile.is-openable { cursor: pointer; }
+.pile.is-openable:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 6px; }
+@media (hover: hover) {
+  .pile.is-openable:hover .pile-label { color: var(--gold-hi); }
+}
+
+.dv { --card-w: clamp(52px, 15vw, 76px); }
+.dv-panel { display: flex; flex-direction: column; gap: .4em; min-width: 0; }
+.dv-tab-n {
+  margin-left: .4em;
+  font-variant-numeric: tabular-nums;
+  color: var(--steel-300);
+}
+.brief-tab.is-on .dv-tab-n { color: inherit; }
+
+.dv-filters { display: flex; flex-wrap: wrap; gap: .3em; }
+.chip.dv-chip {
+  cursor: pointer;
+  min-height: calc(var(--tap) * .7);
+  padding: .3em .6em;
+  font-size: .66em;
+}
+.chip.dv-chip.is-on { color: var(--gold-ink); background: var(--foil); border-color: var(--gold-mid); }
+.chip.dv-chip.is-none { opacity: .45; }
+.chip.dv-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.dv-count {
+  margin: 0;
+  font-size: .66em;
+  letter-spacing: var(--micro-track);
+  color: var(--steel-300);
+}
+
+.dv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr));
+  gap: .5em;
+  align-items: start;
+  /* room for the NEWEST badge, which sits .45em above the first card */
+  padding-top: .55em;
+}
+.dv-card {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* §0.9: the CARD is the target, so the card must clear 44px on its short
+     axis. --card-w bottoms out at 52px and the 5:7 ratio makes it 72px tall. */
+  min-width: var(--card-w);
+}
+.dv-card .card { width: 100%; margin: 0; }
+.dv-card:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 6px; }
+.dv-card.is-reading .card { box-shadow: 0 0 0 2px var(--gold), var(--lift-2); }
+@media (hover: hover) {
+  .dv-card:hover .card { box-shadow: 0 0 0 2px var(--gold-dim), var(--lift-2); }
+}
+.dv-newest {
+  position: absolute;
+  left: 50%;
+  /* on the CARD, not under the button — the name caption now owns the space
+     below and the badge was landing behind it */
+  top: -.45em;
+  transform: translateX(-50%);
+  padding: .05em .35em;
+  border-radius: 2px;
+  font-size: .5em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  color: var(--gold-ink);
+  background: var(--foil);
+  white-space: nowrap;
+}
+
+.dv-reader:empty { display: none; }
+.dv-reader {
+  display: flex;
+  flex-direction: column;
+  gap: .4em;
+  padding: .5em;
+  border-radius: var(--radius);
+  background: rgba(3, 9, 18, .5);
+  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .18);
+}
+.dv-reader .card { width: calc(var(--card-w) * 1.9); align-self: center; }
+.dv-reader-head { display: flex; align-items: center; justify-content: space-between; gap: .4em; }
+.dv-reader-name { font-weight: 900; font-size: .84em; color: var(--gold-hi); }
+
+.dv-rows { display: flex; flex-direction: column; margin-bottom: .3em; }
+.dv-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: .5em;
+  padding: .3em .1em;
+  font-size: .74em;
+  border-bottom: var(--hairline) solid rgba(143, 160, 186, .12);
+}
+.dv-row:last-child { border-bottom: 0; }
+.dv-row-name { display: flex; align-items: center; gap: .35em; min-width: 0; color: var(--ink-100); }
+.dv-row-gone,
+.dv-row-live {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.dv-row-gone { color: var(--steel-300); font-weight: 700; }
+.dv-row.is-spent .dv-row-gone { color: var(--warn); }
+.dv-row-live { color: #9ff0c1; min-width: 4.4em; text-align: right; }
+.dv-row-live.is-out { color: var(--danger-lit); }
+.dv-row.is-dead .dv-row-name { color: var(--steel-300); }
+
+/* ── discard-to-limit: the confirm state is unmistakable (§P8) ────────────
+   `.is-refusing` (above) is what "live, but it will say no" looks like; this is
+   its opposite number, so the two are never a coin toss at a glance. The button
+   is still never `disabled` — the refusal has to be able to speak. */
+.btn.btn-primary.is-ready {
+  box-shadow: 0 0 0 2px var(--gold), 0 0 14px rgba(232, 185, 85, .4), var(--rim);
+}
+.chip.total.is-over {
+  border-color: var(--danger);
+  color: var(--danger-lit);
+  background: linear-gradient(180deg, rgba(208, 52, 44, .3), rgba(90, 18, 14, .3));
+}
+
+/* ── the game record (ui/journal.js) ─────────────────────────────────────
+   The drawer feed and the full log sheet share one beat row so the two can
+   never disagree about what a turning point looks like. Weight is carried by
+   the left rail and the mark glyph, never by hue alone (§0.9 contrast, and the
+   colourblind channel ART-DIRECTION §1 asks for). */
+
+/* §0.9 floor. Measured at .72×--tap: 49×32, which tools/touchtest.mjs flagged
+   in the side panel. The type stays small; the box does not. */
+.jr-open { font-size: .68em; min-height: var(--tap); padding: 0 .7em; }
+
+.jr-beat {
+  display: flex;
+  align-items: flex-start;
+  gap: .45em;
+  padding: .26em .4em .26em .35em;
+  border-bottom: var(--hairline) solid rgba(143, 160, 186, .1);
+  border-left: 3px solid transparent;
+  color: var(--ink-300);
+}
+.jr-beat:last-child { border-bottom: 0; }
+.jr-mark {
+  flex: 0 0 auto;
+  width: 1.1em;
+  text-align: center;
+  font-weight: 900;
+  color: var(--steel-400);
+  line-height: 1.45;
+}
+.jr-body { flex: 1 1 auto; min-width: 0; }
+.jr-text { display: block; line-height: 1.4; overflow-wrap: anywhere; }
+.jr-turn {
+  flex: 0 0 auto;
+  font-size: .78em;
+  font-variant-numeric: tabular-nums;
+  color: var(--steel-500);
+}
+
+/* routine keeps the old log's weight; attacks lift; turning points shout */
+.jr-beat.is-attack { color: var(--ink-100); border-left-color: rgba(143, 160, 186, .35); }
+.jr-beat.is-attack .jr-mark { color: var(--info); }
+.jr-beat.is-turn {
+  color: var(--ink-100);
+  font-weight: 700;
+  border-left-color: var(--gold);
+  background: linear-gradient(90deg, rgba(232, 185, 85, .12), transparent 65%);
+}
+.jr-beat.is-turn .jr-mark { color: var(--gold-hi); }
+.jr-beat.is-mine { box-shadow: inset 2px 0 0 var(--band, var(--steel-300)); }
+.jr-beat.is-alarm {
+  border-left-color: var(--danger);
+  background: linear-gradient(90deg, rgba(208, 52, 44, .22), transparent 65%);
+}
+.jr-beat.is-alarm .jr-mark { color: var(--danger-lit); }
+
+.jr-cards { display: flex; flex-wrap: wrap; gap: .25em; margin-top: .22em; }
+.jr-card {
+  display: inline-flex;
+  align-items: center;
+  gap: .3em;
+  padding: .16em .45em;
+  border: var(--hairline) solid rgba(143, 160, 186, .3);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .34);
+  color: var(--ink-100);
+  font-size: .82em;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: calc(var(--tap) * .62);
+}
+.jr-card:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (hover: hover) {
+  .jr-card:hover { border-color: var(--gold-mid); color: var(--gold-hi); }
+}
+
+.jr-panel { display: flex; flex-direction: column; gap: .4em; min-width: 0; }
+.jr-list { display: flex; flex-direction: column; }
+.jr-prose {
+  padding: .24em 0 .24em .5em;
+  border-left: 2px solid rgba(143, 160, 186, .2);
+  font-size: .78em;
+  line-height: 1.4;
+  color: var(--ink-300);
+}
+.jr-reader:empty { display: none; }
+.jr-reader {
+  display: flex;
+  flex-direction: column;
+  gap: .4em;
+  padding: .5em;
+  border-radius: var(--radius);
+  background: rgba(3, 9, 18, .5);
+  box-shadow: inset 0 0 0 1px rgba(143, 160, 186, .18);
+}
+.jr-reader .card { width: calc(var(--card-w) * 1.9); align-self: center; }
+
+/* the win-screen recap */
+.jr-recap { display: flex; flex-direction: column; gap: .35em; margin: .5em 0 .2em; text-align: left; }
+.jr-recap-head {
+  font-size: .64em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  color: var(--steel-300);
+}
+.jr-approach {
+  margin: 0;
+  padding: .5em .6em;
+  border-radius: var(--radius);
+  font-size: .78em;
+  line-height: 1.4;
+  border-left: 3px solid var(--steel-400);
+  background: rgba(0, 0, 0, .34);
+}
+.jr-approach.is-good { border-left-color: var(--gold); color: var(--ink-100); }
+.jr-approach.is-good b { color: var(--gold-hi); }
+.jr-approach.is-bad { border-left-color: var(--danger); color: var(--ink-100); }
+.jr-approach.is-bad b { color: var(--danger-lit); }
+.jr-list.is-recap { font-size: .78em; max-height: 10em; overflow-y: auto; scrollbar-width: thin; }
+.jr-more { font-size: .74em; align-self: flex-start; }
+
+/* ── the announcement: a beat you cannot miss (§P8) ──────────────────────
+   The owner lost a final approach and could not tell that it had been broken.
+   The drawer is closed by default, so the disarm gets its own full-width slab
+   over the felt. Inert to the pointer: it must never eat a tap meant for a
+   card underneath it. */
+.announce {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top) + 5.6em);
+  transform: translateX(-50%) translateY(-.5em);
+  z-index: 74;
+  display: flex;
+  align-items: center;
+  gap: .6em;
+  width: min(30em, 94vw);
+  padding: .55em .8em;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(20, 33, 54, .97), rgba(6, 12, 22, .98));
+  box-shadow: 0 0 0 1px rgba(143, 160, 186, .3), var(--lift-2);
+  opacity: 0;
+  transition: opacity .18s ease, transform .24s cubic-bezier(.18, 1.5, .4, 1);
+  pointer-events: none;
+}
+.announce.is-in { opacity: 1; transform: translateX(-50%) translateY(0); }
+.announce-flag {
+  flex: 0 0 auto;
+  padding: .28em .55em;
+  border-radius: 3px;
+  font-size: .64em;
+  font-weight: 900;
+  letter-spacing: var(--micro-track);
+  background: rgba(0, 0, 0, .4);
+  color: var(--ink-100);
+  white-space: nowrap;
+}
+.announce-text { font-size: .78em; font-weight: 700; line-height: 1.35; color: var(--ink-100); }
+.announce.is-bad {
+  background: linear-gradient(180deg, rgba(122, 26, 20, .96), rgba(30, 8, 6, .98));
+  box-shadow: 0 0 0 1px rgba(255, 145, 132, .5), 0 0 26px rgba(208, 52, 44, .35), var(--lift-2);
+}
+.announce.is-bad .announce-flag { background: var(--danger); color: #fff; }
+.announce.is-mine,
+.announce.is-good {
+  background: linear-gradient(180deg, rgba(125, 90, 24, .8), rgba(20, 14, 3, .97));
+  box-shadow: 0 0 0 1px var(--gold-mid), 0 0 26px rgba(232, 185, 85, .3), var(--lift-2);
+}
+.announce.is-mine .announce-flag,
+.announce.is-good .announce-flag { background: var(--foil); color: var(--gold-ink); }
+@media (prefers-reduced-motion: reduce) {
+  /* §0.9: motion collapses to a fade; the message itself does not go quiet. */
+  .announce { transition: opacity .18s ease; transform: translateX(-50%); }
+  .announce.is-in { transform: translateX(-50%); }
+}
+
+/* OVERRIDE 5 — the win box must be able to scroll.
+   ui.css gives `.win-box` no max-height. MEASURED after the P8 recap was added
+   to it: 787px tall in a 720px desktop viewport and 713px in an 844px phone —
+   i.e. on desktop the Rematch and Leave room buttons were below the fold with
+   no way to reach them. `.jr-list.is-recap` is already capped at 10em; this is
+   the outer promise that the ceremony can never push its own controls off
+   screen, at five players with stats and a long recap. */
+.win-box {
+  max-height: calc(100vh - 2em);
+  max-height: calc(100dvh - 2em);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* The card's NAME, under its mini face. At the mini tier table.css degrades the
+   face to band + art + coin, so eleven discarded actions all read "ACTION 3M"
+   (measured on discard-pile@phone) and the pile answered none of the questions
+   it exists for. Two lines, then it wraps — nothing truncates. */
+.dv-name {
+  display: block;
+  margin-top: .2em;
+  font-size: .58em;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--ink-300);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.dv-card.is-reading .dv-name { color: var(--gold-hi); }

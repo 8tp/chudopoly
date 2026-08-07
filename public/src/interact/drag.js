@@ -15,7 +15,9 @@
 
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
-import { setAttr, setStyle, setClass, qsa, prefersReducedMotion } from '../core/dom.js';
+import { el as mkEl, setAttr, setStyle, setClass, qsa, prefersReducedMotion } from '../core/dom.js';
+import { subscribe } from '../core/clock.js';
+import { clamp, damp } from '../core/math.js';
 import * as table from '../table/index.js';
 import * as pointer from './pointer.js';
 
@@ -45,12 +47,43 @@ function cueAt(kind, el) {
 const LIFT_RATIO = 0.62;    // of card height — a 5:7 card at 62% clears an adult thumb
 const MOUSE_LIFT = 8;       // a cursor hides nothing; just enough to read as "held"
 const SCALE = 1.06;
-const SPRING_MS = 200;
+// ART §4: invalid drops "lerp home over 260ms, never teleport", settle
+// `250ms cubic-bezier(.22,1,.36,1)`. anim/flight.js solves that exact bezier
+// (settleEase); this is the CSS fallback for the board→board case flight.js is
+// not asked to handle, so it names the same curve.
+const SPRING_MS = 260;
+const SPRING_EASE = 'cubic-bezier(.22, 1, .36, 1)';
 const COMMIT_HOLD_MS = 900;  // an accepted drop keeps its offset this long, then
                              // gives up on the server and springs home anyway
 
+/* ── weight: the card lags the finger, a little ────────────────────────────
+ *
+ * Owner (P8): "better feedback for dragging cards … it should feel like it has
+ * mass". table.dragCard() already supplies the ART §4 pose channel (velocity
+ * lean `v*6deg` and `scaleX(1+|v|*0.08)`); this is the positional half.
+ *
+ * NOT a spring. A spring that TRACKS a moving target sits a constant
+ * damping/stiffness × velocity behind it: at the ratified settle values
+ * (520/38) that is 38×900/520 = 66px of lag at a brisk 900px/s, which is not
+ * weight, it is a broken cursor. Exponential smoothing has lag = τ × velocity
+ * with no oscillation, so the number is chosen directly:
+ *
+ *   τ = 1/FOLLOW_LAMBDA = 22ms  →  13px behind at 600px/s (a deliberate drag),
+ *                                  20px at 900px/s (a flick), and it closes to
+ *                                  under a pixel in ~100ms once the finger
+ *                                  stops.
+ *
+ * The DROP is still resolved at the finger, never at the lagging card, so the
+ * lag can never cost the player a target (drag.resolve / the landing ghost both
+ * take the pointer position). anim/flight.js's own comment argues against
+ * interposing a tween between finger and card; 22ms is deliberately at the
+ * bottom of what reads as mass, and §0.9 turns it off entirely.
+ */
+const FOLLOW_LAMBDA = 45;   // 1/s → τ ≈ 22ms
+
 let api = null;
 let live = null;             // the active drag, or null
+let unfollow = null;         // clock unsubscribe for the follow loop
 
 export function mount(machineApi) {
   api = machineApi;
@@ -102,16 +135,21 @@ function dragStart(cardId, node, press) {
   if (!plan) return false;                       // not draggable right now
 
   const rect = node.getBoundingClientRect();
+  const lift = press.pointerType === 'touch' ? Math.round(rect.height * LIFT_RATIO) : MOUSE_LIFT;
+  // The hand is a fan: every card rests at a NON-ZERO --fx/--fy/--tilt
+  // (table/hand.js). A drag is a delta on that pose, never an absolute one,
+  // or the card jumps to the fan's centre the moment it is picked up.
+  const rx = restVar(node, '__rx', '--fx');
+  const ry = restVar(node, '__ry', '--fy');
   live = {
-    cardId, node, plan,
-    lift: press.pointerType === 'touch' ? Math.round(rect.height * LIFT_RATIO) : MOUSE_LIFT,
-    // The hand is a fan: every card rests at a NON-ZERO --fx/--fy/--tilt
-    // (table/hand.js). A drag is a delta on that pose, never an absolute one,
-    // or the card jumps to the fan's centre the moment it is picked up.
-    rx: restVar(node, '__rx', '--fx'),
-    ry: restVar(node, '__ry', '--fy'),
+    cardId, node, plan, lift, rx, ry,
+    // target (finger) vs shown (lagging) offset — see FOLLOW_LAMBDA.
+    tx: rx, ty: ry - lift,
+    sx: rx, sy: ry - lift,
+    px: 0, py: 0,                                // last pointer position
     snap: press.pointerType === 'touch' ? SNAP_TOUCH : SNAP_MOUSE,
     hover: null,
+    ghost: null,
   };
 
   clearTimeout(node.__dragTimer);
@@ -120,18 +158,73 @@ function dragStart(cardId, node, press) {
   document.body.classList.add('is-dragging-card');
   setStyle(node, '--fs', String(SCALE));
 
+  // THE CARD RIDES ABOVE THE TABLE. table.liftCard() opens every clipping
+  // ancestor the card sits inside (hand zone → dock → board → felt), refcounted
+  // and restored with its scroll offsets on release, takes the card out of the
+  // fan so the gap closes behind it, and retracts + flattens the hand to open
+  // the lane (ART §5.5). Without this call the held card is drawn inside a
+  // `overflow:hidden` box and z-index 60 cannot save it — measured: a hand card
+  // dragged at the top of its arc was clipped by #hand-dock.
+  table.liftCard(cardId, { fan: plan.source === 'hand' });
+
   // No pickup cue here: press() already fired it at pointerdown, ~380ms earlier
   // in a real drag. Two cues for one grab read as a stutter.
   // rank 2 is the whole felt — marking it "1" would draw a dashed outline round
   // the entire table, so it is marked and styled separately.
   for (const t of plan.targets) setAttr(t.el, 'data-droppable', t.rank === 2 ? '2' : '1');
+  markIllegal(plan);
+  markSource(plan);
+  if (!unfollow && !prefersReducedMotion()) unfollow = subscribe(follow);
   return true;
+}
+
+/**
+ * ART §5.1: "legal mats scale 1.04 + ring; ILLEGAL mats desaturate to 35% and
+ * drop a rung." Only the legal half existed. The illegal half is the half that
+ * answers "why is nothing happening when I aim here", so it is marked
+ * explicitly rather than left as the absence of a mark.
+ */
+function markIllegal(plan) {
+  if (!plan.myBoard) return;
+  const legal = new Set(plan.targets.map(t => t.el));
+  for (const col of plan.myBoard.querySelectorAll('.propcol')) {
+    if (!legal.has(col)) setAttr(col, 'data-drop-illegal', '1');
+  }
+}
+
+/** A wild leaving one of my own columns for another is an EXCHANGE, not a
+ *  teleport: the column it is leaving is marked so both ends of the move read
+ *  at once (owner: "hovering animation when swapping between them"). */
+function markSource(plan) {
+  if (plan.source !== 'board') return;
+  const node = live?.node;
+  const col = node?.closest?.('.propcol');
+  if (col) setAttr(col, 'data-drop-source', '1');
+}
+
+/** One frame of follow-the-finger. Two guarded writes, no allocation (§0.8). */
+function follow(dt) {
+  if (!live) return;
+  const step = dt > 0.05 ? 0.05 : dt;            // a backgrounded tab must not teleport
+  live.sx = damp(live.sx, live.tx, FOLLOW_LAMBDA, step);
+  live.sy = damp(live.sy, live.ty, FOLLOW_LAMBDA, step);
+  setStyle(live.node, '--fx', `${Math.round(live.sx)}px`);
+  setStyle(live.node, '--fy', `${Math.round(live.sy)}px`);
 }
 
 function dragMove(dx, dy, x, y) {
   if (!live) return;
-  setStyle(live.node, '--fx', `${Math.round(live.rx + dx)}px`);
-  setStyle(live.node, '--fy', `${Math.round(live.ry + dy - live.lift)}px`);
+  live.tx = live.rx + dx;
+  live.ty = live.ry + dy - live.lift;
+  live.px = x; live.py = y;
+  if (!unfollow) {                                // reduced motion: glued, no lag
+    live.sx = live.tx; live.sy = live.ty;
+    setStyle(live.node, '--fx', `${Math.round(live.sx)}px`);
+    setStyle(live.node, '--fy', `${Math.round(live.sy)}px`);
+  }
+  // The pose (velocity lean + stretch), the unclip refresh and the hand's
+  // open/close as the card comes back over the fan all live in table/.
+  table.dragCard(live.cardId, x, y);
   hover(resolve(x, y));
 }
 
@@ -143,16 +236,35 @@ function restVar(node, prop, cssVar) {
   return Number.isFinite(v) ? v : 0;
 }
 
+/** Everything a drag put on the page, taken back off it. One place, because
+ *  three call sites (drop, cancel, revalidate) all have to undo the same set. */
+function teardown() {
+  if (!live) return;
+  const { node, plan } = live;
+  hover(null);
+  clearGhost();
+  for (const t of plan.targets) setAttr(t.el, 'data-droppable', null);
+  if (plan.myBoard) {
+    for (const c of plan.myBoard.querySelectorAll('[data-drop-illegal]')) {
+      c.removeAttribute('data-drop-illegal');
+    }
+  }
+  for (const c of qsa('[data-drop-source]')) c.removeAttribute('data-drop-source');
+  node.classList.remove('is-dragging');
+  node.style.transition = '';                  // hand the transform back to the flight engine
+  document.body.classList.remove('is-dragging-card');
+  if (unfollow) { unfollow(); unfollow = null; }
+}
+
 function dragEnd(x, y) {
   if (!live) return;
   const hit = resolve(x, y);
   const { node, cardId, plan } = live;
-  hover(null);
-  for (const t of plan.targets) setAttr(t.el, 'data-droppable', null);
-  node.classList.remove('is-dragging');
-  node.style.transition = '';                  // hand the transform back to the flight engine
-  document.body.classList.remove('is-dragging-card');
+  teardown();
   live = null;
+  // The clipping chain stays open on a tail timer (table.releaseCard) so the
+  // flight the drop is about to start is not cut off at the zone's edge.
+  table.releaseCard(cardId, { accepted: !!hit });
 
   const accepted = hit ? api.dropCommit(cardId, hit.drop) : false;
   if (accepted) {
@@ -168,12 +280,9 @@ function dragEnd(x, y) {
 function dragCancel() {
   if (!live) return;
   const { node, cardId, plan } = live;
-  hover(null);
-  for (const t of plan.targets) setAttr(t.el, 'data-droppable', null);
-  node.classList.remove('is-dragging');
-  node.style.transition = '';                  // hand the transform back to the flight engine
-  document.body.classList.remove('is-dragging-card');
+  teardown();
   live = null;
+  table.releaseCard(cardId, { accepted: false });
   springBack(node, cardId, plan.source);
 }
 
@@ -207,6 +316,20 @@ function dragCancel() {
 const SNAP_MOUSE = 120;
 const SNAP_TOUCH = 90;
 
+/* ── magnetic snap: it snaps early and it STAYS (ART §5.2) ─────────────────
+ *
+ * "invisible hit radius 48px beyond visual bounds; snaps early and stays."
+ * The radius was already generous (90/120) but it was RE-DECIDED from scratch
+ * on every pointermove, so a finger sitting on the boundary between two columns
+ * flickered the highlight — and, worse, the target could change between the
+ * last move and the release. Once a target is held it keeps the drop until the
+ * pointer is HOLD_SLACK past the radius that won it, or until the pointer is
+ * standing inside a different precise target (containment always wins).
+ * 48 is the ratified number and it is the slack, not the radius: it is what a
+ * thumb wobbles by while it decides.
+ */
+const HOLD_SLACK = 48;
+
 /** Distance from a point to a rect: 0 inside, edge distance outside. */
 function rectDist(r, x, y) {
   const dx = Math.max(r.left - x, 0, x - r.right);
@@ -236,6 +359,14 @@ function resolve(x, y) {
   // 1 — standing inside a precise target.
   if (best && dist === 0) return best;
 
+  // 1b — HYSTERESIS. Nothing is standing inside anything, so the target that
+  // is already committed keeps the drop while the pointer is anywhere near it.
+  const held = live.hover ? live.plan.targets.find(t => t.el === live.hover) : null;
+  if (held && held.rank === 0) {
+    const r = held.el.getBoundingClientRect();
+    if ((r.width || r.height) && rectDist(r, x, y) <= live.snap + HOLD_SLACK) return held;
+  }
+
   // 2 — standing inside a region: route to the nearest precise target it holds.
   const el = document.elementFromPoint(x, y);
   const hitEl = el && el.closest ? el.closest('[data-droppable="1"]') : null;
@@ -259,11 +390,50 @@ function resolve(x, y) {
 }
 
 function hover(hit) {
-  const el = hit ? hit.el : null;
-  if (!live || live.hover === el) return;
+  const target = hit ? hit.el : null;
+  if (!live || live.hover === target) return;
   if (live.hover) setClass(live.hover, 'is-drop-hover', false);
-  live.hover = el;
-  if (el) setClass(el, 'is-drop-hover', true);
+  live.hover = target;
+  if (target) setClass(target, 'is-drop-hover', true);
+  placeGhost(hit);
+}
+
+/* ── the landing silhouette (ART §5.3) ─────────────────────────────────────
+ *
+ * "dashed card ghost at the exact final position and rotation." Only rank-0
+ * targets get one: a ghost inside #table ("play it, I'll aim later") would be a
+ * dashed card in the middle of the felt promising a place the card is not going.
+ *
+ * It is appended to the TARGET, never to a `.cardzone`: table/index.js's
+ * reconcile orders and counts a zone's element children (orderChildren,
+ * syncBacks), and a foreign node inside one would be counted as a card. A
+ * `.propcol` holds the head, the cardzone and the upgrades zone, so it is the
+ * safe host — and it is the box the player is aiming at anyway.
+ */
+function ghostEl() {
+  if (!live) return null;
+  if (!live.ghost) live.ghost = mkEl('div', { class: 'drop-ghost', attrs: { 'aria-hidden': 'true' } });
+  return live.ghost;
+}
+
+function placeGhost(hit) {
+  if (!live) return;
+  const g = live.ghost;
+  if (!hit || hit.rank !== 0) { if (g?.parentNode) g.parentNode.removeChild(g); return; }
+  const host = hit.el.classList.contains('cardzone') ? (hit.el.parentElement || hit.el) : hit.el;
+  const ghost = ghostEl();
+  if (ghost.parentNode !== host) host.appendChild(ghost);
+  // The rest pose in every drop target is (0,0,0deg) — table/reconcile calls
+  // setRest(node,0,0,0) for every zone except the hand and the discard, neither
+  // of which is ever a drop target. So "the exact final rotation" is upright,
+  // and saying so beats inventing a tilt the card will not land at.
+  setClass(ghost, 'is-on', true);
+}
+
+function clearGhost() {
+  const g = live?.ghost;
+  if (g?.parentNode) g.parentNode.removeChild(g);
+  if (live) live.ghost = null;
 }
 
 /* ── landing ───────────────────────────────────────────────────────────── */
@@ -296,7 +466,7 @@ function springBack(node, cardId, source) {
   }
   if (handled) { watchdog(node); return; }
 
-  node.style.transition = `transform ${SPRING_MS}ms cubic-bezier(.18,1.15,.4,1)`;
+  node.style.transition = `transform ${SPRING_MS}ms ${SPRING_EASE}`;
   setStyle(node, '--fx', `${homeX(node)}px`);
   setStyle(node, '--fy', `${homeY(node)}px`);
   setStyle(node, '--fs', '1');

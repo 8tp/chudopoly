@@ -11,41 +11,25 @@ import * as send from '../net/send.js';
 import { store } from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
 import * as table from '../table/index.js';
+import * as journal from './journal.js';
 
 const MAX_CHAT = 50;
 let scope = 'room';
-let tail = [];
 
-/**
- * getPlayerView sends only the LAST N log lines (game.js LOG_TAIL), so "append
- * everything past the count I already rendered" freezes the log the moment the
- * game passes N lines. Instead: find the longest suffix of what we have
- * rendered that is a prefix of what arrived, and append the remainder.
+/* ── the Mission Log moved (P8) ───────────────────────────────────────────
  *
- * `tail` must keep the WHOLE received window, not a fixed 20: the engine agent
- * raised LOG_TAIL from 20 to 40 in this same round, and a client that
- * remembered only the last 20 of a 40-line window found no overlap at all and
- * re-appended every line — 20 duplicates per broadcast.
+ * This file used to append `game.log` prose into #log, matching the longest
+ * suffix of what it had rendered against the arriving 40-line window. That
+ * whole mechanism is gone: ui/journal.js now owns #log and builds it from the
+ * STRUCTURED event stream (§4) instead, which is what lets a set completion
+ * look different from a bank, lets the cards in a line be inspected, and lets
+ * the record survive past the tail the server sends.
+ *
+ * The prose window is not lost — journal.js's "Transcript" tab renders
+ * `store.snapshot.log` verbatim, which is the one place prose still wins.
+ * Chat, emotes and the software-keyboard handling stay here; they were never
+ * part of the log.
  */
-function renderLog() {
-  const box = $('log');
-  const lines = store.snapshot?.log || [];
-  if (!box) return;
-  let start = 0;
-  for (let k = Math.min(tail.length, lines.length); k > 0; k--) {
-    let match = true;
-    for (let i = 0; i < k; i++) {
-      if (tail[tail.length - k + i] !== lines[i]) { match = false; break; }
-    }
-    if (match) { start = k; break; }
-  }
-  for (let i = start; i < lines.length; i++) {
-    box.appendChild(el('div', { class: 'log-line', text: lines[i] }));
-  }
-  tail = lines.slice();
-  while (box.childElementCount > 120) box.removeChild(box.firstChild);
-  box.scrollTop = box.scrollHeight;
-}
 
 function renderChat() {
   const box = $('chat-msgs');
@@ -155,7 +139,6 @@ export function mount() {
     document.querySelector('[data-action="send-chat"]')?.click();
   });
 
-  bus.on(EVENTS.STATE_APPLIED, renderLog);
   bus.on(EVENTS.CHOREO_EVENT, (ev) => { if (ev.t === 'game_start') resetLog(); });
   bus.on(EVENTS.NET_CHAT, (msg) => pushChat(msg.msg));
   bus.on(EVENTS.NET_CHAT_HISTORY, (msg) => {
@@ -166,4 +149,4 @@ export function mount() {
   bus.on(EVENTS.NET_EMOTE, (msg) => floatEmote(msg.playerId, msg.name, msg.text));
 }
 
-export function resetLog() { tail = []; clear($('log')); }
+export function resetLog() { journal.reset(); clear($('log')); }

@@ -127,9 +127,27 @@ function render() {
     if (sel.hasOpsec()) items.push(button('opsec', 'OPSEC instead', 'respond-opsec'));
     items.push(approachWarning());
   } else if (mode.kind === 'discard') {
-    items.push(text('why', `${mode.hint} — ${mode.selected.size}/${mode.excess} chosen`));
-    items.push(button('confirm', 'Confirm discard', 'confirm-discard', 'btn btn-primary'));
-    items.push(button('cancel', 'Cancel', 'cancel-selection', 'btn btn-ghost'));
+    // §P8: the bar must say the number, show the running count, offer the
+    // one-tap default, and make the confirm's state unmistakable WITHOUT
+    // disabling it (§P7.3 — a disabled button cannot explain itself).
+    const need = mode.excess;
+    const have = mode.selected.size;
+    const why = interact.discardBlockedReason();
+    const over = have > need;
+    items.push(text('why',
+      `Over the hand limit by ${need}. Pick ${need} card${need === 1 ? '' : 's'} to throw away.`));
+    items.push(chip('count', `${have} / ${need} chosen`,
+      `chip total${why ? (over ? ' is-over' : '') : ' is-enough'}`));
+    items.push(button('confirm', why ? `Pick ${need}` : `Discard ${need}`, 'confirm-discard',
+      `btn btn-primary${why ? ' is-refusing' : ' is-ready'}`, why ? { title: why } : {}));
+    // The sensible default, one tap, still fully adjustable afterwards.
+    if (sel.myHand().length > need) {
+      items.push(button('auto', `Cheapest ${need}`, 'discard-cheapest', 'btn',
+        { title: 'Selects your lowest face-value cards, keeping properties and OPSEC back. '
+          + 'Adjust by tapping any card.' }));
+    }
+    if (have) items.push(button('clear', 'Clear', 'cancel-selection', 'btn btn-ghost'));
+    if (why) items.push(text('reason', why, 'prompt-why'));
   } else if (mode.kind === 'target') {
     items.push(text('why', mode.hint));
     items.push(button('cancel', 'Cancel', 'cancel-targeting', 'btn btn-ghost'));
@@ -213,6 +231,7 @@ export function mount() {
     'respond-opsec': () => { send.respond('opsec'); interact.reset(); },
     'begin-payment': () => interact.beginPayment(sel.owedAmount()),
     'pay-all': () => { interact.selectAllPayable(); interact.confirmPayment(); },
+    'discard-cheapest': () => interact.suggestDiscard(),
     'card-details': () => details.show(mode.card),
   });
   bus.on(EVENTS.UI_DETAILS, (cardId) => details.show(sel.findCard(cardId)));

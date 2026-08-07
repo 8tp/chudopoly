@@ -160,8 +160,14 @@ function context(card) {
 
 /* ── the sheet ───────────────────────────────────────────────────────────── */
 
-export function show(card) {
-  if (!card) return;
+/**
+ * The details CONTENT, without the sheet around it. Exported because the
+ * discard browser (ui/discard.js) has to read a card INSIDE an open sheet —
+ * openSheet() would replace the browser the player is standing in. Same body,
+ * same live context, so the inline reader and the sheet can never disagree.
+ */
+export function detailBody(card) {
+  if (!card) return null;
   const body = el('div', { class: 'details' });
   body.appendChild(el('p', { class: 'details-kind', text: kindText(card) }));
   body.appendChild(el('p', { class: 'details-rule', text: cardText(card) }));
@@ -192,6 +198,11 @@ export function show(card) {
 
   const why = sel.handCard(card.id) ? sel.blockedReason(card) : '';
   if (why) body.appendChild(el('p', { class: 'dt-why', text: why }));
+  return body;
+}
 
+export function show(card) {
+  const body = detailBody(card);
+  if (!body) return;
   openSheet(cardName(card), body);
 }

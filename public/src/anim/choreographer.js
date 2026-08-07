@@ -236,6 +236,30 @@ async function drain() {
  * updating for the rest of the game — the one failure the player cannot
  * recover from without a reload.
  */
+/* ── the two halves of one swap ────────────────────────────────────────────
+ * §3.5's atomic swap is TWO `move_property` events carrying `swapWith` (the
+ * OTHER card's id) and `swapHalf` (0 or 1). game.js emits them back to back and
+ * this could index `i + 1`, but it searches: the pair is identified by its own
+ * tags, so an engine that ever interleaves an overflow `banked_property`
+ * between them still finds its mate instead of firing at a stranger.
+ *
+ * `swapHalf === 0` is the only entry point, so a job whose tail begins at half
+ * 1 (a gap, a reconnect) plays that half alone rather than looking backwards
+ * for an event this client never received.
+ *
+ * @returns {number} index of the second half, or -1
+ */
+function swapMate(events, i) {
+  const ev = events[i];
+  if (!ev || ev.t !== 'move_property' || ev.swapHalf !== 0 || ev.swapWith == null) return -1;
+  for (let k = i + 1; k < events.length; k++) {
+    const other = events[k];
+    if (other && other.t === 'move_property' && other.swapHalf === 1
+      && other.swapWith === ev.card?.id && other.card?.id === ev.swapWith) return k;
+  }
+  return -1;
+}
+
 function safeApply(ev, snapshot, expected, animate) {
   try {
     applyEvent(ev, snapshot, expected, animate);
@@ -254,9 +278,37 @@ async function runJobAsync(job) {
   // time, because §0.9 collapses motion and keeps sound. Only the instant path
   // (harness, catch-up) is unperformed.
   const animate = true;
-  for (const ev of job.events) {
+  // Indices already played as the second half of a swap. A Set rather than a
+  // splice: `job.events` is the job's own record and the backpressure path
+  // re-reads it (collapse carries a dropped job's claims forward). Allocated
+  // per JOB, not per frame — §0.8's hot path is the tick, and this loop awaits.
+  const played = new Set();
+  for (let i = 0; i < job.events.length; i++) {
+    if (played.has(i)) continue;
+    const ev = job.events[i];
     safeApply(ev, job.snapshot, expected, animate);
     bus.emit(EVENTS.CHOREO_EVENT, ev);
+    // AN ATOMIC SWAP IS ONE BEAT. §3.5's swap emits TWO `move_property` events
+    // (game.js:2158) tagged `swapWith`/`swapHalf` rather than a new verb, so
+    // every consumer already renders it — but as two queue steps, which is not
+    // what it is. Both halves are applied in the SAME synchronous burst here
+    // and charged one step, and applyEvent gives them mirrored arcs (±34, the
+    // `swap`/TDY treatment) so the picture is two cards passing.
+    //
+    // Firing them together is also what §10's new invariant needs — "a swap
+    // changes no zone count and no set completion". Both counts are written by
+    // layout.paintBoard at the job-ending reconcile and never mid-flight, so no
+    // digit could ever flicker; what COULD be seen was the CARDS disagreeing
+    // with them. Two steps meant 220ms in which one mat visibly held n−1 and
+    // the other still held n — 13 frames at 60fps of a state the rules say does
+    // not exist. Now it is zero frames: the reparents are two statements in one
+    // task and the browser cannot paint between them.
+    const mate = swapMate(job.events, i);
+    if (mate >= 0) {
+      played.add(mate);
+      safeApply(job.events[mate], job.snapshot, expected, animate);
+      bus.emit(EVENTS.CHOREO_EVENT, job.events[mate]);
+    }
     // Reduced motion collapses the PACING too, not just the paths: a fade
     // finishes in 120ms, so holding the queue for a 480ms steal would leave a
     // player who asked for less motion staring at a table that has stopped for
@@ -316,7 +368,12 @@ function stepFor(ev) {
     case 'play_property': return 240;
     case 'play_action': return 260;
     case 'upgrade': return 240;
-    case 'move_property': return 220;
+    // 220 for one wild changing columns. A tagged swap is TWO of them fired in
+    // the same task and charged ONCE (runJobAsync), so the pair gets 260 rather
+    // than 440: the flights are simultaneous, not sequential, and 260 is the
+    // hold the `banked_property`/`play_action` beats already use for a single
+    // exchange. The second half never reaches this function.
+    case 'move_property': return ev.swapWith == null ? 220 : 260;
     case 'opsec': return 300;
     case 'action_blocked': return 280;
     case 'steal': return 480;
@@ -674,7 +731,15 @@ function applyEvent(ev, snapshot, expected, animate) {
       claimUpgradesOf(ev.actor, expected);
       claimDiscardedUpgrades(snapshot, expected);
       move(ev.card, Z('properties', ev.actor, ev.to), expected, animate, null,
-        { speed: 0.9, apex: 54, arc: 18, big: true });
+        // A LONE wild moving between two of YOUR OWN columns bows 18°, on the
+        // side flight.js picks. A SWAP HALF bows ±34 — the `swap`/TDY number
+        // above, chosen there because at ±34 two cards crossing the same
+        // corridor stop being one blur — and the sign is the half, so the two
+        // arcs are mirrored by construction and cannot both pick the same side.
+        // Both halves leave in the same task (runJobAsync) with no stagger:
+        // this is an exchange inside ONE board, symmetric, unlike the TDY swap
+        // where one card is taken and one is given and the 60ms offset says so.
+        { speed: 0.9, apex: 54, big: true, arc: ev.swapWith == null ? 18 : (ev.swapHalf === 0 ? 34 : -34) });
       break;
 
     case 'discard': {

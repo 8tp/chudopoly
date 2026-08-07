@@ -120,6 +120,52 @@
     linear-gradient(180deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 100% .9em no-repeat,
     linear-gradient(0deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 100% / 100% .9em no-repeat;
 }
+/* ══ A CARD IN FLIGHT MUST NOT MOVE THE STRIP ══════════════════════════════
+   OWNER, 2026-08-07, verbatim: "when players/bots recieve cards it like hides
+   their hand for a second and jerks the top preview bar up".
+
+   MEASURED, desktop 1280×720, the session-3p transcript replayed at 200ms with
+   animation on, sampling getBoundingClientRect() of #opponents and of a seat
+   every rAF for the whole game (3,175 frames):
+
+     seat top          62.2 → −9.8 and back    72px, 59 times in ONE game
+     #opponents scrollHeight  165 → 352        while a dealt back is in the air
+     #opponents scrollTop       0 → 72         written by NOBODY — the scroll
+                                               event's stack has no JS in it
+
+   THE CHAIN. anim/flight.js moves a card by writing --fx/--fy on the node, and
+   a TRANSFORMED DESCENDANT counts toward its scroll container's scrollable
+   overflow. A back dealt from the deck starts ~190px BELOW this strip, so for
+   the ~300ms it is in the air #opponents believes it is 187px taller than it
+   is; `scroll-snap-type` re-snaps on that overflow change and scrolls the strip
+   72px. The top 72px of a seat is its nameplate plus the whole fan/bank row —
+   i.e. exactly "their hand" — so it leaves the port, and slides back over ~5
+   frames when the card lands. One event, both halves of the complaint.
+
+   The snap is not deleted: with four opponents it is what makes a flick reveal
+   a WHOLE seat (the round-5 finding above). It is SUSPENDED for exactly the
+   window in which the overflow is a lie. `.is-flying` can be the whole test
+   because flight.js writes the offset and adds the class in the same
+   synchronous call (fly()) and restores the rest pose BEFORE removing it
+   (finish()), so the class is true precisely while a transform is out.
+
+   Isolated, four candidates over the same replay (maxΔ seat top / jumps >2px):
+     baseline                    72.5px / 59      driftCount 0
+     scroll-snap-type: none       1.7px /  0      — proves the cause
+     scroll-snap-align: none     72.4px / 80      — NOT the snap AREAS
+     overflow-y: clip             2.2px /  2      — proves it needs a scroller
+     THIS RULE                    1.9px /  0      driftCount 0
+   Vertical cost: zero. Nothing here reserves, sizes or hides anything.
+
+   Not reachable on a phone TODAY, and that is luck rather than design: a
+   collapsed seat's zones are `display:none` (see layout.js), and a card in a
+   display:none subtree contributes no overflow — measured with the same probe,
+   five-player@phone and @landscape hold scrollHeight at 195 and 190 through
+   the flight that takes desktop 165 → 249. An EXPANDED seat is an ordinary
+   scroller again, so this is not media-gated. */
+.opponents:has(.card.is-flying, .card.is-dragging, .card.is-held) {
+  scroll-snap-type: none;
+}
 /* MOBILE REVIEW round 5: "the seat header is the first thing to leave the
    window, so a scrolled rail shows unattributed property columns." It rides the
    top of its own seat inside the strip, so whatever row of mats you have
@@ -889,20 +935,68 @@
 .opponents .board[data-collapsed="1"] > .board-bank,
 .opponents .board[data-collapsed="1"] > .board-props { display: none; }
 
-/* A SEAT THAT CONTAINS A LIVE TARGET IS OPEN, whatever the accordion says.
+/* A ZONE THAT CONTAINS A LIVE TARGET IS OPEN, whatever the accordion says.
    interact/ marks the SEAT for a `player` step but marks card nodes for
    `theirCard` and `.propcol`s for `theirSet` — targets that live inside the
    seat, which a collapsed seat would hide. Keying on the mark itself means this
    cannot drift out of step with interact/index.js: the rule and the machine
-   read the same attribute. Payment marks only your own cards, and is included
-   because a fixture or a reconnect can land mid-selection.
+   read the same attribute. Payment marks banked cards with `[data-payable]`,
+   and that case wants the bank open — which is why the test below is per zone
+   and not per card type.
    A seat that IS the target stays collapsed on purpose — you are choosing a
    PLAYER there, and a full-width 44px row is a better answer to that than a
-   180px box in the far top corner. */
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) > .zone-hand-oppo { display: flex; }
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) > .board-bank { display: flex; }
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) > .board-props { display: grid; }
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) {
+   180px box in the far top corner.
+
+   THE ZONE, NOT THE SEAT. Round 8 opened all three children whenever the seat
+   held any mark. OWNER, 2026-08-07, verbatim: "when using the CHUD card to
+   steal from players there is no reason to expand their entire bank roll and
+   see everything in their bank instead it should be easier to see their
+   properties that you want to select". He is right and the card list agrees:
+   `chud` is `['player', 'theirCard']` (core/cards.js) and selectors.js gates it
+   on stealableCards(), which never returns a banked note — so every card the
+   old rule un-stacked into view was a card that could not be chosen, laid over
+   the ones that could.
+
+   MEASURED on a staged CHUD theirCard step (mid-game, one hand card replaced by
+   game.js:434's own CHUD object, two opponents, the marks land on three
+   property cards in one seat):
+
+                        seat height   fan/bank row   strip port
+     phone   before        181.8px       54.5px        235px
+     phone   after         126.3px          0px        180px
+     desktop before        167.1px       61.2px        185px
+     desktop after         147.1px       44.0px        165px
+
+   55.5px per opened seat on a phone and 20px at desktop, all of it taken from a
+   row where nothing was choosable — and at desktop the seat stops changing size
+   when a target arms at all (147.1 → 147.1), so the strip and your own board no
+   longer move 20px because somebody pointed at a card.
+
+   Nothing is hidden that the collapsed seat was not already withholding: the
+   bank's DENOMINATIONS are exactly what §the-gist declines to show, `netWorth`
+   answers "can they pay, and will it hurt" from the nameplate, and that
+   nameplate is on screen in both states. The seat toggle is also still live in
+   a `theirCard` step — layout.js's listener only defers to a mark the tap is
+   INSIDE, and the seat is not marked here — so the whole bank is one tap away.
+   De-emphasis was the alternative and it buys none of the 55.5px: a dimmed bank
+   still stands on the row that costs them. */
+.opponents .board[data-collapsed="1"] > .zone-hand-oppo:has([data-targetable="1"], [data-payable="1"]) { display: flex; }
+.opponents .board[data-collapsed="1"] > .board-bank:has([data-targetable="1"], [data-payable="1"]) { display: flex; }
+.opponents .board[data-collapsed="1"] > .board-props:has([data-targetable="1"], [data-payable="1"]) { display: grid; }
+/* The mat row is the third track and collapse zeroes it, so opening the mats
+   has to give it back. The fan/bank track stays at 0: it holds nothing. */
+.opponents .board[data-collapsed="1"]:has(> .board-props [data-targetable="1"],
+                                          > .board-props [data-payable="1"]) {
+  grid-template-rows: auto 0 auto;
+  padding-top: .3em;
+  padding-bottom: .35em;
+}
+/* …and when the live target IS in the fan or the bank, that row comes back too.
+   Last, so it wins on source order when both are open. */
+.opponents .board[data-collapsed="1"]:has(> .zone-hand-oppo [data-targetable="1"],
+                                          > .zone-hand-oppo [data-payable="1"],
+                                          > .board-bank [data-targetable="1"],
+                                          > .board-bank [data-payable="1"]) {
   grid-template-rows: auto var(--tap) auto;
   padding-top: .3em;
   padding-bottom: .35em;
@@ -1111,26 +1205,35 @@
 
    The overlap is the DERIVED one every other zone in this file uses — each card
    starts exactly --tap after the one before, so at these sizes they do not
-   overlap at all and each is whole. */
+   overlap at all and each is whole.
+
+   ROUND-9: the second selector was `.board:has([data-targetable], [data-payable])`
+   — ANY mark anywhere in the seat un-stacked the bank. It is now the BANK'S own
+   mark, for the reason written out on the selective-expand block above: a CHUD
+   step marks property cards and the bank held nothing choosable, yet the bank
+   grew 44 → 61.2px at desktop and 0 → 54.5 on a phone and took the seat, the
+   strip and your own board with it. A payment marks banked cards themselves
+   (`[data-payable="1"]` on the notes), so that case still un-stacks — verified,
+   not assumed. Manual expand is unchanged: it is the whole seat by request. */
 .opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank,
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank {
+.opponents .zone-bank:has([data-targetable="1"], [data-payable="1"]) {
   --card-w: max(30px, calc(var(--s) * 2.5));
   flex-wrap: wrap;
   overflow: visible;
   row-gap: 2px;
 }
 .opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank .card,
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank .card {
+.opponents .zone-bank:has([data-targetable="1"], [data-payable="1"]) .card {
   margin-left: calc(-1 * max(0px, var(--card-w) - var(--tap)));
 }
 /* a whole card shows its whole face: the cut-edge shadow and the suppressed
    corner are STACK treatments and there is no stack any more */
 .opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank .card:not(:last-child),
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank .card:not(:last-child) {
+.opponents .zone-bank:has([data-targetable="1"], [data-payable="1"]) .card:not(:last-child) {
   box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop);
 }
 .opponents[data-seatmode="collapse"] .board[data-collapsed="0"] .zone-bank .card:not(:last-child)::before,
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) .zone-bank .card:not(:last-child)::before {
+.opponents .zone-bank:has([data-targetable="1"], [data-payable="1"]) .card:not(:last-child)::before {
   display: revert;
 }
 /* THE FAN/BANK ROW STOPS BEING A FIXED TRACK, and only here. Round 7 pinned it
@@ -1138,9 +1241,13 @@
    seat beside it — an evenness argument, and evenness is a claim about seats
    STANDING SIDE BY SIDE. In collapse mode exactly one seat is open and the rest
    are 44px rows, so there is nothing for it to be uneven with, and a bank that
-   wraps to a second line needs the height or the wrap is a guillotine. */
+   wraps to a second line needs the height or the wrap is a guillotine.
+   ROUND-9: and only when the BANK is the thing that opened. This track exists to
+   let an un-stacked bank breathe, so a step that never touches the bank has no
+   claim on it — measured, that alone is 17.2px of a desktop seat on every
+   `theirCard` step. */
 .opponents[data-seatmode="collapse"] .board[data-collapsed="0"],
-.opponents .board:has([data-targetable="1"], [data-payable="1"]) {
+.opponents .board:has(> .board-bank [data-targetable="1"], > .board-bank [data-payable="1"]) {
   grid-template-rows: auto minmax(var(--tap), auto) auto;
 }
 
@@ -1661,6 +1768,19 @@
     /* uniform mat rows mean a flick can land on a row boundary, so it does */
     scroll-snap-type: y proximity;
     align-content: start;
+    /* and it stops snapping while a card is in the air, for the reason written
+       out in full on `.opponents:has(.card.is-flying)` above. Same mechanism,
+       measured on this grid: a card flying up out of the fan into a mat carries
+       a large POSITIVE --fy, and while it is out this scrollport reads
+       scrollHeight 201 → 345 on payment-pending@desktop and 227 → 345 on
+       mid-game@desktop. It has not been SEEN to jerk, because in every recorded
+       fixture the grid is exactly its own content (sh === ch) and a snap
+       container that cannot scroll cannot re-snap — but the final-approach
+       payment measured on .self-board below puts 21px of real scroll in this
+       box, and a card leaving the fan is the commonest event a player causes.
+       Downward flights out of this grid are harmless and were checked: --fy of
+       −260px moves scrollHeight not at all, because overflow above the scroll
+       origin is not scrollable. Zero pixels. */
     scrollbar-width: thin;
     scrollbar-color: var(--fg-mute) transparent;
     /* the two `local` shades are the scroll cue, and NOT a mask: a mask clips
@@ -1683,6 +1803,9 @@
     margin: 0;
     width: 100%;
     justify-content: center;
+  }
+  .board-self .board-props:has(.card.is-flying, .card.is-dragging, .card.is-held) {
+    scroll-snap-type: none;
   }
   /* MEASURED (payment@desktop): at 6px of side padding a 156px mat has 144px
      of inner width and three 48px cards plus their 2px gaps need 148 — so a

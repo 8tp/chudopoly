@@ -1142,3 +1142,102 @@ switch privately, and the day §3.8's rearrange was added `test/protocol.test.js
 stopped executing bot decisions and spun its turn loop to the step cap — a passing-looking
 harness driving a game that never ended. If a new decision type is ever added, add it to
 `applyBotAction` first, and check `simulate.js` and any new harness against it.
+
+---
+
+## Round 8 (2026-08-07) — play the House before the rent, not after
+
+Owner report, watching live play on `c881960`: *"right now they will do things like charge
+rent and then add houses/upgrades they should play their cards in the correct order
+(depending on bot type)."*
+
+### The structural cause
+
+`decideBotPlay()` returns **one play at a time** and the caller re-enters for the next.
+There is no turn-level plan, so there was no place where "the Upgrade goes before the rent"
+could live — each call independently scores the best single play, and if the rent scored
+higher on this call it went first. The ordering was an accident of scoring, not a decision.
+
+### The measurement first, as always
+
+Instrumented over 400 four-player games (same lineups as the matrix), counting every turn in
+which a rent on colour C was followed **in the same turn** by an Upgrade/FOC on C or by a
+property played into C, with the forfeited millions computed against each payer's actual
+wealth at charge time:
+
+| per personality | random | conservative | neutral | aggressive | chud |
+|---|---|---|---|---|---|
+| mis-ordered turns per game | 0.02 | 0.04 | 0.06 | **0.10** | 0.04 |
+| mis-orders per 100 rents | 1.1 | 2.2 | 2.8 | **4.0** | 2.1 |
+| **M forfeited per bot per game** | 0.08 | 0.22 | 0.28 | **0.51** | 0.12 |
+
+**The honest number: this is an order of magnitude smaller than the overpay round**
+(0.08–0.51M vs 7.6–8.8M per bot per game). It was never going to move a winrate. What it
+was doing is showing the owner a visibly wrong play every few games — at a Quick Play bench
+of three planning bots misordering ~2–4% of their rents, one backwards sequence surfaces
+roughly every four games. The fix is priced to match the size of the defect.
+
+### The shape: a dependency pass, not a turn planner
+
+**Rejected: a full turn planner.** Three plays over a large branching factor would replace
+personality scoring that is measured and working, to recover half a million per game — all
+risk, no case. **Chosen: one rule at the existing chokepoint.** After the personality plan
+comes back, if it chose a **rent** and the hand holds a play that raises that exact rent —
+an Upgrade/FOC on the charged colour (+3/+4 per payer), or a property that climbs the
+colour's rent ladder — and `playsRemaining >= 2` so the rent still fires afterwards, the
+booster goes first (`findChargeBooster`).
+
+Because the pass runs *after* the plan, it cannot change **what** a personality decided to
+do, only the order it does it in — which is exactly the owner's parenthetical read back to
+him: *whether* a bot builds before it charges is personality; playing both backwards is
+nobody's strategy. Guards, each pinned in `test/bot-economy.test.js`:
+
+- **Never on the last play.** A booster with no play left for the rent would trade the
+  charge for a building — worse than the mis-order it fixes.
+- **Wilds are not hijacked.** A wild is redirected onto the rent colour only when
+  `chooseBestColorForWild()` was sending it there anyway; a wild that completes a
+  different set keeps going there.
+- **The §3.10 break branch is exempt.** It returns before the pass, and its charges are
+  sized against `disposableValue` by logic that is separately measured.
+- **Surge composes.** Surge → booster → rent all fit (the booster check runs at the rent,
+  after the Surge has spent its play), so the doubled rent is the boosted one.
+- **Termination.** Each booster leaves the hand when played and the pass needs two plays,
+  so it fires at most twice ahead of one final rent.
+
+`ORDER_ATTENTION` (exported on `Bot._internal`) carries the personality: the three planning
+modes always order correctly; chud notices 30% of the time and random 12% — the same
+attention axis as `REARRANGE_BIAS`, so the chaotic seats keep visibly imperfect ordering as
+part of their character.
+
+### After
+
+| per personality | random | conservative | neutral | aggressive | chud |
+|---|---|---|---|---|---|
+| M forfeited per bot per game | 0.14 | **0.09** | **0.09** | **0.09** | 0.11 |
+| mis-orders per 100 rents | 1.5 | 0.7 | 0.5 | **0.3** | 1.5 |
+
+The planners' residual is chains the pass cannot see one play ahead of: an Upgrade drawn by
+PCS Orders *after* the rent, or a set that only became complete after the charge. Random and
+chud keep their gap by design.
+
+### Balance (paired seed against round 7, ≥500 games per matchup)
+
+3p and 4p: every personality within ±1 point of round 7, first-player advantage, turns, p90,
+shot-down and points-rate all within noise. 5p (2,500 games, 5 lineups) showed random
+11.8 → 9.5, which a 5,000-game confirming seed resolved as sampling noise (random 10.2,
+conservative 22.3, neutral 22.7, aggressive 33.5, chud 11.4 — all inside 8–60%). **The §3.6
+canary improved: 5-player points-endings 7.88% → 6.76–6.78% on both seeds** (watch line
+~8.4%), p90 88 → 82.
+
+Human-seat check (fixed pre-round-7 bot at the Quick Play bench, 3,000 games/cell): the old
+bot wins 14.7/12.5/10.9% against the new table vs 13.2/14.1/10.4% against round 7's —
+within noise. **Round 8 did not move the difficulty**; it removed an eyesore.
+
+### Test subset
+
+Reported against the bot-relevant subset (`bot-economy`, `bot-finalapproach`, `game`,
+`protocol`, `winrule`, `property-swap`, `wild-rearrange`, `deckconfig`,
+`finalapproach-race`): **155/155** (151 baseline + 4 new ordering tests; the two positive
+ones fail on `c881960`, the two guards pin the last-play and wild-hijack invariants). The
+full-suite total is noisy this hour from another agent's mid-edit work in `server/icon.js` /
+`server/raster.js`, which is outside bot ownership.

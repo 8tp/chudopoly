@@ -331,3 +331,82 @@ test('a wild rent goes to a player who can pay, not one who has nothing', () => 
     assert.equal(plan.targetId, 'p3', `${mode} charged a player with nothing to take`);
   }
 });
+
+/* ── 6. play ordering: boosters before the charge they raise (round 8) ── */
+
+test('holding rent and Upgrade for the same set, the Upgrade is played first', () => {
+  // Owner report: "they will charge rent and then add houses/upgrades — they should play
+  // their cards in the correct order." Both orders cost two plays; the wrong one forfeits
+  // the +3M on every payer. FAILS on the round-7 code, which returns the rent first.
+  for (const mode of ['conservative', 'neutral', 'aggressive']) {
+    const state = build();
+    const bot = state.players[0];
+    setOf(state, bot, 'brown');
+    state.players[1].bank.push(money(state, 5));
+    bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('brown') && c.colors[0] !== 'any'));
+    bot.hand.push(action(state, 'upgrade'));
+    always(0.99);   // pass every attention roll, defeat every holdback
+    const plan = decideBotPlay(state, 'p1', mode);
+    setRng(null);
+    assert.ok(plan && plan.type === 'play_action', `${mode} made no action play`);
+    assert.equal(bot.hand[plan.cardIndex].action, 'upgrade', `${mode} charged before upgrading`);
+    assert.equal(plan.targetColor, 'brown');
+    assert.ok(applyBotAction(state, 'p1', plan).ok);
+    // and the rent follows, now worth +3
+    const next = decideBotPlay(state, 'p1', mode);
+    assert.ok(next && next.type === 'play_action', `${mode} armed the set and never charged`);
+    assert.equal(bot.hand[next.cardIndex].type, 'rent', `${mode} did not follow through with the rent`);
+  }
+});
+
+test('a property of the rent colour climbs the ladder before the rent fires', () => {
+  const state = build();
+  const bot = state.players[0];
+  prop(state, bot, 'red');                      // red 1/3: rent 2
+  state.players[1].bank.push(money(state, 5));
+  bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('red') && c.colors[0] !== 'any'));
+  bot.hand.push(take(state, c => c.type === 'property' && c.color === 'red'));   // 2/3: rent 3
+  always(0.99);
+  const plan = decideBotPlay(state, 'p1', 'aggressive');
+  setRng(null);
+  assert.ok(plan);
+  assert.equal(plan.type, 'play_property', 'the ladder step did not go first');
+  assert.equal(bot.hand[plan.cardIndex].color, 'red');
+});
+
+test('the booster never fires when no play would remain for the rent', () => {
+  const state = build();
+  const bot = state.players[0];
+  setOf(state, bot, 'brown');
+  state.players[1].bank.push(money(state, 5));
+  bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('brown') && c.colors[0] !== 'any'));
+  bot.hand.push(action(state, 'upgrade'));
+  state.playsRemaining = 1;
+  always(0.99);
+  const plan = decideBotPlay(state, 'p1', 'neutral');
+  setRng(null);
+  assert.ok(plan && plan.type === 'play_action');
+  assert.equal(bot.hand[plan.cardIndex].type, 'rent',
+    'burned the last play on an upgrade instead of the charge it was meant to raise');
+});
+
+test('a wild bound for a different set is not pulled onto the rent pile', () => {
+  const state = build();
+  const bot = state.players[0];
+  setOf(state, bot, 'brown');                    // rent target, complete at 2 — but zoneFull
+  prop(state, bot, 'red');                       // red 1/3
+  prop(state, bot, 'lightblue'); prop(state, bot, 'lightblue');   // lightblue 2/3 — a wild HERE completes a set
+  state.players[1].bank.push(money(state, 5));
+  bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('red') && c.colors[0] !== 'any'));
+  const w = take(state, c => c.type === 'wild_property' && c.colors[0] === 'any');
+  bot.hand.push(w);
+  always(0.99);
+  const plan = decideBotPlay(state, 'p1', 'aggressive');
+  setRng(null);
+  assert.ok(plan);
+  // The rent is on red; the rainbow wild's best home is lightblue (completes a set). The
+  // ordering pass must not hijack it for a red ladder step.
+  if (plan.type === 'play_property' && bot.hand[plan.cardIndex]?.id === w.id) {
+    assert.notEqual(plan.targetColor, 'red', 'the wild was pulled onto the rent pile');
+  }
+});

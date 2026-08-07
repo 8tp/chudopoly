@@ -804,6 +804,19 @@ function decideBotPlay(state, botId, mode) {
       && c.type !== 'property' && c.type !== 'wild_property' && c.action !== 'opsec');
     return alt >= 0 ? { type:'play_money', cardIndex:alt } : null;
   }
+
+  // Ordering pass (see findChargeBooster): the planner chose a rent, the hand holds a play
+  // that raises that exact rent, and a play remains to fire the rent afterwards — the
+  // booster goes first. Applied at the chokepoint so all five personalities (and anything
+  // added later) get correct ordering without five separate patches; the chaotic two keep
+  // their attention roll, exactly as with rearranging.
+  if (plan && plan.type === 'play_action' && state.playsRemaining >= 2) {
+    const chosen = bot.hand[plan.cardIndex];
+    if (chosen && chosen.type === 'rent' && rnd() < (ORDER_ATTENTION[mode] ?? 1)) {
+      const booster = findChargeBooster(state, bot, bot.hand, plan);
+      if (booster) return booster;
+    }
+  }
   return plan;
 }
 
@@ -1708,6 +1721,71 @@ function randomRentColor(bot, card) {
 }
 
 // The BEST rent on a complete set, not the first one the hand happens to hold.
+/* ── Play ordering: boosters before the charge they raise ──────────────
+ *
+ * Owner report (2026-08-07, round 8): "right now they will do things like charge rent and
+ * then add houses/upgrades — they should play their cards in the correct order."
+ *
+ * The structural cause: decideBotPlay() returns ONE play at a time and the caller
+ * re-enters, so there is no turn plan in which "the House goes before the rent" could be
+ * expressed — each call independently scores the best single play, and if the rent scores
+ * higher on this call it goes first. The ordering was an accident of scoring.
+ *
+ * Measured over 400 four-player games before the fix: a rent was followed in the SAME turn
+ * by an upgrade/FOC on the charged colour, or by a property into the charged colour, on
+ * 1.1–4.0% of rents — 0.08–0.51M forfeited per bot per game. Small next to the overpay
+ * round (7.6–8.8M), and the fix is priced accordingly: a dependency pass, not a turn
+ * planner. A full planner would replace scoring logic that is measured and working, for a
+ * half-million per game; rejected.
+ *
+ * The rule: when the planner has chosen a rent and the hand holds a play that RAISES that
+ * rent — an Upgrade/FOC on the charged colour (+3/+4 on every payer), or a property that
+ * climbs the colour's rent ladder — and a play remains to fire the rent afterwards, the
+ * booster goes first. This runs at the chokepoint AFTER the personality plan, so it cannot
+ * change WHAT a personality decided to do, only the order it does it in — whether a bot
+ * builds before it charges is personality; playing both backwards is nobody's strategy.
+ * The §3.10 break branch returns before this pass and is deliberately not subject to it:
+ * its charges are sized against disposableValue by logic that is separately measured.
+ *
+ * Wilds are only redirected here when the rent colour is where chooseBestColorForWild()
+ * would have sent them anyway — a wild destined to complete a different set must not be
+ * pulled onto the rent pile for a one-off ladder step.
+ *
+ * Termination: each booster leaves the hand when played, and the pass requires
+ * playsRemaining >= 2, so it can fire at most twice per turn ahead of a final rent.
+ */
+const ORDER_ATTENTION = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3, random: 0.12 };
+
+function findChargeBooster(state, bot, hand, rentPlay) {
+  const color = rentPlay.targetColor;
+  if (!color || !G.COLORS[color]) return null;
+  for (let i = 0; i < hand.length; i++) {
+    const c = hand[i];
+    if (c.action === 'upgrade' && G.isSetComplete(bot, color)
+        && !G.upgradeKinds(bot, color).includes('house')) {
+      return { type: 'play_action', cardIndex: i, targetColor: color };
+    }
+    if (c.action === 'foc' && G.isSetComplete(bot, color)
+        && G.upgradeKinds(bot, color).includes('house')
+        && !G.upgradeKinds(bot, color).includes('hotel')) {
+      return { type: 'play_action', cardIndex: i, targetColor: color };
+    }
+  }
+  if (!G.zoneFull(bot, color)) {
+    for (let i = 0; i < hand.length; i++) {
+      const c = hand[i];
+      if (c.type === 'property' && c.color === color) {
+        return { type: 'play_property', cardIndex: i };
+      }
+      if (c.type === 'wild_property' && G.legalColorsFor(c).includes(color)
+          && chooseBestColorForWild(bot, c) === color) {
+        return { type: 'play_property', cardIndex: i, targetColor: color };
+      }
+    }
+  }
+  return null;
+}
+
 function findRentOnCompleteSet(state, bot, hand, opponents, mode) {
   let best = null;
   for (let i = 0; i < hand.length; i++) {
@@ -2242,7 +2320,7 @@ module.exports = {
   _internal: {
     decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards, setRng, rnd,
     planRearrange, boardScore, minimalCover, applyBotAction,
-    REARRANGE_BIAS, REARRANGE_CONSOLIDATES, payWeight,
+    REARRANGE_BIAS, REARRANGE_CONSOLIDATES, payWeight, ORDER_ATTENTION, findChargeBooster,
     BREAK_URGENCY, BREAK_OVERPAY, disposableValue, tryBreakFinalApproach,
     getAllPayableCardIds, chooseDiscards, findResponder: function(state) {
       return G.pendingResponders(state)[0] || null;

@@ -51,6 +51,125 @@ const BOT_BLURB = {
     + 'and sometimes just stops mid-turn. (Nothing to do with THE CHUD CARD.)',
 };
 
+/* ── the two match clocks (§P9, owner directive) ───────────────────────────
+ *
+ * "45-second default response timer, customisable in the lobby."
+ *
+ * server/handlers.js is already there: DEFAULT_RESPONSE_TIMEOUT is 45,
+ * DEFAULT_TURN_TIMEOUT is 60, the ceilings are 120s and 300s, and a room with
+ * two or more humans floors them at 15s and 30s (MIN_HUMAN_*). public/index.html
+ * is architect-owned (§1) and still ships the OLD option lists — reply
+ * 0/15/30/60 with 30 selected — so a host who touched nothing sent 30 and a
+ * host who did not have the control on screen at all got 45. Two different
+ * answers to the same question, neither of them the one the owner asked for.
+ *
+ * The lists are therefore rebuilt here, from the server's own numbers, exactly
+ * the way describeBots() rewrites the bot labels. `selected` is set on the
+ * DEFAULT, and the host's last choice is remembered so a table that always
+ * plays on a 90s clock does not re-pick it every night.
+ *
+ * WHY THE CLOCKS ARE EXPLAINED AND NOT JUST OFFERED. §6 agency: an expiring
+ * answer clock is the one board change nobody chooses. server/timers.js
+ * autoResolveResponse() accepts on your behalf and pays the charge out of your
+ * CHEAPEST cards (autoPickPayment: bank, then Upgrades, then properties). That
+ * consequence has to be legible before the host picks a number, not discovered
+ * after a set has been broken by it.
+ */
+const TURN_CHOICES = [
+  { value: 0, label: 'off' }, { value: 30, label: '30s' }, { value: 45, label: '45s' },
+  { value: 60, label: '60s' }, { value: 90, label: '90s' }, { value: 120, label: '2 min' },
+  { value: 180, label: '3 min' },
+];
+const REPLY_CHOICES = [
+  { value: 0, label: 'off' }, { value: 15, label: '15s' }, { value: 30, label: '30s' },
+  { value: 45, label: '45s' }, { value: 60, label: '60s' }, { value: 90, label: '90s' },
+  { value: 120, label: '2 min' },
+];
+const DEFAULT_TURN = 60;
+const DEFAULT_REPLY = 45;          // server/handlers.js DEFAULT_RESPONSE_TIMEOUT
+const CLOCK_KEY = 'chud_clocks';
+
+function loadClocks() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CLOCK_KEY) || 'null');
+    return {
+      turn: TURN_CHOICES.some(c => c.value === raw?.turn) ? raw.turn : DEFAULT_TURN,
+      reply: REPLY_CHOICES.some(c => c.value === raw?.reply) ? raw.reply : DEFAULT_REPLY,
+    };
+  } catch { return { turn: DEFAULT_TURN, reply: DEFAULT_REPLY }; }
+}
+
+function saveClocks() {
+  try {
+    localStorage.setItem(CLOCK_KEY, JSON.stringify({
+      turn: Number($('turn-timeout')?.value ?? DEFAULT_TURN),
+      reply: Number($('response-timeout')?.value ?? DEFAULT_REPLY),
+    }));
+  } catch { /* private mode */ }
+}
+
+/** Rebuild one <select> to `choices`, selecting `value`. Idempotent. */
+function fillClock(id, choices, value) {
+  const select = $(id);
+  if (!select) return;
+  const wanted = choices.map(c => String(c.value)).join(',');
+  if (select.dataset.chudClock === wanted) { select.value = String(value); return; }
+  clear(select);
+  for (const c of choices) {
+    select.appendChild(el('option', { text: c.label, attrs: { value: String(c.value) } }));
+  }
+  select.dataset.chudClock = wanted;
+  select.value = String(value);
+}
+
+/** The sentence under the two clocks. Rewritten on every change, because what
+ *  the pair MEANS changes with the numbers — 'off' is a different game. */
+function describeClocks() {
+  const turn = Number($('turn-timeout')?.value ?? DEFAULT_TURN);
+  const reply = Number($('response-timeout')?.value ?? DEFAULT_REPLY);
+  const humans = store.room.players.filter(p => !p.isBot).length;
+
+  const bits = [];
+  bits.push(reply > 0
+    ? `ANSWER CLOCK ${reply}s — when a card is played against you, you have ${reply}s to OPSEC `
+      + 'it or pay. Run it out and it is accepted for you, and a charge is paid automatically '
+      + 'from your cheapest cards.'
+    : 'ANSWER CLOCK OFF — a card played against you waits for an answer forever. One player '
+      + 'who walks away freezes the table.');
+  bits.push(turn > 0
+    ? `TURN CLOCK ${turn}s — a turn that runs out is ended automatically, discarding down to `
+      + 'the hand limit if it has to.'
+    : 'TURN CLOCK OFF — turns never expire.');
+  // The floors are server-side and silent; a lobby that shows a number the
+  // server will overrule is a label that lies (server/handlers.js MIN_HUMAN_*).
+  if (humans > 1 && (reply > 0 && reply < 15)) bits.push('With two or more humans the answer clock is floored at 15s.');
+  if (humans > 1 && reply === 0) bits.push('With two or more humans OFF is floored to 15s — a 0 clock is a griefing tool.');
+  if (humans > 1 && turn > 0 && turn < 30) bits.push('With two or more humans the turn clock is floored at 30s.');
+  if (humans > 1 && turn === 0) bits.push('With two or more humans OFF is floored to 30s.');
+
+  let note = $('clock-note');
+  if (!note) {
+    note = el('p', { class: 'hint clock-note', attrs: { id: 'clock-note', 'aria-live': 'polite' } });
+    $('response-timeout')?.closest('.row')?.after(note);
+  }
+  setText(note, bits.join(' '));
+}
+
+function ensureClocks() {
+  const turnSel = $('turn-timeout');
+  const replySel = $('response-timeout');
+  if (!turnSel || !replySel) return;
+  if (!turnSel.dataset.chudClock) {
+    const saved = loadClocks();
+    fillClock('turn-timeout', TURN_CHOICES, saved.turn);
+    fillClock('response-timeout', REPLY_CHOICES, saved.reply);
+    for (const sel2 of [turnSel, replySel]) {
+      sel2.addEventListener('change', () => { saveClocks(); describeClocks(); });
+    }
+  }
+  describeClocks();
+}
+
 /**
  * public/index.html is architect-owned (§1) and ships the five <option> labels;
  * the meaning is added here rather than by editing the shell.
@@ -281,6 +400,13 @@ function ensureGuestNote() {
   }), hint);
 }
 
+function clockValue(id, fallback) {
+  const raw = $(id)?.value;
+  if (raw == null || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function inviteUrl() {
   const url = new URL(location.href);
   url.hash = '';
@@ -296,7 +422,7 @@ function render() {
   setHidden($('lobby-host'), !host);
   ensureGuestNote();
   setHidden($('ruleset-guest'), host);
-  if (host) { describeBots(); ensurePicker(); syncPicker(); }
+  if (host) { describeBots(); ensureClocks(); ensurePicker(); syncPicker(); }
   setText($('lobby-hint'), host
     ? (store.room.players.length < 2 ? 'Add a bot or invite a squadmate — 2 players minimum.' : 'Ready when you are.')
     : 'Waiting for the host to launch…');
@@ -337,9 +463,12 @@ export function mount() {
     // (server/protocol.js rejects it) and resolveRules() reaches the identical
     // ruleset either way. Absent fields would mean Chudopoly, so this is never
     // empty by accident.
+    // `|| DEFAULT` cannot be used for the clocks: '0' is a legal, deliberate
+    // choice (OFF) and `Number('0') || 45` is 45, so picking OFF silently armed
+    // a 45s clock. Only a genuinely absent control falls back.
     'start-game': () => send.startGame(
-      Number($('turn-timeout')?.value || 60),
-      Number($('response-timeout')?.value || 30),
+      clockValue('turn-timeout', DEFAULT_TURN),
+      clockValue('response-timeout', DEFAULT_REPLY),
       rulesPayload(pending)
     ),
     'copy-invite': async () => {

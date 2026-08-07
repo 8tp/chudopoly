@@ -1466,6 +1466,16 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
 
   // Upgrades leave first: they stop being upgrades the moment they change hands, so both
   // tags are stripped and they land in the payee's bank as ordinary cards.
+  //
+  // The WHOLE selection is removed before any normalisation runs, and that ordering is the
+  // fix for a silent under-payment. normalizeUpgrades() used to be called per card, inside
+  // this loop: paying with an Upgrade AND its FOC together removed the Upgrade, at which
+  // point normalising saw a lone FOC and banked it back to the PAYER — and the FOC's own
+  // iteration then found nothing (`ui < 0`) and returned. totalValue said 7M, the payee
+  // received 3M, and the payer kept the card they had nominally spent. Reachable only since
+  // §3.1b made upgrades payable, and only in the order Upgrade-then-FOC, which is why a
+  // normal single-upgrade payment always looked correct.
+  const touchedColors = new Set();
   upgradeCards.forEach(({ color, card }) => {
     const list = payer.upgrades[color] || [];
     const ui = list.findIndex(c => c && c.id === card.id);
@@ -1476,8 +1486,11 @@ function processPayment(state, pa, payer, payee, selectedCardIds) {
     delete card.placedColor;
     payee.bank.push(card);
     paid.push(card);
-    normalizeUpgrades(state, payer, color);   // an FOC may not outlive its Upgrade
+    touchedColors.add(color);
   });
+  // An FOC may not outlive its Upgrade — settled once per colour, after the whole selection
+  // has been resolved, so it can only ever strand an FOC the payer actually kept.
+  for (const color of touchedColors) normalizeUpgrades(state, payer, color);
 
   propCards.forEach(({ color, card }) => {
     const ci = payer.properties[color].findIndex(c => c.id === card.id);
@@ -1864,6 +1877,10 @@ module.exports = {
   RULE_PRESETS, PRESET_NAMES, DEFAULT_PRESET, DEFAULT_RULES, RULE_KEYS,
   SETS_TO_WIN_CHOICES, normalizeSetsToWin, resolveRules, rulesOf, rulesFor, setsToWinOf,
   bankUpgrades, findUpgrade,
-  logLine, LOG_MAX, LOG_TAIL, advanceToNextActive, forceEndTurn,
+  // `emit` is exported for the ONE class of event the engine cannot originate: a deadline
+  // expiring. server/timers.js owns the clocks, and a clock running out changes the board
+  // without anybody choosing to — so it has to reach the same event stream every deliberate
+  // move goes into, or the journal, the gamelog record and the player are all left guessing.
+  logLine, emit, LOG_MAX, LOG_TAIL, advanceToNextActive, forceEndTurn,
   checkpointForecast, opponentTurnsRemaining, actionLabel, receiveProperty,
 };

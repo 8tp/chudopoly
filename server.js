@@ -5,6 +5,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');            // hardLog() only — see "Death forensics" below
 
 const pkg = require('./package.json');
 const G = require('./game');
@@ -194,17 +195,97 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+/* ── Death forensics ───────────────────────────────────────────────────
+   The play server has been found dead with a log that simply STOPS: no stack, no last
+   line, no explanation. Everything below exists so that never happens again.
+
+   There are exactly two ways this process can end without a word, and both are covered.
+
+   (1) The event loop DRAINS. No request path calls process.exit(), and every throw and
+       rejection is trapped below and merely logged, so an exit means Node ran out of work.
+       While the server is listening that cannot happen — the listening handle and the
+       turn/bot timers hold the loop open (only the heartbeat and the room reaper are
+       unref'd) — but the instant the listen handle goes away, nothing does. That is a real
+       measured death, and it is handled at `server.on('error')` below.
+   (2) A SIGNAL. A signal death runs no 'exit' handler at all, which is precisely why
+       nothing was ever printed. Handled just below.
+
+   Everything here writes with fs.writeSync rather than console.error. Node's stdio is
+   synchronous for files, TTYs and (measured here, Node 24 on darwin: 20,001 lines survived
+   an immediate SIGKILL) pipes — but that is a platform-and-version detail, not a promise,
+   and the whole value of these lines is that they are the LAST thing the process ever
+   says. A write that has to survive its own death should not depend on which of the three
+   the operator happened to redirect to. */
+function hardLog(line) {
+  try { fs.writeSync(2, line.endsWith('\n') ? line : line + '\n'); }
+  catch { try { console.error(line); } catch {} }
+}
+function vitals() {
+  return `uptime ${Math.round(process.uptime())}s, ${rooms.size} rooms, ${wss.clients.size} sockets`;
+}
+
 /* Last-resort backstop: one bad frame, one bug in a timer callback, must never end the
    process for every other room on the instance. Anything that reaches here is a defect —
    it is logged loudly — but the server keeps serving. */
 process.on('uncaughtException', (err, origin) => {
-  console.error(`[FATAL] uncaught exception (${origin}) — server continues:`, err?.stack || err);
+  hardLog(`[FATAL] uncaught exception (${origin}) — server continues (${vitals()}): ${err?.stack || err}`);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] unhandled rejection — server continues:', reason?.stack || reason);
+  hardLog(`[FATAL] unhandled rejection — server continues (${vitals()}): ${reason?.stack || reason}`);
 });
 
+/* Signals that are NOT a shutdown request and must never end a game in progress.
+   One observed death exited 144 — 128+16, which is SIGURG on macOS and SIGSTKFLT on
+   Linux. Neither is something a supervisor sends to stop a server, and SIGURG in
+   particular is spurious noise (out-of-band socket data, or a stray group signal from a
+   Go-based parent process). Installing a listener is precisely what makes such a signal
+   non-fatal: a signal with a JS handler no longer takes its default action, which on
+   Linux for signal 16 is "terminate". Unknown names throw on registration and are
+   skipped, so this list is portable. */
+for (const name of ['SIGURG', 'SIGSTKFLT', 'SIGXCPU', 'SIGXFSZ', 'SIGPIPE']) {
+  try {
+    process.on(name, () => hardLog(`[SIGNAL] ${name} received and IGNORED — `
+      + `not a shutdown request; the server keeps serving (${vitals()})`));
+  } catch { /* not a signal this platform knows */ }
+}
+
+/* Signals that ARE a shutdown request are still obeyed — but they say so first, and they
+   exit 128+n so a supervisor still reads the conventional code. */
+for (const [name, number] of Object.entries({ SIGTERM: 15, SIGINT: 2, SIGHUP: 1 })) {
+  process.on(name, () => {
+    hardLog(`[SIGNAL] ${name} — shutting down (${vitals()})`);
+    process.exit(128 + number);
+  });
+}
+
+// Fires for every exit the process chooses. It cannot fire for a signal death, which is
+// the whole point: an [EXIT] line means the process decided, its absence means something
+// outside did.
+process.on('exit', (code) => hardLog(`[EXIT] code=${code} (${vitals()})`));
+
 /* ── Start ─────────────────────────────────────────────────────────── */
+
+/* THE silent death. Measured, not theorised: start a second server.js on a port that is
+   already taken and the pre-fix process printed one line — `[WSS] server error: listen
+   EADDRINUSE` — and then EXITED 0. No [FATAL], no stack, no last line, and every client
+   on ERR_CONNECTION_REFUSED. Exactly the signature that has been reported.
+
+   Two things conspired. The `ws` server re-emits the HTTP server's error, so wss.on('error')
+   above swallowed it and it never reached uncaughtException; and once the listen handle is
+   gone nothing else holds the loop open — the heartbeat and the room reaper are both
+   unref'd — so Node ran out of work and left quietly with a success code.
+
+   A failed listen is named and fatal ON PURPOSE now, so a supervisor sees a real failure
+   and a human sees the reason. An error on an ALREADY-LISTENING server is a different
+   animal — one connection's problem, not the process's — so it is logged and survived. */
+server.on('error', (err) => {
+  if (server.listening) {
+    hardLog(`[WS] http server error while listening — server continues: ${err?.stack || err}`);
+    return;
+  }
+  hardLog(`[FATAL] cannot listen on :${PORT} — ${err?.code || ''} ${err?.message || err}`);
+  process.exit(1);
+});
 
 server.listen(PORT, () => {
   console.log(`\n  CHUDOPOLY GO — Air Force Card Game`);

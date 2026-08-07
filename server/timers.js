@@ -28,9 +28,20 @@ function onTurnTimeout(room) {
   if (!room.state || room.state.phase !== 'playing') return;
   const cp = G.currentPlayer(room.state);
   if (room.state.pendingAction) { startResponseTimer(room); return; }
-  G.logLine(room.state, cp.name + '\'s turn timed out!');
   room.state.turnPhase = 'play';
   const excess = cp.hand.length > 7 ? cp.hand.slice(-(cp.hand.length - 7)).map(c => c.id) : undefined;
+  // Say what happened, in prose AND as a structured event, BEFORE the turn is force-ended —
+  // so the beat reads in the order it happened and the discard is attributed to the clock
+  // rather than looking like a choice the player made.
+  G.logLine(room.state, `${cp.name} ran out of time (${room.turnTimeout}s) — turn ended automatically`
+    + (excess ? `, ${excess.length} card${excess.length === 1 ? '' : 's'} discarded to the hand limit` : '') + '.');
+  G.emit(room.state, 'turn_timeout', {
+    actor: cp.id,
+    name: cp.name,
+    auto: true,
+    timeout: room.turnTimeout,
+    discarded: excess ? excess.length : 0,
+  });
   const res = G.endTurn(room.state, cp.id, excess);
   // Blind `(idx+1) % len` here could hand the turn to an eliminated seat and skipped
   // beginTurn(), so an armed final approach parked at its checkpoint never resolved.
@@ -101,9 +112,27 @@ function autoResolveResponse(room) {
   const responder = G.getPlayer(room.state, responderId);
   if (!responder) return;
 
-  G.logLine(room.state, responder.name + '\'s response timed out — auto-accepting');
-
   const owed = pa.type === 'payment' && responderId !== pa.sourceId ? (pa.amount || 0) : 0;
+
+  // "It just took my cards and I don't know why" was the complaint. An expiring answer clock
+  // is the one board change nobody chose, so it is narrated twice: a prose line for the log
+  // and a `response_timeout` event for the journal, the replay and the gamelog record. Both
+  // are written BEFORE the auto-answer resolves, so the beat that explains the payment comes
+  // ahead of the payment itself in the stream.
+  const charge = owed > 0 ? ` the ${owed}M charge` : '';
+  G.logLine(room.state,
+    `${responder.name} ran out of time (${room.responseTimeout}s) — auto-accepted${charge}.`);
+  G.emit(room.state, 'response_timeout', {
+    actor: responderId,          // whose clock expired (touchesMe() reads `actor`)
+    name: responder.name,
+    pending: pa.type || null,    // what they were answering: 'payment', 'steal', 'swap', …
+    decision: 'accept',          // what was decided for them — never a silent OPSEC
+    auto: true,
+    amount: owed,                // 0 when the pending action is not a payment
+    timeout: room.responseTimeout,
+    source: pa.sourceId ?? null, // who charged them
+  });
+
   const res = G.respondToAction(room.state, responderId, 'accept', autoPickPayment(responder, owed));
   if (res.needPayment) {
     G.respondToAction(room.state, responderId, 'accept', G.payableCards(responder).map(c => c.id));
@@ -161,5 +190,5 @@ function autoPickPayment(player, amount) {
 
 module.exports = {
   init, startTurnTimer, clearTurnTimer, startResponseTimer, clearResponseTimer,
-  autoPickPayment, autoResolveResponse, syncTimers, armTurnTimer,
+  autoPickPayment, autoResolveResponse, onTurnTimeout, syncTimers, armTurnTimer,
 };

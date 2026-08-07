@@ -44,6 +44,12 @@ function broadcastRoom(room) {
         game: view,
         turnTimer: timerInfo,
         responseTimer: responseTimerInfo,
+        // The SETTINGS, always present, as distinct from the two live countdowns above
+        // (which exist only while a deadline is actually running). Without these the client
+        // could not tell a player what clock the table is on until it was already ticking —
+        // "45s to answer" has to be legible before the charge lands, not after.
+        // 0 means that clock is off. Seconds.
+        timers: { turn: room.turnTimeout ?? null, response: room.responseTimeout ?? null },
       }));
     }
   });

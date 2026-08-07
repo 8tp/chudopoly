@@ -240,6 +240,115 @@ test('a solo table keeps its no-clock Quick Play mode', async () => {
   ws.close();
 });
 
+/* ── owner directive: every match answers on a 45s clock by default ──── */
+
+test('start_game with no responseTimeout gives the table the 45s default', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'Defaults' });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  assert.ok(joined);
+  send(host, { type: 'add_bot', mode: 'neutral' });
+  await sleep(150);
+
+  // Neither clock is supplied — exactly what an older client, or a lobby that has not been
+  // touched, sends. "Unspecified" must mean the default, not "off".
+  send(host, { type: 'start_game' });
+  const state = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  assert.ok(state, 'the game starts without either timer field');
+  assert.equal(state.timers.response, 45, 'the answer clock defaults to 45s');
+  assert.equal(state.timers.turn, 60, 'and the turn clock to 60s');
+  send(host, { type: 'leave_room' });
+  host.close();
+});
+
+test('Quick Play runs a 45s answer clock even though its turn clock is off', async () => {
+  const ws = await openClient();
+  send(ws, { type: 'quick_play', name: 'Quick' });
+  assert.ok(await waitFor(ws, m => m.type === 'joined'));
+  const state = await waitFor(ws, m => m.type === 'state' && m.phase === 'playing');
+  assert.equal(state.turnTimer, null, 'one human = no turn clock, by design');
+  assert.equal(state.timers.turn, 0);
+  assert.equal(state.timers.response, 45,
+    'but a bot\'s charge is still answered on a deadline — that is the whole point');
+  send(ws, { type: 'leave_room' });
+  ws.close();
+});
+
+test('the lobby setting wins over the default, and 0 still means OFF on a solo table', async () => {
+  for (const [picked, expected] of [[15, 15], [30, 30], [45, 45], [60, 60], [90, 90], [0, 0]]) {
+    const host = await openClient();
+    send(host, { type: 'create_room', name: 'Pick' + picked });
+    assert.ok(await waitFor(host, m => m.type === 'joined'));
+    send(host, { type: 'add_bot', mode: 'neutral' });
+    await sleep(120);
+    send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: picked });
+    const state = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+    assert.equal(state.timers.response, expected, `the host picked ${picked}`);
+    send(host, { type: 'leave_room' });
+    host.close();
+    await sleep(100);
+  }
+});
+
+test('the two-human floor raises an OFF answer clock rather than fighting the default', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'Floor' });
+  const joined = await waitFor(host, m => m.type === 'joined');
+  const guest = await openClient();
+  send(guest, { type: 'join_room', code: joined.code, name: 'FloorG' });
+  await waitFor(guest, m => m.type === 'joined');
+  await sleep(150);
+
+  send(host, { type: 'start_game', turnTimeout: 0, responseTimeout: 0 });
+  const state = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  assert.equal(state.timers.response, 15,
+    'a deliberate OFF on a multi-human table is floored, never left unrecoverable');
+  assert.ok(state.timers.response < 45, 'the floor only ever bites below the default');
+  send(host, { type: 'leave_room' }); send(guest, { type: 'leave_room' });
+  host.close(); guest.close();
+});
+
+test('the answer clock is sticky across a rematch', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'StickyC' });
+  assert.ok(await waitFor(host, m => m.type === 'joined'));
+  send(host, { type: 'add_bot', mode: 'neutral' });
+  await sleep(150);
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 90 });
+  const first = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
+  assert.equal(first.timers.response, 90);
+
+  send(host, { type: 'scoop' });
+  assert.ok(await waitFor(host, m => m.type === 'state' && m.game?.phase === 'finished', 4000));
+  host._messages.length = 0;
+  send(host, { type: 'rematch' });
+  const again = await waitFor(host, m => m.type === 'state' && m.game?.phase === 'playing', 4000);
+  assert.ok(again, 'rematch started');
+  assert.equal(again.timers.response, 90, 'the rematch inherits the clock the host chose');
+  send(host, { type: 'leave_room' });
+  host.close();
+});
+
+test('an out-of-range clock is still refused rather than silently clamped', async () => {
+  for (const bad of [{ responseTimeout: 121 }, { responseTimeout: -1 }, { responseTimeout: 45.5 },
+    { turnTimeout: 301 }, { responseTimeout: '45' }]) {
+    const host = await openClient();
+    send(host, { type: 'create_room', name: 'BadClock' });
+    await waitFor(host, m => m.type === 'joined');
+    send(host, { type: 'add_bot', mode: 'neutral' });
+    await sleep(120);
+    send(host, { type: 'start_game', ...bad });
+    const err = await waitFor(host, m => m.type === 'error', 1500);
+    assert.ok(err, `${JSON.stringify(bad)} must be refused`);
+    assert.match(err.message, /timer setting/i);
+    assert.equal(host._messages.find(m => m.type === 'state' && m.phase === 'playing'), undefined,
+      'and the game must not start');
+    send(host, { type: 'leave_room' });
+    host.close();
+    await sleep(100);
+  }
+});
+
 test('leaving a lobby deletes the room and leaves no timer running', async () => {
   const before = (await health()).body.rooms;
   const ws = await openClient();
@@ -430,4 +539,137 @@ test('a reconnecting player never draws twice and never sees a draw phase', asyn
   assert.equal(seat.hand.length, 7, 'no second draw on reconnect');
   assert.notEqual(resumed.game.turnPhase, 'draw');
   back.close();
+});
+
+/* ── P8 round 3 — the server must never die without saying why ────────────
+ *
+ * The play server has been found dead more than once with a log that simply stops: no
+ * stack, no [FATAL], no last line, and every client on ERR_CONNECTION_REFUSED. These
+ * tests pin the two paths that produce exactly that signature, and the forensics that
+ * make any future death self-explaining.
+ *
+ * Each spawns its own short-lived process rather than sharing the suite's server,
+ * because the thing under test IS the process lifecycle.
+ */
+
+const net = require('node:net');
+const ROOT = path.join(__dirname, '..');
+
+function spawnServer(env = {}) {
+  const proc = spawn(process.execPath, ['server.js'], {
+    cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, NODE_ENV: 'test', ...env },
+  });
+  let out = '';
+  proc.stdout.on('data', d => { out += d; });
+  proc.stderr.on('data', d => { out += d; });
+  const ended = new Promise(resolve => proc.on('exit', (code, signal) => resolve({ code, signal })));
+  return { proc, logs: () => out, ended };
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on('error', reject);
+    s.listen(0, () => { const { port: p } = s.address(); s.close(() => resolve(p)); });
+  });
+}
+
+async function waitUntil(fn, ms = 6000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) { if (await fn()) return true; await sleep(50); }
+  return false;
+}
+
+test('a server that cannot take its port says so and fails — it does not vanish with code 0', async () => {
+  // The measured pre-fix behaviour, and the whole reason a death could look like nothing
+  // at all: `ws` re-emits the HTTP server's error, so wss.on('error') swallowed the
+  // EADDRINUSE before uncaughtException could ever see it; the listen handle then went
+  // away and, with the heartbeat and the room reaper both unref'd, Node simply ran out of
+  // work and exited 0. One line of log, success code, no port, no clue.
+  const taken = await freePort();
+  const blocker = net.createServer();
+  await new Promise((resolve, reject) => { blocker.on('error', reject); blocker.listen(taken, resolve); });
+  try {
+    const s = spawnServer({ PORT: String(taken) });
+    const exit = await Promise.race([s.ended, sleep(6000).then(() => null)]);
+    assert.ok(exit, 'the process must not linger holding no port — that is a server that refuses everything');
+    assert.notEqual(exit.code, 0, 'exiting 0 tells a supervisor everything went fine');
+    assert.match(s.logs(), /\[FATAL\] cannot listen on :\d+ — EADDRINUSE/,
+      'the log must name the port and the reason');
+    assert.match(s.logs(), /\[EXIT\] code=/, 'and the exit itself must be recorded');
+  } finally {
+    await new Promise(r => blocker.close(r));
+  }
+});
+
+test('a stray SIGURG does not end a game in progress', async () => {
+  // One observed death exited 144 — 128+16 — which is SIGURG on macOS and SIGSTKFLT on
+  // Linux. Neither is a shutdown request from any supervisor. Installing a handler is
+  // exactly what makes such a signal non-fatal, because a signal with a JS listener stops
+  // taking its default action.
+  const p = await freePort();
+  const s = spawnServer({ PORT: String(p) });
+  const alive = async () => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${p}/health`, { signal: AbortSignal.timeout(1000) });
+      return (await res.json()).ok === true;
+    } catch { return false; }
+  };
+  try {
+    assert.ok(await waitUntil(alive), 'server came up');
+
+    // A real table, so the signal lands on a process with a game in it.
+    const ws = new WebSocket(`ws://127.0.0.1:${p}`);
+    ws.on('error', () => {});
+    const joined = new Promise(resolve => ws.on('message', raw => {
+      const m = JSON.parse(raw); if (m.type === 'joined') resolve(m);
+    }));
+    await new Promise(r => ws.once('open', r));
+    ws.send(JSON.stringify({ type: 'quick_play', name: 'Signal' }));
+    await joined;
+    assert.ok(await waitUntil(async () => {
+      const res = await fetch(`http://127.0.0.1:${p}/health`);
+      return (await res.json()).rooms === 1;
+    }), 'the room exists');
+
+    s.proc.kill('SIGURG');
+    await sleep(500);
+
+    assert.equal(s.proc.exitCode, null, 'SIGURG must not end the process');
+    assert.equal(s.proc.signalCode, null, 'nor kill it by signal');
+    assert.equal(await alive(), true, 'and the server is still serving');
+    const res = await fetch(`http://127.0.0.1:${p}/health`);
+    assert.equal((await res.json()).rooms, 1, 'the game in progress survived it');
+    assert.match(s.logs(), /\[SIGNAL\] SIGURG received and IGNORED/,
+      'and the signal is on the record, so the next one is not a mystery');
+    try { ws.terminate(); } catch {}
+  } finally {
+    s.proc.kill('SIGKILL');
+  }
+});
+
+test('a shutdown signal is named in the log before the process goes', async () => {
+  // SIGTERM is a legitimate request and is still obeyed — but a death that says nothing is
+  // indistinguishable from a crash, and that ambiguity is what cost the last three
+  // investigations. It now names the signal, reports what it was holding, and exits 128+n.
+  const p = await freePort();
+  const s = spawnServer({ PORT: String(p) });
+  try {
+    assert.ok(await waitUntil(async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${p}/health`, { signal: AbortSignal.timeout(1000) });
+        return (await res.json()).ok === true;
+      } catch { return false; }
+    }), 'server came up');
+
+    s.proc.kill('SIGTERM');
+    const exit = await Promise.race([s.ended, sleep(5000).then(() => null)]);
+    assert.ok(exit, 'SIGTERM is obeyed');
+    assert.equal(exit.code, 143, 'and reports the conventional 128+15');
+    assert.match(s.logs(), /\[SIGNAL\] SIGTERM — shutting down \(uptime \d+s, \d+ rooms, \d+ sockets\)/);
+    assert.match(s.logs(), /\[EXIT\] code=143/);
+  } finally {
+    s.proc.kill('SIGKILL');
+  }
 });

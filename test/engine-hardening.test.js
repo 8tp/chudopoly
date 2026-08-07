@@ -441,6 +441,65 @@ test('syncTimers stands the turn timer back up once the pending action resolves'
   timers.clearTurnTimer(room);
 });
 
+/* ── owner directive: an expiring clock must be legible ──────────────── */
+// "It just took my cards and I don't know why." An expiring deadline is the one board change
+// nobody chose, so it has to reach the same event stream every deliberate move goes into —
+// a prose log line alone is invisible to the journal, the replay and the gamelog record.
+
+test('an expiring response clock says who ran out of time and what was decided for them', () => {
+  const room = fakeRoom({ turnTimeout: 0, responseTimeout: 45 });
+  room.players = [{ id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' }];
+  room.state = fresh(2);
+  room.state.players[1].bank.push(take(room.state, c => c.type === 'money' && c.value === 5));
+  room.state.players[0].hand.push(take(room.state, c => c.action === 'finance_office'));
+  G.playAction(room.state, 'p1', 0, { targetId: 'p2' });
+  assert.ok(room.state.pendingAction, 'P2 owes an answer');
+  const owed = room.state.pendingAction.amount;
+
+  const seqBefore = room.state.eventSeq;
+  timers.autoResolveResponse(room);
+
+  const ev = room.state.events.find(e => e.t === 'response_timeout');
+  assert.ok(ev, 'the expiry is a structured event, not just prose');
+  assert.equal(ev.actor, 'p2', 'it names whose clock expired');
+  assert.equal(ev.name, 'P2');
+  assert.equal(ev.decision, 'accept', 'and what was auto-decided — never a silent OPSEC');
+  assert.equal(ev.auto, true);
+  assert.equal(ev.pending, 'payment', 'and what they were answering');
+  assert.equal(ev.amount, owed);
+  assert.equal(ev.timeout, 45, 'and the clock that ran out');
+  assert.equal(ev.source, 'p1', 'and who charged them');
+  assert.ok(ev.seq > seqBefore, 'it is sequenced in the stream like every other beat');
+
+  // Ordering: the explanation comes BEFORE the payment it explains.
+  const payment = room.state.events.find(e => e.t === 'payment');
+  if (payment) assert.ok(ev.seq < payment.seq, 'the reason precedes the consequence');
+
+  const line = room.state.log.find(l => /ran out of time/.test(l));
+  assert.ok(line, 'and a prose line for the log');
+  assert.match(line, /P2/);
+  assert.match(line, /45s/, 'the line states the clock, so "why did that happen" is answerable');
+  timers.clearTurnTimer(room);
+});
+
+test('an expiring turn clock emits a turn_timeout event naming the seat and the discard', () => {
+  const room = fakeRoom({ turnTimeout: 30, responseTimeout: 45 });
+  room.players = [{ id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' }];
+  room.state = fresh(2);
+  for (let i = 0; i < 9; i++) room.state.players[0].hand.push(room.state.deck.pop());
+
+  timers.onTurnTimeout(room);
+
+  const ev = room.state.events.find(e => e.t === 'turn_timeout');
+  assert.ok(ev, 'the turn expiry is a structured event too');
+  assert.equal(ev.actor, 'p1');
+  assert.equal(ev.auto, true);
+  assert.equal(ev.timeout, 30);
+  assert.equal(ev.discarded, 2, 'a forced discard is attributed to the clock, not to the player');
+  assert.ok(room.state.log.some(l => /P1 ran out of time \(30s\)/.test(l)));
+  timers.clearTurnTimer(room);
+});
+
 /* ── 7. timer lifecycle on teardown ──────────────────────────────────── */
 
 test('clearTurnTimer stops the re-arming turn timer, the response timer and the bot', () => {
@@ -829,4 +888,142 @@ test('an UNSEEDED bot-only game keeps its events — nothing else could reconstr
   assert.equal(rec.replayable, false);
   assert.equal(rec.eventsOmitted, undefined, 'no seed means the events are the only record');
   assert.ok(rec.events.length > 0);
+});
+
+/* ── §3.1b — paying with upgrades must deliver every declared card ───── */
+//
+// Upgrades became payable in §3.1b, and that opened a silent under-payment. In
+// processPayment(), normalizeUpgrades() was called once per upgrade card, inside the
+// removal loop: paying with an Upgrade AND its FOC together removed the Upgrade, at
+// which point normalising saw a lone FOC and banked it back to the PAYER — and the FOC's
+// own iteration then found nothing (`ui < 0`) and returned. The engine logged and emitted
+// a 7M payment; the payee received 3M and the payer kept the FOC.
+//
+// These tests assert the thing that actually matters and that the old code got wrong:
+// the payee ENDS UP HOLDING every card the payment declared, and the declared total is
+// the value that actually moved.
+
+// Where a card ended up: 'payee', 'payer', or 'lost'.
+function whereIs(state, cardId) {
+  for (const p of state.players) {
+    if (p.bank.some(c => c.id === cardId)) return { who: p.id, zone: 'bank' };
+    for (const cards of Object.values(p.properties || {})) {
+      if (cards.some(c => c.id === cardId)) return { who: p.id, zone: 'properties' };
+    }
+    for (const ups of Object.values(p.upgrades || {})) {
+      if ((ups || []).some(u => u && u.id === cardId)) return { who: p.id, zone: 'upgrades' };
+    }
+  }
+  return { who: null, zone: 'lost' };
+}
+
+// p1 charges p2 2M (Roll Call). p2 owns a complete intel set carrying an Upgrade and an
+// FOC, a 3M bank card and a spare brown property, so every combination below is a legal
+// payment (each is worth >= 2M).
+function upgradePaymentTable() {
+  const state = fresh();
+  const [a, b] = state.players;
+  propertyCard(state, b, 'intel');
+  propertyCard(state, b, 'intel');
+  const house = { ...take(state, c => c.action === 'upgrade'), upgradeType: 'house', placedColor: 'intel' };
+  const foc = { ...take(state, c => c.action === 'foc'), upgradeType: 'hotel', placedColor: 'intel' };
+  b.upgrades.intel = [house, foc];
+  const money = take(state, c => c.action === 'inspector_general');   // 5M, banked
+  b.bank.push(money);
+  const spare = propertyCard(state, b, 'brown');
+  assert.deepEqual(G.validateState(state), { ok: true }, 'fixture is a legal board');
+
+  a.hand.push(take(state, c => c.action === 'roll_call'));
+  assert.ok(G.playAction(state, 'p1', 0).ok);
+  return { state, a, b, house, foc, money, spare };
+}
+
+const CASES = [
+  ['an Upgrade alone',              ({ house }) => [house]],
+  ['an FOC alone',                  ({ foc }) => [foc]],
+  ['an Upgrade AND its FOC',        ({ house, foc }) => [house, foc]],
+  ['an FOC AND its Upgrade',        ({ house, foc }) => [foc, house]],
+  ['an Upgrade + FOC + bank card',  ({ house, foc, money }) => [house, foc, money]],
+  ['an Upgrade + FOC + a property', ({ house, foc, spare }) => [house, foc, spare]],
+  ['an Upgrade + a bank card',      ({ house, money }) => [house, money]],
+  ['an FOC + a property',           ({ foc, spare }) => [foc, spare]],
+  ['everything payable',            ({ house, foc, money, spare }) => [house, foc, money, spare]],
+];
+
+for (const [label, pick] of CASES) {
+  test(`paying with ${label} delivers every declared card to the payee`, () => {
+    const fixture = upgradePaymentTable();
+    const { state } = fixture;
+    const cards = pick(fixture);
+    const declared = cards.reduce((sum, c) => sum + c.value, 0);
+
+    const res = G.respondToAction(state, 'p2', 'accept', cards.map(c => c.id));
+    assert.ok(res.ok, `payment refused: ${res.error}`);
+
+    for (const card of cards) {
+      const at = whereIs(state, card.id);
+      assert.equal(at.who, 'p1',
+        `${card.name} (${card.value}M) was declared as payment but ended up with ${at.who ?? 'nobody'} in ${at.zone}`);
+    }
+    // What the log and the journal told the players must be what actually moved.
+    const paid = state.events.filter(e => e.t === 'payment').pop();
+    assert.ok(paid, 'a payment event was emitted');
+    assert.equal(paid.total, declared, 'the declared total is the sum of the selected cards');
+    const delivered = cards
+      .filter(c => whereIs(state, c.id).who === 'p1')
+      .reduce((sum, c) => sum + c.value, 0);
+    assert.equal(delivered, declared,
+      `payee received ${delivered}M against a declared ${declared}M`);
+    assert.deepEqual(G.validateState(state), { ok: true }, 'no card was duplicated or lost');
+  });
+}
+
+test('an FOC the payer KEEPS is still banked when its Upgrade is paid away', () => {
+  // The other half of the same rule: normalising once at the end must still strand a lone
+  // FOC. Paying only the Upgrade leaves the FOC with nothing beneath it, so it goes to the
+  // PAYER'S bank (§3.1b) — and it is NOT part of the declared total.
+  const { state, foc, house } = upgradePaymentTable();
+  assert.ok(G.respondToAction(state, 'p2', 'accept', [house.id]).ok);
+
+  assert.equal(whereIs(state, house.id).who, 'p1', 'the Upgrade was paid');
+  assert.deepEqual(whereIs(state, foc.id), { who: 'p2', zone: 'bank' },
+    'the orphaned FOC goes to its owner\'s bank, not the payee and not the discard');
+  assert.equal(state.players[1].upgrades.intel, undefined, 'no lone FOC keeps paying +4M rent');
+  assert.equal(state.events.filter(e => e.t === 'payment').pop().total, house.value);
+  assert.deepEqual(G.validateState(state), { ok: true });
+});
+
+test('seizing an upgraded set moves the Upgrade AND the FOC together', () => {
+  // steal_set/mergeUpgrades shares normalizeUpgrades()'s invariant. It hands the whole
+  // list over in one move and deletes the source key, so there is no window in which a
+  // lone FOC exists — this pins that.
+  const state = fresh();
+  const [a, b] = state.players;
+  propertyCard(state, b, 'intel');
+  propertyCard(state, b, 'intel');
+  const house = { ...take(state, c => c.action === 'upgrade'), upgradeType: 'house', placedColor: 'intel' };
+  const foc = { ...take(state, c => c.action === 'foc'), upgradeType: 'hotel', placedColor: 'intel' };
+  b.upgrades.intel = [house, foc];
+
+  a.hand.push(take(state, c => c.action === 'inspector_general'));
+  assert.ok(G.playAction(state, 'p1', 0, { targetId: 'p2', targetColor: 'intel' }).ok);
+  assert.ok(G.respondToAction(state, 'p2', 'accept').ok);
+
+  assert.deepEqual(G.upgradeKinds(a, 'intel').sort(), ['hotel', 'house'],
+    'both upgrades followed the set');
+  assert.equal(b.upgrades.intel, undefined);
+  assert.deepEqual(G.validateState(state), { ok: true });
+});
+
+test('breaking an upgraded set banks BOTH upgrades to their owner, never stranding the FOC', () => {
+  // The set-break path (bankUpgrades) is the third caller in this family. Paying away a
+  // property of an upgraded set breaks it; both upgrades must land in the payer's bank.
+  const { state, house, foc, spare } = upgradePaymentTable();
+  const intelProp = state.players[1].properties.intel[0];
+  assert.ok(G.respondToAction(state, 'p2', 'accept', [intelProp.id, spare.id]).ok);
+
+  assert.deepEqual(whereIs(state, house.id), { who: 'p2', zone: 'bank' });
+  assert.deepEqual(whereIs(state, foc.id), { who: 'p2', zone: 'bank' });
+  assert.equal(state.players[1].upgrades.intel, undefined);
+  assert.deepEqual(G.validateState(state), { ok: true });
 });

@@ -61,7 +61,12 @@ function validateMessage(message) {
       if (!BOT_MODES.has(message.mode)) return fail('Invalid bot mode');
       break;
     case 'start_game':
-      if (!isInt(message.turnTimeout, 0, 300) || !isInt(message.responseTimeout, 0, 120)) return fail('Invalid timer setting');
+      // Both clocks are OPTIONAL: absent means "the host did not say", and the server
+      // supplies the default (60s turn, 45s answer). An explicit 0 still means OFF, and an
+      // out-of-range or non-integer value is still a hard refusal — silently clamping a
+      // typo'd clock is how a table ends up running on a setting nobody chose.
+      if (message.turnTimeout !== undefined && !isInt(message.turnTimeout, 0, 300)) return fail('Invalid timer setting');
+      if (message.responseTimeout !== undefined && !isInt(message.responseTimeout, 0, 120)) return fail('Invalid timer setting');
       // Every rule field is additive and backward-compatible: absent means the Chudopoly
       // default. A preset supplies the base; individual toggles override it. Presets are
       // resolved server-side (game.js resolveRules), never trusted from the client.

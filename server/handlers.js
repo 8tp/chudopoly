@@ -128,6 +128,30 @@ function seedFromEnv(env = process.env) {
 const MIN_HUMAN_TURN_TIMEOUT = 30;
 const MIN_HUMAN_RESPONSE_TIMEOUT = 15;
 
+/* ── Match clocks ────────────────────────────────────────────────────── */
+// Owner directive: EVERY match answers a charge on a clock — Quick Play, solo-vs-bots and
+// lobby games alike. 45s is the default everywhere a room is created; the lobby's REPLY
+// select overrides it and whatever the host picks is what arms.
+//
+// These two and the floors above never fight: 45 > MIN_HUMAN_RESPONSE_TIMEOUT and
+// 60 > MIN_HUMAN_TURN_TIMEOUT, so the floors only ever bite on a host who deliberately
+// picks OFF or something very short on a table with two or more humans.
+const DEFAULT_TURN_TIMEOUT = 60;
+const DEFAULT_RESPONSE_TIMEOUT = 45;
+const MAX_TURN_TIMEOUT = 300;
+const MAX_RESPONSE_TIMEOUT = 120;
+
+// `undefined`/`null` means "the host did not say" => the default. An explicit 0 means OFF
+// and is honoured. The old code was `Math.max(0, Math.min(max, Number(v) || 0))`, which
+// collapsed "unspecified" and "off" into the same 0 — that is why omitting the field gave a
+// room no answer clock at all instead of the default.
+function clampSeconds(value, max, fallback) {
+  if (value === undefined || value === null) return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(max, Math.trunc(n)));
+}
+
 /* ── Egress cooldowns ────────────────────────────────────────────────── */
 // Everything below is a command whose REPLY is far larger than the request, so the frame
 // rate limit in server.js (40 per 5s) is not a bound on bytes leaving the process.
@@ -137,7 +161,7 @@ const EMOTE_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_EMOTE_MS) || 1000)
 // A history refill is a page, not the whole ring.
 const CHAT_PAGE = 20;
 
-function startRoomGame(room, turnTimeout = 60, responseTimeout = 30, ruleOpts) {
+function startRoomGame(room, turnTimeout, responseTimeout, ruleOpts) {
   // Unconditional, and BEFORE the new state exists. This used to arm the turn timer only
   // when turnTimeout > 0, so restarting a table with a 0 clock left the OLD timer armed
   // against the NEW state: syncTimers saw a truthy turnTimerId, declined to re-arm, and a
@@ -151,8 +175,8 @@ function startRoomGame(room, turnTimeout = 60, responseTimeout = 30, ruleOpts) {
     ? (room.rules || G.resolveRules({}))
     : G.resolveRules(ruleOpts);
   room.winRule = room.rules.winRule;   // legacy field, kept in sync
-  room.turnTimeout = Math.max(0, Math.min(300, Number(turnTimeout) || 0));
-  room.responseTimeout = Math.max(0, Math.min(120, Number(responseTimeout) || 0));
+  room.turnTimeout = clampSeconds(turnTimeout, MAX_TURN_TIMEOUT, DEFAULT_TURN_TIMEOUT);
+  room.responseTimeout = clampSeconds(responseTimeout, MAX_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT);
   const humans = room.players.filter(p => !p.isBot).length;
   if (humans > 1) {
     if (room.turnTimeout < MIN_HUMAN_TURN_TIMEOUT) room.turnTimeout = MIN_HUMAN_TURN_TIMEOUT;
@@ -179,7 +203,10 @@ function handleMessage(ws, msg, state) {
       state.playerId = genId();
       state.roomCode = code;
       const player = { id: state.playerId, resumeToken: genResumeToken(), name: msg.name, ws };
-      const room = { code, phase: 'lobby', hostId: state.playerId, players: [player], state: null, chat: [] };
+      // The clocks are seeded at creation, not at start_game, so the LOBBY broadcast already
+      // says what this table will run on and the REPLY select can show the real default.
+      const room = { code, phase: 'lobby', hostId: state.playerId, players: [player], state: null, chat: [],
+        turnTimeout: DEFAULT_TURN_TIMEOUT, responseTimeout: DEFAULT_RESPONSE_TIMEOUT };
       rooms.set(code, room);
       sendJoined(ws, room, player);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
@@ -194,15 +221,21 @@ function handleMessage(ws, msg, state) {
       state.playerId = genId();
       state.roomCode = code;
       const player = { id: state.playerId, resumeToken: genResumeToken(), name: msg.name, ws };
-      const room = { code, phase: 'lobby', hostId: player.id, players: [player], state: null, chat: [] };
+      const room = { code, phase: 'lobby', hostId: player.id, players: [player], state: null, chat: [],
+        turnTimeout: 0, responseTimeout: DEFAULT_RESPONSE_TIMEOUT };
       for (const mode of ['neutral', 'aggressive']) {
         room.players.push({ id: genId(), name: absent.generateBotName(room), ws: null, isBot: true, botMode: mode });
       }
       rooms.set(code, room);
       sendJoined(ws, room, player);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
-      startRoomGame(room, 0, 30);
-      console.log(`[GAME] ${code} quick play started for ${player.name}`);
+      // Turn clock 0 by design: one human at the table, so only they can stall and only
+      // their own game suffers. The ANSWER clock is not optional though — the third
+      // argument is omitted so Quick Play takes the same 45s default every other match
+      // gets, and a bot's charge is answered on a deadline like anyone else's.
+      startRoomGame(room, 0);
+      console.log(`[GAME] ${code} quick play started for ${player.name} `
+        + `(response clock ${room.responseTimeout}s)`);
       break;
     }
 

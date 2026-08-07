@@ -65,13 +65,21 @@ function broadcastRoom(room) {
 
 function broadcastAndScheduleBot(room) {
   const timers = require('./timers');
-  broadcastRoom(room);
   // Bots create pending actions without going through a message handler, so timer state is
-  // reconciled after every broadcast rather than only in the handlers. Without this a bot's
-  // charge in a turnTimeout=0 room armed no response deadline at all.
+  // reconciled here rather than only in the handlers. Without this a bot's charge in a
+  // turnTimeout=0 room armed no response deadline at all.
+  //
+  // ORDER MATTERS, and getting it wrong is invisible in testing: sync BEFORE broadcasting.
+  // A pending action against a human produces no further broadcast until it resolves, so a
+  // state serialised before `responseStartedAt` is set carries `responseTimer: null` — and
+  // that null is the only value the client will ever see. Measured: the countdown was
+  // structurally invisible for 100% of bot-initiated attacks, while human attacks were fine
+  // because `case 'play_action'` arms the timer before broadcasting. That asymmetry is
+  // exactly why this survived every test we had.
   timers.syncTimers(room);
+  broadcastRoom(room);
   Bot.scheduleBotAction(room, {
-    broadcast: (r) => { broadcastRoom(r); timers.syncTimers(r); },
+    broadcast: (r) => { timers.syncTimers(r); broadcastRoom(r); },
     startTimer: timers.startTurnTimer,
     clearTimer: timers.clearTurnTimer,
   });

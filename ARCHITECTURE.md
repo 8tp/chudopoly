@@ -48,8 +48,16 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    typeface's identity, not ours, and it is the one mark that has to be ours.
 
    **AMENDED 2026-08-07 — recorded music, and only music, may ship as files.** Scope:
-   `public/audio/*.opus`, at most **four** tracks (one lobby bed, two match beds, one Final
-   Approach bed). **Every sound effect stays procedural** and that is not a purity argument:
+   `public/audio/*.opus`, at most **six** tracks (one lobby bed, two match beds, one Final
+   Approach bed, and a victory / defeat pair).
+
+   *The cap moved four → six on 2026-08-07 (c), owner directive, and the endgame pair is
+   cheap in a way the beds are not: 40s rather than 3 minutes, so **322KB + 317KB** against
+   the beds' 1.5MB each. Total audio 5.2MB → 5.9MB. They are also the only tracks whose load
+   moment is known in advance — the win overlay is already held back 850ms for the
+   celebration, and §3.10 arms a full cycle before anyone converts, so both can be resident
+   without a stall. Whether to prefetch one or both (the winner is not known until it
+   happens) is an implementation call for the audio owner.* **Every sound effect stays procedural** and that is not a purity argument:
    a synthesised click fires at zero latency with no load path, and its pitch and timing
    jitter per call, which is what stops a cue heard 400× a match from becoming a woodpecker.
    Samples would ship the *same* click 400 times.
@@ -136,7 +144,33 @@ tree. Git history is the archive; do not keep a `legacy/` copy.
 
 ## §3 Gameplay balance (P1 directives)
 
-Authoritative deck stays 106 cards. Changes below are directives; the engine agent tunes exact
+Authoritative deck stays 106 cards.
+
+> **AMENDED 2026-08-07 — the default stays 106; a custom lobby may edit it.** Thirteen counts
+> are editable (the eleven action kinds, plus wilds split into rainbow and an ordered
+> two-colour list), clamped per-kind 0–12 and 80–130 total, resolved and refused **server-side**.
+> Property, money and rent are deliberately **not** editable: `COLORS[c].size` is simultaneously
+> the property count, the §3.5 zone cap and the completion test, so a property knob makes
+> colours uncompletable or breaks an invariant `validateState` asserts; money and rent are the
+> economy's scale, and moving them moves every rent, demand and payment together, so nothing
+> measured over them is interpretable. A count is never a card list — the host says how many,
+> the engine says which.
+>
+> **The measurement said ship nothing to the stock deck**, and that null result is recorded
+> here because it cost 10,000+ games to earn. One more Inspector General does move Final
+> Approach shot-down (45.8% → 52.4% at 4p) and a size-neutral control (+1 IG, −1 PCS, still
+> 106) reaches 53.3% — so the lever is the *breaker*, not the deck size, and the deck genuinely
+> was the ceiling the bot round named. But every breaker addition pushes 5-player points-endings
+> from 8.4% to 13–19% and p90 past 110 turns. All of them fail §3.6's bar.
+>
+> Two findings worth keeping: **restoring the two missing wilds runs the other way** — it lowers
+> shot-down but improves every cost (5p p90 96 → 81, points-endings 8.39% → 5.93%). And
+> **`mdFaithful` shoots down only 24.8% at 4p**, which means CHUD is doing most of the
+> set-breaking work in this game. `mdFaithful` is now literally the official deck: our action
+> counts already matched MD exactly, so `chud: 0, wildPairs: 9` lands on it category-for-category
+> and stays at 106 because the two changes cancel.
+
+Changes below are directives; the engine agent tunes exact
 numbers and **must validate with `simulate.js` winrate matrices** (≥500 games per matchup of
 the 5 bot personalities; no personality > 60% or < 8% winrate in a 4-player mixed game, and
 first-player advantage measured and reported).

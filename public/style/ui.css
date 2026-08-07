@@ -33,55 +33,155 @@
 }
 
 /* ══ HOME — the apron, seen from above (§3.3) ══════════════════════════════
-   ROUND-4 REVIEW. The previous pass deleted the gradient CTA and the panel fill
-   but kept the ANATOMY the spec bans by name: a centred narrow column, a
-   tracked-caps label stacked over a rounded input, four full-width buttons in a
-   pile, and empty apron either side. §3.3's actual instruction is:
 
-     "the home screen IS the table, seen from above, with the deck sitting on
-      it and the actions painted into the apron as markings."
+   §3.3, ratified: "the home screen IS the table, seen from above, with the deck
+   sitting on it and the actions painted into the apron as markings."
 
-   So the screen is a TABLE with two things standing on it: a real deck (four
-   card backs at a dealer's angle in --card-back, with two cards dealt face up
-   beside it) inside the same painted compass inlay the table centre uses, and a
-   marshalling area — the call sign cut into the concrete as a SLOT with its
-   caption beside it, one wide ink slab, a hold-short line, and the alternates
-   painted along it at unequal weight. Asymmetric at every width that can hold
-   it: deck left, markings right. A centred column is what a login form does. */
+   ROUND-6 REVIEW, and this one is measured rather than argued. On the previous
+   build, at 1440×900 dark, first-timer (tools/lib/harness.mjs viewport +
+   getBoundingClientRect over every painting node in #screen-home):
+
+     ink box            1044 × 500 at (198, 200)
+     of the viewport    72.5% of the width, 55.6% of the HEIGHT
+     dead apron         22.2% above, 22.2% below, 13.8% either side
+     mass centres       deck midX 30% · wordmark midX 63% · actions midX 66%
+     bounding-box       dead centre — offset 0px h, 0px v
+
+   The last two lines together are the whole diagnosis. The composition's BOX
+   was already centred, so "it sits right of centre" was never a margin problem
+   and no amount of nudging would have found it. What was off-centre was the
+   WEIGHT: two half-weight objects at 30% and 66% with a hole between them, and
+   44% of the viewport height carrying nothing at all. The wordmark — a 440×134
+   bone plate, by a wide margin the brightest object on a near-black ground —
+   sat in the right-hand mass at 32% of the height, which is what made the
+   balance read wrong.
+
+   THE HYPOTHESIS WAS "CENTRE THE WORDMARK", AND CENTRING ALONE MAKES IT WORSE.
+   Tested: a centred column at 1440 puts every object on one ~500px axis and
+   strands 470px of unmarked apron on each side — the same disease rotated 90°,
+   and now it reads as a splash screen, which is the one thing §3.3 forbids. A
+   table seen from above has no sky to hang a logo in.
+
+   WHAT ACTUALLY FIXES IT: markings run to the edge of the frame; objects do
+   not. That is how a real apron is composed and it is already this design's own
+   vocabulary — the painted line is what anchors the surface, and the furniture
+   standing on it is free to sit wherever it sits. So the screen is three
+   registers, at every width:
+
+     head    the wordmark plate, with a rule under it that reaches both edges
+     table   the deck — now the LARGEST object on screen, filling the 1fr row
+     rail    the hold-short line edge to edge, and the marshalling area painted
+             along it, with the two secondary marks at the frame's corners
+
+   The wordmark IS centred, which is what was asked for, and it no longer floats
+   — the full-bleed rule under it is what holds it down. Every edge of the frame
+   now carries a marking, so there is no dead band left to strand anything in,
+   and the deck is the hero it should always have been on a card game's menu.
+
+   Only the rail's internal arrangement changes between widths; the three
+   registers are the same everywhere, which is why the phone and the desktop are
+   recognisably the same screen. */
 
 .home {
+  --home-pad: clamp(1em, 4.5vw, 3.5em);
+
   position: relative;
   z-index: 1;
-  width: min(58em, 100%);
-  margin: auto;
-  padding: 1.2em 1.4em;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
   display: grid;
-  gap: .8em 2.2em;
-  grid-template-columns: minmax(0, auto) minmax(15em, 1fr);
-  grid-template-areas: "deck mark" "deck actions";
-  align-items: center;
-  justify-content: center;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "head" "table" "rail";
+  /* NO horizontal padding here, deliberately: the two rules are MARKINGS, and a
+     marking that stops 3em short of the edge is a box. The inset lives on the
+     contents (--home-pad) so the lines can reach the frame. */
+  padding: clamp(.4em, 1.6vh, 1.1em) 0 0;
 }
 
-.home-table {
-  grid-area: deck;
+/* ── head: the plate, painted on the concrete ─────────────────────────── */
+
+.home-head {
+  grid-area: head;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.1em;
-  padding: 2.2em 1.4em 1.2em;
+  gap: .5em;
+  padding: 0 var(--home-pad) clamp(.5em, 1.5vh, 1em);
+  text-align: center;
+}
+/* The rule that stops the plate floating. Solid over dashed, the flight-line
+   pair — the same two-weight vocabulary the hold-short line uses below, so the
+   screen is bracketed by one marking language rather than two. */
+.home-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil) 0 26px, transparent 26px 40px) 0 3px / 100% 2px no-repeat;
+}
+/* The plate's size, capped on BOTH axes. Width alone is not enough: the mark is
+   3.29:1, so a width cap that suits 1440×900 makes it 228px tall in a 390-wide
+   phone's short landscape and eats the deck. Height-capped in vh, it yields to
+   the register that has the object in it. Overrides cardart.css's own
+   `max-width: 440px` (0,2,0 beats 0,1,0) — that file owns the drawing, this
+   file owns its place in the composition, which is the split its header sets. */
+.home-head .brand-mark {
+  max-width: min(560px, 88vw);
+  max-height: min(160px, 19vh);
+}
+
+/* ── table: the deck, and it is the hero ──────────────────────────────── */
+
+/* RESEARCH, and this is the number that moved the design: across the shipping
+   menus that put an object in the middle of a wide frame, the object is big
+   enough to BE the composition — Hearthstone's box measures ~60% of the screen
+   width by ~76% of its height on a 3840×2160 capture, and its four corner
+   elements have not moved in eight years of menu churn. A 400px assembly in a
+   1440px frame reads as an accident; a 60% object reads as intent. The first
+   pass of this layout put the deck at 39% × 49% and it still looked timid, so
+   the head and the rail are trimmed to whatever they actually need and every
+   pixel of slack goes to the deck.
+
+   The deck also sits ABOVE the geometric centre, by the asymmetric padding
+   below: the optical centre of a rectangle — "the place where a viewer's eye
+   spends most of its time" — is slightly above the geometric one, and
+   Hearthstone's own primary control sits 31% from the top rather than 50%. */
+.home-table {
+  grid-area: table;
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(.3em, 1vh, .7em);
+  padding: clamp(.3em, 1vh, .7em) var(--home-pad) clamp(.6em, 2.4vh, 1.8em);
+  /* a size container, so the deck can be sized off the height it was GIVEN.
+     Without this there is no way to say "as wide as fits, but no taller than
+     the row" in one box: aspect-ratio derives the cross axis from the main one
+     and max-width clamps the result without shrinking the height back, which is
+     exactly what left 70px of empty deck box under the cards on the phone. */
+  container-type: size;
 }
 /* the painted inlay the piles stand in — the same compass marking table.css
-   prints at the centre of the table, because this IS that table */
+   prints at the centre of the table, because this IS that table. Sized off the
+   deck rather than in em so it tracks the hero instead of the root font. */
 .home-table::before {
   content: "";
   position: absolute;
   left: 50%;
-  top: 44%;
-  width: 17em;
-  height: 17em;
-  margin: -8.5em 0 0 -8.5em;
+  top: 50%;
+  width: min(30em, 62vh);
+  aspect-ratio: 1;
+  translate: -50% -50%;
   border-radius: 50%;
   background:
     radial-gradient(circle, transparent 0 46%, var(--stencil-hi) 46% 46.6%, transparent 46.6%),
@@ -91,86 +191,74 @@
   mask-image: radial-gradient(circle, #000 38%, transparent 49%);
   pointer-events: none;
 }
-/* the deck stands at the left of its own patch of concrete; two cards are dealt
-   off it to the right, and the box is sized to hold both */
-.home-deck { position: relative; width: 20.5em; height: 16.4em; }
-.home-card {
-  position: absolute;
-  inset: 0 auto auto 0;
-  width: 9.4em;
-  aspect-ratio: var(--card-ratio);
-  border-radius: var(--card-r);
-  background:
-    repeating-linear-gradient(45deg, rgba(242, 238, 228, .04) 0 1px, transparent 1px 5px),
-    repeating-linear-gradient(-45deg, rgba(0, 0, 0, .35) 0 1px, transparent 1px 5px),
-    var(--card-back);
-  box-shadow: var(--card-drop);
-}
-.home-card::after {
-  content: "";
-  position: absolute;
-  inset: 3px;
-  border-radius: calc(var(--card-r) * .7);
-  box-shadow: inset 0 0 0 2px rgba(242, 238, 228, .30);
-}
-.home-card:nth-child(1) { transform: translate(-7px, 6px) rotate(-4.5deg); }
-.home-card:nth-child(2) { transform: translate(4px, 3px) rotate(2.4deg); }
-.home-card:nth-child(3) { transform: translate(-2px, 1px) rotate(-1.1deg); }
-.home-card:nth-child(4) { display: flex; align-items: center; justify-content: center; transform: rotate(.6deg); }
-.home-roundel { width: 46%; color: rgba(242, 238, 228, .34); fill: currentColor; }
 
-/* a printed card (§6): solid set-colour band with the set name in stock, the
-   glyph at ~46% of the width, and a filled ink value coin with bone numerals */
-.home-face {
+/* The deck takes every pixel the row can spare, in whichever axis binds. The
+   width is the smaller of "the whole row" and "as wide as this aspect can be
+   without exceeding the row's height, less the tag under it" — 100cqh is the
+   row's content height, --deck-reserve is the tag plus its gap, and 1.43 is
+   100/70 written the other way round.
+
+   100/74 is the MEASURED extent of the arrangement below with the rotations
+   applied. At 38cqw per card, each group's axis-aligned box is
+   w' = W·|cos θ| + H·|sin θ| about its own centre, which puts the three at
+   x −0.8→103.0 and y 0.9→73.1 in cqw. It is not a guess at a nice ratio — the
+   first pass used 100/70 and the Inspector General's rotated bottom corner ran
+   3.1cqw past the box, which at 1440 is 19px straight through the "104 cards"
+   chip. A menu whose gate fails on buried text is a menu that buried text. */
+.home-deck {
+  --deck-reserve: 2.6em;
+
+  position: relative;
+  flex: 0 1 auto;
+  align-self: center;
+  width: min(100%, calc((100cqh - var(--deck-reserve)) * 1.351));
+  aspect-ratio: 100 / 74;
+  /* an inline-size container so the cards' offsets and their corner radius can
+     be expressed against the DECK, while each card is its own container for the
+     art inside it (cardart.css queries the nearest one) */
+  container-type: inline-size;
+}
+
+/* One box per card. cardart.css sizes every tier off `container-type:
+   inline-size` on the element that holds the .ca, so this is the same hand-off
+   the table makes — .home-cardbox stands in for .card-face/.card-back, without
+   claiming either class or a [data-card-id]. Nothing that walks the table can
+   see these. */
+.home-cardbox {
   position: absolute;
   top: 0;
   left: 0;
-  width: 8.4em;
+  width: 38cqw;
   aspect-ratio: var(--card-ratio);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  overflow: hidden;
-  border-radius: var(--card-r);
-  background: var(--card-stock);
-  color: var(--band);
-  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop);
+  container-type: inline-size;
+  /* 6% of the card's width — the proportion --card-r targets before its 6px
+     clamp, which exists for 40px cards and would read as a square corner on a
+     200px one. 38cqw × .06 = 2.3cqw. */
+  border-radius: 2.3cqw;
+  box-shadow: var(--card-drop);
 }
-.home-face:nth-of-type(5) { transform: translate(8.4em, 1.1em) rotate(7deg); }
-.home-face:nth-of-type(6) { transform: translate(13.4em, 4.4em) rotate(21deg); }
-.home-face-band {
-  align-self: stretch;
-  padding: .22em .3em;
-  background: var(--band);
-  color: var(--band-ink);
-  font-size: .52em;
-  font-weight: 800;
-  /* §3.6: the set name in a card's colour band is the ONE place in this whole
-     product where tracked caps are allowed. This is that place. */
-  letter-spacing: .06em;
-  text-align: center;
-  line-height: 1.3;
-}
-.home-face-glyph { width: 46%; margin-top: 12%; fill: currentColor; }
-.home-face-coin {
-  position: absolute;
-  left: 8%;
-  bottom: 7%;
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  width: 26%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--card-stock);
-  font-family: var(--font-mono);
-  font-size: .62em;
-  font-weight: 700;
-}
-.home-face-coin i { font-style: normal; font-size: .7em; }
+.home-cardbox > .ca { border-radius: inherit; }
+
+/* The deal. Four backs at a dealer's angle, two cards face up beside them —
+   near enough to read as "dealt off this pile", far enough not to occlude the
+   pile's own mark. Percentages of the deck box, so the whole arrangement is one
+   scalable drawing.
+
+   dealt-0 starts at 36cqw and not the 31 the first pass used, because the BACK
+   prints the wordmark across its middle 66% — at 38cqw wide from x=1 that runs
+   x 7.5→32.5, and the F-22's rotated left edge was landing at 27.8 and cutting
+   the word in half. The one dark object in the design was the one thing being
+   occluded. */
+.home-back-0 { translate: 1cqw 9cqw; rotate: -4deg; }
+.home-back-1 { translate: 2.4cqw 10.2cqw; rotate: 2.6deg; }
+.home-back-2 { translate: 1.4cqw 9.6cqw; rotate: -1.2deg; }
+.home-back-3 { translate: 2cqw 9cqw; rotate: .6deg; }
+.home-dealt-0 { translate: 36cqw 3cqw; rotate: 7deg; }
+.home-dealt-1 { translate: 57cqw 15cqw; rotate: 20deg; }
+
 .home-deck-tag {
   margin: 0;
+  flex: 0 0 auto;
   font-size: var(--t-micro);
   font-weight: 700;
   color: var(--fg-mute);
@@ -179,32 +267,63 @@
   background: var(--ground);
 }
 
-.home-mark { grid-area: mark; align-self: end; }
-.home-actions {
-  grid-area: actions;
+/* ── rail: the hold-short line and everything painted along it ─────────── */
+
+.home-rail {
+  grid-area: rail;
   position: relative;
-  align-self: start;
-  display: flex;
-  flex-direction: column;
-  gap: .55em;
-  padding-top: 1em;
+  display: grid;
+  /* minmax(0, 1fr), NOT 1fr. A bare 1fr is minmax(AUTO, 1fr), so each side
+     column carries its own content's min-content as a floor — "How to play" is
+     86px and the sound mark is 118px — and the free space either side of the
+     centre column then divides unevenly. Measured on the first pass: the
+     marshalling area's midpoint landed at 42% of the viewport instead of 50%,
+     which is the same off-centre-weight defect this round exists to fix, only
+     mirrored. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas: "help actions sound";
+  align-items: center;
+  gap: .7em 1.2em;
+  padding: clamp(.8em, 2.2vh, 1.4em) var(--home-pad) clamp(.5em, 1.6vh, 1.1em);
 }
-/* the hold-short line the actions are painted behind: two solid, two dashed */
-.home-actions::before {
+/* the hold-short line: two solid, two dashed, and it runs to both edges */
+.home-rail::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: 9px;
+  height: 11px;
   pointer-events: none;
   background:
     linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 100% 2px no-repeat,
     linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 3px / 100% 2px no-repeat,
-    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 6px / 100% 2px no-repeat,
-    repeating-linear-gradient(90deg, var(--stencil-hi) 0 10px, transparent 10px 18px) 0 9px / 100% 2px no-repeat;
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 12px, transparent 12px 22px) 0 7px / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 12px, transparent 12px 22px) 0 10px / 100% 2px no-repeat;
 }
-.home-slot { display: flex; align-items: center; gap: .7em; }
+
+/* One flex-wrap rule for both layouts, because the desktop row and the phone
+   stack are the SAME order — greeting, call sign, the slab, the alternates,
+   the error. The 15em bases put call sign and the slab side by side wherever
+   the rail is at least ~32em wide and stack them below that; there is no second
+   template to keep in step. */
+.home-actions {
+  grid-area: actions;
+  /* NOT the default stretch: `width: min(44em, 100%)` overrides stretch, and a
+     narrower-than-its-column item then sits at the column's inline START. That
+     is what put the marshalling area's midpoint at 42% of the viewport with the
+     side columns already at minmax(0, 1fr) — the auto column is as wide as the
+     block's max-content, and the block was left-aligned inside it. */
+  justify-self: center;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .5em .7em;
+  width: min(44em, 100%);
+}
+.home-greet { flex: 1 1 100%; margin: 0; text-align: center; }
+.home-slot { flex: 1 1 15em; display: flex; align-items: center; gap: .7em; }
 .home-slot .field-label { flex: 0 0 auto; margin: 0; }
 .home-slot .field { flex: 1 1 auto; min-width: 0; }
 /* ROUND-5: the CTA pressed SHALLOWER than the buttons under it. It inherits
@@ -213,53 +332,146 @@
    travel than the same 4px against a transparent secondary. The primary action
    gets the deepest press in the app, which is also what §4 means by the press
    being the whole affordance. */
-.home-go { font-size: 1.1em; min-height: calc(var(--tap) * 1.15); --btn-drop: 6px; }
-.home-alt { display: flex; gap: .5em; align-items: stretch; }
+.home-go { flex: 1 1 15em; font-size: 1.1em; min-height: calc(var(--tap) * 1.15); --btn-drop: 6px; }
+/* The alternates taper: narrower than the row above and centred, so the rail
+   reads as one marshalling block that steps down in weight rather than three
+   full-width bars. */
+.home-alt {
+  flex: 1 1 100%;
+  display: flex;
+  gap: .5em;
+  align-items: stretch;
+  justify-content: center;
+  width: min(30em, 100%);
+  margin-inline: auto;
+}
 .home-alt .btn { flex: 1 1 auto; }
 .home-join { flex: 1 1 auto; display: flex; gap: .35em; min-width: 0; }
 .home-join .field-code { flex: 1 1 4.5em; min-width: 0; }
 .home-join .btn { flex: 0 0 auto; padding: 0 .9em; }
-/* tertiary: a painted mark at the edge of the box, not a fourth button */
-.home-help {
-  align-self: flex-start;
+.home #home-error { flex: 1 1 100%; margin: 0; text-align: center; }
+
+/* The two corner marks. Painted, not buttons: a fourth and fifth ink slab in
+   the rail would flatten the hierarchy the slab exists to carry, and these sit
+   at the frame's corners where a real apron puts its lettering. They keep the
+   §0.9 44px box; only the fill is gone. */
+.home-help, .home-sound {
   min-height: var(--tap);
   padding: 0;
   box-shadow: none;
   font-weight: 700;
   font-size: var(--t-small);
+  color: var(--fg-mute);
+  --btn-ink: var(--fg-mute);
+}
+.home-help { grid-area: help; justify-self: start; }
+.home-sound { grid-area: sound; justify-self: end; gap: .45em; }
+.home-help > span, .home-help,
+.home-sound #home-sound-label {
   text-decoration: underline;
   text-underline-offset: .28em;
   text-decoration-thickness: 1px;
   text-decoration-color: var(--stencil-hi);
 }
-.home-help:active:not(:disabled) { transform: none; box-shadow: none; }
-.home #home-error { margin: 0; }
+.home-help:active:not(:disabled),
+.home-sound:active:not(:disabled) { transform: none; box-shadow: none; }
 
-@media (max-width: 719px), (max-height: 560px) {
-  .home {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "mark" "deck" "actions";
-    gap: .5em;
-    padding: .8em 1.1em;
-  }
-  .home-table { padding: 1em 0 .6em; }
-  .home-table::before { width: 13em; height: 13em; margin: -6.5em 0 0 -6.5em; }
-  .home-deck { width: 15em; height: 12em; }
-  .home-card { width: 6.8em; }
-  .home-face { width: 6em; }
-  .home-face:nth-of-type(5) { transform: translate(6.1em, .8em) rotate(7deg); }
-  .home-face:nth-of-type(6) { transform: translate(9.6em, 3.2em) rotate(21deg); }
-  .home-mark { align-self: auto; }
+.home-sound-mark { width: 1.15em; height: 1.15em; flex: none; fill: currentColor; }
+/* Two states from one drawing: the waves are the ON state, the strike is the
+   OFF state, and exactly one of them is ever present. A speaker with BOTH would
+   be a speaker with a slash through its own waves. */
+.home-sound-cut { display: none; }
+.home-sound.is-off .home-sound-wave { display: none; }
+.home-sound.is-off .home-sound-cut { display: block; }
+
+/* ── first-timer vs returning ──────────────────────────────────────────────
+   These rendered identically: the saved call sign was pushed into the field and
+   nothing acknowledged it, so the row that was already ANSWERED still looked
+   like the first question. The greeting names them, and the call-sign row
+   demotes so the slab is the first thing in the rail with weight.
+
+   NOT a reorder. Putting the answered field below the button is the obvious
+   version and it breaks §0.9's keyboard clause via WCAG 2.4.3 — the visual and
+   focus orders would disagree. DOM order is fixed; only emphasis moves. */
+.home-greet {
+  font-size: var(--t-small);
+  font-weight: 700;
+  color: var(--fg);
 }
+/* Demotion by PROPORTION, not by opacity or type size. Both of those were in
+   the first draft and both are unmeasurable here: tools/checkContrast.mjs runs
+   on pristine storage, so it only ever renders the first-timer, and an .82
+   opacity on --fg-mute or a .92em cut of --t-micro would have shipped as the
+   one state on this screen no gate looks at. The answered row simply stops
+   taking half the rail and the slab takes what it gives up. */
+.home.is-returning .home-slot { flex: 0 1 13em; }
+.home.is-returning .home-go { flex: 1 1 22em; }
+
+/* ── phone / short: the rail's three cells become two rows ─────────────── */
+
+@media (max-width: 719px) {
+  .home-rail {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "actions actions"
+      "help    sound";
+    gap: .5em .8em;
+  }
+
+  /* PORTRAIT DEALS DOWN THE TABLE, NOT ACROSS IT.
+     Measured at 390×844 with the landscape arrangement: the deck came out
+     355×248 — 91% of the width and 29% of the height — because it was already
+     width-bound, so 20% of the viewport sat empty inside the table row while
+     the deck could not grow into it. The reflex fix is to shrink the register;
+     the right one is to change the arrangement's own aspect, which is what the
+     shipping portrait card menus do (reframe, don't re-stack).
+
+     So the fan descends instead of spreading: 39cqw cards stepping right AND
+     down, box aspect 100/89 instead of 100/74. Measured extent with the
+     rotations applied: x −1.6→99.5, y 1.85→88.25 in cqw. dealt-0 starts at
+     36cqw because the back prints its word across 6.6→32.4 here and anything
+     lower cuts it. */
+  .home-deck {
+    aspect-ratio: 100 / 89;
+    width: min(100%, calc((100cqh - var(--deck-reserve)) * 1.124));
+  }
+  .home-cardbox { width: 39cqw; border-radius: 2.3cqw; }
+  .home-back-0 { translate: 0 3cqw; rotate: -3.5deg; }
+  .home-back-1 { translate: 1.4cqw 4.2cqw; rotate: 2.4deg; }
+  .home-back-2 { translate: .4cqw 3.6cqw; rotate: -1deg; }
+  .home-back-3 { translate: 1cqw 3cqw; rotate: .6deg; }
+  .home-dealt-0 { translate: 36cqw 14cqw; rotate: 8deg; }
+  .home-dealt-1 { translate: 53cqw 29cqw; rotate: 18deg; }
+}
+
+/* Landscape phone. 844×390 is 390px of height for three registers, and the
+   previous build overflowed it in both directions — measured at y −11…401 in a
+   390 viewport, with `justify-content: center` on the scroll container making
+   the top 11px unreachable rather than merely clipped. Here the plate and the
+   rail sit side by side so the deck keeps a register of its own, and the 1fr
+   row cannot push anything past the frame. */
 @media (max-height: 560px) and (orientation: landscape) {
-  .home { grid-template-columns: minmax(0, auto) minmax(15em, 1fr); grid-template-areas: "deck mark" "deck actions"; }
-  .home-deck { width: 13em; height: 10.5em; }
-  .home-card { width: 6em; }
-  .home-face { width: 5.4em; }
-  .home-face:nth-of-type(5) { transform: translate(5.4em, .7em) rotate(7deg); }
-  .home-face:nth-of-type(6) { transform: translate(8.4em, 2.8em) rotate(21deg); }
-  .home-table { padding: .6em 1em; gap: .5em; }
+  .home {
+    grid-template-columns: minmax(0, 19em) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "head  table"
+      "rail  rail";
+    padding-top: .4em;
+  }
+  .home-head { justify-content: center; padding: 0 0 .4em var(--home-pad); }
+  .home-head::after { display: none; }
+  /* 19vh of a 390px viewport is a 74px plate, which at 3.29:1 is 244px wide and
+     reads as a favicon. Here the plate is width-bound by its own column
+     instead, which is the axis that has room in landscape. */
+  .home-head .brand-mark { max-width: 100%; max-height: 38vh; }
+  /* Five lines of strapline in 390px of height is a paragraph where the deck
+     should be. The mark and the deck carry the identity at this size. */
+  .brand-sub { display: none; }
+  .home-table { padding-top: 0; }
   .home-table::before { display: none; }
+  .home-rail { padding-top: .7em; padding-bottom: .4em; }
+  .home-greet { display: none; }
 }
 
 /* ── THE HOST'S CTA IS ALWAYS ON SCREEN ───────────────────────────────────
@@ -312,13 +524,19 @@
   font-size: clamp(2.1em, 5.2vw, 3.4em);
   font-weight: 800;
   letter-spacing: var(--track-display);
-  margin: 0 0 .12em;
+  margin: 0;
   line-height: .98;
   color: var(--fg);
   text-shadow: 0 1px 0 var(--sheen);
+  /* the plate is width-capped by .home-head .brand-mark; the h1 must not add a
+     line box under it or the "gap: .55em" to the sub becomes .55em + leading */
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }
 .brand-sub {
   margin: 0;
+  max-width: 44em;
   font-size: var(--t-small);
   font-weight: 700;
   letter-spacing: 0;

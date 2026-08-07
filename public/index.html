@@ -41,164 +41,134 @@
   <!-- ── HOME ───────────────────────────────────────────────────────────
        ART §3.3: "the home screen IS the table, seen from above, with the deck
        sitting on it and the actions painted into the apron as markings."
-       So: no panel, no card, no centred column of equal buttons. A real deck
-       stands on the concrete inside its painted inlay; the controls are a
-       marshalling area stencilled onto the apron beside it. -->
+
+       COMPOSITION, round 6. Measured on the previous build at 1440x900: the ink
+       occupied 55.6% of the viewport height with 22.2% dead apron above it and
+       22.2% below, and the two masses sat at 30% and 66% of the width with
+       nothing between them. The bounding box was dead-centre; the WEIGHT was
+       not, and a menu made of two half-weight objects floating in a hole is
+       what "unfinished" looks like.
+
+       The fix is not to centre the wordmark and hope. It is that MARKINGS RUN
+       TO THE EDGE OF THE FRAME AND OBJECTS DO NOT. A painted apron is anchored
+       by its lines, not by its furniture, so this screen is three registers:
+
+         head   the wordmark plate, painted on the concrete, with a rule under
+                it that reaches both edges of the viewport
+         table  the deck — the largest object on screen, because the deck IS
+                the subject and a card game's menu should show cards
+         rail   the hold-short line, edge to edge, with the marshalling area
+                painted along it: call sign, the ink slab, the alternates, and
+                the two edge marks (how to play; sound)
+
+       Every edge of the frame now carries a marking, the wordmark is centred
+       WITHOUT floating (the rule under it is what holds it down), and the deck
+       is the hero it was always supposed to be. Same three registers at every
+       width — only the rail's internal arrangement changes. -->
   <section id="screen-home" class="screen screen-home">
     <div class="home">
 
+      <header class="home-head">
+        <h1 class="brand-title">
+          <svg class="brand-mark" viewBox="0 0 724 220" fill-rule="evenodd"
+               role="img" aria-label="Chudopoly"><title>Chudopoly</title>
+            <rect width="724" height="220" fill="var(--card-stock)"/>
+            <path fill="var(--ink)" d="M13 13 H711 V207 H13 Z M20 20 H704 V200 H20 Z"/>
+            <g fill="var(--ink)">
+              <path d="M5 5 H84 V12 H12 V60 H5 Z"/>
+              <path d="M719 5 V60 H712 V12 H640 V5 Z"/>
+              <path d="M5 215 V160 H12 V208 H84 V215 Z"/>
+              <path d="M719 215 H640 V208 H712 V160 Z"/>
+            </g>
+            <g transform="translate(73 53)">
+              <path fill="var(--ca-drop, #A2977E)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
+             V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
+             M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100
+             H298.0 L282.0 84 V16 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100 H350.0 Z M429.0 0
+             H459.0 L475.0 16 V84 L459.0 100 H429.0 L413.0 84 V16 Z M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z
+             M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48 V100 H555.0 V48 Z"/>
+            </g>
+            <g transform="translate(64 44)">
+              <path fill="var(--ink)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
+             V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
+             M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M236.0 20 H254.0 L258.0 24 V76 L254.0 80
+             H236.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100 H298.0 L282.0 84 V16 Z M306.0 20 H320.0 L324.0
+             24 V76 L320.0 80 H306.0 L302.0 76 V24 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100
+             H350.0 Z M370.0 20 H388.0 L392.0 24 V36 L388.0 40 H370.0 Z M429.0 0 H459.0 L475.0 16 V84 L459.0
+             100 H429.0 L413.0 84 V16 Z M437.0 20 H451.0 L455.0 24 V76 L451.0 80 H437.0 L433.0 76 V24 Z
+             M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48
+             V100 H555.0 V48 Z"/>
+            </g>
+            <!-- The GO chip lived here — a reversed revision-block bottom right.
+                 OWNER RULING 2026-08-07: the game is CHUDOPOLY. The suffix was
+                 inherited from the one-night build and never earned anything, and
+                 the card back had already been saying CHUDOPOLY on its own. -->
+          </svg>
+        </h1>
+        <p class="brand-sub">Monopoly Deal, flight-line edition. Three complete sets and you are wheels up.</p>
+      </header>
+
+      <!-- THE DECK IS BUILT, NOT WRITTEN.
+           This element was 11 hand-authored spans: two copies of the Fighters
+           and Space Force glyphs, a bespoke value coin at left:8%/bottom:7%
+           that matched nothing on a real card, and a back carrying only the
+           alignment target. The card art has been redrawn three times since
+           those copies were made and they were stale on arrival — the owner's
+           read was "tacky / not well made", and the reason is that they are not
+           the cards. src/ui/home.js now fills this from table/cardart.js's own
+           faceNode()/backNode(), so the menu shows the ACTUAL printed card, the
+           coin sits where the card design puts it, and every future art change
+           lands here for free. Decorative: aria-hidden, no [data-card-id], and
+           nowhere near a .cardzone, so nothing that reconciles the table can
+           mistake these for cards in play (§0.4). -->
       <div class="home-table">
-        <div class="home-deck" aria-hidden="true">
-          <span class="home-card"></span>
-          <span class="home-card"></span>
-          <span class="home-card"></span>
-          <span class="home-card">
-            <!-- The deck mark, kept in sync with BACK_MARK in table/cardart.js.
-                 It was a five-point star in a circle with a bar struck through
-                 it — the US national aircraft insignia, hand-drawn. 32 C.F.R.
-                 §507.9 permits PHOTOGRAPHING a service insignia and prohibits
-                 "making or executing in any manner any engraving, impression,
-                 or colorable imitation" of one, so authoring it as SVG was the
-                 prohibited act. It is now a pre-press alignment target, which
-                 imitates no service's device and belongs to the flight-line
-                 technical-order vocabulary the rest of the identity uses. -->
-            <svg class="home-roundel" viewBox="0 0 100 100" fill="currentColor"
-                 fill-rule="evenodd" aria-hidden="true" focusable="false">
-              <path d="M4 4 H30 V10 H10 V30 H4 Z M96 4 V30 H90 V10 H70 V4 Z
-                       M4 96 V70 H10 V90 H30 V96 Z M96 96 H70 V90 H90 V70 H96 Z"/>
-              <path d="M24 24 H76 V76 H24 Z M27 27 H73 V73 H27 Z"/>
-              <path d="M47 12 H53 V37 H47 Z M47 63 H53 V88 H47 Z
-                       M12 47 H37 V53 H12 Z M63 47 H88 V53 H63 Z"/>
-              <path d="M50 40.5 L59.5 50 L50 59.5 L40.5 50 Z"/>
-            </svg>
-          </span>
-          <!-- two cards dealt off the top and lying face up on the concrete;
-               the glyphs are the Fighters and Space Force silhouettes from
-               table/cardart.js, authored as text (§0.3). -->
-          <span class="home-face" style="--band: var(--set-red);">
-            <span class="home-face-band">FIGHTERS</span>
-            <svg class="home-face-glyph" viewBox="0 0 48 48" fill="currentColor"
-                 fill-rule="evenodd" style="--ca-knock: var(--card-stock)"
-                 aria-hidden="true" focusable="false">
-              <path d="M24 2.5 L26.2 9 L27.2 15 L27.8 20 L28.6 24.5 L43 33.5 L43 36
-                       L29.4 37.4 L29.4 38.6 L36.5 41.2 L36.5 43.2 L28.6 45 L26.6 46.5
-                       L21.4 46.5 L19.4 45 L11.5 43.2 L11.5 41.2 L18.6 38.6 L18.6 37.4
-                       L5 36 L5 33.5 L19.4 24.5 L20.2 20 L20.8 15 L21.8 9 Z"/>
-              <g fill="var(--ca-knock)">
-                <path d="M24 11 L26.3 14.5 L26 19.5 L24 22 L22 19.5 L21.7 14.5 Z"/>
-                <path d="M27 32.5 L31.8 43.4 L29 43.4 L25.2 33.8 Z"/>
-                <path d="M21 32.5 L16.2 43.4 L19 43.4 L22.8 33.8 Z"/>
-              </g>
-            </svg>
-            <span class="home-face-coin">3<i>M</i></span>
-          </span>
-          <span class="home-face" style="--band: var(--set-pink);">
-            <span class="home-face-band">SPACE FORCE</span>
-            <svg class="home-face-glyph" viewBox="0 0 48 48" fill="currentColor"
-                 fill-rule="evenodd" style="--ca-knock: var(--card-stock)"
-                 aria-hidden="true" focusable="false">
-              <rect x="19.5" y="10" width="9" height="18"/>
-              <rect x="15.5" y="17.5" width="4" height="3"/>
-              <rect x="28.5" y="17.5" width="4" height="3"/>
-              <rect x="1.5" y="11.5" width="14" height="15"/>
-              <rect x="32.5" y="11.5" width="14" height="15"/>
-              <rect x="22.75" y="28" width="2.5" height="6.5"/>
-              <rect x="19" y="34.5" width="10" height="3.5"/>
-              <g fill="var(--ca-knock)">
-                <rect x="6" y="11.5" width="2" height="15"/>
-                <rect x="11" y="11.5" width="2" height="15"/>
-                <rect x="37" y="11.5" width="2" height="15"/>
-                <rect x="42" y="11.5" width="2" height="15"/>
-                <rect x="1.5" y="18" width="14" height="2"/>
-                <rect x="32.5" y="18" width="14" height="2"/>
-                <rect x="21.5" y="13" width="5" height="2"/>
-                <rect x="21.5" y="23" width="5" height="2"/>
-              </g>
-            </svg>
-            <span class="home-face-coin">2<i>M</i></span>
-          </span>
-        </div>
+        <div id="home-deck" class="home-deck" aria-hidden="true"></div>
         <p class="home-deck-tag">104 cards &middot; 2&ndash;5 seats</p>
       </div>
 
-      <div class="home-mark">
-      <!-- THE WORDMARK. Drawn geometry, not type: the letters are the ALPHA
-           alphabet in src/table/cardart.js and this markup is its home-screen
-           lockup. Keep the two in step — the card back builds the same letters
-           from the same table, and a drift between them is two marks.
-
-           §0.3's font amendment permits self-hosted faces and says in the same
-           breath that a LOGO IS DRAWN, NOT SET; the old mark was set in
-           --font-display, which is SF Pro Rounded on macOS and Segoe UI Variable
-           Display on Windows, so the game had no fixed letterform at all.
-
-           Chamfered technical caps: square corners and mitred 16-unit chamfers
-           per ASME Y14.2, two weights at 2:1 (20-unit stem, 10-unit rule), and
-           ONE hard zero-blur offset — the single shadow ART §6's drawing law
-           sanctions. The frame's corner brackets are the card back's own datum
-           device, so the plate and the deck mark are visibly one system.
-
-           None of it is measured against Hasbro's mark: the owner asked for the
-           heavy keyline and the dimension, which are universal, and Jack
-           Daniel's v. VIP (2023) is why the letterforms, the banner and the DEAL
-           badge are not borrowed with them. -->
-      <h1 class="brand-title">
-        <svg class="brand-mark" viewBox="0 0 724 220" fill-rule="evenodd"
-             role="img" aria-label="Chudopoly"><title>Chudopoly</title>
-          <rect width="724" height="220" fill="var(--card-stock)"/>
-          <path fill="var(--ink)" d="M13 13 H711 V207 H13 Z M20 20 H704 V200 H20 Z"/>
-          <g fill="var(--ink)">
-            <path d="M5 5 H84 V12 H12 V60 H5 Z"/>
-            <path d="M719 5 V60 H712 V12 H640 V5 Z"/>
-            <path d="M5 215 V160 H12 V208 H84 V215 Z"/>
-            <path d="M719 215 H640 V208 H712 V160 Z"/>
-          </g>
-          <g transform="translate(73 53)">
-            <path fill="var(--ca-drop, #A2977E)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
-           V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
-           M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100
-           H298.0 L282.0 84 V16 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100 H350.0 Z M429.0 0
-           H459.0 L475.0 16 V84 L459.0 100 H429.0 L413.0 84 V16 Z M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z
-           M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48 V100 H555.0 V48 Z"/>
-          </g>
-          <g transform="translate(64 44)">
-            <path fill="var(--ink)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
-           V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
-           M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M236.0 20 H254.0 L258.0 24 V76 L254.0 80
-           H236.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100 H298.0 L282.0 84 V16 Z M306.0 20 H320.0 L324.0
-           24 V76 L320.0 80 H306.0 L302.0 76 V24 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100
-           H350.0 Z M370.0 20 H388.0 L392.0 24 V36 L388.0 40 H370.0 Z M429.0 0 H459.0 L475.0 16 V84 L459.0
-           100 H429.0 L413.0 84 V16 Z M437.0 20 H451.0 L455.0 24 V76 L451.0 80 H437.0 L433.0 76 V24 Z
-           M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48
-           V100 H555.0 V48 Z"/>
-          </g>
-          <!-- The GO chip lived here — a reversed revision-block bottom right.
-               OWNER RULING 2026-08-07: the game is CHUDOPOLY. The suffix was
-               inherited from the one-night build and never earned anything, and
-               the card back had already been saying CHUDOPOLY on its own. -->
-        </svg>
-      </h1>
-
-        <p class="brand-sub">Monopoly Deal, flight-line edition. Three complete sets and you are wheels up.</p>
-      </div>
-
-      <div class="home-actions">
-        <div class="home-slot">
-          <label class="field-label" for="name-input">Call sign</label>
-          <input id="name-input" class="field" type="text" maxlength="16" autocomplete="off"
-                 autocapitalize="characters" placeholder="Who is flying?">
-        </div>
-        <button id="btn-quick-play" class="btn btn-primary home-go" data-action="quick-play">Quick play vs bots</button>
-        <div class="home-alt">
-          <button id="btn-create-room" class="btn" data-action="create-room">Create room</button>
-          <div class="home-join">
-            <input id="code-input" class="field field-code" type="text" maxlength="4" autocomplete="off"
-                   placeholder="CODE" aria-label="Room code">
-            <button id="btn-join-room" class="btn" data-action="join-room">Join</button>
+      <!-- the hold-short line and everything painted along it -->
+      <div class="home-rail">
+        <div class="home-actions">
+          <p id="home-greet" class="home-greet" hidden></p>
+          <div class="home-slot">
+            <label class="field-label" for="name-input">Call sign</label>
+            <input id="name-input" class="field" type="text" maxlength="16" autocomplete="off"
+                   autocapitalize="characters" placeholder="Who is flying?">
           </div>
+          <button id="btn-quick-play" class="btn btn-primary home-go" data-action="quick-play">Quick play vs bots</button>
+          <div class="home-alt">
+            <button id="btn-create-room" class="btn" data-action="create-room">Create room</button>
+            <div class="home-join">
+              <input id="code-input" class="field field-code" type="text" maxlength="4" autocomplete="off"
+                     placeholder="CODE" aria-label="Room code">
+              <button id="btn-join-room" class="btn" data-action="join-room">Join</button>
+            </div>
+          </div>
+          <p id="home-error" class="error" role="alert" aria-live="polite"></p>
         </div>
-        <p id="home-error" class="error" role="alert" aria-live="polite"></p>
+
         <button class="btn btn-ghost home-help" data-action="help">How to play</button>
+
+        <!-- §7's music bed starts on the first pointerdown anywhere, and until
+             now the only switch for it lived inside the game screen's settings
+             sheet — so a player who tapped Quick Play got a bed they could not
+             silence until the table had loaded. audio/engine.js documents
+             setMusicEnabled() as safe to call before a gesture, and pointer.js
+             dispatches on window capture, ahead of main.js's unlock listener,
+             so pressing this as the FIRST gesture of the session mutes the bed
+             before it is ever attached. -->
+        <button id="btn-home-sound" class="btn btn-ghost home-sound" data-action="home-sound"
+                aria-pressed="true">
+          <svg class="home-sound-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path class="home-sound-cone" d="M3 9 H7 L12 4.5 V19.5 L7 15 H3 Z"/>
+            <path class="home-sound-wave" d="M15.4 8.2 A5.2 5.2 0 0 1 15.4 15.8 L14.1 14.1
+                     A3 3 0 0 0 14.1 9.9 Z M18.1 5.1 A9 9 0 0 1 18.1 18.9 L16.9 17.3
+                     A6.9 6.9 0 0 0 16.9 6.7 Z"/>
+            <path class="home-sound-cut" d="M15.2 8.6 L16.6 7.2 L22.4 13 L21 14.4 Z
+                     M21 7.2 L22.4 8.6 L16.6 14.4 L15.2 13 Z"/>
+          </svg>
+          <span id="home-sound-label">Sound on</span>
+        </button>
       </div>
 
     </div>

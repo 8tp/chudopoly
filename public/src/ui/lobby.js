@@ -1,12 +1,18 @@
 // ui/lobby.js — seats, bots, timers, launch, invite link.
 
-import { $, el, clear, setText, setHidden } from '../core/dom.js';
+import { $, el, clear, setText, setHidden, setAttr } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import * as send from '../net/send.js';
 import { store } from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
 import { toast } from './screens.js';
+import {
+  PRESETS, PRESET_ORDER, PRESET_COPY, SETS_TO_WIN_CHOICES, WIN_RULES,
+  WIN_RULE_NAMES, WIN_RULE_LINE, TOGGLE_COPY,
+  matchPreset, presetLabel, normalizeRules, rulesPayload,
+  loadHostRules, saveHostRules, winRuleSummary,
+} from './ruleset.js';
 
 /* ── who you are actually sitting down with (§P7.19) ───────────────────────
  *
@@ -67,6 +73,214 @@ function describeBots() {
   setText(blurb, BOT_BLURB[select.value] || '');
 }
 
+/* ── the ruleset picker (§P8) ──────────────────────────────────────────────
+ *
+ * Real tables negotiate a handful of rules before anyone deals, and they do it
+ * by NAME — "normal", "quick game" — not by enumerating four switches. So the
+ * four presets are the whole choice, one tap each, and the switches live behind
+ * a disclosure for the table that actually wants to argue about them.
+ *
+ * WHY THE HOST'S CHOICE IS LOCAL, AND WHAT NON-HOSTS SEE.
+ * The lobby broadcast (server/broadcast.js broadcastRoom) carries code, phase,
+ * players, hostId, game and the two timers. There is NO ruleset field before a
+ * game exists — `game` is null in a lobby — so a pending choice has nowhere to
+ * travel and no other seat can read it. server/ is frozen (§1) and not ours, so
+ * the picker is host-local and every other seat is told the truth: the host is
+ * choosing, and the ruleset is stated on the table and in How to play from the
+ * first broadcast onward (ui/ruleset.js activeRules → ui/help.js ruleBadge).
+ * The alternative — showing non-hosts the DEFAULT ruleset as though it were the
+ * pending one — is a label that lies four times out of five. The one-message
+ * server change that would fix it properly is in this agent's report.
+ *
+ * PERSISTENCE: ui/ruleset.js loadHostRules/saveHostRules. A host who picked
+ * Blitz last night gets Blitz selected tonight, in a new room, without asking.
+ */
+
+/** The host's pending toggle set. Server-authoritative from `start_game` on. */
+let pending = normalizeRules(null);
+let pickerRoot = null;
+
+/** name → the four inputs that must reflect `pending`, cached at build time. */
+const inputs = { preset: [], winRule: [], setsToWin: [], flags: {} };
+
+function radio(name, value, checked) {
+  return el('input', {
+    class: 'rule-input',
+    attrs: { type: 'radio', name, value, ...(checked ? { checked: true } : {}) },
+  });
+}
+
+function presetTile(id) {
+  const copy = PRESET_COPY[id];
+  const input = radio('chud-preset', id, id === matchPreset(pending));
+  inputs.preset.push(input);
+  return el('label', { class: 'preset' }, [
+    input,
+    el('span', { class: 'preset-body' }, [
+      el('span', { class: 'preset-top' }, [
+        el('span', { class: 'preset-name', text: copy.name }),
+        el('span', { class: 'preset-tag', text: copy.tag }),
+        el('span', { class: 'preset-turns', text: copy.turns }),
+      ]),
+      el('span', { class: 'preset-line', text: copy.line }),
+    ]),
+  ]);
+}
+
+function winRuleRow(id) {
+  const input = radio('chud-winrule', id, pending.winRule === id);
+  inputs.winRule.push(input);
+  return el('label', { class: 'rule-row' }, [
+    input,
+    el('span', { class: 'rule-body' }, [
+      el('span', { class: 'rule-name', text: WIN_RULE_NAMES[id] }),
+      el('span', { class: 'rule-line', text: WIN_RULE_LINE[id] }),
+    ]),
+  ]);
+}
+
+function setsRow() {
+  return el('div', { class: 'rule-seg', attrs: { role: 'radiogroup', 'aria-label': 'Sets to win' } },
+    SETS_TO_WIN_CHOICES.map((n) => {
+      const input = radio('chud-sets', String(n), pending.setsToWin === n);
+      inputs.setsToWin.push(input);
+      return el('label', { class: 'seg' }, [input, el('span', { class: 'seg-face', text: String(n) })]);
+    }));
+}
+
+function flagRow(key, name) {
+  const copy = TOGGLE_COPY[key];
+  const input = el('input', {
+    class: 'rule-input',
+    attrs: { type: 'checkbox', name, ...(pending[key] ? { checked: true } : {}) },
+  });
+  inputs.flags[key] = input;
+  return el('label', { class: 'rule-row' }, [
+    input,
+    el('span', { class: 'rule-body' }, [
+      el('span', { class: 'rule-name', text: copy.label }),
+      el('span', { class: 'rule-line', text: copy.line }),
+    ]),
+  ]);
+}
+
+/** Fold one changed control back into `pending`, persist, repaint the label. */
+function onPick(e) {
+  const t = e.target;
+  if (!t || t.tagName !== 'INPUT') return;
+  switch (t.name) {
+    // A preset REPLACES the toggle set — that is what picking one means.
+    case 'chud-preset': pending = { ...PRESETS[t.value] }; break;
+    case 'chud-winrule': pending = { ...pending, winRule: t.value }; break;
+    case 'chud-sets': pending = { ...pending, setsToWin: Number(t.value) }; break;
+    case 'chud-pure': pending = { ...pending, pureSetRequired: t.checked }; break;
+    case 'chud-pcs': pending = { ...pending, passGoRestartsTurn: t.checked }; break;
+    default: return;
+  }
+  pending = normalizeRules(pending);
+  saveHostRules(pending);
+  syncPicker();
+}
+
+/**
+ * Push `pending` back into every control and repaint the summary. Runs after a
+ * pick AND on every lobby render, so a picker built from a stale localStorage
+ * read can never disagree with the object that is actually sent.
+ */
+function syncPicker() {
+  if (!pickerRoot) return;
+  const preset = matchPreset(pending);
+  for (const input of inputs.preset) input.checked = input.value === preset;
+  for (const input of inputs.winRule) input.checked = input.value === pending.winRule;
+  for (const input of inputs.setsToWin) input.checked = Number(input.value) === pending.setsToWin;
+  inputs.flags.pureSetRequired.checked = pending.pureSetRequired;
+  inputs.flags.passGoRestartsTurn.checked = pending.passGoRestartsTurn;
+
+  // The label the host reads is computed the same way the server computes the
+  // one the table will read (game.js resolveRules), so flipping a toggle off a
+  // preset says "Custom" here exactly when the broadcast will say 'custom'.
+  const bits = [`${WIN_RULE_NAMES[pending.winRule]}`, `${pending.setsToWin} sets`];
+  if (pending.pureSetRequired) bits.push('no all-wild sets');
+  if (pending.passGoRestartsTurn) bits.push('PCS Orders restarts');
+  setText($('ruleset-name'), presetLabel(preset));
+  setText($('ruleset-bits'), bits.join(' · '));
+  setText($('ruleset-win'), winRuleSummary(pending));
+  setAttr($('ruleset'), 'data-preset', preset);
+}
+
+/**
+ * index.html is architect-owned (§1) and ships no picker, so it is built here —
+ * once, then only mutated. Inserted before Launch Mission because the ruleset
+ * is a decision you make BEFORE you launch, not a footnote under the button.
+ */
+function ensurePicker() {
+  if (pickerRoot) return;
+  const hostBox = $('lobby-host');
+  const start = $('btn-start');
+  if (!hostBox || !start) return;
+
+  pending = loadHostRules();
+
+  pickerRoot = el('section', {
+    class: 'ruleset',
+    attrs: { id: 'ruleset', 'aria-labelledby': 'ruleset-head' },
+  }, [
+    el('div', { class: 'ruleset-head' }, [
+      el('h3', { class: 'ruleset-title', attrs: { id: 'ruleset-head' }, text: 'Rules' }),
+      el('span', { class: 'ruleset-now', attrs: { 'aria-live': 'polite' } }, [
+        el('span', { class: 'ruleset-name', attrs: { id: 'ruleset-name' } }),
+        el('span', { class: 'ruleset-bits', attrs: { id: 'ruleset-bits' } }),
+      ]),
+    ]),
+    el('div', {
+      class: 'preset-grid',
+      attrs: { role: 'radiogroup', 'aria-label': 'Ruleset preset' },
+    }, PRESET_ORDER.map(presetTile)),
+    el('p', { class: 'ruleset-win hint', attrs: { id: 'ruleset-win' } }),
+    el('details', { class: 'ruleset-adv' }, [
+      el('summary', { class: 'ruleset-summary' }, [
+        el('span', { class: 'ruleset-summary-text', text: 'Change individual rules' }),
+        el('span', { class: 'ruleset-caret', attrs: { 'aria-hidden': 'true' }, text: '▸' }),
+      ]),
+      el('div', { class: 'adv-body' }, [
+        el('fieldset', { class: 'adv-group' }, [
+          el('legend', { class: 'adv-legend', text: 'When you win' }),
+          ...WIN_RULES.map(winRuleRow),
+        ]),
+        el('fieldset', { class: 'adv-group adv-group-inline' }, [
+          el('legend', { class: 'adv-legend', text: 'Sets to win' }),
+          setsRow(),
+        ]),
+        el('fieldset', { class: 'adv-group' }, [
+          el('legend', { class: 'adv-legend', text: 'House rules' }),
+          flagRow('pureSetRequired', 'chud-pure'),
+          flagRow('passGoRestartsTurn', 'chud-pcs'),
+        ]),
+      ]),
+    ]),
+  ]);
+
+  pickerRoot.addEventListener('change', onPick);
+  hostBox.insertBefore(pickerRoot, start);
+  syncPicker();
+}
+
+/**
+ * What a seat that is NOT the host sees. Not a picker and not a guess at one:
+ * a statement of who decides and where the answer will appear.
+ */
+function ensureGuestNote() {
+  if ($('ruleset-guest')) return;
+  const hint = $('lobby-hint');
+  if (!hint) return;
+  hint.parentNode.insertBefore(el('p', {
+    class: 'ruleset-guest hint',
+    attrs: { id: 'ruleset-guest', hidden: true },
+    text: 'The host is choosing the ruleset. Whatever they pick, the table and How to play '
+      + 'describe the game you are actually in, from the first hand.',
+  }), hint);
+}
+
 function inviteUrl() {
   const url = new URL(location.href);
   url.hash = '';
@@ -80,7 +294,9 @@ function render() {
 
   const host = store.room.hostId === store.self.id;
   setHidden($('lobby-host'), !host);
-  if (host) describeBots();
+  ensureGuestNote();
+  setHidden($('ruleset-guest'), host);
+  if (host) { describeBots(); ensurePicker(); syncPicker(); }
   setText($('lobby-hint'), host
     ? (store.room.players.length < 2 ? 'Add a bot or invite a squadmate — 2 players minimum.' : 'Ready when you are.')
     : 'Waiting for the host to launch…');
@@ -116,9 +332,15 @@ export function mount() {
     'add-bot': () => send.addBot($('bot-mode')?.value || 'neutral'),
     'remove-bot': (el2) => send.removeBot(el2.dataset.target),
     'kick': (el2) => send.kick(el2.dataset.target),
+    // rulesPayload() sends a NAME when the toggles are a named preset and the
+    // four toggles when they are not — 'custom' is not a wire value
+    // (server/protocol.js rejects it) and resolveRules() reaches the identical
+    // ruleset either way. Absent fields would mean Chudopoly, so this is never
+    // empty by accident.
     'start-game': () => send.startGame(
       Number($('turn-timeout')?.value || 60),
-      Number($('response-timeout')?.value || 30)
+      Number($('response-timeout')?.value || 30),
+      rulesPayload(pending)
     ),
     'copy-invite': async () => {
       const url = inviteUrl();

@@ -320,22 +320,11 @@ test('the win rule is sticky across a rematch', async () => {
   const first = await waitFor(host, m => m.type === 'state' && m.phase === 'playing');
   assert.equal(first.game.winRule, 'instant');
 
-  // Play to a finish, then rematch without restating the rule.
-  const deadline = Date.now() + 25000;
-  while (Date.now() < deadline) {
-    const latest = host._messages.filter(m => m.type === 'state').pop();
-    const g = latest?.game;
-    if (!g) { await sleep(120); continue; }
-    if (g.phase === 'finished') break;
-    if (g.currentPlayerId === joined.playerId && !g.pendingAction) {
-      send(host, { type: 'end_turn' });
-    } else if ((g.responders || []).includes(joined.playerId)) {
-      send(host, { type: 'respond', response: 'accept' });
-    }
-    await sleep(120);
-  }
-  const finished = host._messages.filter(m => m.type === 'state').pop();
-  assert.equal(finished.game.phase, 'finished', 'the game reached an ending');
+  // End it deterministically: scooping out of a 2-seat table leaves the bot last standing.
+  send(host, { type: 'scoop' });
+  const finished = await waitFor(host, m => m.type === 'state' && m.game?.phase === 'finished', 4000);
+  assert.ok(finished, 'the game reached an ending');
+  assert.ok(joined);
 
   host._messages.length = 0;
   send(host, { type: 'rematch' });

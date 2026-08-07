@@ -38,7 +38,20 @@
      16.6) so a short desktop window cannot push the table taller than it is;
      at 390×844 the vw term wins (14.35px). Measured at a flat 17px the
      1280×720 mid-game shot left 70px of dead table under the self board. */
-  --s: clamp(12px, min(1.5vw + 8.5px, 2.3vh), 18px);
+  --s: calc(clamp(12px, min(1.5vw + 8.5px, 2.3vh), 18px) * var(--ui-scale));
+
+  /* ── UI SCALE ────────────────────────────────────────────────────────────
+     A player-set multiplier on --s, written by ui/settings.js, which carries
+     the measured sweep that fixed its 0.8–1.3 bounds. Applied to --s ONLY and
+     deliberately NOT to --tap below: that separation is the whole §0.9 defence,
+     because it means shrinking the table shrinks the CARD and never the THUMB.
+     Every interactive floor in table.css is already written against --tap
+     (`min-height: var(--tap)`, `max(var(--card-tap), calc(var(--s) * N))`,
+     `minmax(var(--tap), 1fr)`), so a card slides down its own max() until --tap
+     takes over and the target stops shrinking. Default 1 keeps the expression
+     arithmetically identical to the one that shipped before the setting, so
+     the screenshot hashes do not move. */
+  --ui-scale: 1;
 
   /* ══ THE CARD — identical in both themes ══════════════════════════════ */
   --card-stock: #FBF8F1;

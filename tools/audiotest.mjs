@@ -24,6 +24,9 @@
  *   • the synthesised layer is ABSENT under a recorded bed, and is the WHOLE
  *     score when the recording is withheld (9) — both halves, because a fix
  *     that silences the fallback is worse than the bug it fixes
+ *   • the recording actually ARRIVES when the buffer lands mid-render (11) —
+ *     the path every player takes on the first use of a track, and the one
+ *     every other assertion here skips
  *
  * Needs the audio engine (P5) to expose a render hook. Exits 2 until then.
  */
@@ -658,16 +661,29 @@ try {
 
     /* Level: the stings must clear the cue under them, and the cue must not be
      * quieter than the menu music it replaces. */
+    /* ABOVE 300Hz, not broadband — the same trap the card-cue gate had to climb
+     * out of in round 2. The menu beds are a 55Hz drone under a bass-heavy
+     * lobby track and the endgame pair is dense mid-forward material; compared
+     * broadband the ceremony reads 1-2dB QUIETER while carrying 2.3 to 7.7dB
+     * more energy in the band a laptop or a phone actually reproduces. The
+     * question here is "does the payoff sound bigger than the lobby loop", and
+     * that is a loudness question, so it is asked where loudness lives. */
     const ends = await h.page.evaluate(async () => {
       const db = (v) => (v > 0 ? 20 * Math.log10(v) : -180);
       const out = {};
       for (const w of ['menu', 'victory', 'defeat']) {
         const o = await window.__CHUD.audio.renderMusic(w, 40);
-        let s = 0, n = 0, pk = 0;
+        const a = Math.exp(-2 * Math.PI * 300 / o.sampleRate);
+        let hs = 0, n = 0, pk = 0;
         for (const c of o.channels) {
-          for (let i = 0; i < c.length; i++) { const v = Math.abs(c[i]); if (v > pk) pk = v; s += c[i] * c[i]; n++; }
+          let prev = 0, hp = 0;
+          for (let i = 0; i < c.length; i++) {
+            const v = Math.abs(c[i]); if (v > pk) pk = v;
+            hp = a * (hp + c[i] - prev); prev = c[i];
+            hs += hp * hp; n++;
+          }
         }
-        out[w] = { rms: db(Math.sqrt(s / n)), peak: db(pk) };
+        out[w] = { rms: db(Math.sqrt(hs / n)), peak: db(pk) };
       }
       return out;
     });
@@ -676,8 +692,61 @@ try {
       r.fail(`${soft.map((k) => `${k} ${ends[k].rms.toFixed(1)}`).join(', ')} dBFS is quieter than the menu bed `
         + `${ends.menu.rms.toFixed(1)} — the endgame cue is the payoff, not background`);
     } else {
-      r.pass(`the endgame pair carries the screen ${dim(`(victory ${ends.victory.rms.toFixed(1)}, `
-        + `defeat ${ends.defeat.rms.toFixed(1)} vs menu bed ${ends.menu.rms.toFixed(1)} dBFS RMS)`)}`);
+      r.pass(`the endgame pair carries the screen ${dim(`(>300Hz RMS: victory ${ends.victory.rms.toFixed(1)}, `
+        + `defeat ${ends.defeat.rms.toFixed(1)} vs menu bed ${ends.menu.rms.toFixed(1)} dBFS)`)}`);
+    }
+  }
+
+  /* ---- 11. THE ARRIVAL PATH ------------------------------------------------
+   * Every assertion above renders with the buffers already resident, which
+   * exercises raiseBed()'s fast path — `buffers.has(key)` true → startFile. A
+   * real player NEVER takes that path on the first use of a track: the buffer is
+   * absent, the synth is scheduled behind SYNTH_GRACE, and handoff() → load() →
+   * crossToFile() is what actually puts the recording on. Nothing rendered that,
+   * because no offline scene had a buffer show up mid-render, so a session could
+   * have had no music at all with this whole file green.
+   *
+   * offlineTransition's `arrive` map fixes that: the named tracks start ABSENT
+   * and are handed over at a scheduled moment through the real promise handoff()
+   * is waiting on, with clockOffset set to that moment. The assertion is simply
+   * that the recording is at level shortly after it lands, at both a fast
+   * arrival (inside the grace, where the fallback should never sound) and a slow
+   * one (past it, where the fallback covers and must then hand over).           */
+  if (hasTrans && hasMusic) {
+    const CASES = [
+      ['lobby, fast arrival', [{ at: 0, do: 'menu' }], 20, { lobby: 0.2 }, 0.2],
+      ['lobby, slow arrival', [{ at: 0, do: 'menu' }], 20, { lobby: 3.0 }, 3.0],
+      ['match bed, fast arrival', [{ at: 0, do: 'match' }], 20, { match1: 0.2, match2: 0.2 }, 0.2],
+      ['match bed, slow arrival', [{ at: 0, do: 'match' }], 20, { match1: 3.0, match2: 3.0 }, 3.0],
+      ['climax, arrival on arm', [{ at: 0, do: 'match' }, { at: 8, do: 'arm' }], 22, { final: 8.2 }, 8.2],
+    ];
+    const SETTLE = 4.0;          // seconds after the buffer lands
+    const bad = [];
+    const good = [];
+    for (const [label, steps, secs, arrive, at] of CASES) {
+      const m = await h.page.evaluate(async ([st, sec, ar, t0]) => {
+        const db = (v) => (v > 0 ? 20 * Math.log10(v) : -200);
+        const o = await window.__CHUD.audio.renderTransition(st, sec, { solo: 'file', arrive: ar });
+        const sr = o.sampleRate, L = o.channels[0], R = o.channels[1];
+        const a = Math.round((t0 + 4.0) * sr), b = Math.min(L.length, Math.round((sec - 1) * sr));
+        let s = 0, n = 0;
+        for (let i = a; i < b; i++) { const x = (L[i] + R[i]) * 0.5; s += x * x; n++; }
+        return { rms: db(Math.sqrt(s / Math.max(1, n))), log: o.log };
+      }, [steps, secs, arrive, at]);
+      // -70 dBFS is 30dB under the quietest bed here: this is "is it playing at
+      // all", not a level assertion. The level assertions are 6 and 6b.
+      if (m.rms < -70) {
+        bad.push(`${label}: file bus is ${m.rms.toFixed(1)} dBFS ${SETTLE}s after the buffer landed — `
+          + `the recording never arrived (log: ${m.log.join(' | ') || 'nothing scheduled'})`);
+      } else good.push(`${label.split(',')[0]} ${m.rms.toFixed(0)}`);
+    }
+    if (bad.length) {
+      r.fail(`${bad.length} of ${CASES.length} arrival path(s) never put the recording on — `
+        + 'this is the path every player takes on the first use of a track');
+      for (const x of bad) r.info(x);
+    } else {
+      r.pass(`the recording arrives and reaches level in all ${CASES.length} cases `
+        + dim(`(file bus dBFS: ${good.join(', ')})`));
     }
   }
 

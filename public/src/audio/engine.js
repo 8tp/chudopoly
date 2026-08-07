@@ -1296,7 +1296,7 @@ export async function renderTransition(steps, seconds = 20, opts = null) {
     bufs[k] = transitionBufs.get(k);
   }
   let log = null;
-  const out = await renderInto(seconds, (gr) => { log = music.offlineTransition(gr, seconds, steps, bufs, opts); });
+  const out = await renderInto(seconds, async (gr) => { log = await music.offlineTransition(gr, seconds, steps, bufs, opts); });
   out.log = log;
   return out;
 }
@@ -1308,7 +1308,7 @@ async function renderInto(seconds, schedule) {
   const sr = 48000;
   const ctx = new OC(2, Math.max(1, Math.ceil(seconds * sr)), sr);
   const g = buildGraph(ctx, 1);
-  schedule(g);
+  await schedule(g);
   const buf = await ctx.startRendering();
   const channels = [buf.getChannelData(0), buf.getChannelData(1)];
   let peak = 0;
@@ -1319,6 +1319,30 @@ async function renderInto(seconds, schedule) {
     }
   }
   return { channels, sampleRate: buf.sampleRate, peak };
+}
+
+/**
+ * A live output meter, for tools that need to know whether sound is actually
+ * COMING OUT rather than whether the state machine thinks it should be.
+ *
+ * It earned its place: §P10 round 4 opened with a confident diagnosis that the
+ * arrival path was producing silence, and every piece of state agreed it was
+ * playing. Only this settled it — the live path measured -34.3 dBFS RMS on the
+ * menu, so the arrival path was fine and the real complaint was the mix. State
+ * is not sound and a bridge that only reports state cannot tell you which.
+ */
+export function __meter() {
+  if (!graph) return null;
+  const an = graph.ctx.createAnalyser();
+  an.fftSize = 2048;
+  graph.master.connect(an);
+  const buf = new Float32Array(an.fftSize);
+  return () => {
+    an.getFloatTimeDomainData(buf);
+    let s = 0, pk = 0;
+    for (let i = 0; i < buf.length; i++) { s += buf[i] * buf[i]; const a = Math.abs(buf[i]); if (a > pk) pk = a; }
+    return { rms: Math.sqrt(s / buf.length), peak: pk, t: graph.ctx.currentTime, state: graph.ctx.state };
+  };
 }
 
 export function stats() {

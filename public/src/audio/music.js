@@ -201,7 +201,7 @@ const TRACKS = Object.freeze({
   },
   match1: {
     file: 'match-1.opus', loopStart: 34.504, loopEnd: 98.504, xfade: 2.0,
-    bar: 4.0, trimDb: -6.0,
+    bar: 4.0, trimDb: -6.3,
   },
   match2: {
     file: 'match-2.opus', loopStart: 13.520, loopEnd: 45.520, xfade: 2.0,
@@ -297,11 +297,21 @@ let matchSeq = 0;
 let busyUntil = 0;                       // no new transition lands before this
 
 const LOOKAHEAD = 0.45;                 // schedule this far ahead of the clock
-/* How long the synthesised fallback waits before it makes itself heard. See
- * raiseBed(): a warm localhost fetch+decode measured 176ms, so this is the
- * difference between "the fallback never sounds" and "the fallback sounds every
- * single time" on any connection worth the name. */
-const SYNTH_GRACE = 0.45;
+/* How long the synthesised fallback waits before it makes itself heard.
+ *
+ * 0.45 was set against a warm localhost fetch+decode of 176ms and it was too
+ * tight for a real first load: the owner, on a COLD cache, "still heard like an
+ * old synthesized synth… played for a second". A first-gesture fetch of a 1.4MB
+ * file plus a 3-minute Opus decode is comfortably past 450ms on a real browser
+ * even when the server is localhost, so the fallback showed itself and then had
+ * to leave again — which is the one thing it exists not to do.
+ *
+ * 1.4s, and the cost of being wrong is asymmetric: waiting means a beat of
+ * silence after a click, which reads as the music starting; NOT waiting means a
+ * completely different piece of music plays and is then taken away, which reads
+ * as a bug. A player who is actually offline does not pay it either — a failed
+ * fetch rejects in milliseconds and skips straight to the synth (see raiseBed). */
+const SYNTH_GRACE = 1.4;
 const FADE = 0.7;                       // bed crossfades
 
 /* ── levels ──────────────────────────────────────────────────────────────
@@ -336,7 +346,7 @@ const FADE = 0.7;                       // bed crossfades
  * MATCH_TRIM is where its level lives.
  */
 const MENU_TRIM = 2.76;
-const MATCH_TRIM = 4.03;
+const MATCH_TRIM = 2.85;
 const DRONE_GAIN = 0.045;
 
 /* ── THE MUSIC'S OWN ROOM (§P10 fix 1) ────────────────────────────────────
@@ -392,6 +402,50 @@ const F2_HZ = A2 * st(8) * 0.5;         // 87.3Hz
 
 /* ── plumbing ───────────────────────────────────────────────────────────── */
 
+/* ── THE POCKET (§P10 round 2) ────────────────────────────────────────────
+ *
+ * The owner's verdict on the first build was "cant really hear anything at
+ * all music wise", and the octave-band measurement says exactly why and
+ * exactly where. Every card cue that must cut through the bed has its
+ * dominant energy in the 250Hz band — card_snap −37.8 dB, deal_done −39.8,
+ * shuffle_riffle −39.1, prop_place −32.6 — and so does every music bed:
+ * match-1 −51.1, match-2 −53.0, final-approach −49.9, and the synthesised
+ * bed −56.1. The music and the card thumps were fighting over one octave.
+ *
+ * So the bed gets EQ'd out of the way rather than turned down — but only where
+ * the collision actually is.
+ *
+ * ── IT WAS A SHELF AND THAT WAS TOO BLUNT (§P10 round 4) ─────────────────
+ * The first version was a lowshelf at 380Hz, −8dB, which took the weight out
+ * of every octave below the collision as well as the collision itself. Owner:
+ * "the tracks sound much weaker/less impactful than they did initially… they
+ * sounded much better on the preview." MEASURED against the raw .opus files,
+ * per octave, referenced to 2kHz so only the SHAPE is compared:
+ *
+ *              63Hz   125Hz  250Hz  500Hz   1k
+ *   lobby      −7.3   −7.2   −6.6   −2.2   −0.3 dB
+ *   match-1    −6.5   −7.3   −6.5   −2.0   −0.3
+ *   final      −6.6   −7.2   −6.1   −2.5   −0.3
+ *
+ * Seven decibels of weight gone at 63 and 125Hz — and NOT ONE card cue has
+ * its dominant energy below 180Hz, so those two octaves bought nothing at all.
+ * A peaking cut centred in the band that does collide keeps the clearance and
+ * gives the weight back. MEASURED after, same reference:
+ *
+ *              63Hz   125Hz  250Hz  500Hz   1k
+ *   lobby      +1.2   −1.0   −6.0   −2.0   −0.4 dB
+ *   match-1    +0.6   −1.6   −6.1   −1.8   −0.4
+ *   final      +0.4   −1.5   −5.5   −2.3   −0.4
+ *
+ * Seven decibels of weight returned at 63 and 125Hz for six tenths of a decibel
+ * at the collision, which −8dB rather than −7 then buys back. The highpass
+ * drops 45 → 32Hz for the same reason: at 45 it was second-guessing the 63Hz
+ * octave. NOTHING was taken from the card layer to do this, and the masking
+ * floor did not move. */
+const MUSIC_NOTCH_HZ = 250;
+const MUSIC_NOTCH_Q = 1.1;
+const MUSIC_NOTCH_DB = -8;
+
 /**
  * The music bus. One object so offline() can swap the whole thing atomically.
  *
@@ -430,32 +484,14 @@ function buildMix(graph, volume) {
   m.file.gain.value = 1;
   m.fx = ctx.createGain();
   m.fx.gain.value = 1;
-  /* ── THE POCKET (§P10 round 2) ────────────────────────────────────────────
-   *
-   * The owner's verdict on the first build was "cant really hear anything at
-   * all music wise", and the octave-band measurement says exactly why and
-   * exactly where. Every card cue that must cut through the bed has its
-   * dominant energy in the 250Hz band — card_snap −37.8 dB, deal_done −39.8,
-   * shuffle_riffle −39.1, prop_place −32.6 — and so does every music bed:
-   * match-1 −51.1, match-2 −53.0, final-approach −49.9, and the synthesised
-   * bed −56.1. The music and the card thumps were fighting over one octave.
-   *
-   * So the bed gets EQ'd out of the way rather than turned down. A −5dB shelf
-   * below 320Hz costs the beds four to five decibels in the one band the cards
-   * need and nothing in the bands the music is actually heard in, which is what
-   * buys the +10 to +12dB of trim below. The 45Hz highpass removes only content
-   * no speaker in the target set reproduces and that was eating headroom the
-   * soft-clip then had to give back.
-   *
-   * MEASURED, before → after, in-band margin on the binding cue (deal_done,
-   * 250Hz) against match-1: 11.3dB → 6.9dB, with the bed 8.8dB louder. */
   m.shelf = ctx.createBiquadFilter();
-  m.shelf.type = 'lowshelf';
-  m.shelf.frequency.value = 380;
-  m.shelf.gain.value = -8;
+  m.shelf.type = 'peaking';
+  m.shelf.frequency.value = MUSIC_NOTCH_HZ;
+  m.shelf.Q.value = MUSIC_NOTCH_Q;
+  m.shelf.gain.value = MUSIC_NOTCH_DB;
   m.rumble = ctx.createBiquadFilter();
   m.rumble.type = 'highpass';
-  m.rumble.frequency.value = 45;
+  m.rumble.frequency.value = 32;
   m.rumble.Q.value = 0.5;
   m.synth.connect(m.synthLp);
   m.synthLp.connect(m.synthEnv);
@@ -628,6 +664,17 @@ function load(key) {
   if (cached) return cached;
   const spec = TRACKS[key];
   if (!spec || !g) return Promise.resolve(null);
+  if (offlineMode) {
+    // A render cannot wait on the network, so the arrival is scheduled instead:
+    // offlineTransition() resolves this at the simulated moment the fetch would
+    // have landed, with clockOffset set to that moment.
+    if (!offlineArrive || offlineArrive[key] == null) return Promise.resolve(null);
+    let resolve;
+    const p = new Promise((r) => { resolve = r; });
+    loading.set(key, p);
+    offlinePending.push({ key, at: offlineArrive[key], resolve });
+    return p;
+  }
   let url;
   try {
     url = new URL(`../../audio/${spec.file}`, import.meta.url).href;
@@ -839,6 +886,13 @@ function cancelFrom(param, t) {
  */
 let clockOffset = 0;
 let offlineMode = false;              // offlineTransition() only — see below
+/* Deterministic buffer ARRIVAL, offline only. Every gate before this one
+ * rendered with the buffers already resident, which exercises raiseBed()'s fast
+ * path and never once ran handoff() — the path a real player takes on the first
+ * gesture of every session. These two let a render say "this track shows up at
+ * t=0.2s" and drive the real load()→then→crossToFile() chain against it. */
+let offlineArrive = null;
+const offlinePending = [];
 let offlineLog = null;                // …and the score it wrote, for the harness
 function note(what) { if (offlineLog) offlineLog.push(`${clockOffset.toFixed(2)} ${what}`); }
 function ctxNow() { return g ? g.ctx.currentTime + clockOffset : 0; }
@@ -1247,12 +1301,12 @@ function raiseBed(D, fadeIn, key) {
     synthUpAt = 0;
     return;
   }
-  // The recording is not here yet, so the synth has a gap to cover — but hold
-  // it back by SYNTH_GRACE before it becomes audible. MEASURED: a warm
-  // localhost fetch + decode of lobby.opus is 176ms, so on any connection that
-  // quick the fallback is never heard at all, and on a slow one it arrives
-  // 450ms late rather than never. 450ms after a click is a beat, not dead air.
-  const S = D + SYNTH_GRACE;
+  // The recording is not here yet, so the synth has a gap to cover — but hold it
+  // back by SYNTH_GRACE before it becomes audible, UNLESS the fetch has already
+  // failed, in which case there is nothing to wait for and waiting is just
+  // silence. `failed` is set by load()'s catch, which a real offline browser
+  // reaches in milliseconds.
+  const S = failed.has(key) ? D : D + SYNTH_GRACE;
   synthLive = true;
   synthOffAt = 0;
   synthUpAt = S;
@@ -2064,7 +2118,7 @@ export function tracks() { return Object.keys(TRACKS); }
  *
  * @param {Array<{at:number, do:'menu'|'match'|'arm'|'break'|'lobby'|'off'|'win'|'lose'}>} steps
  */
-export function offlineTransition(graph, seconds, steps, bufs, opts) {
+export async function offlineTransition(graph, seconds, steps, bufs, opts) {
   const save = {
     g, mix, mode, want, rng, drone, nextSwell, bar, motif, synthLive, synthOffAt, synthUpAt,
     nextBar, tension, bedWant, matchTrack, matchKey, voices, pendingArm, busyUntil,
@@ -2086,7 +2140,13 @@ export function offlineTransition(graph, seconds, steps, bufs, opts) {
   if (opts && opts.solo === 'synth') { mix.file.disconnect(); mix.fx.disconnect(); }
   if (opts && opts.solo === 'file') { mix.synthEnv.disconnect(); mix.fx.disconnect(); }
   buffers.clear();
-  for (const [k, v] of Object.entries(bufs || {})) if (v) buffers.set(k, v);
+  for (const [k, v] of Object.entries(bufs || {})) {
+    // A track scheduled to ARRIVE must not start out resident, or the render
+    // takes raiseBed()'s fast path and the arrival path goes untested — which is
+    // exactly how this gate came to be missing.
+    if (opts && opts.arrive && opts.arrive[k] != null) continue;
+    if (v) buffers.set(k, v);
+  }
   voices = [];
   drone = null;
   mode = 'off';
@@ -2105,6 +2165,8 @@ export function offlineTransition(graph, seconds, steps, bufs, opts) {
   nextBar = 0;
   clockOffset = 0;
   offlineLog = [];
+  offlineArrive = (opts && opts.arrive) || null;
+  offlinePending.length = 0;
   const held = sub;
   sub = null;
   offlineMode = true;                   // clock.subscribe() must not run offline
@@ -2113,13 +2175,29 @@ export function offlineTransition(graph, seconds, steps, bufs, opts) {
     let qi = 0;
     for (let t = 0; t < seconds; t += 0.05) {
       clockOffset = t;
-      // The render models an instant network: release() legitimately evicts a
-      // bed on a mode change (see LOAD POLICY) and a live client would re-fetch
-      // it, which cannot happen inside a synchronous schedule. Put it back so
-      // what gets measured is the transition and not the fallback.
+      // The render models an instant network for everything EXCEPT the tracks
+      // named in `arrive`: release() legitimately evicts a bed on a mode change
+      // (see LOAD POLICY) and a live client would re-fetch it, which cannot
+      // happen inside a schedule. Put those back so what gets measured is the
+      // transition and not the fallback.
       for (const k of Object.keys(bufs || {})) {
+        if (offlineArrive && offlineArrive[k] != null) continue;
         if (bufs[k] && !buffers.has(k)) buffers.set(k, bufs[k]);
       }
+      // …and hand over the ones that are scheduled to show up now, through the
+      // real promise handoff() is waiting on.
+      for (let i = offlinePending.length - 1; i >= 0; i--) {
+        const q = offlinePending[i];
+        if (t + 1e-9 < q.at) continue;
+        offlinePending.splice(i, 1);
+        const buf = bufs ? bufs[q.key] : null;
+        if (buf) buffers.set(q.key, buf); else failed.add(q.key);
+        loading.delete(q.key);
+        q.resolve(buf || null);
+      }
+      // Drain the microtask queue so those continuations run at THIS
+      // clockOffset rather than after the whole render has been scheduled.
+      for (let d = 0; d < 4; d++) await Promise.resolve();
       while (qi < queue.length && queue[qi].at <= t) {
         const s = queue[qi++];
         if (s.do === 'arm') setTension(true);
@@ -2134,6 +2212,8 @@ export function offlineTransition(graph, seconds, steps, bufs, opts) {
   } finally {
     sub = held;
     offlineMode = false;
+    offlineArrive = null;
+    offlinePending.length = 0;
     g = save.g; mix = save.mix; mode = save.mode; want = save.want;
     rng = save.rng; drone = save.drone; nextSwell = save.nextSwell;
     bar = save.bar; motif = save.motif; synthLive = save.synthLive;

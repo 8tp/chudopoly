@@ -22,6 +22,15 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    Every texture, card face, card back and icon is generated in code (CSS, inline SVG /
    SVG data-URIs authored as text, canvas). Enforced by `tools/checkAssets.mjs`.
 
+   **AMENDED 2026-08-07 (d) — documentation brand assets are permitted, outside `public/`.**
+   Scope: `docs/*.svg` and `docs/*.png`, referenced only by `README.md` and other repo docs.
+   GitHub does not render inline SVG in Markdown, so a README cannot show the wordmark
+   without a file — and this rule exists to keep the **client payload** free of binary
+   assets, not to keep them out of the repository. A README image is served to nobody,
+   imported by no module, and never reaches a player. `checkAssets.mjs` must continue to
+   fail on anything binary under `public/` outside the two allowlisted directories, and must
+   not be relaxed to cover `docs/` — it should simply not scan there.
+
    **AMENDED 2026-08-07 (b) — self-hosted webfonts are permitted.** `public/fonts/*.woff2`.
    This rule was over-broad from the day it was written: it filed fonts alongside textures
    and sounds, but a texture generated in code *is* the art, whereas a font generated in

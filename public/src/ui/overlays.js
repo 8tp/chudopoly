@@ -12,7 +12,7 @@ import * as send from '../net/send.js';
 import { store, seatName } from '../state/store.js';
 import { COLORS, COLOR_KEYS, SETS_TO_WIN } from '../core/cards.js';
 import * as pointer from '../interact/pointer.js';
-import { closeSheet } from './screens.js';
+import { closeSheet, sheetOpen } from './screens.js';
 import * as help from './help.js';
 import * as settings from './settings.js';
 import * as hints from './hints.js';
@@ -167,7 +167,9 @@ export function mount() {
   // navigating from `/?harness=1` to `/?harness=1#help` changes only the hash,
   // so the document is never re-created and boot() never runs again — which is
   // why tools/screenshot.mjs's `help` shot was capturing the home screen.
-  const openFromHash = () => { if (location.hash === '#help') help.show(); };
-  window.addEventListener('hashchange', openFromHash);
-  if (location.hash === '#help') queueMicrotask(openFromHash);
+  // Symmetric: the hash leaving must close what its arrival opened, or a
+  // same-document navigation away from #help strands the sheet open.
+  const syncFromHash = () => { if (location.hash === '#help') help.show(); else if (sheetOpen()) closeSheet(); };
+  window.addEventListener('hashchange', syncFromHash);
+  if (location.hash === '#help') queueMicrotask(() => syncFromHash());
 }

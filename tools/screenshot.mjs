@@ -81,6 +81,15 @@ try {
     for (const shot of SHOTS) {
       if (shot.screen && shot.screen !== screen.tag) continue;
       try {
+        // Every shot gets a full page reload on a unique URL. Without it, state
+        // bleeds between shots — a #help hash left by one shot kept the sheet
+        // open over every later capture (removing a hash is a same-document
+        // navigation; the page never reloads).
+        const u = new URL(shot.route || '/?harness=1', server.url);
+        u.searchParams.set('seed', seed);
+        u.searchParams.set('shot', shot.name);
+        await h.page.goto(u.href, { waitUntil: 'load', timeout: 20000 });
+        await requireBridge(h.page, 8000);
         if (shot.fixture) {
           const states = loadStates(shot.fixture);
           if (!states?.length) {
@@ -93,9 +102,6 @@ try {
             window.__CHUD.applyState(s);
             window.__CHUD.drainEvents?.();
           }, state);
-        } else if (shot.route) {
-          await h.page.goto(`${server.url}${shot.route}`, { waitUntil: 'load', timeout: 20000 });
-          await requireBridge(h.page, 8000);
         }
         await h.page.waitForTimeout(180);
         const file = path.join(SHOT_DIR, `${shot.name}@${screen.tag}.png`);

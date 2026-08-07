@@ -439,6 +439,79 @@ export const DRIVERS = {
   },
 
   /**
+   * THE FLIGHT LOG (ui/stats.js), opened the way a player opens it: the second
+   * reading mark on the home rail.
+   *
+   * IT DOES NOT SEED THE LOGBOOK, and that separation is the point. The record
+   * arrives in `localStorage` before the document runs, from
+   * `lib/logbook.mjs installLogbooks` off a `?logbook=<case>` parameter, because
+   * `pristineStorage` clears storage at document start on EVERY navigation — a
+   * driver that wrote the key and reloaded would watch it be wiped. So this
+   * driver only presses the control and reports what it found.
+   *
+   * The reported string carries the population, because the whole design of
+   * this panel is population-dependent: the mark is not on the rail at zero
+   * flights, band 3 is suppressed below eight, and a `stats.status` with
+   * something to say puts a note above everything. A shot that silently
+   * degraded to "whatever the default logbook looked like" would be the round-1
+   * targeting lie with a different subject.
+   */
+  'flight-log': async () => {
+    const mark = document.getElementById('btn-flight-log');
+    if (!mark) return 'flightlog:no-mark';
+    if (mark.hidden || !mark.getBoundingClientRect().height) {
+      // The DELIBERATE state at zero flights, and a legitimate answer — but it
+      // is never what a shot of the panel wants, so it is reported as its own
+      // outcome rather than as a generic failure.
+      return 'flightlog:mark-hidden (zero flights, entry point withheld by design)';
+    }
+    mark.click();
+    await new Promise((r) => setTimeout(r, 340));
+    const sheet = document.getElementById('sheet');
+    if (!sheet || sheet.hidden) return 'flightlog:sheet-closed';
+    const panel = sheet.querySelector('.fl');
+    if (!panel) return 'flightlog:sheet-open-but-empty';
+    const rate = panel.querySelector('.fl-rate')?.textContent?.trim() || '';
+    const den = panel.querySelector('.fl-rate-den')?.textContent?.trim() || '';
+    const cells = panel.querySelectorAll('.fl-cell').length;
+    const texture = !!panel.querySelector('.fl-band-texture');
+    const locked = panel.querySelector('.fl-locked')?.textContent?.trim() || '';
+    const note = panel.querySelector('.fl-note') ? 'note ' : '';
+    const marks = panel.querySelectorAll('.fl-mark').length;
+    if (!rate && !locked && !panel.querySelector('.fl-empty')) {
+      return `flightlog:no-bands ${cells} cell(s)`;
+    }
+    return `flightlog:open ${note}${rate ? `${rate} "${den}"` : 'empty'} `
+      + `${cells} cell(s), ${texture ? `texture+${marks} form mark(s)` : 'texture suppressed'}`
+      + `${locked ? ` — "${locked.slice(0, 44)}"` : ''}`;
+  },
+
+  /**
+   * The same panel with the segment toggle moved off All. The default is All
+   * and MUST be — every recorded game in this project's logs has exactly one
+   * human seat, so a human-only default opens on an empty panel — which is
+   * precisely why the empty-segment path needs a gate of its own: it is the
+   * state a player reaches on their second tap and the one nobody would have
+   * screenshotted.
+   */
+  'flight-log-people': async () => {
+    const mark = document.getElementById('btn-flight-log');
+    if (!mark || mark.hidden) return 'flightlog:mark-hidden';
+    mark.click();
+    await new Promise((r) => setTimeout(r, 340));
+    const seg = document.querySelector('.fl-seg input[value="people"]');
+    if (!seg) return 'flightlog:no-scope-toggle';
+    seg.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const panel = document.querySelector('#sheet .fl');
+    if (!panel) return 'flightlog:sheet-closed';
+    const checked = document.querySelector('.fl-seg input:checked')?.value || '?';
+    const empty = panel.querySelector('.fl-locked')?.textContent?.trim() || '';
+    const rate = panel.querySelector('.fl-rate')?.textContent?.trim() || '';
+    return `flightlog:scope=${checked} ${rate ? `rate ${rate}` : `empty — "${empty.slice(0, 52)}"`}`;
+  },
+
+  /**
    * `.announce` — ui/journal.js's full-width banner ("FINAL APPROACH", "BREAK
    * THEM NOW", "SET SEIZED"). It is not in any snapshot: it is what the client
    * DOES when an event arrives, so it can only be reached by making the event

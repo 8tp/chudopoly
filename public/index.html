@@ -175,7 +175,30 @@
           <p id="home-error" class="error" role="alert" aria-live="polite"></p>
         </div>
 
-        <button class="btn btn-ghost home-help" data-action="help">How to play</button>
+        <!-- THE RAIL'S LEFT CORNER IS THE READING CORNER, and it now carries
+             two marks instead of one. Both are things you go and READ — the
+             rules, and your own logbook — where the right corner is the dial
+             you go and CHANGE. That split is why the flight log sits here and
+             not next to Settings, and why it is a painted rail mark in the same
+             vocabulary rather than a fourth ink slab in the marshalling area
+             (ART §3.2: the rail already steps down in weight once).
+
+             #btn-flight-log SHIPS HIDDEN AND STAYS HIDDEN AT ZERO FLIGHTS.
+             ui/stats.js is the only thing that unhides it, on the frame the
+             recorder banks a game. A mark that opens an empty box is pressed
+             exactly once and teaches the player not to press it again — so
+             until there is something to read, the corner is unchanged from the
+             screen every first-timer already sees.
+
+             .home-marks is styled in content.css, not ui.css: the rail's grid
+             areas ("help actions settings" on desktop, two rows on a phone)
+             live in ui.css, and this wrapper takes the `help` cell so no grid
+             template has to change to fit a third mark. -->
+        <div class="home-marks">
+          <button class="btn btn-ghost home-help" data-action="help">How to play</button>
+          <button id="btn-flight-log" class="btn btn-ghost home-help home-log"
+                  data-action="flight-log" hidden>Flight log</button>
+        </div>
 
         <!-- THE SOUND MARK FOLDED INTO THIS ONE, and the fold is the point.
              This corner used to carry a music toggle, added because §7's bed

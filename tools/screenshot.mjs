@@ -77,6 +77,7 @@ import {
 import * as audit from './lib/audit.mjs';
 import { drive, releaseInput } from './lib/drivers.mjs';
 import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
+import { installLogbooks } from './lib/logbook.mjs';
 import { census, observeMarkers } from './lib/census.mjs';
 import { applyTheme, sameAppearance, THEMES } from './lib/theme.mjs';
 import { startServer } from './serve.mjs';
@@ -169,6 +170,57 @@ const SHOTS = [
     screen: ['desktop', 'phone', 'landscape'],
   },
   { name: 'toast', fixture: null, drive: 'toast', expect: 'toast:"', transient: true },
+  /* ── THE FLIGHT LOG (ui/stats.js) ───────────────────────────────────────
+   * A surface with no server state at all: it renders `chud.stats.v1` out of
+   * localStorage, so a fixture cannot reach it and neither can a driver — see
+   * `lib/logbook.mjs`, which seeds it before the document runs off the
+   * `?logbook=` parameter in each route below. Every blob is real recorder
+   * output (tools/recordlog.mjs plays the games); only the deep case's row
+   * COUNT is synthetic, and it is banked through the shipping store.
+   *
+   * FOUR POPULATIONS, FOUR PICTURES, and the split is not padding — the panel
+   * is designed to be a different screen at each one:
+   *   home-log     the RAIL, with the entry point on it. `home@*.png` is
+   *                pristine-storage and therefore always the zero-flight rail,
+   *                so without this the mark itself appears in no capture.
+   *   flightlog-young   3 flights: bands 1 and 2, and the line naming what
+   *                opens at 8. The "never render zero-filled bands" rule has
+   *                to be seen holding.
+   *   flightlog    ~40: every band, the final-approach record, the rivalry
+   *                line, the form marks.
+   *   flightlog-deep    300: `totals` has outrun the 100-row ring, so the
+   *                footer names both windows. THE REFLOW CASE — if anything on
+   *                this panel moves between 40 and 300 flights, these two
+   *                pictures are where it shows.
+   *   flightlog-people  the second tap. All is the default and must be (every
+   *                recorded game in this project has one human seat), so the
+   *                human-only segment is usually EMPTY and its sentence is the
+   *                thing that stops the feature reading as broken.
+   *   flightlog-gone    a logbook a NEWER BUILD wrote. Read-only, nothing
+   *                deleted, and the panel must explain itself rather than look
+   *                like a crash — one of the two `stats.status` values that
+   *                brings the entry point back at zero flights.                */
+  { name: 'home-log', route: '/?harness=1&logbook=40', fixture: null, themes: true },
+  {
+    name: 'flightlog', route: '/?harness=1&logbook=40', fixture: null,
+    drive: 'flight-log', expect: 'flightlog:open', themes: true,
+  },
+  {
+    name: 'flightlog-young', route: '/?harness=1&logbook=3', fixture: null,
+    drive: 'flight-log', expect: 'flightlog:open',
+  },
+  {
+    name: 'flightlog-deep', route: '/?harness=1&logbook=300', fixture: null,
+    drive: 'flight-log', expect: 'flightlog:open', themes: true,
+  },
+  {
+    name: 'flightlog-people', route: '/?harness=1&logbook=40', fixture: null,
+    drive: 'flight-log-people', expect: 'flightlog:scope=people', screen: 'desktop',
+  },
+  {
+    name: 'flightlog-gone', route: '/?harness=1&logbook=future', fixture: null,
+    drive: 'flight-log', expect: 'flightlog:open', screen: 'desktop',
+  },
   // Landscape — the viewport where `.self-board` was 0px tall and no shot looked.
   { name: 'landscape-mid', fixture: 'mid-game', screen: 'landscape' },
   { name: 'landscape-armed', fixture: 'final-approach', screen: 'landscape' },
@@ -384,6 +436,18 @@ try {
     // Every take starts from a first-time player's storage, or the coach layer
     // appears in whichever shot happens to be first (see pristineStorage).
     await pristineStorage(h.context);
+    /* AFTER pristineStorage, and the order is load-bearing: Playwright runs
+     * init scripts in the order they were added, and that one clears
+     * localStorage at document start. This one puts a REAL recorded logbook
+     * back, for the shots whose route asks for one — the flight log has no
+     * server state to fixture, so a populated record is the only way any gate
+     * can see the panel at all. Every other shot navigates without the
+     * parameter and is unaffected. */
+    const cases = await installLogbooks(h.context);
+    if (!cases.length) {
+      console.log(yellow('  ! no tools/fixtures/logbook.json — the flight log shots will render '
+        + 'the zero-flight rail. Run `node tools/recordlog.mjs`.'));
+    }
     // Ships audit.openHitTesting into every document this context loads; the
     // occlusion pass throws loudly if it is missing rather than measuring
     // nothing. addInitScript, because every take does a fresh `goto`.

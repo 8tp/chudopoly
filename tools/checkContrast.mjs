@@ -107,6 +107,7 @@ import * as audit from './lib/audit.mjs';
 import { contrastRatio, sampledBackground } from './lib/pixels.mjs';
 import { drive } from './lib/drivers.mjs';
 import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
+import { installLogbooks } from './lib/logbook.mjs';
 import { census, observeMarkers } from './lib/census.mjs';
 import { applyTheme, THEME_MODES } from './lib/theme.mjs';
 import { startServer } from './serve.mjs';
@@ -144,6 +145,26 @@ const SURFACES = [
   { name: 'opponent-armed', fixture: 'opponent-armed' },
   { name: 'announce', fixture: 'approach-called', from: 0, at: 1, transient: true, drive: 'announce', expect: 'announce:' },
   { name: 'toast', fixture: null, drive: 'toast', expect: 'toast:"' },
+  /* ── the flight log (ui/stats.js) ───────────────────────────────────────
+   * A whole panel of --fg-mute labels against --fg figures on --surface, plus
+   * one set-colour swatch, and none of it is reachable from a fixture: it
+   * renders `chud.stats.v1`, which lib/logbook.mjs seeds off `?logbook=`.
+   * Two populations, because they are two different sets of text — the young
+   * one is the threshold sentence and no band 3 at all, and `-gone` is the
+   * `stats.status` note, which is the longest run of small muted type this
+   * client prints anywhere. */
+  {
+    name: 'flightlog', route: '/?harness=1&logbook=300', fixture: null,
+    drive: 'flight-log', expect: 'flightlog:open',
+  },
+  {
+    name: 'flightlog-young', route: '/?harness=1&logbook=3', fixture: null,
+    drive: 'flight-log', expect: 'flightlog:open',
+  },
+  {
+    name: 'flightlog-gone', route: '/?harness=1&logbook=future', fixture: null,
+    drive: 'flight-log', expect: 'flightlog:open',
+  },
 ];
 
 /**
@@ -198,7 +219,11 @@ let hardError = null;
 
 /** Measure one (surface, theme). Returns {violations, samples, sheet} or null. */
 async function measureSurface(h, surface, theme, extraCss) {
-  const u = new URL('/?harness=1', server.url);
+  // `route` exists for surfaces with NO server state — the flight log renders
+  // out of localStorage, and lib/logbook.mjs seeds it from a query parameter
+  // before the document runs. Everything else navigates to the same URL it
+  // always did.
+  const u = new URL(surface.route || '/?harness=1', server.url);
   u.searchParams.set('seed', seed);
   u.searchParams.set('surface', surface.name);
   await h.page.goto(u.href, { waitUntil: 'load', timeout: 20000 });
@@ -277,6 +302,10 @@ try {
   // localStorage, so without this the first surface measured carries a hint
   // bubble and no other one does.
   await pristineStorage(h.context);
+  // AFTER pristineStorage — init scripts run in the order added and that one
+  // clears storage at document start, so a logbook seeded any earlier would be
+  // wiped before the client ever read it.
+  await installLogbooks(h.context);
   // `auditTextContrast`'s buried-run filter runs on audit.openHitTesting, which
   // lives in the page, not in this module — install it for every document.
   await audit.installPageHelpers(h.context);

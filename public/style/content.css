@@ -1705,3 +1705,320 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   overflow-wrap: anywhere;
 }
 .dv-card.is-reading .dv-name { color: var(--fg); }
+
+/* ══ THE FLIGHT LOG ═══════════════════════════════════════════════════════
+
+   ui/stats.js's panel, and the second reading mark on the home rail that opens
+   it. Both live here rather than in ui.css because ui.css owns the rail's grid
+   and the sheet chassis, and neither has to change to carry this: the panel is
+   a `.sheet-body` like every other, and the marks group takes the rail's
+   existing `help` cell.
+
+   BANDS ARE SEPARATED BY A LINE, NOT BY A BOX (ART §3.2). Three stacked
+   rounded-rect panels on a slightly-lighter ground inside a panel is the exact
+   dashboard stack the art direction was written to kill, and a stats screen is
+   where it happens by reflex. The bands are divided by the same 1px stencil the
+   apron uses for its markings, and nothing here has a border of its own.
+
+   NO SET COLOURS, with ONE exception. §1 reserves hue for set identity; a stats
+   panel is the classic place to reach for ten of them. `.fl-swatch` is a
+   card-colour swatch naming a card colour, which is what the channel is for.
+   Everything else on this surface is --fg / --fg-mute on --surface.
+
+   NO COUNT-UP, NO GROW-IN, NO BAR CHART. A number that animates claims it just
+   changed; a record being consulted did not. `tabular-nums` is already on every
+   figure via base.css's .mono, so 300 flights reflows nothing and there is
+   nothing for an animation to hide.                                          */
+
+/* ── the rail's reading corner ─────────────────────────────────────────── */
+
+/* Takes the `help` grid area from ui.css so the rail's template is untouched.
+   Both children keep .home-help's painted-mark treatment; only the cell is new.
+
+   STACKED, AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE. The rail's outer
+   columns are `minmax(0, 1fr)` either side of an `auto` centre, and the centre
+   is `width: min(44em, 100%)` — so at 1280 the resolved template is
+   `92.9px / 939.3px / 92.9px` and at 390 it is `171.7px / 171.7px`. "How to
+   play" alone is 80px of that 93. Two marks cannot share a line at either
+   width, and a `flex-wrap` that wraps at every viewport is a column pretending
+   not to be one.
+
+   So it is a column, deliberately: two lines of apron lettering in the frame's
+   corner, `--tap` apart, which is the same vocabulary the single mark already
+   used. No row gap — the 44px tap floor is the spacing, and anything on top of
+   it would read as two separate rail entries rather than one reading corner.
+
+   Widening the centre column instead would be the other fix, and it belongs to
+   ui.css, which this agent does not own (see the report). */
+.home-marks {
+  grid-area: help;
+  justify-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 0;
+}
+
+/* ── the panel ─────────────────────────────────────────────────────────── */
+
+.fl { display: flex; flex-direction: column; gap: .7em; min-width: 0; }
+.fl-body { display: flex; flex-direction: column; gap: .7em; min-width: 0; }
+
+/* Every stats.status that has something to say gets this. It is a NOTE, not an
+   error: `no-storage` and `future-version` are both ordinary situations a real
+   player is in, and neither may look like a crash. So: the apron's own hairline
+   down the left edge, the same device .prompt-why uses for its refusal
+   sentence, and no hazard material anywhere. */
+.fl-note {
+  margin: 0;
+  padding: .5em 0 .5em .7em;
+  font-size: var(--t-small);
+  line-height: 1.45;
+  color: var(--fg-mute);
+  /* A GRADIENT, not the bare colour. `background: var(--stencil-hi) left / 3px
+     100% no-repeat` is what the first draft said, copying .prompt-why — and a
+     `/size` only applies to background IMAGES, so a bare colour ignores it and
+     paints the whole box. The result was a tinted panel inside a panel, which
+     is the §3.2 stack this file's header refuses. Two stops of the same colour
+     is an image and takes the 3px. */
+  background: linear-gradient(var(--stencil-hi), var(--stencil-hi)) left / 3px 100% no-repeat;
+  text-wrap: pretty;
+}
+
+.fl-seg { flex: 0 0 auto; }
+
+.fl-band { display: flex; flex-direction: column; gap: .45em; min-width: 0; }
+/* The divider. One hairline above each band after the first — the marking
+   between two registers of an apron, and the only structure on this screen. */
+.fl-band + .fl-band,
+.fl-band + .fl-locked { padding-top: .7em; box-shadow: inset 0 1px 0 var(--shade-2); }
+
+/* ── band 1: one number, and the denominator against it ────────────────── */
+
+.fl-band-rate { align-items: center; gap: .1em; text-align: center; }
+/* --t-display, mono, tabular. §4: figures are "the character of the thing", and
+   a win rate is a figure before it is a headline — it is not set in the display
+   face for the same reason the money coins are not. */
+.fl-rate {
+  margin: 0;
+  font-size: var(--t-display);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--fg);
+  letter-spacing: var(--track-display);
+}
+/* IMMEDIATELY adjacent, and never optional. A 62% at this size over three
+   flights is a lie told in a large typeface; the count is what stops it. */
+.fl-rate-den {
+  margin: 0;
+  font-size: var(--t-small);
+  font-weight: 700;
+  color: var(--fg-mute);
+}
+
+/* ── band 2/3: the figure strips ───────────────────────────────────────── */
+
+/* WRAP, NEVER SCROLL. A stat strip you have to swipe is one nobody reads, so
+   there is no overflow-x here and there never will be: at 390px the five cells
+   fall to three-and-two and both rows are fully on screen. The basis is 4.2em
+   because "shootdowns" is the longest label in the set and sets the floor. */
+.fl-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5em .9em;
+  min-width: 0;
+}
+.fl-cell {
+  flex: 1 1 4.2em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .05em;
+}
+.fl-cell-num {
+  font-size: var(--t-title);
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--fg);
+  letter-spacing: var(--track-display);
+}
+.fl-cell-label {
+  font-size: var(--t-micro);
+  font-weight: 700;
+  color: var(--fg-mute);
+  overflow-wrap: anywhere;
+}
+
+/* The final-approach four sit a step below the record strip: this is the
+   texture, not the headline figures. */
+.fl-strip-fa .fl-cell-num { font-size: var(--t-lede); }
+
+.fl-head {
+  margin: 0;
+  font-size: var(--t-lede);
+  font-weight: 800;
+  color: var(--fg);
+  letter-spacing: var(--track-display);
+}
+
+/* The one line of copy on the screen, and the reason band 3 exists: it is the
+   only statistic in the set with a rivalry in it. Full ink, because it is a
+   sentence the player is meant to read rather than a caption. */
+.fl-rivalry {
+  margin: 0;
+  font-size: var(--t-small);
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--fg);
+  text-wrap: pretty;
+}
+
+/* ── the label/value rows ──────────────────────────────────────────────── */
+
+.fl-rows { display: flex; flex-direction: column; }
+.fl-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .8em;
+  padding: .32em 0;
+  font-size: var(--t-small);
+  box-shadow: inset 0 -1px 0 var(--shade);
+}
+.fl-row:last-child { box-shadow: none; }
+.fl-row-label { color: var(--fg-mute); min-width: 0; }
+.fl-row-value {
+  flex: 0 0 auto;
+  font-weight: 800;
+  color: var(--fg);
+  text-align: right;
+}
+.fl-fav { display: flex; align-items: center; gap: .4em; }
+/* THE ONE SET COLOUR ON THIS SURFACE (§1). Same geometry as .brief-swatch in
+   the rules sheet, so the two places the app shows a set colour outside a card
+   show it the same way. */
+.fl-swatch {
+  display: inline-block;
+  width: .8em;
+  height: .8em;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  background: var(--band, var(--fg-mute));
+  box-shadow: 0 0 0 1px var(--shade);
+}
+
+/* ── the form line: last N, oldest left ────────────────────────────────── */
+
+.fl-formline { display: flex; align-items: center; gap: .55em; padding-top: .2em; }
+.fl-form-label {
+  flex: 0 0 auto;
+  font-size: var(--t-micro);
+  font-weight: 700;
+  color: var(--fg-mute);
+}
+.fl-form { display: flex; flex-wrap: wrap; gap: 3px; min-width: 0; }
+/* Stencil marks, not a sparkline. Filled = won, hollow = lost, dashed edge =
+   a flight whose record has a hole in it (gaps > 0). Square corners, because
+   ART §6's drawing style has square corners always. Decorative by §0.9 — the
+   strip carries one accessible sentence and each mark is aria-hidden. */
+.fl-mark {
+  width: 9px;
+  height: 12px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1.5px var(--fg-mute);
+}
+.fl-mark.is-won { background: var(--fg); box-shadow: none; }
+.fl-mark.is-gapped { box-shadow: inset 0 0 0 1.5px var(--fg-mute); opacity: .55; }
+.fl-mark.is-won.is-gapped { background: var(--fg-mute); }
+
+/* ── the honest sentences: threshold, caveat, footer ───────────────────── */
+
+/* The threshold line, and the "this filter has no flights" line. One string
+   naming what unlocks and how far away it is — a visible threshold is a
+   returning-player hook that costs exactly this much. */
+.fl-locked,
+.fl-caveat {
+  margin: 0;
+  font-size: var(--t-small);
+  line-height: 1.45;
+  color: var(--fg-mute);
+  text-wrap: pretty;
+}
+.fl-caveat { font-size: var(--t-micro); }
+
+/* THE FOOTER RIDES THE BOTTOM OF THE SCROLLER.
+   MEASURED (touchtest, iPhone, 300 flights): "Clear this logbook" was 136×44
+   with 14px reachable, and 0px once a filter shortened the panel — a control on
+   screen and untappable. Identical defect and identical fix to the win recap's
+   `.jr-more` above. Pinning the whole footer rather than just the button also
+   keeps rule 1's sentence — the date, the count, "kept in this browser only" —
+   against the numbers it qualifies at every scroll position, which is where it
+   belongs anyway. Opaque, full width, hairline on top, so a band scrolling
+   under it is a scroll and not a collision. */
+.fl-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: .5em;
+  margin-top: auto;
+  padding: .6em 0 .15em;
+  background: var(--surface);
+  box-shadow: inset 0 1px 0 var(--shade-2);
+}
+
+/* Rule 1 lives here: the date and the count, never the word "lifetime". */
+.fl-foot {
+  margin: 0;
+  font-size: var(--t-micro);
+  line-height: 1.45;
+  color: var(--fg-mute);
+  text-wrap: pretty;
+}
+
+/* ── zero flights ──────────────────────────────────────────────────────── */
+
+/* Reachable only when the logbook has something to explain (a blob a newer
+   build wrote, or one that could not be parsed) — otherwise the rail mark is
+   not on screen at all. One sentence and a way out; never a set of bands
+   filled with zeros. */
+.fl-empty { display: flex; flex-direction: column; align-items: stretch; gap: .7em; }
+.fl-empty-text {
+  margin: 0;
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--fg-mute);
+  text-wrap: pretty;
+}
+
+/* ── clearing it ───────────────────────────────────────────────────────── */
+
+.fl-clear { align-self: flex-start; font-size: var(--t-small); }
+/* Two taps, and the second one names the number it is about to erase. NOT
+   .btn-danger: §1 reserves hazard material for danger in play, and a permanent
+   striped button in a settings-shaped panel spends the material a long way from
+   where the final-approach rails need it. */
+.fl-confirm { display: flex; flex-direction: column; gap: .45em; }
+.fl-confirm-text { margin: 0; font-size: var(--t-small); font-weight: 700; color: var(--fg); }
+.fl-confirm-row { display: flex; flex-wrap: wrap; gap: .45em; }
+.fl-confirm-row .btn { flex: 1 1 8em; font-size: var(--t-small); }
+
+/* ── desktop: the sheet is 44em, and two columns is what that width is for ── */
+
+@media (min-width: 720px) {
+  /* Band 1 stops being a stacked block and sits beside the record strip: at
+     44em the centred percentage alone left ~28em of empty panel to its right,
+     which is the "dead apron" defect the home screen was rebuilt to fix. */
+  .fl-band-rate {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: .6em;
+    text-align: left;
+  }
+  .fl-rate-den { font-size: var(--t-lede); }
+  /* Five cells across one 44em row rather than three-and-two. */
+  .fl-cell { flex: 1 1 5.5em; }
+}

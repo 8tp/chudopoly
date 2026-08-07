@@ -77,6 +77,7 @@ import {
 } from './lib/touch.mjs';
 import * as audit from './lib/audit.mjs';
 import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
+import { installLogbooks } from './lib/logbook.mjs';
 import { drive } from './lib/drivers.mjs';
 import { census, observeMarkers } from './lib/census.mjs';
 import fs from 'node:fs';
@@ -99,6 +100,10 @@ try {
   browser = await launchBrowser();
   const h = await openTouchPage(browser, `${server.url}/?harness=1&seed=${seed}`);
   const page = h.page;
+  // A real logbook in storage for the `?logbook=` stages below. The flight log
+  // has no server state, so this is the only way this gate can put a finger on
+  // it — see tools/lib/logbook.mjs.
+  await installLogbooks(h.context);
 
   const bridged = await waitForBridge(page, BRIDGE_MS);
   if (!bridged.ok) {
@@ -437,14 +442,24 @@ try {
    */
   const stage = async (name, opts = {}) => {
     const { cold = true, label = name } = opts;
-    const fx = fixture(name);
-    if (!fx) { r.fail(`fixture ${name}.json missing — run npm run tool:record`); stagesFailed.push(name); return false; }
+    /* `fixture: null` is for surfaces with NO SERVER STATE. The flight log
+     * renders `chud.stats.v1` out of localStorage, seeded before the document
+     * runs by lib/logbook.mjs off the `?logbook=` in `route` — there is nothing
+     * for `applyState` to apply, and demanding a fixture would have kept a whole
+     * §0.9 surface out of this gate for want of a file that cannot exist. */
+    const fx = opts.fixture === null ? null : fixture(name);
+    if (opts.fixture !== null && !fx) { r.fail(`fixture ${name}.json missing — run npm run tool:record`); stagesFailed.push(name); return false; }
     /* §H leaves CDP network emulation behind on some runs, and a later stage
      * then dies on ERR_CONNECTION_REFUSED — one aborted run in four. Clearing
      * the emulation and retrying once distinguishes "the harness left the wire
      * cut" from "the server is genuinely gone": the second failure is still
      * reported and still fails the gate. */
-    const goStage = () => page.goto(`${server.url}/?harness=1&seed=${seed}&stage=${name}`, { waitUntil: 'load' });
+    const goStage = () => {
+      const u = new URL(opts.route || '/?harness=1', server.url);
+      u.searchParams.set('seed', seed);
+      u.searchParams.set('stage', name);
+      return page.goto(u.href, { waitUntil: 'load' });
+    };
     try {
       await goStage();
     } catch (e) {
@@ -478,7 +493,7 @@ try {
      * own `selfId` is what makes a LOBBY fixture render the seat it was
      * recorded from; without it `store.self.id` is null, `#lobby-host` never
      * appears and this gate measures a screen nobody is looking at. */
-    await stageFixture(page, fx, { at: opts.at, from: opts.from, drain: !opts.transient });
+    if (fx) await stageFixture(page, fx, { at: opts.at, from: opts.from, drain: !opts.transient });
     if (!opts.transient) await quietTransients(page);
     if (opts.drive) {
       const reached = await drive(page, opts.drive);
@@ -492,6 +507,31 @@ try {
     if (cold) await measureSurface(`${label} (cold)`);
     return true;
   };
+
+  /* ── the flight log, on a phone, at two populations ─────────────────────
+   * §0.9 is the whole reason this stage exists: a panel of small figures and
+   * .74em labels inside a scrolling sheet is exactly where a 44px floor and a
+   * clipped control go unnoticed. Two populations because they are two
+   * different layouts — the young one is four cells and a sentence, the deep
+   * one is fifteen rows, twenty form marks and a scroll. */
+  if (await stage('flightlog', {
+    fixture: null, route: '/?harness=1&logbook=300',
+    drive: 'flight-log', expect: 'flightlog:open', label: 'flight log (300)',
+  })) {
+    // The segment toggle is the one control on this panel a player uses twice.
+    await tapSel('.fl-seg .seg', 1);
+    await page.waitForTimeout(220);
+    const scope = await page.evaluate(
+      () => document.querySelector('.fl-seg input:checked')?.value || 'none',
+    );
+    if (scope === 'bots') r.pass('flight log: the scope toggle changes scope on a real finger tap');
+    else r.fail(`flight log: tapping "vs bots" left the scope on '${scope}'`);
+    await measureSurface('flight log (segment tapped)');
+  }
+  await stage('flightlog-young', {
+    fixture: null, route: '/?harness=1&logbook=3',
+    drive: 'flight-log', expect: 'flightlog:open', label: 'flight log (3)',
+  });
 
   /* Sheets first, over a recorded table, so their numbers are reproducible. */
   if (await stage('mid-game')) await measureSheets();

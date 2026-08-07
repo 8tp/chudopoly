@@ -1,5 +1,12 @@
 // Strict validation for every client-to-server WebSocket command.
 
+// The scalar rule vocabularies below are deliberately restated rather than imported — they
+// are three short lists and test/houserules.test.js pins them against the engine. The DECK
+// is not: it is thirteen counts, thirteen ceilings and two totals, and a mirror that long
+// drifts. game.js owns it and this file calls G.validateDeck(). No cycle — game.js requires
+// nothing.
+const G = require('../game');
+
 const MESSAGE_TYPES = new Set([
   'create_room', 'quick_play', 'join_room', 'reconnect', 'kick', 'add_bot',
   'remove_bot', 'leave_room', 'set_rules', 'start_game', 'rematch', 'draw', 'play_money',
@@ -47,6 +54,12 @@ function validateRuleFields(message) {
   if (message.setsToWin !== undefined && !SETS_TO_WIN.has(message.setsToWin)) return fail('Invalid sets to win (3, 4 or 5)');
   if (!validOptionalBool(message.pureSetRequired)) return fail('Invalid pure-set setting');
   if (!validOptionalBool(message.passGoRestartsTurn)) return fail('Invalid PCS Orders setting');
+  // Deck composition (§3 deck knob). The counts are the engine's to police — game.js owns
+  // the kind list, the per-kind ceilings and the total bounds, and this is the strict door
+  // in front of the same function normalizeDeck() falls back to silently. One source, so a
+  // count the lobby is allowed to offer is exactly a count start_game will accept.
+  const deckError = G.validateDeck(message.deck);
+  if (deckError) return fail(deckError);
   return null;
 }
 

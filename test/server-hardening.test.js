@@ -6,6 +6,9 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const WebSocket = require('ws');
+// The engine, only so a rule assertion can ask it what a legal deck is instead of
+// restating thirteen counts a wire test has no business owning.
+const G = require('../game');
 
 const port = 34000 + (process.pid % 900);
 const url = `ws://127.0.0.1:${port}`;
@@ -453,7 +456,14 @@ test('a preset is resolved server-side and shipped as the whole ruleset', async 
   };
   for (const [preset, rules] of Object.entries(expected)) {
     const { host, guest, state } = await startTwoHumanRoom('RP', { preset });
-    assert.deepEqual(state.game.rules, { preset, ...rules }, preset);
+    // The SCALAR ruleset. `suddenDeath` and `deck` are asserted separately below rather
+    // than pinned here: this test is about a preset surviving the wire, and restating the
+    // whole 13-count deck in it would make it a second copy of the preset table.
+    const { deck, suddenDeath, ...scalars } = state.game.rules;
+    assert.deepEqual(scalars, { preset, ...rules }, preset);
+    assert.equal(suddenDeath, 'off', `${preset} ships §3.10b off`);
+    assert.ok(deck && typeof deck === 'object', `${preset} ships its deck composition`);
+    assert.equal(G.deckSize(deck), 106, `${preset} deck is 106 cards`);
     assert.equal(state.game.setsToWin, rules.setsToWin, `${preset} legacy scalar agrees`);
     assert.equal(state.game.winRule, rules.winRule);
     send(host, { type: 'leave_room' }); send(guest, { type: 'leave_room' });

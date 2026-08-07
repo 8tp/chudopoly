@@ -171,9 +171,9 @@ const SET_RULES_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_SET_RULES_MS) 
 
 /* ── Lobby ruleset ───────────────────────────────────────────────────── */
 
-// The five fields `set_rules` and `start_game` share. Kept as a list so "did the host say
+// The six fields `set_rules` and `start_game` share. Kept as a list so "did the host say
 // anything about the rules?" is one question with one answer in both places.
-const RULE_FIELDS = ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn'];
+const RULE_FIELDS = ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'deck'];
 
 function pickRuleOpts(msg) {
   const opts = {};
@@ -184,7 +184,10 @@ function pickRuleOpts(msg) {
 function sameRules(a, b) {
   if (!a || !b) return false;
   return a.preset === b.preset && a.winRule === b.winRule && a.setsToWin === b.setsToWin
-    && a.pureSetRequired === b.pureSetRequired && a.passGoRestartsTurn === b.passGoRestartsTurn;
+    && a.pureSetRequired === b.pureSetRequired && a.passGoRestartsTurn === b.passGoRestartsTurn
+    // Reference equality is wrong for the deck and would make every set_rules look like a
+    // change, defeating the coalescer above and fanning a full room state per keystroke.
+    && G.sameDeck(a.deck, b.deck);
 }
 
 // Leading-edge broadcast, then one coalesced trailing broadcast per window. The trailing

@@ -33,6 +33,54 @@ function normalizeWinRule(value) {
   return WIN_RULES.includes(value) ? value : DEFAULT_WIN_RULE;
 }
 
+/* ── §3.10b CONTESTED APPROACH (owner directive 2026-08-07) ────────────────
+ *
+ * The owner's ask: "if someone is on final approach but another person is able to also hit
+ * 3 sets before their turn comes back around then it shouldn't end until they are stopped."
+ *
+ * Today a contested race resolves by turn order — A arms, B arms, A's turn comes first, A
+ * wins — which is §3.10's own reading of the Hasbro rule and needs no tiebreak. This makes
+ * the contest SUSPEND the win instead.
+ *
+ * THE PROBLEM THAT HAD TO BE SOLVED BEFORE ANY OF IT COULD BE MEASURED: as asked, it does
+ * not terminate. Two armed players who both hold their sets and neither of whom draws a
+ * breaker never resolve, and they are by construction the two strongest seats at the table —
+ * the ones most able to defend. §3.6 and §3.11 exist because this project does not ship
+ * non-terminating states, so every mode below carries its own bound and none of them relies
+ * on the deck running out to end the game.
+ *
+ *   off      — DEFAULT. Turn order decides, exactly as §3.10 has always done.
+ *   oneLap   — the current behaviour delayed by exactly one lap. While contested nobody
+ *              converts; after one full turn cycle of contest the turn-order rule resolves
+ *              it. The smallest possible version of the owner's ask.
+ *   escalate — while contested the bar rises to setsToWin + 1, so the contest is broken by
+ *              PULLING AHEAD rather than by waiting. Bounded at CONTEST_LAP_CAP laps, after
+ *              which turn order resolves it, because nobody is guaranteed to find a fourth
+ *              set either.
+ *   points   — the purest reading: nobody converts while contested, and after
+ *              CONTEST_LAP_CAP laps the game ends on §3.6 points (most sets, then net
+ *              worth). Terminating, but it ends the biggest game of the night on a count.
+ *
+ * Measured cost per mode at 3, 4 and 5 players is in BOT-STRATEGY.md; the recommendation and
+ * the reason `off` is still the default are there too.
+ */
+const SUDDEN_DEATH_RULES = ['off', 'oneLap', 'escalate', 'points'];
+const DEFAULT_SUDDEN_DEATH = 'off';
+// Laps of contest before `escalate` and `points` stop waiting. Two, not one: one lap is a
+// single turn each and a table that has just been forced into a contest has had no real
+// chance to break it, while three measurably drags (see BOT-STRATEGY.md).
+const CONTEST_LAP_CAP = 2;
+function normalizeSuddenDeath(value, winRule) {
+  const v = SUDDEN_DEATH_RULES.includes(value) ? value : DEFAULT_SUDDEN_DEATH;
+  // FORBIDDEN COMBINATION, refused here rather than in the lobby. Under 'instant' nothing is
+  // ever armed (syncSets finishes the game the moment the count lands), so there is no such
+  // thing as a contested approach and the control would be a switch wired to nothing —
+  // which is worse than not offering it, because a host would believe they had chosen
+  // something. It composes with 'mdFaithful' mechanically and is allowed to; that ruleset
+  // simply stops being "by the book" and resolveRules() labels it 'custom', which is true.
+  return winRule === 'instant' ? 'off' : v;
+}
+
 /* ── Rule presets and toggles (§3, owner directive 2026-08-06) ────────── */
 
 const SETS_TO_WIN_CHOICES = [3, 4, 5];
@@ -41,29 +89,213 @@ function normalizeSetsToWin(value) {
   return SETS_TO_WIN_CHOICES.includes(n) ? n : SETS_TO_WIN;
 }
 
+/* ── Deck composition (§3 deck knob, owner directive 2026-08-07) ──────────
+ *
+ * WHAT IS EDITABLE, AND WHY EXACTLY THESE THIRTEEN.
+ *
+ * The deck has five families. Three of them are not free parameters and are deliberately
+ * NOT exposed:
+ *   * property (28) — COLORS[c].size IS the number of cards of that colour in the deck, and
+ *     the same number is simultaneously the §3.5 zone cap and the set-completion test.
+ *     Fewer copies makes a colour uncompletable without spending a wild on it; more breaks
+ *     the cap validateState() asserts. A property count is a consequence of the colour
+ *     table, not a knob.
+ *   * money (20) — the economy's SCALE. Change it and every rent, every demand and every
+ *     payment move together, so nothing measured over it is interpretable as being about
+ *     any one card.
+ *   * rent (13) — same argument. Thirteen rents against ten colours is the ladder itself.
+ * The other two families are free — every count in them is legal at every value, and they
+ * are the two the balance question is actually about:
+ *   * the eleven ACTION kinds — the cards that decide tempo and interaction
+ *   * the WILD properties, split into the rainbow ("any") wilds and the ordered two-colour
+ *     list, because those are two different cards that share one name.
+ *
+ * A count is a COUNT, never a card list: the host chooses how many, the engine chooses
+ * which, so no lobby input can ever name a card that does not exist.
+ */
+
+// The two-colour wilds, IN DECK ORDER. `wildPairs: n` takes the first n, so the baseline
+// (7) is byte-identical to the deck this game shipped with and every id is unchanged.
+// Entries 8 and 9 restore Monopoly Deal's second Orange/Pink and second Red/Yellow — the
+// only two cards our deck is missing against the official 110 (see mdFaithful below).
+const WILD_PAIRS = [
+  { colors: ['brown', 'lightblue'], name: 'Wild: Drone/Training', value: 1 },
+  { colors: ['pink', 'orange'], name: 'Wild: Space/Test', value: 2 },
+  { colors: ['red', 'yellow'], name: 'Wild: Fighter/Mobility', value: 3 },
+  { colors: ['green', 'darkblue'], name: 'Wild: Elite/Command', value: 4 },
+  { colors: ['base', 'intel'], name: 'Wild: Bases/Intel', value: 2 },
+  { colors: ['base', 'green'], name: 'Wild: Bases/Elite', value: 4 },
+  { colors: ['lightblue', 'brown'], name: 'Wild: Training/Drone', value: 1 },
+  { colors: ['pink', 'orange'], name: 'Wild: Space/Test', value: 2 },
+  { colors: ['red', 'yellow'], name: 'Wild: Fighter/Mobility', value: 3 },
+];
+
+// The shipped deck, as counts. Sums to 45; the fixed families sum to 61; 45 + 61 = 106.
+const DECK_BASE = Object.freeze({
+  inspector_general: 2, opsec: 3, midnight_requisition: 3, tdy_orders: 3,
+  finance_office: 3, roll_call: 3, pcs_orders: 10, upgrade: 3, foc: 2,
+  surge_ops: 2, chud: 2,
+  wildAny: 2, wildPairs: 7,
+});
+const DECK_KINDS = Object.keys(DECK_BASE);
+// The eleven action kinds, in buildDeck() emission order. `chud` is last because it is
+// emitted in its own block AFTER the rents, and that order is what fixes the card ids.
+const DECK_ACTION_KINDS = DECK_KINDS.filter(k => !k.startsWith('wild'));
+// 28 property + 20 money + 13 rent. Not editable (see above), so it is a constant here and
+// checked against buildDeck() in test/deckconfig.test.js.
+const DECK_FIXED = 61;
+
+// Per-kind ceiling. 12 for an action kind because PCS Orders already ships 10 and a host may
+// legitimately want more of it; the ceiling exists to stop "sixty CHUDs", not to referee
+// taste. Wilds are capped by what exists: two rainbow wilds is what MD has and four is
+// already double, and the pair list is nine cards long.
+const DECK_KIND_MAX = Object.freeze({ wildAny: 4, wildPairs: WILD_PAIRS.length });
+const DECK_ACTION_MAX = 12;
+function deckKindMax(kind) {
+  return DECK_KIND_MAX[kind] !== undefined ? DECK_KIND_MAX[kind] : DECK_ACTION_MAX;
+}
+
+// TOTAL deck size bounds, and an honest account of what they do and do not buy.
+//
+// MEASURED 2026-08-07 (simulate.js mixedMatrix, 2000 games per point, 5 players — the seat
+// count where the tail lives), scaling the whole editable block and holding its shape:
+//
+//   size   property share   avg turns   p90   max   decided on §3.6/§3.11 points   cycles
+//     61        45.9%          33.2      44    54            58.6%                  5.99
+//     76        40.8%          44.4      61    81            57.8%                 10.24
+//     86        37.2%          47.8      75    99            33.8%                  6.48
+//     96        36.5%          52.6      93   121            26.4%                  4.45
+//    106        34.9%          47.5      94   144             8.5%                  2.13
+//    116        33.6%          42.9      68   157             1.4%                  1.18
+//    126        31.7%          46.4      73   200             0.9%                  0.88
+//    146        28.1%          51.6      78   244             0.3%                  0.60
+//
+// Two things fall out, and the second one is the reason this comment is longer than the
+// constants it explains.
+//
+//   * The ceiling is the TAIL. Max turns climbs monotonically with size — 144 at 106, 200 at
+//     126, 244 at 146 — because a bigger deck reaches §3.11's 16-cycle cap later. 130 is
+//     where the worst game is still inside twice the p90.
+//   * The floor is where the points ending stops being a safety net. Below ~100 cards the
+//     deck runs dry faster than three sets can be assembled and §3.6 becomes the NORMAL
+//     ending: a quarter of 5-player games at 96, a third at 86, most of them at 76.
+//
+// AND THE BOUNDS ARE NOT A BALANCE GUARANTEE. A second sweep holding the wilds at baseline
+// and scaling only the actions produced 35.5% points-endings at size 86 but 11.4% at 92 and
+// 6.6% at 96 — non-monotonic in size, because what actually drives the ending mix is WHICH
+// cards were removed (OPSEC and PCS Orders dominate) and not how many. So these two numbers
+// bracket the region the game has been measured in; they do not promise that every deck
+// inside them plays well, and no bound on a single scalar could. What they DO guarantee is
+// that the game still ends — §3.6 and §3.11 terminate every reachable deck, and
+// test/deckconfig.test.js proves it at both extremes rather than asserting it here.
+const DECK_MIN = 80;
+const DECK_MAX = 130;
+
+function deckSize(counts) {
+  let n = DECK_FIXED;
+  for (const kind of DECK_KINDS) n += counts[kind];
+  return n;
+}
+
+/**
+ * Any input → a COMPLETE, legal count map. Total, like normalizeWinRule: unknown keys are
+ * ignored, non-integers fall back to `base`, integers are clamped to the kind's range. If
+ * the result still lands outside [DECK_MIN, DECK_MAX] the whole override is REFUSED and
+ * `base` is returned — a size that far off is not a typo in one field, it is a different
+ * request, and half-honouring it would run the table on a deck nobody chose.
+ *
+ * The strict door is validateDeck() (server/protocol.js), which refuses the same inputs out
+ * loud so a real client gets an error instead of a silent substitution.
+ */
+function normalizeDeck(raw, base = DECK_BASE) {
+  const out = { ...base };
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const kind of DECK_KINDS) {
+      const v = raw[kind];
+      if (v === undefined) continue;
+      if (!Number.isInteger(v)) continue;
+      out[kind] = Math.max(0, Math.min(deckKindMax(kind), v));
+    }
+  }
+  const size = deckSize(out);
+  return (size < DECK_MIN || size > DECK_MAX) ? { ...base } : out;
+}
+
+/** Strict validation for the wire. Returns an error string, or null when `raw` is legal. */
+function validateDeck(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return 'Deck composition must be an object';
+  const keys = Object.keys(raw);
+  if (keys.length > DECK_KINDS.length) return 'Deck composition has too many fields';
+  for (const key of keys) {
+    if (!DECK_KINDS.includes(key)) return `Unknown deck card "${key}"`;
+    const v = raw[key];
+    if (!Number.isInteger(v) || v < 0 || v > deckKindMax(key)) {
+      return `Invalid count for "${key}" (0–${deckKindMax(key)})`;
+    }
+  }
+  const size = deckSize({ ...DECK_BASE, ...raw });
+  if (size < DECK_MIN || size > DECK_MAX) {
+    return `Deck must hold ${DECK_MIN}–${DECK_MAX} cards (that one holds ${size})`;
+  }
+  return null;
+}
+
+function sameDeck(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return DECK_KINDS.every(kind => a[kind] === b[kind]);
+}
+
+/* ── Rule presets ────────────────────────────────────────────────────── */
+
 // Four one-tap lobby presets. Resolved SERVER-SIDE so a preset is never a client illusion.
+//
+// mdFaithful's deck is not a flavour choice, it is the arithmetic. Official Monopoly Deal
+// (monopolydealrules.com, cross-checked against Geeky Hobbies) is 110 cards = 4 rule cards
+// + 106 playable: 28 property, 11 property wilds, 13 rent, 20 money, and 34 action —
+// Deal Breaker 2, Just Say No 3, Sly Deal 3, Forced Deal 3, Debt Collector 3, It's My
+// Birthday 3, Double The Rent 2, House 3, Hotel 2, Pass Go 10. Our shipped deck already
+// matches every one of those counts; the only two differences in the whole deck are the two
+// CHUD cards (our invention, no MD equivalent) and the two wilds we were short. Dropping
+// CHUD and restoring the wilds therefore lands on the official deck EXACTLY, card category
+// for card category — and it stays 106, because the two changes cancel. Pinned by
+// test/deckconfig.test.js against the published counts.
 const RULE_PRESETS = {
-  chudopoly: { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false },
-  mdFaithful: { winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, passGoRestartsTurn: false },
-  blitz: { winRule: 'instant', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true },
-  longGame: { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false },
+  chudopoly: { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE } },
+  mdFaithful: { winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE, chud: 0, wildPairs: 9 } },
+  blitz: { winRule: 'instant', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true, suddenDeath: 'off', deck: { ...DECK_BASE } },
+  longGame: { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE } },
 };
 const PRESET_NAMES = Object.keys(RULE_PRESETS);
 const DEFAULT_PRESET = 'chudopoly';
-const RULE_KEYS = ['winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn'];
+// The SCALAR rule keys. `deck` is deliberately not in here: every consumer of this list
+// compares with ===, which is exactly wrong for an object, so the deck is compared through
+// sameDeck() next to every use instead of silently comparing references.
+const RULE_KEYS = ['winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath'];
 
 // opts → the resolved ruleset. A named preset supplies the base; any individual toggle the
 // lobby also sent overrides it. `preset` in the result is the preset the resolved values
 // actually match, or 'custom' — so the client can never label a mixed ruleset as a preset.
+//
+// `deck` merges over the PRESET's deck rather than over DECK_BASE, so
+// {preset:'mdFaithful', deck:{inspector_general:3}} means "the MD deck, with a third Deal
+// Breaker" — the same additive reading the scalar toggles already have.
 function resolveRules(opts = {}) {
   const named = RULE_PRESETS[opts && opts.preset] ? opts.preset : DEFAULT_PRESET;
-  const rules = { ...RULE_PRESETS[named] };
+  const rules = { ...RULE_PRESETS[named], deck: { ...RULE_PRESETS[named].deck } };
   if (opts && opts.winRule !== undefined) rules.winRule = normalizeWinRule(opts.winRule);
   if (opts && opts.setsToWin !== undefined) rules.setsToWin = normalizeSetsToWin(opts.setsToWin);
   if (opts && opts.pureSetRequired !== undefined) rules.pureSetRequired = !!opts.pureSetRequired;
   if (opts && opts.passGoRestartsTurn !== undefined) rules.passGoRestartsTurn = !!opts.passGoRestartsTurn;
+  if (opts && opts.suddenDeath !== undefined) rules.suddenDeath = opts.suddenDeath;
+  if (opts && opts.deck !== undefined) rules.deck = normalizeDeck(opts.deck, rules.deck);
+  // LAST, and after winRule is settled: the legal values depend on it (see
+  // normalizeSuddenDeath), so this cannot be folded into the line above.
+  rules.suddenDeath = normalizeSuddenDeath(rules.suddenDeath, rules.winRule);
   const match = PRESET_NAMES.find(name =>
-    RULE_KEYS.every(key => RULE_PRESETS[name][key] === rules[key]));
+    RULE_KEYS.every(key => RULE_PRESETS[name][key] === rules[key])
+    && sameDeck(RULE_PRESETS[name].deck, rules.deck));
   return { preset: match || 'custom', ...rules };
 }
 
@@ -116,7 +348,14 @@ const REARRANGE_BUDGET = 12;
 
 /* ── Card definitions ────────────────────────────────────────────────── */
 
-function buildDeck() {
+/**
+ * @param {object} [deck] a count map (sparse or complete) — see normalizeDeck(). Absent
+ *   means the shipped 106-card deck, and with the baseline counts every card comes out in
+ *   the same order with the same id as before this parameter existed
+ *   (test/deckconfig.test.js pins it), so a recorded game replays unchanged.
+ */
+function buildDeck(deck) {
+  const n = normalizeDeck(deck);
   let id = 0;
   const cards = [];
   const c = (props) => { cards.push({ id: id++, ...props }); };
@@ -137,15 +376,10 @@ function buildDeck() {
   props.forEach(([color,name,value]) => c({ type:'property', color, name, value }));
 
   /* Wild property cards */
-  c({ type:'wild_property', colors:['any'], name:'Wild Property', value:0 });
-  c({ type:'wild_property', colors:['any'], name:'Wild Property', value:0 });
-  c({ type:'wild_property', colors:['brown','lightblue'], name:'Wild: Drone/Training', value:1 });
-  c({ type:'wild_property', colors:['pink','orange'], name:'Wild: Space/Test', value:2 });
-  c({ type:'wild_property', colors:['red','yellow'], name:'Wild: Fighter/Mobility', value:3 });
-  c({ type:'wild_property', colors:['green','darkblue'], name:'Wild: Elite/Command', value:4 });
-  c({ type:'wild_property', colors:['base','intel'], name:'Wild: Bases/Intel', value:2 });
-  c({ type:'wild_property', colors:['base','green'], name:'Wild: Bases/Elite', value:4 });
-  c({ type:'wild_property', colors:['lightblue','brown'], name:'Wild: Training/Drone', value:1 });
+  for (let i=0;i<n.wildAny;i++) c({ type:'wild_property', colors:['any'], name:'Wild Property', value:0 });
+  for (const w of WILD_PAIRS.slice(0, n.wildPairs)) {
+    c({ type:'wild_property', colors:[...w.colors], name:w.name, value:w.value });
+  }
 
   /* Money cards */
   for(let i=0;i<6;i++) c({ type:'money', name:'1M', value:1 });
@@ -155,21 +389,21 @@ function buildDeck() {
   for(let i=0;i<2;i++) c({ type:'money', name:'5M', value:5 });
   c({ type:'money', name:'10M', value:10 });
 
-  /* Action cards */
+  /* Action cards — the QUANTITY now comes from the resolved deck, never from this table. */
   const actions = [
-    ['inspector_general','Inspector General',5,'Steal a complete property set from any player. OPSEC can block it.',2],
-    ['opsec','OPSEC',4,'Counter any action card played against you. Can itself be countered by another OPSEC.',3],
-    ['midnight_requisition','Midnight Requisition',3,'Steal a single property from any player. Cannot touch a complete set.',3],
-    ['tdy_orders','TDY Orders',3,'Swap one of your properties for one of another player\'s. Neither card may come from a complete set.',3],
-    ['finance_office','Finance Office',3,'Collect 5M from any one player',3],
-    ['roll_call','Roll Call',2,'All other players pay you 2M each',3],
-    ['pcs_orders','PCS Orders',1,'Draw 2 extra cards from the deck',10],
-    ['upgrade','Upgrade (House)',3,'Add to a complete set: +3M rent',3],
-    ['foc','Full Operational Capability (Hotel)',4,'Add to a complete set with Upgrade: +4M rent',2],
-    ['surge_ops','Surge Operations',1,'Double the next charge you make this turn — rent or any demand',2],
+    ['inspector_general','Inspector General',5,'Steal a complete property set from any player. OPSEC can block it.'],
+    ['opsec','OPSEC',4,'Counter any action card played against you. Can itself be countered by another OPSEC.'],
+    ['midnight_requisition','Midnight Requisition',3,'Steal a single property from any player. Cannot touch a complete set.'],
+    ['tdy_orders','TDY Orders',3,'Swap one of your properties for one of another player\'s. Neither card may come from a complete set.'],
+    ['finance_office','Finance Office',3,'Collect 5M from any one player'],
+    ['roll_call','Roll Call',2,'All other players pay you 2M each'],
+    ['pcs_orders','PCS Orders',1,'Draw 2 extra cards from the deck'],
+    ['upgrade','Upgrade (House)',3,'Add to a complete set: +3M rent'],
+    ['foc','Full Operational Capability (Hotel)',4,'Add to a complete set with Upgrade: +4M rent'],
+    ['surge_ops','Surge Operations',1,'Double the next charge you make this turn — rent or any demand'],
   ];
-  actions.forEach(([action,name,value,desc,qty]) => {
-    for(let i=0;i<qty;i++) c({ type:'action', action, name, value, description:desc });
+  actions.forEach(([action,name,value,desc]) => {
+    for(let i=0;i<n[action];i++) c({ type:'action', action, name, value, description:desc });
   });
 
   /* Rent cards */
@@ -185,13 +419,15 @@ function buildDeck() {
     for(let i=0;i<qty;i++) c({ type:'rent', colors, name:'Rent: '+colors.join('/'), value });
   });
 
-  /* THE CHUD CARD — 2 copies. The 2M tax rider is gone (§3.1); the steal is the whole card.
+  /* THE CHUD CARD — 2 copies by default, 0 under mdFaithful (it has no MD equivalent).
+     The 2M tax rider is gone (§3.1); the steal is the whole card.
      Face value stays 4M: a 4000-game mixed matrix at value 5 moved no personality by more
      than 0.1 point (conservative 27.3% → 27.2%, all others identical), so §3.1's
      "raise the face value if it still dominates" has nothing to fix. */
   const CHUD_TEXT = 'Commandeer Hardware Under Directive — Steal ANY property from any player, even out of a complete set. OPSEC can block it.';
-  c({ type:'action', action:'chud', name:'THE CHUD CARD', value:4, description:CHUD_TEXT });
-  c({ type:'action', action:'chud', name:'THE CHUD CARD', value:4, description:CHUD_TEXT });
+  for (let i=0;i<n.chud;i++) {
+    c({ type:'action', action:'chud', name:'THE CHUD CARD', value:4, description:CHUD_TEXT });
+  }
 
   return cards;
 }
@@ -289,8 +525,9 @@ function redactEvent(ev, playerId) {
 function createGame(players, opts = {}) {
   const seed = opts && opts.seed !== undefined ? opts.seed : undefined;
   const rand = makeRng(seed);
-  const deck = shuffle(buildDeck(), rand);
+  // Rules FIRST: the deck is one of them now, so it cannot be built before they resolve.
   const rules = resolveRules(opts);
+  const deck = shuffle(buildDeck(rules.deck), rand);
   const state = {
     phase: 'playing',
     turnPhase: 'draw',
@@ -440,6 +677,9 @@ function syncSets(state, player, before, byId = null) {
       (by ? ' by ' + (getPlayer(state, by)?.name || '?') : '') + '!');
     emit(state, 'final_approach_broken', { actor: player.id, by });
   }
+  // Every arming and every break can open or close a contest, so the clock is re-derived
+  // here rather than at any one call site — the same reason syncSets exists at all.
+  syncContest(state);
 }
 
 function activeCount(state) {
@@ -516,6 +756,83 @@ function armedPlayers(state) {
   return state.players.filter(p => p.finalApproach && !p.eliminated).map(p => p.id);
 }
 
+/* ── §3.10b contested approach ───────────────────────────────────────── */
+
+function suddenDeathOf(state) {
+  return rulesFor(state).suddenDeath || DEFAULT_SUDDEN_DEATH;
+}
+
+// The contest clock. Stamped the first time TWO seats are armed at once, and cleared the
+// moment the field drops back to one — so re-contesting restarts the count exactly the way
+// re-arming restarts armedAtTurn. Called from syncSets (a set changed hands) and beginTurn
+// (a turn ticked), which are the only two ways the answer can change.
+function syncContest(state) {
+  if (suddenDeathOf(state) === 'off') return;
+  if (state.phase !== 'playing') return;
+  const armed = armedPlayers(state);
+  if (armed.length >= 2) {
+    if (state._contestedSince === undefined) {
+      state._contestedSince = state.turnCounter || 0;
+      logLine(state, 'CONTESTED FINAL APPROACH — ' + armed.length + ' players are armed. '
+        + 'Nobody converts while the approach is contested.');
+      emit(state, 'contest_open', {
+        actors: armed, mode: suddenDeathOf(state),
+        lapCap: CONTEST_LAP_CAP, bar: contestBar(state),
+      });
+    }
+  } else if (state._contestedSince !== undefined) {
+    delete state._contestedSince;
+    logLine(state, 'The final approach is no longer contested.');
+    emit(state, 'contest_closed', { actors: armed });
+  }
+}
+
+function contestOpen(state) {
+  return state._contestedSince !== undefined;
+}
+
+// Turns spent contested, expressed in LAPS so it means the same thing at every seat count —
+// one lap is one turn for every active player.
+function contestLaps(state) {
+  if (!contestOpen(state)) return 0;
+  return ((state.turnCounter || 0) - state._contestedSince) / Math.max(1, activeCount(state));
+}
+
+// The number of sets a CONVERSION needs right now. Only 'escalate' moves it, and only while
+// the contest is live and inside its lap cap — once the cap expires the bar drops back so
+// the fall-through to turn order can actually fire.
+function contestBar(state) {
+  const base = setsToWinOf(state);
+  if (suddenDeathOf(state) !== 'escalate') return base;
+  if (!contestOpen(state) || contestLaps(state) >= CONTEST_LAP_CAP) return base;
+  return base + 1;
+}
+
+/**
+ * Is `player`'s checkpoint suspended by a contested approach?
+ * @returns {null|{reason:string, bar:number, laps:number}} null means convert normally.
+ */
+function contestBlocks(state, player) {
+  const mode = suddenDeathOf(state);
+  if (mode === 'off' || !contestOpen(state)) return null;
+  const laps = contestLaps(state);
+  if (mode === 'escalate') {
+    // Pulling ahead beats waiting: reach the raised bar ALONE and the contest is over.
+    const bar = contestBar(state);
+    const sets = completedSets(player);
+    if (sets >= bar && !state.players.some(p =>
+      p.id !== player.id && !p.eliminated && completedSets(p) >= bar)) return null;
+    if (laps >= CONTEST_LAP_CAP) return null;      // cap expired — turn order resolves it
+    return { reason: 'escalate', bar, laps };
+  }
+  if (mode === 'oneLap') {
+    if (laps >= 1) return null;                    // one lap served — turn order resolves it
+    return { reason: 'oneLap', bar: setsToWinOf(state), laps };
+  }
+  // 'points' — never resolves by turn order; endTurn() ends the game on §3.6 at the cap.
+  return { reason: 'points', bar: setsToWinOf(state), laps };
+}
+
 // The one and only win-by-sets resolution point: the armed player's own turn start.
 function resolveFinalApproach(state, player) {
   if (state.phase !== 'playing') return false;
@@ -552,6 +869,26 @@ function resolveFinalApproach(state, player) {
     });
     return false;
   }
+  // §3.10b — the checkpoint is reached, but the approach may be CONTESTED. Announced at
+  // most once per turn per seat for exactly the reason the pending narration above is:
+  // this function is a query anything may ask, and a narration that fires per call lies
+  // about how many times the thing happened.
+  const blocked = contestBlocks(state, player);
+  if (blocked) {
+    const stamp = 'c' + (state.turnCounter || 0) + ':' + player.id;
+    if (state._faContestStamp !== stamp) {
+      state._faContestStamp = stamp;
+      logLine(state, player.name + ' reached the checkpoint, but the final approach is '
+        + 'CONTESTED — ' + (blocked.reason === 'escalate'
+          ? 'the bar is now ' + blocked.bar + ' sets.'
+          : 'nobody converts until one approach is broken.'));
+      emit(state, 'contest_held', {
+        actor: player.id, sets, reason: blocked.reason, bar: blocked.bar,
+        laps: Math.floor(blocked.laps), lapCap: CONTEST_LAP_CAP,
+      });
+    }
+    return false;
+  }
   return finishGame(state, player.id, 'sets',
     player.name + ' held the final approach and wins with ' + sets + ' complete sets!');
 }
@@ -572,6 +909,10 @@ function beginTurn(state) {
   state.rearrangesRemaining = REARRANGE_BUDGET;
   const p = currentPlayer(state);
   emit(state, 'turn_start', { actor: p.id, plays: state.playsRemaining, finalApproach: !!p.finalApproach });
+  // The contest clock is measured in turns, so a turn ticking is the other way its answer
+  // can change. Re-derived BEFORE the checkpoint is evaluated, or a lap cap that expired on
+  // this very turn would not be seen until the next one.
+  syncContest(state);
   if (resolveFinalApproach(state, p)) return true;   // won at the checkpoint; no draw
   drawCards(state);
   return false;
@@ -1788,7 +2129,9 @@ function endInStalemate(state, why = 'deck_dry') {
   const runnerUp = ranked[1] || null;
   const cause = why === 'deck_cycles'
     ? 'The deck has been through ' + DECK_CYCLE_LIMIT + ' cycles with no one closing — '
-    : 'Deck and discard are empty and nobody can move — ';
+    : why === 'contested'
+      ? 'The final approach stayed contested for ' + CONTEST_LAP_CAP + ' full rounds — '
+      : 'Deck and discard are empty and nobody can move — ';
 
   let basis = 'unopposed';
   if (winner && runnerUp) {
@@ -1879,6 +2222,14 @@ function endTurn(state, playerId, discardIds) {
     endInStalemate(state, 'deck_cycles');
     return { ok: true, stalemate: true };
   }
+  // §3.10b 'points' mode's bound. It sits beside §3.11's for the same reason: a rule that
+  // can suspend the win indefinitely must carry its own terminator, and the terminator must
+  // be checked where every turn ends rather than trusted to some other rule firing first.
+  if (suddenDeathOf(state) === 'points' && contestOpen(state)
+      && contestLaps(state) >= CONTEST_LAP_CAP) {
+    endInStalemate(state, 'contested');
+    return { ok: true, stalemate: true };
+  }
 
   advanceToNextActive(state);
   state.stats.turns++;
@@ -1921,6 +2272,12 @@ function getPlayerView(state, playerId) {
     winRule: state.winRule || DEFAULT_WIN_RULE,
     deckCycle: state.shuffleCount || 0,
     deckCycleLimit: DECK_CYCLE_LIMIT,
+    // §3.10b. `contestBar` is what a conversion needs RIGHT NOW, which under 'escalate' is
+    // not setsToWin — the HUD must never tell a player they need three when they need four.
+    contested: contestOpen(state),
+    contestLaps: Math.floor(contestLaps(state)),
+    contestLapCap: CONTEST_LAP_CAP,
+    contestBar: contestBar(state),
     turnNumber: state.turnCounter || 0,
     stats: state.stats,
     log: state.log.slice(-LOG_TAIL),
@@ -1966,6 +2323,10 @@ module.exports = {
   WIN_RULES, DEFAULT_WIN_RULE, normalizeWinRule, checkpointThreshold,
   RULE_PRESETS, PRESET_NAMES, DEFAULT_PRESET, DEFAULT_RULES, RULE_KEYS,
   SETS_TO_WIN_CHOICES, normalizeSetsToWin, resolveRules, rulesOf, rulesFor, setsToWinOf,
+  DECK_BASE, DECK_KINDS, DECK_ACTION_KINDS, DECK_FIXED, DECK_MIN, DECK_MAX, DECK_ACTION_MAX,
+  WILD_PAIRS, deckKindMax, deckSize, normalizeDeck, validateDeck, sameDeck,
+  SUDDEN_DEATH_RULES, DEFAULT_SUDDEN_DEATH, CONTEST_LAP_CAP, normalizeSuddenDeath,
+  suddenDeathOf, contestOpen, contestLaps, contestBar, contestBlocks, syncContest,
   bankUpgrades, findUpgrade,
   // `emit` is exported for the ONE class of event the engine cannot originate: a deadline
   // expiring. server/timers.js owns the clocks, and a clock running out changes the board

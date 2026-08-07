@@ -287,14 +287,17 @@ test('two Surge Ops stack to x4 on rent', () => {
 /* ── §3 presets and toggles: configuration surface ───────────────────── */
 
 test('every preset resolves server-side to its documented ruleset', () => {
-  assert.deepEqual(G.resolveRules({ preset: 'chudopoly' }),
-    { preset: 'chudopoly', winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false });
-  assert.deepEqual(G.resolveRules({ preset: 'mdFaithful' }),
-    { preset: 'mdFaithful', winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, passGoRestartsTurn: false });
-  assert.deepEqual(G.resolveRules({ preset: 'blitz' }),
-    { preset: 'blitz', winRule: 'instant', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true });
-  assert.deepEqual(G.resolveRules({ preset: 'longGame' }),
-    { preset: 'longGame', winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false });
+  // The deck is asserted card-for-card in test/deckconfig.test.js; here it is stripped so
+  // this stays a test of the SCALAR ruleset rather than a second copy of the deck table.
+  const scalars = (p) => { const { deck, ...rest } = G.resolveRules({ preset: p }); return rest; };
+  assert.deepEqual(scalars('chudopoly'),
+    { preset: 'chudopoly', winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off' });
+  assert.deepEqual(scalars('mdFaithful'),
+    { preset: 'mdFaithful', winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, passGoRestartsTurn: false, suddenDeath: 'off' });
+  assert.deepEqual(scalars('blitz'),
+    { preset: 'blitz', winRule: 'instant', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true, suddenDeath: 'off' });
+  assert.deepEqual(scalars('longGame'),
+    { preset: 'longGame', winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off' });
   // absent / unknown ⇒ Chudopoly defaults
   for (const bad of [undefined, null, 'nope', 42]) {
     assert.equal(G.resolveRules({ preset: bad }).preset, 'chudopoly');
@@ -332,10 +335,14 @@ test('start_game validates every rule field additively', () => {
 test('getPlayerView ships the whole resolved ruleset', () => {
   const state = game(2, { preset: 'longGame' });
   const view = G.getPlayerView(state, 'p1');
-  assert.deepEqual(view.rules, {
+  const { deck, ...scalars } = view.rules;
+  assert.deepEqual(scalars, {
     preset: 'longGame', winRule: 'finalApproach', setsToWin: 5,
-    pureSetRequired: false, passGoRestartsTurn: false,
+    pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off',
   });
+  // §3 deck knob: the whole composition is on the wire, so the client never has to guess
+  // what is in the deck and a recorded game carries the deck it was played with.
+  assert.deepEqual(deck, G.DECK_BASE);
   assert.equal(view.setsToWin, 5, 'the legacy scalar agrees with the ruleset');
   assert.equal(view.winRule, 'finalApproach');
   assert.equal(state.events[0].rules.preset, 'longGame', 'game_start carries it too');

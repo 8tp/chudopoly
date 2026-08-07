@@ -76,6 +76,7 @@ function runGame(playerConfigs, maxTurns = 500, seed, rules) {
   }
 
   let turnNum = 0;
+  let maxArmed = 0, contestedTurns = 0;
   let lastTurnCounter = null;
   let currentTurnPlays = [];
   let currentTurnPlayer = null;
@@ -147,6 +148,13 @@ function runGame(playerConfigs, maxTurns = 500, seed, rules) {
       // Track OPSEC held
       const opsecInHand = cp.hand.filter(c => c.action === 'opsec').length;
       if (opsecInHand > 0) tracker[cp.id].opsec.held++;
+
+      // §3.10b — how often is a final approach CONTESTED? Sampled at every turn start,
+      // which is the only moment the count can change a player's fate, so "turns spent
+      // contested" is a count of real decision points and not of engine iterations.
+      const armedNow = G.armedPlayers(state).length;
+      if (armedNow > maxArmed) maxArmed = armedNow;
+      if (armedNow >= 2) contestedTurns++;
 
       turnNum++;
       if (state.phase === 'finished') break;
@@ -294,6 +302,13 @@ function runGame(playerConfigs, maxTurns = 500, seed, rules) {
     breaks: state.events.filter(e => e.t === 'final_approach_broken').length,
     breaksByOpponent: state.events.filter(e => e.t === 'final_approach_broken' && e.by).length,
     shuffles: state.events.filter(e => e.t === 'shuffle').length,
+    // §3.6/§3.11: WHICH points ending, not just that there was one. 'deck_dry' is the table
+    // going still; 'deck_cycles' is the 16-reshuffle attrition cap. They are different
+    // failures and a deck change can move one without touching the other.
+    stalemateReason: (state.events.find(e => e.t === 'stalemate') || {}).reason || null,
+    deckSize: state.cardTotal,
+    // §3.10b: was the approach ever contested, and for how many turns.
+    maxArmed, contestedTurns,
     armingsOffTurn: state.events.filter(e => e.t === 'final_approach' && e.onOwnTurn === false).length,
     tracker,
   };
@@ -316,7 +331,10 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300, winRule
 
   let totalTurns = 0, stalemates = 0, decided = 0;
   let armings = 0, breaks = 0, breaksByOpponent = 0, armingsOffTurn = 0, maxTurns_ = 0;
+  let deckDry = 0, deckCycles = 0, contestCap = 0, shuffleSum = 0;
+  let contestedGames = 0, suspendedTurns = 0;
   const turnList = [];
+  const shuffleList = [];
 
   for (let g = 0; g < games; g++) {
     const gameSeed = seed === null || seed === undefined ? undefined : `${seed}:${g}`;
@@ -324,12 +342,19 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300, winRule
     const result = runGame(configs, maxTurns, gameSeed, ruleOpts);
     totalTurns += result.turns;
     turnList.push(result.turns);
+    shuffleSum += result.shuffles;
+    shuffleList.push(result.shuffles);
     armings += result.armings;
     breaks += result.breaks;
     breaksByOpponent += result.breaksByOpponent;
     armingsOffTurn += result.armingsOffTurn;
     if (result.turns > maxTurns_) maxTurns_ = result.turns;
     if (result.endReason === 'stalemate' || (!result.winner && result.stalemate)) stalemates++;
+    if (result.stalemateReason === 'deck_cycles') deckCycles++;
+    else if (result.stalemateReason === 'contested') contestCap++;
+    else if (result.stalemateReason === 'deck_dry') deckDry++;
+    if (result.maxArmed >= 2) contestedGames++;
+    suspendedTurns += result.contestedTurns;
     if (result.winner) {
       decided++;
       const seat = Number(String(result.winner).slice(1));
@@ -340,11 +365,25 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300, winRule
   setRng(null);
 
   const sorted = turnList.slice().sort((a, b) => a - b);
+  const shuffleSorted = shuffleList.slice().sort((a, b) => a - b);
   const winrates = {};
   for (const m of Object.keys(wins)) winrates[m] = +(wins[m] / games * 100).toFixed(2);
 
   return {
     games, players: modes, wins, winrates, seatCounts: seats,
+    // §3.11 deck-cycle attrition: how hard this deck is actually working.
+    avgShuffles: +(shuffleSum / games).toFixed(2),
+    p90Shuffles: shuffleSorted[Math.min(shuffleSorted.length - 1, Math.floor(games * 0.9))],
+    // The §3.6 points ending, split by cause: the deck going still, §3.11's 16-cycle
+    // attrition cap, and §3.10b's contested-approach lap cap. `pointsRate` is the number
+    // the owner watches — the share of games nobody actually won.
+    deckDry, deckCycles, contestCap,
+    pointsRate: +((deckDry + deckCycles + contestCap) / games * 100).toFixed(2),
+    deckSize: G.deckSize(G.resolveRules(toRuleOpts(ruleOpts)).deck),
+    // §3.10b — games in which two or more players were armed at the same turn start, and
+    // the total number of turn starts spent that way.
+    contestedGames, suspendedTurns,
+    contestedRate: +(contestedGames / games * 100).toFixed(2),
     seatWins,
     seatWinrates: seatWins.map(w => +(w / games * 100).toFixed(2)),
     firstPlayerWin: +(seatWins[0] / games * 100).toFixed(2),
@@ -366,44 +405,102 @@ function runMatches({ players, games = 500, seed = null, maxTurns = 300, winRule
   };
 }
 
-// Every personality plays 4-player mixed games in every seat, against every other
-// 4-subset of the roster, so neither seat order nor a lucky matchup can flatter a mode.
-function mixedMatrix(totalGames = 500, seed = 'matrix') {
+/**
+ * The lineups a mixed matrix is run over, at a given seat count: EVERY k-subset of the
+ * 5-personality roster × EVERY rotation of that subset, so neither seat order nor a lucky
+ * matchup can flatter a mode. That is the rule the 4-player matrix has always used, stated
+ * once and generalised, rather than four special cases:
+ *
+ *   k=2 → C(5,2)=10 subsets × 2 rotations = 20 lineups
+ *   k=3 → C(5,3)=10 × 3 = 30
+ *   k=4 → C(5,4)= 5 × 4 = 20   (identical to the old drop-one loop, lineup for lineup)
+ *   k=5 → C(5,5)= 1 × 5 =  5
+ *
+ * Seats beyond the roster size repeat personalities, which is the only honest option — a
+ * 6-seat table cannot be five distinct modes.
+ */
+function lineupsFor(playerCount = 4) {
+  const roster = BOT_MODES;
+  const k = Math.max(2, playerCount);
   const lineups = [];
-  for (let drop = 0; drop < BOT_MODES.length; drop++) {
-    const base = BOT_MODES.filter((_, i) => i !== drop);
-    for (let r = 0; r < base.length; r++) lineups.push(base.slice(r).concat(base.slice(0, r)));
+  if (k > roster.length) {
+    const padded = Array.from({ length: k }, (_, i) => roster[i % roster.length]);
+    for (let r = 0; r < k; r++) lineups.push(padded.slice(r).concat(padded.slice(0, r)));
+    return lineups;
   }
+  const subsets = [];
+  const walk = (start, acc) => {
+    if (acc.length === k) { subsets.push(acc.slice()); return; }
+    for (let i = start; i < roster.length; i++) { acc.push(roster[i]); walk(i + 1, acc); acc.pop(); }
+  };
+  walk(0, []);
+  for (const subset of subsets) {
+    for (let r = 0; r < subset.length; r++) lineups.push(subset.slice(r).concat(subset.slice(0, r)));
+  }
+  return lineups;
+}
+
+// Every personality plays mixed games in every seat. `rules` is the full opts object
+// createGame takes (preset, toggles, deck), so any variant is measurable through the same
+// door the lobby uses — that is the whole point of making the deck a rule.
+function mixedMatrix(totalGames = 500, seed = 'matrix', { rules, playerCount = 4 } = {}) {
+  const lineups = lineupsFor(playerCount);
   const per = Math.max(1, Math.round(totalGames / lineups.length));
   const tally = {};
   for (const m of BOT_MODES) tally[m] = { wins: 0, games: 0 };
   let seat0 = 0, games = 0, turnSum = 0, stalemates = 0, decided = 0;
   let armings = 0, breaks = 0, armingsOffTurn = 0, maxTurns_ = 0;
+  let deckDry = 0, deckCycles = 0, contestCap = 0, shuffleSum = 0, deckSize = 0;
+  let contestedGames = 0, suspendedTurns = 0;
+  const turns = [];
 
   lineups.forEach((order, i) => {
-    const res = runMatches({ players: order, games: per, seed: `${seed}-mix${i}` });
+    const res = runMatches({ players: order, games: per, seed: `${seed}-mix${i}`, rules });
     for (const m of order) { tally[m].wins += res.wins[m]; tally[m].games += res.games; }
     seat0 += res.seatWins[0];
     armings += res.armings;
     breaks += res.breaks;
     armingsOffTurn += res.armingsOffTurn;
+    deckDry += res.deckDry;
+    deckCycles += res.deckCycles;
+    contestCap += res.contestCap;
+    shuffleSum += res.avgShuffles * res.games;
+    deckSize = res.deckSize;
+    contestedGames += res.contestedGames;
+    suspendedTurns += res.suspendedTurns;
     if (res.maxTurns > maxTurns_) maxTurns_ = res.maxTurns;
+    turns.push(...res.turnList);
     games += res.games;
     decided += res.decided;
     turnSum += res.avgTurns * res.games;
     stalemates += res.stalemates;
   });
 
+  turns.sort((a, b) => a - b);
   return {
-    games, tally, decided,
+    games, tally, decided, deckSize,
     firstPlayerWin: seat0 / games * 100,
     avgTurns: turnSum / games,
+    medianTurns: turns[Math.floor(turns.length / 2)],
+    p90Turns: turns[Math.min(turns.length - 1, Math.floor(turns.length * 0.9))],
     stalemateRate: stalemates / games * 100,
+    // §3.6/§3.11 points endings, split by cause. `pointsRate` is the number the owner
+    // watches: the share of games nobody actually won.
+    deckDry, deckCycles, contestCap,
+    pointsRate: (deckDry + deckCycles + contestCap) / games * 100,
+    avgShuffles: shuffleSum / games,
     maxTurns: maxTurns_,
     armings, breaks, armingsOffTurn,
     armingsPerGame: armings / games,
     breakRate: armings > 0 ? breaks / armings * 100 : 0,
     offTurnArmRate: armings > 0 ? armingsOffTurn / armings * 100 : 0,
+    // §3.10b contested-approach telemetry.
+    contestedGames,
+    contestedRate: contestedGames / games * 100,
+    suspendedTurns,
+    suspendedPerContested: contestedGames > 0 ? suspendedTurns / contestedGames : 0,
+    perMode: Object.fromEntries(BOT_MODES.map(m =>
+      [m, tally[m].games > 0 ? tally[m].wins / tally[m].games * 100 : 0])),
   };
 }
 
@@ -821,7 +918,7 @@ function runAndAnalyze(numGames = 500) {
 
 /* ── Main ──────────────────────────────────────────────────────────── */
 
-module.exports = { runMatches, runGame, printMatrix, runAndAnalyze, BOT_MODES };
+module.exports = { runMatches, runGame, printMatrix, runAndAnalyze, mixedMatrix, lineupsFor, BOT_MODES };
 
 if (require.main === module) {
   const [first, second, third] = process.argv.slice(2);

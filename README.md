@@ -45,7 +45,7 @@ deployment story.
 disk: 56 files under `public/src/`, one `<script type="module" src="/src/main.js?v=1">` entry,
 real `import` statements below it. No bundler, no transpiler, no config file for either. What
 you read in `public/src/` is byte-for-byte what the browser runs, which makes a stack trace a
-real address and a git blame the whole story. It costs about 546 KiB gzipped for the client
+real address and a git blame the whole story. It costs roughly 550 KiB gzipped for the client
 (1.5 MB raw), which is more than a bundler would produce and is the price being paid on purpose.
 
 **The client ships essentially no binary assets.** Every card face, card back, set glyph, icon,

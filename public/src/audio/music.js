@@ -150,6 +150,8 @@ const MOTIFS = [
  *   lobby              5.272s  61.272s  56.000s   2.5s   6.6%   (p50 0.4946)
  *   match-1           34.504s  98.504s  64.000s   2.0s  20.0%   (p50 0.3891)
  *   match-2           13.520s  45.520s  32.000s   2.0s  29.3%   (p50 0.6299)
+ *   match-3           18.198s  47.289s  29.091s  2.727s  22.6%   (p50 0.6596)
+ *   match-4           10.944s  40.035s  29.091s  2.727s  24.4%   (p50 0.7059)
  *   final-approach    19.093s  52.075s  32.982s   2.5s   5.1%   (p50 0.5360)
  *
  * The lobby row is the SECOND lobby track and every number in it was re-derived
@@ -166,6 +168,18 @@ const MOTIFS = [
  *   match-1  60.00 bpm in 5 of 7 chunks, 120.00 (the 8ths) in the other 2
  *   match-2  60.00 / 120.00 in 7 of 7
  *   final    51–80 bpm, a different answer every chunk — no stable pulse
+ *
+ * MATCH-3 AND MATCH-4 were both prompted at 66 BPM, and unlike the lobby the
+ * prompt turned out to be the truth — but only the low band says so cleanly, so
+ * it was measured the same careful way. A fine comb over BAR lengths 2–8s puts
+ * match-4's best at 3.636s (score 0.837, the top of its sweep) and match-3's
+ * second at 3.636s (0.626), and the targeted test agrees in BOTH the low and
+ * full bands on the same period AND the same phase for match-3 (1.3813s). That
+ * is 66.01 BPM in 4/4 — which is to say these two beds share the synthesised
+ * score's OWN bar (BEAT*4 = 3.63636s at BPM 66), the first recorded beds that
+ * do. Their xfade is three beats (2.7273s) rather than a round number for the
+ * usual reason: 29.091 − 2.727 = 26.364s is 29 whole beats, so nothing flams
+ * across the overlap.
  *
  * The LOBBY needed a better instrument than chunk-wise comb, which answered
  * 50–56 bpm in every chunk — all of them at the bottom edge of the search range,
@@ -207,6 +221,14 @@ const TRACKS = Object.freeze({
     file: 'match-2.opus', loopStart: 13.520, loopEnd: 45.520, xfade: 2.0,
     bar: 4.0, trimDb: -7.8,
   },
+  match3: {
+    file: 'match-3.opus', loopStart: 18.198, loopEnd: 47.289, xfade: 2.7273,
+    bar: 3.63636, trimDb: -10.0,
+  },
+  match4: {
+    file: 'match-4.opus', loopStart: 10.944, loopEnd: 40.035, xfade: 2.7273,
+    bar: 3.63636, trimDb: -13.0,
+  },
   final: {
     file: 'final-approach.opus', loopStart: 19.093, loopEnd: 52.075, xfade: 2.5,
     bar: 0, trimDb: -10.7,
@@ -242,7 +264,11 @@ const TRACKS = Object.freeze({
   defeat: { file: 'defeat.opus', oneShot: true, holds: 'none', bar: 0, trimDb: 2.1 },
 });
 
-const MATCH_TRACKS = ['match1', 'match2'];
+/* FOUR beds, and the fourth is the point. §0.3's cap went to eight for these.
+ * A fair pick over two means a player hears the same bed twice running half the
+ * time, which is what "there is only one track" actually was — see
+ * pickMatchTrack(), which is where the no-repeat rule lives. */
+const MATCH_TRACKS = ['match1', 'match2', 'match3', 'match4'];
 
 /* ── module state ───────────────────────────────────────────────────────── */
 
@@ -283,7 +309,8 @@ const buffers = new Map();              // key → trimmed AudioBuffer
 const loading = new Map();              // key → Promise<AudioBuffer|null>
 const failed = new Set();               // key → the fetch/decode lost; synth stays
 let voices = [];                        // live file sources, oldest first
-let matchTrack = null;                  // which of the two, this match
+let matchTrack = null;                  // which of the four, this match
+let lastBed = null;                     // …and the one before it — see pickMatchTrack()
 let matchKey = '';                      // the per-match seed for that choice
 let bedWant = null;                     // which track SHOULD be the bed
 let pendingArm = false;                 // armed before the climax buffer landed
@@ -786,6 +813,18 @@ function startFile(key, at, opts) {
   }
   if (opts.lp && opts.lpTo) glide(lp.frequency, t0, opts.lp, opts.lpTo, opts.lpDur || fade);
   voices.push(v);
+  /* VOICE CAP. A crossfade needs exactly two — one going, one coming — and every
+   * ordinary path here creates the second and immediately stops the first. A
+   * player toggling in and out of a game faster than the fades can finish stacks
+   * them instead: MEASURED at a 1.15s leave/rejoin cadence, nine full beds
+   * playing at once. It drains (the reaper is fine, and a realistic 6.5s cadence
+   * never exceeds one voice) but nine beds at once is not a crossfade, it is a
+   * mix, and it is nine buffers of level nobody asked for. Anything older than
+   * the outgoing pair is retired at once; it is already inaudible under the two
+   * on top of it. */
+  // ctxNow(), not t0: the new voice's start is bar-aligned and can be a second
+  // or more in the future, and retiring the pile-up THEN is not retiring it.
+  for (let i = 0; i < voices.length - 3; i++) retire(voices[i], ctxNow());
   note(`startFile ${key} at ${t0.toFixed(3)} fade ${fade} level ${v.level.toFixed(4)} period ${period.toFixed(3)}`);
   return v;
 }
@@ -796,6 +835,21 @@ function leadVoice() {
     if (!voices[i].stopping && !voices[i].dead) return voices[i];
   }
   return null;
+}
+
+/** Hard-retire a voice that is already on its way out. stopVoice() deliberately
+ *  no-ops on a voice that is stopping, which is right for a crossfade and wrong
+ *  for a pile-up: the ones stacking are all mid-fade, so nothing short of this
+ *  shortens them. */
+function retire(v, at) {
+  if (!v || v.retired || v.dead) return;
+  v.retired = true;
+  v.stopping = true;
+  const t = Math.max(at, ctxNow());
+  note(`retire ${v.key} at ${t.toFixed(3)}`);
+  fadeParam(v.gain.gain, t, 0.1, v.gain.gain.value, 0.0001, 'out');
+  try { v.src.stop(t + 0.13); } catch { /* already scheduled */ }
+  v.endAt = Math.min(v.endAt, t + 0.13);
 }
 
 function stopVoice(v, at, dur, shape) {
@@ -1263,7 +1317,27 @@ function setSynthTrim(t) {
 function pickMatchTrack() {
   const r = makeRng(`chudopoly-bed-${matchKey}`);
   r(); r();
-  return MATCH_TRACKS[Math.floor(r() * MATCH_TRACKS.length) % MATCH_TRACKS.length];
+  // NO IMMEDIATE REPEAT. The picker is a fair coin and was verified as one (48%
+  // over 400 room codes), and a fair coin over two beds still plays the same one
+  // twice running half the time — which is exactly the complaint. Excluding the
+  // last one leaves three equally likely, so back-to-back repeats are not
+  // unlikely, they are impossible.
+  //
+  // SCOPE: module-level, so it spans consecutive games in one sitting and not a
+  // page reload. That is the whole of the complaint — a repeat after you have
+  // closed the tab and come back is not "there is only one track" — and the
+  // alternative costs a storage key and a migration for a case nobody reported.
+  //
+  // It is CLIENT-LOCAL, which means two players in one room can end up on
+  // different beds. That is already true (matchKey folds in a per-tab count, so
+  // a player who joined late keys differently) and it is invisible: the bed is
+  // per-listener ambience, no rule reads it, and neither player can hear the
+  // other's. Not repeating yourself is worth more than agreeing with someone you
+  // cannot hear.
+  const pool = MATCH_TRACKS.filter((k) => k !== lastBed);
+  const pick = pool[Math.floor(r() * pool.length) % pool.length];
+  lastBed = pick;
+  return pick;
 }
 
 /**
@@ -2101,6 +2175,23 @@ export function decodeTrack(ctx, key) {
     .catch(() => null);
 }
 
+/**
+ * Run the picker over a list of match keys and return what it chooses, without
+ * disturbing the live rotation. Exists so tools/audiotest.mjs can assert the
+ * no-repeat property over hundreds of rooms rather than over the two or three a
+ * render could exercise — the property IS statistical and cannot be shown any
+ * other way.
+ */
+export function __rotation(keys) {
+  const save = { matchKey, lastBed };
+  const out = [];
+  try {
+    lastBed = null;
+    for (const k of keys) { matchKey = String(k); out.push(pickMatchTrack()); }
+  } finally { matchKey = save.matchKey; lastBed = save.lastBed; }
+  return out;
+}
+
 /** The track table, for the harness. */
 export function tracks() { return Object.keys(TRACKS); }
 
@@ -2122,7 +2213,7 @@ export async function offlineTransition(graph, seconds, steps, bufs, opts) {
   const save = {
     g, mix, mode, want, rng, drone, nextSwell, bar, motif, synthLive, synthOffAt, synthUpAt,
     nextBar, tension, bedWant, matchTrack, matchKey, voices, pendingArm, busyUntil,
-    clockOffset, level, ceremony, buffers: new Map(buffers),
+    clockOffset, level, ceremony, lastBed, buffers: new Map(buffers),
   };
   // Rendered at full user volume, like every other offline render here, so the
   // numbers compare directly against renderMusic()'s rather than against a
@@ -2153,7 +2244,15 @@ export async function offlineTransition(graph, seconds, steps, bufs, opts) {
   want = 'off';
   tension = false;
   bedWant = null;
-  matchTrack = null;
+  // A forced bed, so a render can exercise ONE named track instead of whichever
+  // the rotation happens to pick. start('match') only calls the picker when
+  // matchTrack is unset, so presetting it is the whole mechanism.
+  matchTrack = (opts && opts.bed) || null;
+  // Reset, not carried: pickMatchTrack() remembers the last bed, so without this
+  // a render depended on how many renders had run before it in the same page —
+  // two identical calls chose different beds and a control render stopped being
+  // a control. Renders are reproducible; the live rotation is restored below.
+  lastBed = null;
   pendingArm = false;
   ceremony = null;
   busyUntil = 0;
@@ -2222,6 +2321,7 @@ export async function offlineTransition(graph, seconds, steps, bufs, opts) {
     bedWant = save.bedWant; matchTrack = save.matchTrack; matchKey = save.matchKey;
     voices = save.voices; pendingArm = save.pendingArm; busyUntil = save.busyUntil;
     clockOffset = save.clockOffset; level = save.level; ceremony = save.ceremony;
+    lastBed = save.lastBed;
     buffers.clear();
     for (const [k, v] of save.buffers) buffers.set(k, v);
   }

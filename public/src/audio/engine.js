@@ -1371,7 +1371,8 @@ export function stats() {
 
 /** The §9 contract the P2 harness asked for. */
 export function harnessApi() {
-  return { list, renderOffline, renderMix, renderMusic, renderTransition, stats };
+  return { list, renderOffline, renderMix, renderMusic, renderTransition, stats,
+    rotation: music.__rotation, tracks: music.tracks };
 }
 
 /**

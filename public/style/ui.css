@@ -539,7 +539,19 @@
 }
 .prompt .btn { --btn-drop: 3px; font-size: .88em; }
 .prompt-text { font-weight: 700; font-size: .92em; flex: 1 1 11em; min-width: 0; color: var(--fg); }
-.prompt-why { font-size: var(--t-small); color: var(--danger-ink); flex: 1 1 100%; font-weight: 700; }
+/* `flex: 1 1 100%` forced EVERY reason onto its own full-width line, and a
+   final-approach payment shows two at once ("45s to answer, or the 2M is paid
+   for you" + "you are on FINAL APPROACH"). Measured by the layout agent: a
+   3-row bar at 175px, leaving a 155px board pane around 298px of board — the
+   bank sat 131px over the property grid and 7 of your 15 own cards rendered
+   46x8, while the bar itself said "tap your bank, property and Upgrade cards".
+   A basis lets two reasons share a row when the bar is wide enough and stack
+   when it is not; the pair only fits above ~46em, which is why this is a basis
+   and not a width. */
+.prompt-why {
+  font-size: var(--t-small); color: var(--danger-ink); font-weight: 700;
+  flex: 1 1 22em; min-width: 0;
+}
 /* payment bar: the running total is the thing you are watching */
 .chip.total { font-size: .84em; padding: .3em .7em; color: var(--fg); }
 .chip.total.is-enough { background: var(--act); color: var(--act-fg); box-shadow: none; }

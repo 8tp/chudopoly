@@ -255,8 +255,52 @@ The test: at mini tier, with no text rendered, a player must be able to say *whi
 **Tier degradation via container queries** — at ≤60px: band + glyph at 60% + value coin, and
 nothing else (three marks). At ≤28px: band + glyph at 70% only. Nothing that can truncate.
 
-**Ten glyphs**, each legible as a 1-bit silhouette at 14×14px, designed on a 24px grid, 2px
-minimum stroke: Drone Ops = top-down delta UAV · Training = two stacked chevrons · Space Force
+> **AMENDED 2026-08-07 — the 14×14 1-bit mandate is retired for set glyphs.** It was the right
+> test for the *mini* tier and the wrong objective for the whole system: three redraws chasing
+> a threshold check produced a Space Force mark that reads as a witch's hat, and the owner's
+> verdict on the result was "this SVG art is just bad". **Two marks per subject** instead — a
+> drawn glyph that only has to work from the table tier up, and a letter/short code that owns
+> the mini tier. That is also how MIL-STD-2525 does it (air platform type is carried as a
+> Sector-1 letter: B bomber, C cargo, F fighter, K tanker, R recon), so the split has
+> precedent in the game's own idiom rather than being a concession.
+>
+> **Three legal constraints on how the art is made** (researched 2026-08-07, sources in the
+> research report; none of them require a §0 change):
+> 1. **Draw no insignia by hand.** 32 C.F.R. §507.9 is inverted from intuition: *photographing*
+>    a service medal, badge, patch, seal or device is **authorised**, while "making or executing
+>    in any manner any engraving, impression, or **colorable imitation**" is **prohibited**
+>    without written approval. Hand-authored SVG is exactly the prohibited act. This rules out
+>    seals, emblems, patches, medals, ribbons and **roundels** — including the star-and-bar
+>    device currently on the card back, which is a colorable imitation of the US national
+>    aircraft insignia. Generic aircraft planforms and 2525-style glyphs are unaffected.
+> 2. **Trace from orthographic 3-views, never from photographs.** *ATC Distribution v. Whatever
+>    It Takes* (6th Cir. 2005) held sketches traced from catalogue photographs uncopyrightable
+>    slavish copying; *Rentmeester v. Nike* (9th Cir. 2018) held that reducing a photo to a
+>    silhouette is non-infringing as a matter of law. A top-down planform keeps none of a
+>    photographer's choices; a dramatic three-quarter shot keeps all of them. Trace only Tier-1
+>    public-domain corpora (Greg Goebel's ~557 `PD-author` silhouettes, FM 44-80 *Visual
+>    Aircraft Recognition*, US Navy Standard Aircraft Characteristics 3-views, AIGA/DOT).
+>    **~57% of Commons' 3-view aircraft SVGs are CC BY-SA** — tracing one would force the whole
+>    game copyleft to save an hour of drawing. Keep a per-asset provenance log and cross-check
+>    each planform against two independent PD sources.
+> 3. **Trademarked designations stay on card faces and off all branding.** *AM General v.
+>    Activision* protects depicting and naming real hardware inside an expressive work;
+>    *Jack Daniel's v. VIP Products* (2023) removes that protection when a mark is used as a
+>    source identifier for your own goods. "F-35 Lightning II" as a card name is defensible;
+>    the same name on packaging, a logo or a store listing is not. Note "Thunderbirds" is a
+>    claimed DAF brand element **including trade dress** — the four-ship diamond geometry is
+>    fine, the name and any red/white/blue livery are the exposure.
+>
+> **Technical-order drawing style** (MIL-STD-38784B / ASME Y14.2), which the identity already
+> half-honours: exactly **two line widths at a 2:1 ratio**, thick for object lines only;
+> **square corners always** (`miter` joins, `butt` caps, no rounded corners anywhere);
+> **never a gradient, blur or soft shadow** — the one sanctioned shadow in the entire corpus is
+> a hard zero-blur offset block behind a WARNING box; solid black reverse-out chips used
+> aggressively; and **patterns rather than opacity for tints** (a 45° dot-grid reads as the
+> halftone screen it is imitating, where `fill-opacity` just reads as faded).
+
+**Ten glyphs**, historically specified as legible 1-bit at 14×14px on a 24px grid with a 2px
+minimum stroke (see the amendment above — this now applies to the code, not the drawing): Drone Ops = top-down delta UAV · Training = two stacked chevrons · Space Force
 = dot with one elliptical orbit · Test & Eval = reticle with axis ticks · Fighters = swept-wing
 jet nose-up · Mobility = high-wing cargo with T-tail · Elite Programs = four-point star in a
 diamond · Command = four stars in a bar · Overseas Bases = runway trapezoid with centreline

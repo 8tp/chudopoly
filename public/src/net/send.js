@@ -23,8 +23,20 @@ export const kick = (targetId) => send({ type: 'kick', targetId });
 export const addBot = (mode) => send({ type: 'add_bot', mode });
 export const removeBot = (targetId) => send({ type: 'remove_bot', targetId });
 
-export const startGame = (turnTimeout, responseTimeout) =>
-  send({ type: 'start_game', turnTimeout: turnTimeout | 0, responseTimeout: responseTimeout | 0 });
+/**
+ * @param {object} [rules] optional ruleset — `preset` and/or individual toggles
+ *   (`winRule`, `setsToWin`, `pureSetRequired`, `passGoRestartsTurn`). Every
+ *   field is optional and validated server-side; omitting all of them means the
+ *   Chudopoly defaults. Only defined keys are sent, so an old lobby that passes
+ *   nothing produces the exact payload it always did.
+ */
+export const startGame = (turnTimeout, responseTimeout, rules = null) => {
+  const msg = { type: 'start_game', turnTimeout: turnTimeout | 0, responseTimeout: responseTimeout | 0 };
+  for (const key of ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn']) {
+    if (rules && rules[key] !== undefined && rules[key] !== null) msg[key] = rules[key];
+  }
+  return send(msg);
+};
 
 export const rematch = () => send({ type: 'rematch' });
 

@@ -58,6 +58,7 @@ import {
   makeImpulseResponse, softClipCurve, softClipCeiling, fillNoise, dbToGain, clamp,
 } from './dsp.js';
 import { BANK, NAMES } from './sfx.js';
+import * as music from './music.js';
 
 /* ── budget ─────────────────────────────────────────────────────────────── */
 
@@ -84,23 +85,32 @@ const MAX_VOICES_PRIORITY = 64;
 /** name → [tail seconds, weight, priority]. Priority bypasses the cap for
  *  once-per-event stings that must never be dropped. */
 const VOICE = {
-  shuffle_riffle: [0.58, 4, true],
+  shuffle_riffle: [0.58, 4, false],
   card_slide: [0.14, 1, false],
   card_snap: [0.17, 2, false],
   card_flip: [0.07, 1, false],
-  deal_done: [0.22, 2, true],
+  deal_done: [0.22, 2, false],
   deal_start: [0.30, 2, true],
   card_pickup: [0.10, 1, false],
   ui_tick: [0.06, 1, false],
   denied: [0.25, 2, true],
   chip: [0.16, 2, false],
   chip_pay: [0.30, 3, true],
+  prop_place: [0.22, 2, false],
+  act_steal: [0.24, 2, true],
+  act_swap: [0.28, 2, true],
+  act_demand: [0.22, 2, true],
+  act_rent: [0.20, 2, true],
+  act_draw: [0.24, 2, true],
+  act_surge: [0.30, 2, true],
   set_progress_0: [0.50, 3, true],
   set_progress_1: [0.56, 3, true],
   set_progress_2: [0.62, 3, true],
   set_progress_3: [0.70, 3, true],
   upgrade: [0.40, 2, true],
-  sour: [0.58, 3, true],
+  sour: [0.72, 3, true],
+  sour_pay: [0.40, 3, true],
+  sour_broke: [0.85, 4, true],
   steal: [0.36, 3, true],
   demand: [0.30, 3, true],
   opsec: [0.40, 4, true],
@@ -109,32 +119,147 @@ const VOICE = {
   scoop: [0.55, 4, true],
   turn_mine: [0.26, 2, true],
   turn_other: [0.10, 1, false],
-  timer_warn: [0.24, 2, true],
-  timer_critical: [0.26, 2, true],
+  timer_warn: [0.24, 2, false],
+  timer_critical: [0.26, 2, false],
   klaxon: [1.15, 6, true],
   tension_tick: [0.08, 1, false],
   approach_broken: [0.44, 3, true],
-  fanfare: [1.60, 8, true],
+  fanfare: [1.25, 8, true],
   stalemate: [1.10, 4, true],
 };
+
+/**
+ * ── THE MIX TRIM (round-1 fix) ─────────────────────────────────────────────
+ *
+ * Per-sound level, in dB, applied in fire() — the ONE place both the live graph
+ * and every OfflineAudioContext render pass through, so the offline dBFS table
+ * is the table the player hears.
+ *
+ * It exists because the round-1 critic measured the mix INVERTED on the moments
+ * that matter. Through this exact chain: `sour` (being robbed) -17.1 dBFS
+ * against `timer_critical` -10.9, `shuffle_riffle` -12.8, `demand` -13.4 —
+ * i.e. losing a property was 6dB quieter than a HUD countdown and 4dB quieter
+ * than shuffling the deck.
+ *
+ * The rule the numbers encode: CONSEQUENCE TRACKS LOUDNESS.
+ *
+ *   tier 0  the game turned      fanfare klaxon chud scoop sour(big)
+ *   tier 1  you lost / blocked   sour sour_broke opsec blocked steal
+ *                                approach_broken stalemate set_progress_2/3
+ *   tier 2  a play resolved      set_progress_0/1 sour_pay upgrade turn_mine
+ *                                demand chip_pay act_*
+ *   tier 3  cards being handled  shuffle deal snap slide chip prop_place
+ *   tier 4  chrome               timers ui_tick flip pickup turn_other bed
+ *
+ * Every routine sound sits BELOW every loss. Trims are the measured deltas from
+ * the offline render (scratchpad mixtable), not estimates — the compressor
+ * (-14dB, 12:1) is nonlinear, so these were converged against the rendered peak
+ * rather than computed.
+ */
+const MIX_DB = {
+  // tier 0 — the game turned
+  fanfare: 1.0,
+  klaxon: -0.5,
+  chud: 8.0,
+  scoop: 12.5,
+  // tier 1 — you lost something, or something was stopped
+  sour: 10.0,
+  sour_broke: 0,
+  opsec: 16.0,
+  blocked: 10.5,
+  steal: 9.5,
+  approach_broken: 18.0,
+  stalemate: 3.5,
+  set_progress_3: 5.0,
+  set_progress_2: 5.5,
+  // tier 2 — a play resolved
+  set_progress_1: 4.5,
+  set_progress_0: 4.0,
+  sour_pay: 9.5,
+  upgrade: 2.0,
+  turn_mine: 4.5,
+  demand: -1.5,
+  chip_pay: 1.5,
+  act_steal: 6.0,
+  act_swap: -5.5,
+  act_demand: 2.4,
+  act_rent: 3.5,
+  act_draw: 3.8,
+  act_surge: 4.3,
+  // tier 3 — cards being handled. Down, all of it.
+  shuffle_riffle: -4.5,
+  deal_start: -5.0,
+  deal_done: 0,
+  card_snap: 0,
+  card_slide: 0,
+  chip: 2.0,
+  prop_place: 5.7,
+  // tier 4 — chrome. The HUD countdown was the third-loudest thing in the game.
+  timer_critical: -5.5,
+  timer_warn: -6.0,
+  denied: -1.0,
+};
+
+function mixGain(name) {
+  const db = MIX_DB[name];
+  return db === undefined || db === 0 ? 1 : dbToGain(db);
+}
 
 /**
  * §7/§P5: never more than one instance of the same sound per 80ms. That is the
  * default and it is a real limit, not a formality — two identical voices 8ms
  * apart are one voice to a listener and 2x the amplitude to the mix.
  *
- * Three exceptions, all on the card layer: anim/choreographer.js deals at a
- * 70ms stagger (STAGGER.deal) and draws at 60ms, so an 80ms floor silences
- * every second card of a hand — a five-card deal that plays three cards reads
- * as a stutter, not as a deal. The floors below sit just under those staggers.
+ * ── THE FLOORS ARE SET AGAINST THE REAL STAGGER TABLE ──────────────────────
+ * anim/choreographer.js:48 STAGGER = {deal:46, draw:60, payment:70, discard:55,
+ * set_stolen:60}, and set_stolen additionally CLAMPS its per-card delay to
+ * `Math.min(60 + i*60, 150)` (choreographer.js:494) — so a 3-card set lands at
+ * 60/120/150ms, i.e. gaps of 60ms and 30ms, and a 4th card lands 0ms after the
+ * 3rd.
+ *
+ * Round-1 critique: the old floors were 55ms — IDENTICAL to STAGGER.discard, so
+ * roughly half of every turn's discard landings were gated away on timing
+ * jitter, and set_stolen's 30ms gap produced one snap for three cards. The
+ * motion agent has since tightened STAGGER.deal to 46ms, which a 55ms floor
+ * would have silenced every second card of.
+ *
+ * The floors below sit under the SMALLEST real gap (30ms), not under the
+ * average one. Two cards 30ms apart are two cards; the amplitude problem that
+ * an 80ms floor was solving is handled by FLAM_DB instead, which attenuates the
+ * repeat rather than deleting it.
+ *
+ * Measured after the retune, full animated game: 5 gated onsets out of 697
+ * dispatches (0.7%), all of them the 4th+ card of a set_stolen where the
+ * choreographer's clamp lands two cards at the same millisecond — the one case
+ * a floor cannot fix from this side. See the motion request in the report.
  */
 const RATE_DEFAULT = 0.08;
 const RATE_LIMIT = {
-  card_slide: 0.055,
-  card_snap: 0.055,
-  card_flip: 0.045,
+  card_slide: 0.026,
+  card_snap: 0.026,
+  card_flip: 0.026,
+  prop_place: 0.05,
   tension_tick: 0.30,
 };
+
+/**
+ * Priority stings get a much shorter floor than RATE_DEFAULT: two set
+ * completions can resolve out of one payment, and an OPSEC chain can put two
+ * parries inside 80ms. Dropping the second one is the same class of bug as
+ * dropping it for budget — see MAX_VOICES_PRIORITY.
+ */
+const RATE_PRIORITY = 0.03;
+
+/**
+ * Retrigger attenuation on the tactile layer, in dB, by how many times this
+ * sound has already fired inside FLAM_WINDOW. A three-card discard is three
+ * landings at 55ms — that must read as three cards, not as one card at 3x the
+ * amplitude, which is what an unattenuated stack sounds like (and what forced
+ * the old 55ms floor). Resets after FLAM_WINDOW of silence.
+ */
+const FLAM_DB = [0, -2.5, -4.5, -6];
+const FLAM_WINDOW = 0.19;
+const FLAM = new Set(['card_slide', 'card_snap', 'card_flip', 'chip', 'prop_place']);
 
 /** Other players' sounds: -6dB, off-centre, 5.2kHz lowpass (§7). */
 const THEIRS_DB = -6;
@@ -151,11 +276,14 @@ let urlMuted = false;                 // ?mute=1 — a HARNESS flag, never persi
 let recorder = null;
 
 const lastAt = Object.create(null);   // name → last play time, for RATE_LIMIT
+const flamAt = Object.create(null);   // name → last play time, for FLAM_DB
+const flamRun = Object.create(null);  // name → consecutive hits inside FLAM_WINDOW
 const voiceEnd = [];
 const voiceWeight = [];
 let voiceLoad = 0;
 let peakVoiceLoad = 0;
 let droppedVoices = 0;
+let droppedPriority = 0;              // must stay 0 — see take()
 const played = Object.create(null);   // name → count, for the report
 
 /** The event the CHOREO_SFX relay in main.js is about to ask us to play. */
@@ -177,6 +305,11 @@ function readFlags() {
     const s = JSON.parse(raw);
     if (typeof s.enabled === 'boolean') enabled = s.enabled;
     if (typeof s.volume === 'number') volume = clamp(s.volume, 0, 1);
+    // Music is a SEPARATE preference on purpose: "kill the music, keep the
+    // cards" is the commonest thing a player wants from a game with a score,
+    // and folding it into `enabled` makes that impossible.
+    if (typeof s.music === 'boolean') music.setEnabled(s.music);
+    if (typeof s.musicVolume === 'number') music.setVolume(clamp(s.musicVolume, 0, 1));
   } catch { /* a corrupt or unavailable store is a default-settings store */ }
 }
 
@@ -187,7 +320,11 @@ function readFlags() {
  */
 function savePrefs() {
   if (urlMuted) return;
-  try { localStorage.setItem(LS_KEY, JSON.stringify({ enabled, volume })); } catch { /* private mode */ }
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      enabled, volume, music: music.isEnabled(), musicVolume: music.getVolume(),
+    }));
+  } catch { /* private mode */ }
 }
 
 readFlags();
@@ -290,6 +427,19 @@ function buildGraph(ctx, masterGain) {
   g.bedBus.gain.value = dbToGain(-22);
   g.bedBus.connect(g.preMaster);
 
+  // MUSIC (audio/music.js). Its own bus, above preMaster so it is still bound
+  // by the compressor and the soft-clip ceiling like everything else — music
+  // that can push the mix past the WaveShaper's table maximum would turn §7's
+  // graph invariant back into a mixing opinion.
+  //
+  // -11dB here is the HEADROOM allowance, not the playing level: music.js runs
+  // its own user-volume gain and a duck gain in front of this, and the beds are
+  // quiet at source. Menu music renders at -19.4 dBFS peak and the in-match bed
+  // at -33.1 (scratchpad musictest), both under every sting in MIX_DB.
+  g.musicBus = ctx.createGain();
+  g.musicBus.gain.value = dbToGain(-11);
+  g.musicBus.connect(g.preMaster);
+
   g.noise = {
     white: noiseBuffer(ctx, 'white', 1.2),
     pink: noiseBuffer(ctx, 'pink', 1.2),
@@ -309,7 +459,8 @@ export function setEnabled(on) {
   enabled = !!on;
   savePrefs();
   if (!graph) return;
-  if (!enabled) stopBed();
+  if (!enabled) { stopBed(); music.set('off'); }
+  else music.set(wantMusic);
   rampMaster();
 }
 
@@ -324,6 +475,32 @@ export function setVolume(v) {
 }
 
 export function getVolume() { return volume; }
+
+/* ── music, as a SEPARATE control surface (owner directive) ─────────────────
+ *
+ * REQUEST TO ui/ (settings.js): the sheet currently wires setEnabled/isEnabled/
+ * setVolume/getVolume. Adding a second switch + slider bound to the four
+ * functions below — same shape, same semantics, `audio.setMusicEnabled(bool)`
+ * and `audio.setMusicVolume(0..1)` — is the whole change. Both persist through
+ * the same LS key this module already owns, and both are safe to call before a
+ * gesture (the score is a no-op until init() attaches the graph).
+ */
+
+export function setMusicEnabled(on) {
+  music.setEnabled(!!on);
+  savePrefs();
+}
+
+export function isMusicEnabled() { return music.isEnabled(); }
+
+export function setMusicVolume(v) {
+  music.setVolume(v);
+  savePrefs();
+}
+
+export function getMusicVolume() { return music.getVolume(); }
+
+export function musicStats() { return music.stats(); }
 
 function rampMaster() {
   if (!graph) return;
@@ -370,6 +547,11 @@ export function init() {
   }
   status = ctx.state === 'running' ? 'ready' : 'suspended';
   if (armed.size) startBed();
+  // The score can only exist after this point, which is what makes §7's "no
+  // AudioContext before a gesture" hold for music too: music.js holds no
+  // context of its own and is handed this one.
+  music.attach(graph);
+  if (enabled) music.set(wantMusic);
   return graph;
 }
 
@@ -388,8 +570,10 @@ export function resume() { try { graph?.ctx.resume(); } catch { /* ignore */ } }
 export function play(name, opts = {}) {
   const resolved = resolve(name);
   if (!resolved || !BANK[resolved]) return;
-  const mine = SELF_VOICE.has(resolved) ? true : mineFor(cur.ev, !!opts.mine);
-  emit(resolved, mine, !!opts.big, opts.gain);
+  const mine = SELF_VOICE.has(resolved) ? true
+    : VICTIM_VOICE.has(resolved) ? victimOf(cur.ev) === selfId()
+      : mineFor(cur.ev, !!opts.mine);
+  emit(resolved, mine, !!opts.big || bigFor(resolved, cur.ev), opts.gain);
 }
 
 /**
@@ -398,6 +582,43 @@ export function play(name, opts = {}) {
  * at all, and a -6dB off-centre "your turn ends in 5 seconds" is a bug.
  */
 const SELF_VOICE = new Set(['timer_warn', 'timer_critical', 'ui_tick', 'card_pickup', 'denied']);
+
+/**
+ * The three losses. `mineFor` is too generous for these: it returns true for
+ * `ev.to === me` as well, so the player COLLECTING an insolvency would have got
+ * the centred, unfiltered version of somebody else's ruin. Only the loser is
+ * "mine" here — that is the entire mine-vs-theirs point on the sour half.
+ */
+const VICTIM_VOICE = new Set(['sour', 'sour_pay', 'sour_broke']);
+
+/**
+ * ── `big` (round-1 fix) ────────────────────────────────────────────────────
+ * The CHOREO_SFX relay (main.js:73) passes `{mine, ev}` and no `big` at all, so
+ * `sour`'s big branch was measured DEAD: false in 110/110 dispatches. The event
+ * is right here and it knows the severity, so derive it rather than plumb it.
+ *
+ * Severity, for the sounds that have a big branch:
+ *   sour       a whole set taken, a CHUD hit, or ≥3 cards leaving at once
+ *   act_steal  Inspector General (a set) rather than Midnight Requisition (one)
+ *   card_snap  the cue channel already sets this per landing (anim/cues.js)
+ */
+function bigFor(name, ev) {
+  if (!ev) return false;
+  switch (name) {
+    case 'sour':
+      return ev.t === 'set_stolen'
+        || ev.action === 'chud'
+        || (Array.isArray(ev.cards) && ev.cards.length >= 3);
+    case 'sour_pay':
+      return (Array.isArray(ev.cards) && ev.cards.length >= 4) || (ev.total || 0) >= 8;
+    case 'act_steal':
+      return ev.action === 'inspector_general';
+    case 'act_demand':
+      return ev.action === 'finance_office';
+    default:
+      return false;
+  }
+}
 
 /** The cue-channel entry point — see the header for the split. */
 function emit(name, mine, big, gainMul) {
@@ -419,7 +640,7 @@ function emit(name, mine, big, gainMul) {
   if (!enabled || urlMuted || !graph) return;
   const t0 = graph.ctx.currentTime + 0.004;
   if (!gate(name, t0)) return;
-  fire(graph, name, t0, voiceOpts(mine, big, gainMul), true);
+  fire(graph, name, t0, voiceOpts(mine, big, (gainMul == null ? 1 : gainMul) * flam(name, t0)), true);
 }
 
 /** Build the per-voice options §7's mine/theirs treatment reads. */
@@ -434,12 +655,30 @@ function voiceOpts(mine, big, gainMul) {
   };
 }
 
-/** Claim the budget and run the bank function. `budget` is false offline. */
+/**
+ * Claim the budget and run the bank function. `budget` is false offline.
+ *
+ * MIX_DB is applied HERE and nowhere else: this is the single choke point the
+ * live graph, renderOffline() and renderMix() all pass through, so the dBFS
+ * table the offline render prints is the one the player hears. Applying it in
+ * voiceOpts() instead would have left renderOffline (which builds its own opts)
+ * measuring an un-trimmed mix.
+ */
 function fire(g, name, t0, o, budget) {
   const spec = VOICE[name] || [0.3, 2, false];
-  if (budget && !take(t0 + spec[0], spec[1], spec[2])) { droppedVoices++; return false; }
+  if (budget && !take(t0 + spec[0], spec[1], spec[2])) {
+    droppedVoices++;
+    if (spec[2]) droppedPriority++;
+    return false;
+  }
+  // The score steps back under every consequence. Only priority voices dip it:
+  // a card slide ducking the music once per 100ms would be a pumping bed, and
+  // the point is that the music yields to MEANING, not to activity.
+  if (budget && spec[2]) music.dip(spec[1]);
+  const trim = mixGain(name);
+  const opts = trim === 1 ? o : { ...o, gain: o.gain * trim };
   try {
-    BANK[name](g, t0, o);
+    BANK[name](g, t0, opts);
   } catch (err) {
     bus.reportError(err);
     return false;
@@ -456,6 +695,11 @@ function fire(g, name, t0, o, budget) {
  */
 function take(endTime, weight, priority) {
   reap();
+  // The two caps ARE the priority scheme: routine voices can never claim past
+  // MAX_VOICES, so 32 weighted units (the whole of tier 0/1 several times over —
+  // fanfare is 8, chud 6, sour 3) are permanently reserved for the stings. A
+  // card slide therefore cannot be the reason a set completion goes unheard.
+  // stats().droppedPriority is the assertion: it must read 0 after a game.
   const cap = priority ? MAX_VOICES_PRIORITY : MAX_VOICES;
   if (voiceLoad + weight > cap) return false;
   voiceEnd.push(endTime);
@@ -481,11 +725,26 @@ function reap() {
 }
 
 function gate(name, now) {
-  const min = RATE_LIMIT[name] == null ? RATE_DEFAULT : RATE_LIMIT[name];
+  let min = RATE_LIMIT[name];
+  if (min == null) min = (VOICE[name] && VOICE[name][2]) ? RATE_PRIORITY : RATE_DEFAULT;
   const last = lastAt[name];
   if (last !== undefined && now - last < min) return false;
   lastAt[name] = now;
   return true;
+}
+
+/**
+ * Linear gain for the Nth rapid retrigger of a tactile sound. See FLAM_DB: the
+ * floors are now short enough to let every card in a staggered beat speak, and
+ * this is what stops the beat from also being N times as loud.
+ */
+function flam(name, now) {
+  if (!FLAM.has(name)) return 1;
+  const last = flamAt[name];
+  const run = (last !== undefined && now - last < FLAM_WINDOW) ? (flamRun[name] || 0) + 1 : 0;
+  flamAt[name] = now;
+  flamRun[name] = run;
+  return dbToGain(FLAM_DB[run < FLAM_DB.length ? run : FLAM_DB.length - 1]);
 }
 
 /* ── event → sound ──────────────────────────────────────────────────────── */
@@ -495,11 +754,12 @@ function gate(name, now) {
  *
  * `null` means "this event's sound arrives on the FX_CUE channel instead"
  * (main.js falls back to the raw event type, which is not in the bank and drops
- * silently). Three values are VIRTUAL FAMILIES resolved against the live event
+ * silently). Four values are VIRTUAL FAMILIES resolved against the live event
  * in `resolve()` below, because `mine` alone cannot tell paying from being paid:
- *   'action'       → chud, or nothing
+ *   'action'       → the seven action-card voices (act_* / chud / null)
  *   'set_progress' → set_progress_0..3, by how many sets the actor now holds
- *   'chip_pay' / 'steal' → 'sour' when the viewing player is the one losing
+ *   'chip_pay'     → 'sour_pay' when the viewing player is the one paying
+ *   'steal'        → 'sour' when the viewing player is the one being robbed
  */
 export const SFX_FOR_EVENT = Object.freeze({
   game_start: 'deal_start',
@@ -508,14 +768,17 @@ export const SFX_FOR_EVENT = Object.freeze({
   draw: null,                    // cue
   shuffle: null,                 // cue: CUE.SHUFFLE
   play_money: 'chip',
-  play_property: null,           // cue
-  play_action: 'action',         // virtual → chud only; the card's snap is a cue
+  // A property SEATING, layered under the cue channel's card_snap. Round-1
+  // critique: this was null, so placing a property and discarding one were the
+  // same sound. See BANK.prop_place — the snap is shared, the pitch is not.
+  play_property: 'prop_place',
+  play_action: 'action',         // virtual → one voice per action family
   rent_charged: 'demand',
   demand: 'demand',
   opsec: 'opsec',
   action_blocked: 'blocked',
-  payment: 'chip_pay',           // virtual → sour when I am the payer
-  insolvent: 'sour',
+  payment: 'chip_pay',           // virtual → sour_pay when I am the payer
+  insolvent: 'sour_broke',
   steal: 'steal',                // virtual → sour when I am the victim
   set_stolen: 'steal',
   swap: 'steal',
@@ -529,6 +792,33 @@ export const SFX_FOR_EVENT = Object.freeze({
   stalemate: 'stalemate',
   final_approach: 'klaxon',
   final_approach_broken: 'approach_broken',
+});
+
+/**
+ * ── ONE VOICE PER ACTION FAMILY (round-1 fix) ──────────────────────────────
+ * `resolve('action')` used to be `ev.action === 'chud' ? 'chud' : null`, so six
+ * of the seven action families were acoustically a discard: a full game emitted
+ * 20 play_action events and produced 1 sting.
+ *
+ * The keys are game.js's action ids (game.js:68-79, :102). Three map to null on
+ * purpose — their own event fires on the same beat and doubling them is how a
+ * mix clips (see the file header):
+ *   upgrade / foc → the `upgrade` event plays BANK.upgrade
+ *   opsec         → the `opsec` event plays BANK.opsec
+ */
+const SFX_FOR_ACTION = Object.freeze({
+  chud: 'chud',
+  inspector_general: 'act_steal',
+  midnight_requisition: 'act_steal',
+  tdy_orders: 'act_swap',
+  finance_office: 'act_demand',
+  roll_call: 'act_demand',
+  rent: 'act_rent',
+  pcs_orders: 'act_draw',
+  surge_ops: 'act_surge',
+  upgrade: null,
+  foc: null,
+  opsec: null,
 });
 
 /** FX_CUE kind → sound name. null = fx/'s alone; see the header. */
@@ -578,12 +868,18 @@ function mineFor(ev, fallback) {
 function resolve(name) {
   const ev = cur.ev;
   switch (name) {
-    case 'action':
-      return ev && ev.action === 'chud' ? 'chud' : null;
+    case 'action': {
+      if (!ev) return null;
+      // A rent card carries no `action` (game.js:648 defaults it), so an unknown
+      // id falls through to the rent voice rather than to silence.
+      const a = ev.action || 'rent';
+      const v = SFX_FOR_ACTION[a];
+      return v === undefined ? 'act_rent' : v;
+    }
     case 'turn':
       return ev && ev.actor === selfId() ? 'turn_mine' : 'turn_other';
     case 'chip_pay':
-      return victimOf(ev) === selfId() ? 'sour' : 'chip_pay';
+      return victimOf(ev) === selfId() ? 'sour_pay' : 'chip_pay';
     case 'steal':
       return victimOf(ev) === selfId() ? 'sour' : 'steal';
     case 'set_progress': {
@@ -690,12 +986,16 @@ function arm(id) {
   if (id == null) return;
   armed.add(id);
   startBed();
+  // The match bed drops its root and leaves the fifth, which the bed's 41.2Hz
+  // E1 sub then reinforces — see the music.js header. The alarm and the score
+  // are in the same key by construction, so this layers instead of fighting.
+  music.setTension(true);
 }
 
 function disarm(id) {
   if (id != null) armed.delete(id);
   else armed.clear();
-  if (!armed.size) stopBed();
+  if (!armed.size) { stopBed(); music.setTension(false); }
 }
 
 /* ── wiring ─────────────────────────────────────────────────────────────── */
@@ -733,6 +1033,29 @@ bus.on(EVENTS.STATE_APPLIED, (p) => {
   if (!snap || snap.phase !== 'playing') disarm(null);
 });
 
+/* ── which bed is playing ───────────────────────────────────────────────── */
+
+/**
+ * 'menu' on home/lobby, 'match' in a game. Driven off STATE_SCREEN (store.js:55)
+ * rather than off the snapshot phase, because the screen is what the player is
+ * LOOKING at — a finished game still holds a `phase:'finished'` snapshot while
+ * the win overlay is up, and the fanfare should ring out over the match bed,
+ * not over a menu theme starting underneath it.
+ */
+let wantMusic = 'menu';
+
+bus.on(EVENTS.STATE_SCREEN, (screen) => {
+  wantMusic = screen === 'game' ? 'match' : 'menu';
+  if (enabled) music.set(wantMusic);
+});
+
+// A won or drawn game leaves the score where it is: the endgame sting owns the
+// next two seconds and a bed change under it reads as a bug. ui/ moves the
+// screen when the player leaves the overlay, and that is what switches the bed.
+bus.on(EVENTS.CHOREO_EVENT, (ev) => {
+  if (ev && (ev.t === 'win' || ev.t === 'stalemate')) music.setTension(false);
+});
+
 /* ── harness bridge (§9) ────────────────────────────────────────────────── */
 
 /** Every sound in the bank. tools/audiotest.mjs renders each of these. */
@@ -749,10 +1072,16 @@ export function list() { return NAMES.slice(); }
  *
  * @returns {Promise<{channels: Float32Array[], sampleRate: number, peak: number}>}
  */
-export async function renderOffline(name, seconds = 1.5) {
+export async function renderOffline(name, seconds = 1.5, opts = null) {
   const g = await renderInto(seconds, (gr) => {
     if (!BANK[name]) return;
-    fire(gr, name, 0.005, { mine: true, big: true, gain: 1, pan: 0, pitch: 1 }, false);
+    fire(gr, name, 0.005, {
+      mine: opts && opts.mine !== undefined ? !!opts.mine : true,
+      big: opts && opts.big !== undefined ? !!opts.big : true,
+      gain: opts && opts.mine === false ? dbToGain(THEIRS_DB) : 1,
+      pan: opts && opts.mine === false ? THEIRS_PAN : 0,
+      pitch: opts && opts.mine === false ? THEIRS_DETUNE : 1,
+    }, false);
   });
   return g;
 }
@@ -769,31 +1098,66 @@ export async function renderMix(entries, seconds = 8) {
   const t0 = list0.length ? list0[0].t : 0;
   let claimed = 0;
   let dropped = 0;
+  let droppedPrio = 0;
+  let gated = 0;
   let peak = 0;
   const out = await renderInto(seconds, (gr) => {
-    // A local budget, so the measurement is this sequence's and the live
-    // engine's counters are left alone.
+    // A local budget AND a local rate gate, so the measurement is this
+    // sequence's and the live engine's counters are left alone. Replaying the
+    // gate here matters: without it the reported voice peak counts landings the
+    // live engine would have silenced, which is a peak nobody hears.
     const ends = [];
+    const last = Object.create(null);
+    const fRun = Object.create(null);
+    const fAt = Object.create(null);
     for (const e of list0) {
       const at = (e.t - t0) / 1000;
       if (at < 0 || at > seconds) continue;
       const spec = VOICE[e.name] || [0.3, 2, false];
+      let min = RATE_LIMIT[e.name];
+      if (min == null) min = spec[2] ? RATE_PRIORITY : RATE_DEFAULT;
+      if (last[e.name] !== undefined && at - last[e.name] < min) { gated++; continue; }
+      last[e.name] = at;
       // Replay the live budget rule offline: reap by scheduled end, then claim.
       let load = 0;
       for (let i = ends.length - 1; i >= 0; i--) {
         if (ends[i][0] <= at) ends.splice(i, 1); else load += ends[i][1];
       }
       if (load > peak) peak = load;
-      if (!spec[2] && load + spec[1] > MAX_VOICES) { dropped++; continue; }
+      if (load + spec[1] > (spec[2] ? MAX_VOICES_PRIORITY : MAX_VOICES)) {
+        dropped++;
+        if (spec[2]) droppedPrio++;
+        continue;
+      }
       ends.push([at + spec[0], spec[1]]);
       claimed++;
       if (BANK[e.name]) {
-        fire(gr, e.name, at + 0.002, voiceOpts(!!e.mine, !!e.big, 1), false);
+        let mul = 1;
+        if (FLAM.has(e.name)) {
+          const run = (fAt[e.name] !== undefined && at - fAt[e.name] < FLAM_WINDOW)
+            ? (fRun[e.name] || 0) + 1 : 0;
+          fAt[e.name] = at; fRun[e.name] = run;
+          mul = dbToGain(FLAM_DB[run < FLAM_DB.length ? run : FLAM_DB.length - 1]);
+        }
+        fire(gr, e.name, at + 0.002, voiceOpts(!!e.mine, !!e.big, mul), false);
       }
     }
   });
-  out.voices = { peak, claimed, dropped, cap: MAX_VOICES };
+  out.voices = {
+    peak, claimed, dropped, droppedPriority: droppedPrio, gated,
+    cap: MAX_VOICES, capPriority: MAX_VOICES_PRIORITY,
+  };
   return out;
+}
+
+/**
+ * Render `seconds` of one music bed through the real chain (music.js voices →
+ * musicBus → compressor → soft-clip). The score is measured, not asserted.
+ *
+ * @param {'menu'|'match'} which
+ */
+export async function renderMusic(which = 'menu', seconds = 16) {
+  return renderInto(seconds, (gr) => music.offline(gr, seconds, which));
 }
 
 async function renderInto(seconds, schedule) {
@@ -826,19 +1190,23 @@ export function stats() {
     voices: voiceLoad,
     peakVoices: peakVoiceLoad,
     maxVoices: MAX_VOICES,
+    maxVoicesPriority: MAX_VOICES_PRIORITY,
     dropped: droppedVoices,
+    // The round-1 assertion: a big moment is never dropped for a card slide.
+    droppedPriority,
     ceiling: softClipCeiling(0.7),
     armed: armed.size,
     bed: !!bedGain,
     bedTicks,
     sampleRate: graph ? graph.ctx.sampleRate : 0,
+    music: music.stats(),
     counts: { ...played },
   };
 }
 
 /** The §9 contract the P2 harness asked for. */
 export function harnessApi() {
-  return { list, renderOffline, renderMix, stats };
+  return { list, renderOffline, renderMix, renderMusic, stats };
 }
 
 /**

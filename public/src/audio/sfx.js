@@ -364,7 +364,12 @@ export const BANK = Object.freeze({
   /* ── the sour half (§7) ─────────────────────────────────────────────── */
 
   /**
-   * THE SOUR CUE. Being stolen from, paying, going insolvent, scooped.
+   * THE SOUR CUE — ROBBED. A property or a whole set taken off YOUR board.
+   *
+   * One of three losses, and the worst of them: `sour_pay` is a transaction and
+   * `sour_broke` is an emptiness, but this is somebody's hand on your card.
+   * (Round-1 critique measured all three sharing one voice, so a 3-card set
+   * theft and a 1M rent payment were acoustically the same event.)
    *
    * Sour, not merely low: a tritone against the root, both voices gliding DOWN,
    * a sawtooth instead of a triangle, and a lowpass closing over the whole thing
@@ -375,29 +380,123 @@ export const BANK = Object.freeze({
    *
    * The lowpass starts at 800Hz, under the sawtooth's second harmonic (622Hz at
    * onset), so the DFT in the tool sees the fundamental and not a partial.
+   *
+   * `big` is the severity axis and it is REACHABLE (engine.js bigFor): a set
+   * stolen whole, a CHUD hit, or a card pulled out of a completed set. It adds
+   * the sub-octave and a longer, deeper fall — measured as a separate row in the
+   * offline mix table, not as a comment.
    */
   sour(g, t0, o) {
-    const h = head(g, o, 0.2);
+    const big = !!o.big;
+    const h = head(g, o, big ? 0.28 : 0.2);
     const root = f(o, 311.13);
+    const fall = big ? 0.6 : 0.72;              // big drops a fifth, not a third
+    const span = big ? 0.6 : 0.44;
     const env = gain(g, 0);
     env.connect(h);
     const lp = filt(g, 'lowpass', 800, 1.1);
     lp.connect(env);
     lp.frequency.setValueAtTime(800, t0);
-    lp.frequency.exponentialRampToValueAtTime(360, t0 + 0.45);
+    lp.frequency.exponentialRampToValueAtTime(big ? 280 : 360, t0 + span + 0.01);
 
     const g1 = gain(g, 0.5);
-    const o1 = osc(g, 'sawtooth', root, t0, t0 + 0.55);
-    glide(o1.frequency, t0, root, root * 0.72, 0.44);
+    const o1 = osc(g, 'sawtooth', root, t0, t0 + span + 0.12);
+    glide(o1.frequency, t0, root, root * fall, span);
     o1.connect(g1); g1.connect(lp);
 
     // The tritone is what makes it sour.
     const g2 = gain(g, 0.2);
-    const o2 = osc(g, 'square', root * semis(6), t0, t0 + 0.55);
-    glide(o2.frequency, t0, root * semis(6), root * semis(6) * 0.72, 0.44);
+    const o2 = osc(g, 'square', root * semis(6), t0, t0 + span + 0.12);
+    glide(o2.frequency, t0, root * semis(6), root * semis(6) * fall, span);
     o2.connect(g2); g2.connect(lp);
 
-    perc(env.gain, t0, o.big ? 0.4 : 0.33, 0.006, 0.48);
+    if (big) {
+      // Sub-octave: the floor going out from under it. Quiet enough (-13dB
+      // against the fundamental) that the tool's DFT still ranks 311Hz first.
+      const g3 = gain(g, 0.22);
+      const o3 = osc(g, 'sawtooth', root * 0.5, t0, t0 + span + 0.12);
+      glide(o3.frequency, t0, root * 0.5, root * 0.5 * fall, span);
+      o3.connect(g3); g3.connect(lp);
+      // The card being pulled: a short reversed-sounding scrape at the onset.
+      burst(g, h, t0, 0.09, 1100, 1.6, 0.1, 1.25, 'pink');
+    }
+    perc(env.gain, t0, big ? 0.44 : 0.33, 0.006, span + 0.06);
+  },
+
+  /**
+   * SOUR — PAID. You handed value over because you were charged. A transaction,
+   * not a theft: it keeps the chips (you gave something of value), the tritone
+   * only sags a minor third, and it is over in ~330ms so the payment caravan's
+   * own landings still read.
+   *
+   * Deliberately the LEAST severe of the three losses (see the mix table): you
+   * chose which cards went, and you may get them back.
+   */
+  sour_pay(g, t0, o) {
+    const h = head(g, o, 0.22);
+    const root = f(o, 311.13);
+    const env = gain(g, 0);
+    env.connect(h);
+    const lp = filt(g, 'lowpass', 1200, 1.0);
+    lp.connect(env);
+    glide(lp.frequency, t0, 1200, 520, 0.3);
+
+    const g1 = gain(g, 0.5);
+    const o1 = osc(g, 'sawtooth', root, t0, t0 + 0.36);
+    glide(o1.frequency, t0, root, root * 0.84, 0.28);   // a minor third, no more
+    o1.connect(g1); g1.connect(lp);
+    const g2 = gain(g, 0.16);
+    const o2 = osc(g, 'square', root * semis(6), t0, t0 + 0.36);
+    glide(o2.frequency, t0, root * semis(6), root * semis(6) * 0.84, 0.28);
+    o2.connect(g2); g2.connect(lp);
+    perc(env.gain, t0, 0.3, 0.004, 0.3);
+
+    // Two chip clinks leaving: the money side of the same beat. This is the
+    // audible difference from `sour` at a glance — value moved, nothing was taken.
+    for (let i = 0; i < 2; i++) {
+      const t = t0 + 0.02 + i * 0.062;
+      const cg = gain(g, 0);
+      const cv = osc(g, 'sine', f(o, 2380) * (1 - i * 0.06), t, t + 0.09);
+      cv.connect(cg); cg.connect(h);
+      perc(cg.gain, t, 0.05 - i * 0.012, 0.001, 0.07);
+      tick(g, h, t, 0.03, 4200, 0.01);
+    }
+  },
+
+  /**
+   * SOUR — INSOLVENT. You were charged and had nothing. §3.4's "pay with
+   * everything you have" already emptied you; this is the sound of the board
+   * being scraped clean.
+   *
+   * Hollow by construction: no attack transient at all (a 90ms linear swell),
+   * the widest fall of the three (a full fifth over 640ms), the lowpass closing
+   * to 220Hz, and an air-only noise bed under it. Longest of the three losses
+   * and the only one with no percussive edge — there was nothing to land.
+   */
+  sour_broke(g, t0, o) {
+    const h = head(g, o, 0.34);
+    const root = f(o, 311.13);
+    const env = gain(g, 0);
+    env.connect(h);
+    const lp = filt(g, 'lowpass', 700, 1.2);
+    lp.connect(env);
+    glide(lp.frequency, t0, 700, 220, 0.66);
+
+    for (const [mult, amp, type] of [[1, 0.46, 'sawtooth'], [semis(6), 0.2, 'square'], [0.5, 0.26, 'sawtooth']]) {
+      const vg = gain(g, amp);
+      const ov = osc(g, type, root * mult, t0, t0 + 0.78);
+      glide(ov.frequency, t0, root * mult, root * mult * 0.667, 0.64);
+      ov.connect(vg); vg.connect(lp);
+    }
+    // No perc(): a swell, so there is no strike. That is the whole character.
+    swell(env.gain, t0, 0.34, 0.09, 0.1, 0.5);
+
+    const ag = gain(g, 0);
+    const ahp = filt(g, 'highpass', 900, 0.6);
+    const an = noise(g, 'pink', t0, 0.68);
+    an.connect(ahp); ahp.connect(ag); ag.connect(h);
+    swell(ag.gain, t0, 0.05, 0.12, 0.1, 0.42);
+    autoFree(an, ahp);
   },
 
   /**
@@ -435,6 +534,157 @@ export const BANK = Object.freeze({
       perc(vg.gain, t, 0.13, 0.004, 0.11);
     });
     thump(g, h, t0, f(o, 130), f(o, 80), 0.11, 0.14);
+  },
+
+  /* ── the action families (§4 play_action) ───────────────────────────────
+   *
+   * Round-1 critique: six of the seven action families resolved to `null`, so
+   * 20 play_action events in a full game produced one sting and an Inspector
+   * General sounded exactly like a discard. These are the CARD HITTING THE
+   * TABLE WITH INTENT — short (≤260ms, the choreographer's play_action step),
+   * quieter than the consequence event that follows them (steal / demand /
+   * rent_charged / draw), and each one is a different gesture, not a different
+   * pitch of the same gesture:
+   *
+   *   act_steal  a hook   — bandpass scrape DOWN then UP, a low knock
+   *   act_swap   a cross  — two triangles trading places, one up one down
+   *   act_demand a slap   — dry paper hit, one flat square stab, no movement
+   *   act_rent   a meter  — bright square figure running UP, chip edge
+   *   act_draw   a flick  — two riffle grains and an upward tick
+   *   act_surge  a double — rising whoosh under a 24Hz amplitude flutter
+   *
+   * chud, upgrade/foc and opsec are NOT here: they already own a voice, and the
+   * `upgrade` / `opsec` events fire on the same beat (engine.js maps them null
+   * on the play_action leg so nothing doubles).
+   */
+
+  /** Requisition / Inspector General leaving the hand: a hook going out. */
+  act_steal(g, t0, o) {
+    const h = head(g, o, 0.16);
+    const bg = gain(g, 0);
+    const bp = filt(g, 'bandpass', 1200, 3.2);
+    const n = noise(g, 'white', t0, 0.16, 1.1);
+    n.connect(bp); bp.connect(bg); bg.connect(h);
+    // Down then up — a hand reaching across and closing. `steal` (the landing)
+    // is a single rise, so the pair reads as reach → take.
+    glide3(bp.frequency, t0, f(o, 1500), f(o, 620), f(o, 1900), 0.06, 0.08);
+    swell(bg.gain, t0, o.big ? 0.15 : 0.115, 0.008, 0.02, 0.11);
+    autoFree(n, bp);
+    thump(g, h, t0, f(o, 142), f(o, 74), o.big ? 0.16 : 0.12, 0.1);
+    tick(g, h, t0, 0.05, 3200, 0.012);
+  },
+
+  /** TDY Orders: two voices crossing. Trade, not theft (§3.1). */
+  act_swap(g, t0, o) {
+    const h = head(g, o, 0.2);
+    const lp = filt(g, 'lowpass', 2600, 0.9);
+    lp.connect(h);
+    for (const [from, to] of [[329.63, 493.88], [493.88, 329.63]]) {
+      const vg = gain(g, 0);
+      const ov = osc(g, 'triangle', f(o, from), t0, t0 + 0.24);
+      glide(ov.frequency, t0, f(o, from), f(o, to), 0.16);
+      ov.connect(vg); vg.connect(lp);
+      swell(vg.gain, t0, 0.13, 0.02, 0.06, 0.14);
+    }
+    // The two cards passing each other on the felt.
+    burst(g, h, t0, 0.09, 1500, 1.1, 0.07, 1.1, 'pink');
+    burst(g, h, t0 + 0.07, 0.09, 1100, 1.1, 0.06, 0.9, 'pink');
+  },
+
+  /** Finance Office / Roll Call: paperwork served. Flat and bureaucratic. */
+  act_demand(g, t0, o) {
+    const h = head(g, o, 0.12);
+    // The slap: a dry hit with no tail, brighter and harder than card_snap.
+    thump(g, h, t0, f(o, 175), f(o, 82), 0.19, 0.075);
+    burst(g, h, t0, 0.04, 620, 1.0, 0.1, 1, 'pink');
+    tick(g, h, t0, 0.1, 3600, 0.014);
+    // One stab, no glide — a demand does not negotiate. `demand` (the charge
+    // landing) is the two falling blips; this is the stamp before it.
+    const vg = gain(g, 0);
+    const lp = filt(g, 'lowpass', 1500, 0.9);
+    const ov = osc(g, 'square', f(o, 246.94), t0 + 0.02, t0 + 0.2);
+    ov.connect(lp); lp.connect(vg); vg.connect(h);
+    perc(vg.gain, t0 + 0.02, 0.13, 0.004, 0.15);
+  },
+
+  /** A rent card played: a meter running up. Rising, because you are collecting. */
+  act_rent(g, t0, o) {
+    const h = head(g, o, 0.2);
+    const bp = filt(g, 'bandpass', 1400, 1.4);
+    bp.connect(h);
+    [523.25, 659.25, 783.99].forEach((hz, i) => {
+      const t = t0 + i * 0.045;
+      const vg = gain(g, 0);
+      const ov = osc(g, 'square', f(o, hz), t, t + 0.1);
+      ov.connect(vg); vg.connect(bp);
+      perc(vg.gain, t, 0.09, 0.002, 0.075);
+    });
+    tick(g, h, t0, 0.055, 4000, 0.012);
+    thump(g, h, t0, f(o, 150), f(o, 92), 0.075, 0.09);
+  },
+
+  /** PCS Orders: two cards flicked off the deck toward you. */
+  act_draw(g, t0, o) {
+    const h = head(g, o, 0.14);
+    for (let i = 0; i < 2; i++) {
+      const t = t0 + i * 0.062;
+      burst(g, h, t, 0.03, 1900 + i * 500, 3.5, 0.09, 1 + i * 0.15);
+      tick(g, h, t + 0.012, 0.05, 3000, 0.012);
+    }
+    // The upward flick: a short pitched edge so it reads as gain, not handling.
+    const og = gain(g, 0);
+    const ov = osc(g, 'triangle', f(o, 440), t0 + 0.05, t0 + 0.22);
+    glide(ov.frequency, t0 + 0.05, f(o, 440), f(o, 659.25), 0.1);
+    ov.connect(og); og.connect(h);
+    perc(og.gain, t0 + 0.05, 0.085, 0.005, 0.13);
+  },
+
+  /** Surge Ops: the next charge is about to double. A rise with a flutter on it. */
+  act_surge(g, t0, o) {
+    const h = head(g, o, 0.24);
+    const env = gain(g, 0);
+    env.connect(h);
+    const bp = filt(g, 'bandpass', 700, 1.4);
+    bp.connect(env);
+    glide(bp.frequency, t0, f(o, 500), f(o, 2600), 0.22);
+    const n = noise(g, 'white', t0, 0.26, 1.1);
+    n.connect(bp);
+    // 24Hz flutter: literally an amplitude doubling, which is what the card does.
+    const lfo = osc(g, 'square', 24, t0, t0 + 0.26);
+    const lfoAmt = gain(g, 0.06);
+    lfo.connect(lfoAmt); lfoAmt.connect(env.gain);
+    swell(env.gain, t0, 0.13, 0.03, 0.09, 0.14);
+    autoFree(n, bp);
+    const og = gain(g, 0);
+    const ov = osc(g, 'sawtooth', f(o, 196), t0, t0 + 0.28);
+    glide(ov.frequency, t0, f(o, 196), f(o, 392), 0.2);
+    const olp = filt(g, 'lowpass', 1400, 1.2);
+    ov.connect(olp); olp.connect(og); og.connect(h);
+    perc(og.gain, t0, 0.11, 0.02, 0.22);
+  },
+
+  /**
+   * A PROPERTY SEATING INTO A COLUMN. Round-1 critique: play_property mapped to
+   * null, so placing a property and throwing one away were the same sound (both
+   * got only the cue channel's card_snap).
+   *
+   * This layers UNDER that snap rather than replacing it — the snap is the card
+   * hitting felt, this is the short warm confirmation that it is yours and it
+   * stays. A discard gets the snap alone, so the two are now told apart by the
+   * presence of a pitch at all.
+   */
+  prop_place(g, t0, o) {
+    const h = head(g, o, 0.18);
+    const lp = filt(g, 'lowpass', 2000, 0.9);
+    lp.connect(h);
+    // A fifth, up: the smallest possible "that belongs there".
+    const vg = gain(g, 0);
+    const ov = osc(g, 'triangle', f(o, 293.66), t0 + 0.01, t0 + 0.2);
+    glide(ov.frequency, t0 + 0.01, f(o, 293.66), f(o, 440), 0.06);
+    ov.connect(vg); vg.connect(lp);
+    perc(vg.gain, t0 + 0.01, 0.12, 0.006, 0.15);
+    // Felt press, not a knock: no tick, so it cannot be mistaken for a landing.
+    burst(g, h, t0, 0.045, 320, 1.1, 0.055, 1, 'pink');
   },
 
   /**
@@ -657,15 +907,27 @@ export const BANK = Object.freeze({
    * a timpani under the first and last, and the confetti crackle over the top.
    *
    * Restrained means: no held major chord, no cymbal, no octave-up sparkle.
-   * Four notes and it is done in 1.4s.
+   *
+   * ── TIMING AGAINST THE WIN BEAT (round-1 critique) ────────────────────────
+   * The choreographer holds the queue 320ms on `win` (choreographer.js:189) and
+   * ui/ gates the victory overlay on CHOREO_IDLE, so the window in which the
+   * player is looking at the TABLE is ~320ms. The four-note statement used to
+   * finish at 390+300 = 690ms — its resolving note landed after the overlay had
+   * already opened over it.
+   *
+   * Retimed to 0 / 90 / 180 / 270ms: the phrase RESOLVES at 270ms, inside the
+   * beat, on a visible table. Everything after that is deliberate tail — the
+   * held fifth and the confetti crackle — which is the part that should carry
+   * INTO the overlay rather than be cut by it. Total 1.19s, of which 0.92s is
+   * tail that nothing has to wait for.
    */
   fanfare(g, t0, o) {
     const h = head(g, o, 0.4);
     const notes = [
-      [196.00, 0.00, 0.30],
-      [261.63, 0.13, 0.30],
-      [329.63, 0.26, 0.30],
-      [392.00, 0.39, 0.95],
+      [196.00, 0.00, 0.22],
+      [261.63, 0.09, 0.22],
+      [329.63, 0.18, 0.22],
+      [392.00, 0.27, 0.92],
     ];
     for (const [hz, at, dur] of notes) {
       const t = t0 + at;
@@ -683,22 +945,24 @@ export const BANK = Object.freeze({
       }
       swell(env.gain, t, 0.34, 0.02, dur * 0.45, dur * 0.55);
     }
-    // A fifth over the last note: the only harmony in the piece.
+    // A fifth over the last note: the only harmony in the piece. This is tail —
+    // it is meant to still be ringing when ui/ opens the overlay.
     const fg = gain(g, 0);
-    const fv = osc(g, 'triangle', f(o, 587.33), t0 + 0.39, t0 + 1.35);
+    const fv = osc(g, 'triangle', f(o, 587.33), t0 + 0.27, t0 + 1.18);
     fv.connect(fg); fg.connect(h);
-    swell(fg.gain, t0 + 0.39, 0.12, 0.06, 0.4, 0.48);
+    swell(fg.gain, t0 + 0.27, 0.12, 0.06, 0.36, 0.46);
 
     thump(g, h, t0, f(o, 110), f(o, 55), 0.26, 0.24);
-    thump(g, h, t0 + 0.39, f(o, 110), f(o, 55), 0.24, 0.3);
+    thump(g, h, t0 + 0.27, f(o, 110), f(o, 55), 0.24, 0.3);
 
-    // Confetti crackle: 48 grains over 1.05s, density and level both decaying.
-    // Paper, not applause — §7 asks for "crowd-less".
+    // Confetti crackle: 44 grains over 0.9s, density and level both decaying.
+    // Paper, not applause — §7 asks for "crowd-less". Starts at 0.25s so the
+    // first grains land under the resolving note rather than after it.
     const cg = gain(g, 0.5);
     cg.connect(h);
-    let t = t0 + 0.34;
-    for (let i = 0; i < 48 && t < t0 + 1.4; i++) {
-      const fade = 1 - (t - t0 - 0.34) / 1.05;
+    let t = t0 + 0.25;
+    for (let i = 0; i < 44 && t < t0 + 1.18; i++) {
+      const fade = 1 - (t - t0 - 0.25) / 0.9;
       burst(g, cg, t, 0.012, 3200 + g.rng() * 3600, 7, 0.05 * fade * fade);
       t += 0.008 + g.rng() * 0.038;
     }

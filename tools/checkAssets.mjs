@@ -82,7 +82,22 @@ function allowedFor(rel) {
   return null;
 }
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '.github', 'coverage', '.vscode', '.idea']);
+/**
+ * `.claude` holds agent git WORKTREES (gitignored). A worktree is a second full
+ * checkout, so walking it scanned public/audio twice and reported every generated
+ * PNG in its tools/shots as an offence — SKIP_REL matches on a path relative to the
+ * repo root, so `tools/shots` never matched `.claude/worktrees/x/tools/shots`. One
+ * agent worktree present was enough to fail this gate on an otherwise clean tree.
+ *
+ * `docs` is required by ARCHITECTURE §0.3 amendment (d) 2026-08-07, verbatim: brand
+ * assets for the README are permitted there and checkAssets "must not be relaxed to
+ * cover docs/ — it should simply not scan there." Note the distinction the amendment
+ * draws and this fix preserves: docs/ is SKIPPED, not ALLOWLISTED. Nothing under
+ * public/ is loosened, so a binary that reaches a player still fails.
+ */
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', '.github', 'coverage', '.vscode', '.idea', '.claude', 'docs',
+]);
 /** tools/shots/ holds GENERATED review screenshots — output, not source assets. Gitignored. */
 const SKIP_REL = new Set([
   path.join('tools', 'shots'),

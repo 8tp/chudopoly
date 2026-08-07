@@ -148,8 +148,23 @@ function boot() {
     installHarness(ready, (msg, opts) => applyState(msg, opts));
   } else {
     // §7: no AudioContext before a gesture.
-    const unlock = () => { audio.init(); window.removeEventListener('pointerdown', unlock); };
-    window.addEventListener('pointerdown', unlock, { once: true });
+    //
+    // Opening SETTINGS does not unlock. Measured by the settings agent: with the
+    // settings mark as the session's first pointerdown, the procedural bed is
+    // audible at t+145ms and the sheet opens within 3ms — so a player reaching
+    // for the volume control gets a second of music first, which is the exact
+    // thing they were reaching over to stop.
+    //
+    // NOT `{ once: true }`, and that is the whole point: `once` retires the
+    // listener on the first call whatever the handler decides, so a skip would
+    // have burned the unlock and left the game silent for the rest of the
+    // session. It removes itself only on the call that actually unlocks.
+    const unlock = (e) => {
+      if (e.target?.closest?.('[data-action="settings"]')) return;
+      audio.init();
+      window.removeEventListener('pointerdown', unlock);
+    };
+    window.addEventListener('pointerdown', unlock);
   }
 
   // Resume runs in harness mode too, so a tool exercises the same code a player

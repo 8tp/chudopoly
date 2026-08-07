@@ -647,7 +647,18 @@ test('a filesystem failure — and only that — hard-disables logging', async (
   }
 });
 
-test('the game log is bounded: it rotates instead of growing without limit', async () => {
+// Compression runs in the background, so wait for the archive to materialise.
+async function waitFor(predicate, ms = 3000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (predicate()) return true;
+    await new Promise(r => setTimeout(r, 25));
+  }
+  return false;
+}
+const archivesIn = dir => fs.readdirSync(dir).filter(n => /^games-.*\.jsonl\.gz$/.test(n));
+
+test('the game log is bounded: it rotates, and the live file stays plain greppable JSONL', async () => {
   await withGameLog({ CHUD_GAME_LOG: '1', CHUD_GAME_LOG_MAX_BYTES: '2000' }, async (gamelog, dir) => {
     for (let i = 0; i < 6; i++) {
       const room = finishedRoom();
@@ -655,9 +666,120 @@ test('the game log is bounded: it rotates instead of growing without limit', asy
       gamelog.recordFinished(room, G);
       await new Promise(r => setTimeout(r, 20));   // let each async append land
     }
-    await new Promise(r => setTimeout(r, 150));
-    assert.ok(fs.existsSync(nodePath.join(dir, 'games.1.jsonl')), 'it rotated');
-    const live = fs.statSync(nodePath.join(dir, 'games.jsonl')).size;
-    assert.ok(live < 20000, `the live file stays bounded (${live} bytes)`);
+    assert.ok(await waitFor(() => archivesIn(dir).length > 0), 'it rotated and archived');
+
+    const livePath = nodePath.join(dir, 'games.jsonl');
+    const live = fs.readFileSync(livePath, 'utf8');
+    assert.ok(live.length < 20000, `the live file stays bounded (${live.length} bytes)`);
+    // Plain text, one JSON object per line — grep/jq must keep working mid-investigation.
+    for (const line of live.trim().split('\n')) {
+      assert.doesNotThrow(() => JSON.parse(line), 'every live line is plain readable JSON');
+    }
   });
+});
+
+test('a rotated archive is a valid gzip that round-trips back to the original records', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '1', CHUD_GAME_LOG_MAX_BYTES: '2000' }, async (gamelog, dir) => {
+    const codes = [];
+    for (let i = 0; i < 6; i++) {
+      const room = finishedRoom();
+      room.code = 'RT' + i;
+      codes.push(room.code);
+      gamelog.recordFinished(room, G);
+      await new Promise(r => setTimeout(r, 20));
+    }
+    assert.ok(await waitFor(() => archivesIn(dir).length > 0), 'an archive appeared');
+
+    const zlib = require('node:zlib');
+    const recovered = [];
+    for (const name of archivesIn(dir)) {
+      const text = zlib.gunzipSync(fs.readFileSync(nodePath.join(dir, name))).toString('utf8');
+      for (const line of text.trim().split('\n')) recovered.push(JSON.parse(line));
+    }
+    assert.ok(recovered.length > 0, 'the archive decompresses to real records');
+    assert.ok(recovered.every(r => r.code && r.endReason === 'sets'), 'and they are intact');
+    // Nothing is lost across the rotation boundary: every game is in an archive or live.
+    const live = fs.readFileSync(nodePath.join(dir, 'games.jsonl'), 'utf8').trim();
+    const all = new Set([...recovered.map(r => r.code),
+      ...live.split('\n').filter(Boolean).map(l => JSON.parse(l).code)]);
+    for (const code of codes) assert.ok(all.has(code), `${code} survived rotation`);
+    // No partial archive is ever left visible.
+    assert.deepEqual(fs.readdirSync(dir).filter(n => n.endsWith('.part')), []);
+  });
+});
+
+test('the archive ring is bounded by CHUD_GAME_LOG_ARCHIVES', async () => {
+  await withGameLog({ CHUD_GAME_LOG: '1', CHUD_GAME_LOG_MAX_BYTES: '900', CHUD_GAME_LOG_ARCHIVES: '2' },
+    async (gamelog, dir) => {
+      for (let i = 0; i < 12; i++) {
+        const room = finishedRoom();
+        room.code = 'AR' + i;
+        gamelog.recordFinished(room, G);
+        await new Promise(r => setTimeout(r, 25));
+      }
+      await waitFor(() => archivesIn(dir).length >= 2);
+      await new Promise(r => setTimeout(r, 250));
+      const generations = new Set(fs.readdirSync(dir)
+        .map(n => /^games-(.+?)\.jsonl/.exec(n)?.[1]).filter(Boolean));
+      assert.ok(generations.size <= 2,
+        `kept ${generations.size} generations, cap is 2: ${[...generations]}`);
+    });
+});
+
+/* ── bot-only games skip the event stream (85% of a record) ──────────── */
+
+function roomWith(seats, opts = {}) {
+  const room = {
+    code: 'SEAT', phase: 'playing', chat: [], turnTimeout: 60, responseTimeout: 30,
+    players: seats,
+  };
+  room.state = G.createGame(seats.map(p => ({ id: p.id, name: p.name })), opts);
+  room.state.phase = 'finished';
+  room.state.winner = seats[0].id;
+  room.state.endReason = 'sets';
+  return room;
+}
+const BOT_A = { id: 'a', name: 'A', isBot: true, botMode: 'neutral' };
+const BOT_B = { id: 'b', name: 'B', isBot: true, botMode: 'chud' };
+
+test('a seeded bot-only game omits its event stream but says so', () => {
+  const rec = require('../server/gamelog').buildRecord(
+    roomWith([{ ...BOT_A }, { ...BOT_B }], { seed: 'botonly' }), G);
+  assert.equal(rec.humanSeats, 0);
+  assert.equal(rec.replayable, true);
+  assert.equal(rec.events, undefined, 'the stream is gone');
+  assert.equal(rec.eventsOmitted, 'bot_only', 'and the omission is explicit, never silent');
+  assert.ok(rec.eventsTotal > 0, 'the count survives so the omission is measurable');
+  assert.ok(rec.seed, 'the seed that reconstructs it is kept');
+  assert.ok(rec.boards.length === 2 && rec.log.length > 0, 'boards and prose log are kept');
+});
+
+test('a game with any human seat keeps its full event stream', () => {
+  const rec = require('../server/gamelog').buildRecord(
+    roomWith([{ id: 'a', name: 'A', isBot: false }, { ...BOT_B }], { seed: 'human' }), G);
+  assert.equal(rec.humanSeats, 1);
+  assert.equal(rec.eventsOmitted, undefined);
+  assert.ok(Array.isArray(rec.events) && rec.events.length > 0);
+});
+
+test('a seat a human LEFT — now driven by a bot — still counts as human', () => {
+  // The disconnect/leave takeover case: isBot is true at the final broadcast, but a human
+  // played the game, so their choices are not reproducible from the seed.
+  const takenOver = { id: 'a', name: 'A', isBot: true, botMode: 'neutral', _wasHuman: true };
+  const rec = require('../server/gamelog').buildRecord(
+    roomWith([takenOver, { ...BOT_B }], { seed: 'takeover' }), G);
+  assert.equal(rec.humanSeats, 1, 'decided by whether a human EVER held the seat');
+  assert.equal(rec.seats[0].everHuman, true);
+  assert.equal(rec.seats[0].isBot, true, 'even though it is a bot now');
+  assert.equal(rec.eventsOmitted, undefined);
+  assert.ok(rec.events.length > 0, 'the game somebody disconnected from keeps its events');
+});
+
+test('an UNSEEDED bot-only game keeps its events — nothing else could reconstruct it', () => {
+  const rec = require('../server/gamelog').buildRecord(
+    roomWith([{ ...BOT_A }, { ...BOT_B }], {}), G);
+  assert.equal(rec.humanSeats, 0);
+  assert.equal(rec.replayable, false);
+  assert.equal(rec.eventsOmitted, undefined, 'no seed means the events are the only record');
+  assert.ok(rec.events.length > 0);
 });

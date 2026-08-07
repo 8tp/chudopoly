@@ -9,7 +9,8 @@
 // Rules this module lives by:
 //   * it can never throw into a room (every entry point is wrapped);
 //   * it never blocks the event loop (async append, errors swallowed after one warning);
-//   * it is bounded (byte cap with a single rotation, then it stops writing);
+//   * it is bounded (byte cap; the closed file is GZIPPED into a bounded ring of archives,
+//     so rotation is no longer data loss);
 //   * it is opt-outable (CHUD_GAME_LOG=0/off/false);
 //   * ONE BAD GAME NEVER SILENCES THE REST. A record that cannot be built or serialized
 //     skips itself and logging continues — the games most worth recording are the weird
@@ -18,12 +19,19 @@
 
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
+const { pipeline } = require('stream');
 
 const DIR = process.env.CHUD_GAME_LOG_DIR || path.join(__dirname, '..', 'logs');
+// The LIVE file is deliberately plain text. The whole point of JSONL is that a human can
+// grep/jq it mid-investigation, so it is never compressed in place and never per-line.
 const FILE = path.join(DIR, 'games.jsonl');
-const ROTATED = path.join(DIR, 'games.1.jsonl');
-// 32MB per file, one rotation kept: ~64MB worst case on a single-instance deploy.
+const ARCHIVE_RE = /^games-(.+?)\.jsonl(\.gz(\.part)?)?$/;
+// 32MB of plain text per file. Measured on a real 3-seat/23-turn/200-event record:
+// 49,160 B raw -> 5,813 B gzip (11.8%), so each archive costs ~3.8MB.
 const MAX_BYTES = Math.max(0, Number(process.env.CHUD_GAME_LOG_MAX_BYTES) || 32 * 1024 * 1024);
+// How many closed archives to keep. Default 5 => ~192MB of raw history for ~19MB on disk.
+const ARCHIVES = Math.max(0, Number(process.env.CHUD_GAME_LOG_ARCHIVES ?? 5));
 
 function enabled() {
   const raw = String(process.env.CHUD_GAME_LOG ?? '1').toLowerCase();
@@ -53,17 +61,79 @@ function ensureReady() {
   return true;
 }
 
+// Rotation. The live file is CLOSED by an atomic rename and a fresh one is created by the
+// next append; the closed file is then gzipped in the background.
+//
+// Why rename-then-compress rather than compress-then-replace: a synchronous gzip of a full
+// 32MB file stalls the event loop for ~1s, freezing every room on the instance, and
+// compressing a file that is still being appended to would race the writer. After the
+// rename nothing writes to the closed file, so it can be streamed at leisure.
+//
 // Appends are asynchronous, so the live file may not exist on disk yet when the in-process
-// byte counter says it is time to rotate. A failed rotation must never stop logging — the
-// worst case is one oversized file, which the next rotation trims.
+// byte counter says it is time to rotate; that is not an error.
 function rotate() {
   bytes = 0;
   try {
     if (!fs.existsSync(FILE)) return;
-    fs.rmSync(ROTATED, { force: true });
-    fs.renameSync(FILE, ROTATED);
+    if (ARCHIVES === 0) { fs.rmSync(FILE, { force: true }); return; }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const closed = path.join(DIR, `games-${stamp}.jsonl`);
+    fs.renameSync(FILE, closed);   // atomic: the live path is safe from here on
+    compressArchive(closed);
   } catch (error) {
-    warnOnce(error);   // logged once, but logging continues
+    // The rename is the only part that can affect the live write path.
+    fsDisabled = true;
+    warnOnce(error);
+  }
+}
+
+// Background, streamed, and written to a `.part` name first so a half-written archive is
+// never mistaken for a complete one. A failure here cannot corrupt the live file and does
+// NOT disable logging: the plain closed file is left in place, so no data is lost — only
+// the space saving is.
+function compressArchive(closed) {
+  const finalPath = closed + '.gz';
+  const partPath = finalPath + '.part';
+  const finish = (error) => {
+    try {
+      if (error) {
+        fs.rmSync(partPath, { force: true });
+        console.warn('[GAMELOG] archive compression failed, keeping the plain file:',
+          error?.message || error);
+      } else {
+        fs.renameSync(partPath, finalPath);      // becomes visible only when complete
+        fs.rmSync(closed, { force: true });
+      }
+    } catch (cleanupError) {
+      console.warn('[GAMELOG] archive cleanup failed:', cleanupError?.message || cleanupError);
+    }
+    pruneArchives();
+  };
+  try {
+    pipeline(fs.createReadStream(closed), zlib.createGzip(), fs.createWriteStream(partPath), finish);
+  } catch (error) {
+    finish(error);
+  }
+}
+
+// Keeps the newest ARCHIVES closed generations. ISO timestamps sort lexicographically, so
+// a plain sort is chronological. All files belonging to a doomed generation go together,
+// including any orphaned `.part` from an interrupted compression.
+function pruneArchives() {
+  try {
+    const byStamp = new Map();
+    for (const name of fs.readdirSync(DIR)) {
+      const match = ARCHIVE_RE.exec(name);
+      if (!match) continue;
+      if (!byStamp.has(match[1])) byStamp.set(match[1], []);
+      byStamp.get(match[1]).push(name);
+    }
+    const stamps = [...byStamp.keys()].sort();
+    for (const stamp of stamps.slice(0, Math.max(0, stamps.length - ARCHIVES))) {
+      for (const name of byStamp.get(stamp)) fs.rmSync(path.join(DIR, name), { force: true });
+    }
+  } catch (error) {
+    console.warn('[GAMELOG] archive pruning failed:', error?.message || error);
   }
 }
 
@@ -92,6 +162,17 @@ function board(player) {
   };
 }
 
+// A seat counts as HUMAN if a human EVER occupied it — not merely if one is sitting there
+// at the final broadcast. Verified against every transition in server/handlers.js:
+//   * leave_room mid-game (:241) and handleClose (:467) set isBot=true AND _wasHuman=true
+//   * reclaiming the seat on rejoin (:131-133) or reconnect (:173-175) clears both
+// so `!isBot || _wasHuman` is true for exactly the seats a human ever held. Deciding from
+// `isBot` alone would have thrown away the events of any game somebody disconnected from —
+// the single most likely game to be asked about.
+function everHuman(seat) {
+  return !seat?.isBot || !!seat?._wasHuman;
+}
+
 function safeValidate(state, G) {
   try { return G ? G.validateState(state) : null; }
   catch (error) { return { error: 'validateState threw: ' + (error?.message || error) }; }
@@ -99,13 +180,17 @@ function safeValidate(state, G) {
 
 function buildRecord(room, G) {
   const state = room.state;
+  const seats = asArray(room.players);
+  const humanSeats = seats.filter(everHuman).length;
+  const replayable = state.seed != null;
+  const omitEvents = seats.length > 0 && humanSeats === 0 && replayable;
   return {
     ts: new Date().toISOString(),
     code: room.code,
     seed: state.seed ?? null,
     // Unseeded production games cannot be replayed from the seed; the event stream below
     // is the reconstruction. `eventsTotal` vs `events.length` shows whether it was capped.
-    replayable: state.seed != null,
+    replayable,
     rules: state.rules,
     turnTimeout: room.turnTimeout ?? null,
     responseTimeout: room.responseTimeout ?? null,
@@ -116,11 +201,18 @@ function buildRecord(room, G) {
     deckCycles: state.shuffleCount || 0,
     seats: asArray(room.players).map((p, i) => ({
       seat: i, id: p?.id ?? null, name: p?.name ?? null,
-      isBot: !!p?.isBot, botMode: p?.botMode || null,
+      isBot: !!p?.isBot, botMode: p?.botMode || null, everHuman: everHuman(p),
     })),
+    humanSeats,
     stats: state.stats ?? null,
+    // The event stream is 85% of a record (41,738 B of a measured 49,160 B). A game with
+    // no human seat at all is only ever produced by the harness, and a SEEDED one replays
+    // exactly from seed + ruleset + seat order, so its events are pure duplication.
+    // `eventsTotal` always survives so the omission is visible and countable, and an
+    // unseeded bot game KEEPS its events — nothing else could reconstruct it.
     eventsTotal: state.eventSeq || 0,
-    events: asArray(state.events),
+    events: omitEvents ? undefined : asArray(state.events),
+    eventsOmitted: omitEvents ? 'bot_only' : undefined,
     boards: asArray(state.players).map(board),
     // A corrupt state is the most interesting kind to record, so say so in the record
     // rather than losing it: a null players array becomes an explicit marker.

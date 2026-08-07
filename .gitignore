@@ -5,3 +5,4 @@ node_modules/
 # Harness output (tools/) — regenerate with `npm run tool:screenshot` / `tool:record`
 tools/shots/
 tools/fixtures/session-*.json
+.claude/worktrees/

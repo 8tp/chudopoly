@@ -726,6 +726,53 @@ test('the archive ring is bounded by CHUD_GAME_LOG_ARCHIVES', async () => {
     });
 });
 
+// Rotation used to stamp archives to the millisecond and renameSync clobbers silently, so
+// two rotations inside one millisecond destroyed a whole generation and raced the
+// `.part` -> `.gz` rename of the one they overwrote. Measured with ARCHIVES=999 (nothing is
+// pruned, so any shortfall is real loss): 300 records written, 139 recoverable, 161 lost.
+// This drives rotation as fast as it can go and demands every record back.
+test('back-to-back rotations lose no records and leave no clobbered generation', async () => {
+  await withGameLog(
+    { CHUD_GAME_LOG: '1', CHUD_GAME_LOG_MAX_BYTES: '900', CHUD_GAME_LOG_ARCHIVES: '999' },
+    async (gamelog, dir) => {
+      const zlib = require('node:zlib');
+      const codes = [];
+      // No pacing at all: many rotations land inside the same millisecond.
+      for (let i = 0; i < 60; i++) {
+        const room = finishedRoom();
+        room.code = 'RX' + String(i).padStart(3, '0');
+        codes.push(room.code);
+        gamelog.recordFinished(room, G);
+      }
+      // Settled = every closed generation has finished compressing (plain file gone, no
+      // `.part` left). Compression is deliberately backgrounded, so this is the only
+      // reliable quiescence signal.
+      await new Promise(r => setTimeout(r, 400));
+      await waitFor(() => {
+        const names = fs.readdirSync(dir);
+        return !names.some(n => n.endsWith('.part') || /^games-.*\.jsonl$/.test(n));
+      }, 6000);
+
+      const found = new Set();
+      for (const name of fs.readdirSync(dir)) {
+        const full = nodePath.join(dir, name);
+        const buf = name.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(full)) : fs.readFileSync(full);
+        for (const line of buf.toString('utf8').split('\n').filter(Boolean)) {
+          found.add(JSON.parse(line).code);        // a throw here is a corrupt archive
+        }
+      }
+      const lost = codes.filter(c => !found.has(c));
+      assert.deepEqual(lost, [], `${lost.length}/${codes.length} records were lost to rotation`);
+      assert.deepEqual(fs.readdirSync(dir).filter(n => n.endsWith('.part')), [],
+        'no half-written archive is left behind');
+      // Every generation is distinct, so nothing was renamed on top of anything else.
+      const generations = fs.readdirSync(dir)
+        .map(n => /^games-(.+?)\.jsonl/.exec(n)?.[1]).filter(Boolean);
+      assert.equal(new Set(generations).size, generations.length,
+        'one file per generation: no archive shares a stamp with another');
+    });
+});
+
 /* ── bot-only games skip the event stream (85% of a record) ──────────── */
 
 function roomWith(seats, opts = {}) {

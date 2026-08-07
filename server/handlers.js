@@ -26,6 +26,83 @@ function sendJoined(ws, room, player) {
   });
 }
 
+/* ── Seat authority ──────────────────────────────────────────────────── */
+
+// The ONLY way to sit down in a seat that already exists. Every seat's UUID is broadcast to
+// every room member, so a player id is public and proves nothing; the private resume token
+// is the whole credential.
+//
+// This used to be `find(x => x.id === msg.playerId && x.resumeToken === msg.resumeToken)`.
+// Bots are minted with NO resumeToken and the protocol allowed the field to be omitted, so
+// `undefined === undefined` matched: quoting a bot's public UUID with no token at all handed
+// over the seat, its private hand, and full command authority over it. `leave_room` then set
+// `_wasHuman`, and a second join hit the reclaim branch and converted the bot into an
+// uncontested human seat still wearing the bot's callsign.
+//
+// Three independent conditions, all required:
+//   1. the presented credential is a non-empty string (never undefined/null/'');
+//   2. the SEAT holds a non-empty token too (a bot seat holds none, so it can never match);
+//   3. the seat is not a bot that no human has ever occupied — those belong to nobody.
+function findClaimableSeat(room, playerId, resumeToken) {
+  if (typeof playerId !== 'string' || playerId === '') return null;
+  if (typeof resumeToken !== 'string' || resumeToken === '') return null;
+  const seat = room.players.find(x => x.id === playerId);
+  if (!seat) return null;
+  if (typeof seat.resumeToken !== 'string' || seat.resumeToken === '') return null;
+  if (seat.resumeToken !== resumeToken) return null;
+  if (seat.isBot && !seat._wasHuman) return null;
+  return seat;
+}
+
+// A seat a human held before the takeover comes back to that human, AI and all.
+function reclaimFromBot(room, seat, code, how) {
+  if (!seat.isBot || !seat._wasHuman) return;
+  seat.isBot = false;
+  delete seat._wasHuman;
+  delete seat.botMode;
+  Bot.cancelBotTimeout(room);
+  console.log(`[BOT] ${code} ${seat.name} reclaimed from bot (${how})`);
+}
+
+/* ── Room reaping ────────────────────────────────────────────────────── */
+
+// How long an abandoned room is kept alive so a dropped player can come back.
+const REAP_DELAY_MS = Math.max(50, Number(process.env.CHUD_REAP_MS) || 30000);
+
+// ONE reaper per room, armed by every path that can leave a room without a live human in it.
+//
+// Two defects lived here. (a) `leave_room` during a live game — the normal ✕ / "Leave room"
+// button — nulled state.roomCode and returned, so handleClose bailed at `if (!roomCode)` and
+// nothing was ever scheduled: the room, its bots, its turn timer and its state object lived
+// forever, and each abandoned table still played its bot game to completion and wrote a
+// gamelog record (measured: 300 immortal rooms in 8.5s from 10 sockets; ~600x disk-write
+// amplification). (b) handleClose armed a fresh uncancelled 30s timeout on EVERY disconnect,
+// so a flapping connection stacked them; the `_reapTimerId` guard makes it at most one.
+function scheduleRoomReap(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room || room._reapTimerId) return;
+  room._reapTimerId = setTimeout(() => {
+    const r = rooms.get(roomCode);
+    if (!r) return;
+    r._reapTimerId = null;
+    if (r.players.every(x => x.isBot || !x.ws || x.ws.readyState !== 1)) {
+      timers.clearTurnTimer(r);          // otherwise the deleted room keeps playing forever
+      rooms.delete(roomCode);
+      console.log(`[ROOM] ${roomCode} deleted (empty)`);
+    } else {
+      broadcast.broadcastRoom(r);
+    }
+  }, REAP_DELAY_MS);
+  room._reapTimerId.unref?.();
+}
+
+function deleteRoom(roomCode, room) {
+  if (room._reapTimerId) { clearTimeout(room._reapTimerId); room._reapTimerId = null; }
+  timers.clearTurnTimer(room);
+  rooms.delete(roomCode);
+  console.log(`[ROOM] ${roomCode} deleted (empty)`);
+}
+
 let seedWarned = false;
 
 // Dev/harness determinism hook (ARCHITECTURE §0.7). Refused in production so a
@@ -51,7 +128,21 @@ function seedFromEnv(env = process.env) {
 const MIN_HUMAN_TURN_TIMEOUT = 30;
 const MIN_HUMAN_RESPONSE_TIMEOUT = 15;
 
+/* ── Egress cooldowns ────────────────────────────────────────────────── */
+// Everything below is a command whose REPLY is far larger than the request, so the frame
+// rate limit in server.js (40 per 5s) is not a bound on bytes leaving the process.
+const CHAT_HISTORY_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_HISTORY_COOLDOWN_MS) || 5000);
+const GLOBAL_CHAT_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_GLOBAL_CHAT_MS) || 3000);
+const EMOTE_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_EMOTE_MS) || 1000);
+// A history refill is a page, not the whole ring.
+const CHAT_PAGE = 20;
+
 function startRoomGame(room, turnTimeout = 60, responseTimeout = 30, ruleOpts) {
+  // Unconditional, and BEFORE the new state exists. This used to arm the turn timer only
+  // when turnTimeout > 0, so restarting a table with a 0 clock left the OLD timer armed
+  // against the NEW state: syncTimers saw a truthy turnTimerId, declined to re-arm, and a
+  // spurious timeout fired against a game it knew nothing about.
+  timers.clearTurnTimer(room);
   room.phase = 'playing';
   // Room ruleset, chosen in the lobby next to the timers. A preset supplies the base and
   // any individual toggle overrides it; resolution happens HERE, server-side, so a preset
@@ -121,20 +212,14 @@ function handleMessage(ws, msg, state) {
       const room = rooms.get(code);
       if (!room) { broadcast.send(ws, { type: 'error', message: 'Room not found' }); break; }
       if (room.phase !== 'lobby') {
-        const dc = room.players.find(x => x.id === msg.playerId && x.resumeToken === msg.resumeToken);
+        const dc = findClaimableSeat(room, msg.playerId, msg.resumeToken);
         if (!dc) {
           broadcast.send(ws, { type: 'error', message: 'Game in progress. This browser does not have the private resume key for that seat.' });
           break;
         }
         if (dc.ws?.readyState === 1) { broadcast.send(ws, { type: 'error', message: 'That player is already connected' }); break; }
         dc.ws = ws;
-        if (dc.isBot && dc._wasHuman) {
-          dc.isBot = false;
-          delete dc._wasHuman;
-          delete dc.botMode;
-          Bot.cancelBotTimeout(room);
-          console.log(`[BOT] ${code} ${dc.name} reclaimed from bot (rejoin)`);
-        }
+        reclaimFromBot(room, dc, code, 'rejoin');
         state.playerId = dc.id;
         state.roomCode = code;
         sendJoined(ws, room, dc);
@@ -166,18 +251,14 @@ function handleMessage(ws, msg, state) {
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
       if (!room) { broadcast.send(ws, { type: 'error', message: 'Room not found' }); break; }
-      const p = room.players.find(x => x.id === msg.playerId);
-      if (!p || p.resumeToken !== msg.resumeToken) { broadcast.send(ws, { type: 'error', message: 'Invalid resume credentials' }); break; }
+      // Same single gate as join_room: a public UUID is not a credential, and a bot seat
+      // nobody has ever sat in is not claimable at any price.
+      const p = findClaimableSeat(room, msg.playerId, msg.resumeToken);
+      if (!p) { broadcast.send(ws, { type: 'error', message: 'Invalid resume credentials' }); break; }
       if (p.ws?.readyState === 1) { broadcast.send(ws, { type: 'error', message: 'That player is already connected' }); break; }
       p.ws = ws;
-      if (p.isBot && p._wasHuman) {
-        p.isBot = false;
-        delete p._wasHuman;
-        delete p.botMode;
-        Bot.cancelBotTimeout(room);
-        console.log(`[BOT] ${code} ${p.name} reclaimed from bot (reconnect)`);
-      }
-      state.playerId = msg.playerId;
+      reclaimFromBot(room, p, code, 'reconnect');
+      state.playerId = p.id;
       state.roomCode = code;
       sendJoined(ws, room, p);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
@@ -244,15 +325,17 @@ function handleMessage(ws, msg, state) {
         if (wasHost) broadcast.transferHost(room);
         absent.handleAbsent(room);
         broadcast.broadcastAndScheduleBot(room);
+        // The seat this socket is abandoning is the last thing tying the room to a live
+        // connection. state.roomCode is nulled below, so handleClose will bail out and this
+        // is the only chance to arm the reaper — without it the room was immortal.
+        scheduleRoomReap(roomCode);
       } else {
         room.players = room.players.filter(x => x.id !== playerId);
         console.log(`[ROOM] ${roomCode} -${lp.name} left`);
         if (room.players.length === 0 || room.players.every(x => x.isBot)) {
           // Without this the re-arming turn timer kept driving the deleted room forever:
           // measured 3 further turns in 4s on a 1s clock, and the state object never freed.
-          timers.clearTurnTimer(room);
-          rooms.delete(roomCode);
-          console.log(`[ROOM] ${roomCode} deleted (empty)`);
+          deleteRoom(roomCode, room);
         } else {
           if (wasHost) broadcast.transferHost(room);
           broadcast.broadcastRoom(room);
@@ -266,6 +349,14 @@ function handleMessage(ws, msg, state) {
     case 'start_game': {
       const room = rooms.get(roomCode);
       if (!room || room.hostId !== playerId) { broadcast.send(ws, { type: 'error', message: 'Only host can start' }); break; }
+      // `rematch` has always guarded on phase; this had NO guard at all, so the host could
+      // wipe a live game at any instant and swap the whole ruleset under everyone
+      // (measured: turn 3, boards [2,1] -> turn 0, boards [0,0], winRule replaced).
+      // Restarting a finished table is what `rematch` is for.
+      if (room.phase !== 'lobby') {
+        broadcast.send(ws, { type: 'error', message: 'A game is already under way in this room' });
+        break;
+      }
       if (room.players.length < 2) { broadcast.send(ws, { type: 'error', message: 'Need at least 2 players' }); break; }
       startRoomGame(room, msg.turnTimeout, msg.responseTimeout, {
         preset: msg.preset,
@@ -378,6 +469,12 @@ function handleMessage(ws, msg, state) {
       if (!room) break;
       const emotePlayer = room.players.find(x => x.id === playerId);
       if (!emotePlayer) break;
+      // Emotes fan out to every seat and had no cooldown at all (8/s x room fan-out).
+      // Dropped silently rather than answered with an error: an error reply is itself
+      // egress, and a spammer would only be trading one fan-out for another.
+      const emoteNow = Date.now();
+      if (state.lastEmoteAt && emoteNow - state.lastEmoteAt < EMOTE_COOLDOWN_MS) break;
+      state.lastEmoteAt = emoteNow;
       const text = (msg.text || '').slice(0, 30);
       room.players.forEach(p => {
         if (p.ws?.readyState === 1) {
@@ -398,6 +495,16 @@ function handleMessage(ws, msg, state) {
       const text = (msg.text || '').slice(0, 500);
       if (!text) break;
       const scope = msg.scope === 'global' ? 'global' : 'room';
+      // Global chat crosses every room boundary and fans to wss.clients — one 520-byte
+      // message reached 400 sockets for 254,000 B (x489). The room cooldown above is far
+      // too loose for that, so global gets its own, much slower one.
+      if (scope === 'global') {
+        if (state.lastGlobalChatAt && now - state.lastGlobalChatAt < GLOBAL_CHAT_COOLDOWN_MS) {
+          broadcast.send(ws, { type: 'error', message: 'Please slow down' });
+          break;
+        }
+        state.lastGlobalChatAt = now;
+      }
       const room = rooms.get(roomCode);
       const cp = room?.players.find(x => x.id === playerId);
       const name = cp?.name || 'Anon';
@@ -418,9 +525,19 @@ function handleMessage(ws, msg, state) {
     }
 
     case 'chat_history': {
+      // The single worst amplifier on the wire: an untouched socket — no room, no name, no
+      // auth of any kind — got 30,790 B back for a 30 B request, and could repeat it at the
+      // frame limit for ~240 KB/s per socket. Three gates now:
+      //   * the socket must actually hold a seat (an anonymous socket gets nothing at all);
+      //   * one refill per COOLDOWN, dropped silently so the refusal costs no egress;
+      //   * a page of CHAT_PAGE, not the whole ring.
+      if (!playerId) break;
+      const historyNow = Date.now();
+      if (state.lastHistoryAt && historyNow - state.lastHistoryAt < CHAT_HISTORY_COOLDOWN_MS) break;
+      state.lastHistoryAt = historyNow;
       const room = rooms.get(roomCode);
-      broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
-      if (room) broadcast.send(ws, { type: 'chat_history', scope: 'room', msgs: room.chat.slice(-CHAT_MAX) });
+      broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_PAGE) });
+      if (room) broadcast.send(ws, { type: 'chat_history', scope: 'room', msgs: room.chat.slice(-CHAT_PAGE) });
       break;
     }
 
@@ -472,17 +589,7 @@ function handleClose(state, ws) {
   console.log(`[ROOM] ${roomCode} -${p?.name || '?'} disconnected`);
   if (playerId === room.hostId) broadcast.transferHost(room);
   absent.handleAbsent(room);
-  const closedRoomCode = roomCode;
-  setTimeout(() => {
-    const r = rooms.get(closedRoomCode);
-    if (r && r.players.every(x => x.isBot || !x.ws || x.ws.readyState !== 1)) {
-      timers.clearTurnTimer(r);          // otherwise the deleted room keeps playing forever
-      rooms.delete(closedRoomCode);
-      console.log(`[ROOM] ${closedRoomCode} deleted (empty)`);
-    } else if (r) {
-      broadcast.broadcastRoom(r);
-    }
-  }, 30000);
+  scheduleRoomReap(roomCode);
   broadcast.broadcastAndScheduleBot(room);
 }
 

@@ -71,13 +71,33 @@ function ensureReady() {
 //
 // Appends are asynchronous, so the live file may not exist on disk yet when the in-process
 // byte counter says it is time to rotate; that is not an error.
+// The stamp was millisecond-granular and renameSync clobbers silently, so two rotations
+// inside one millisecond destroyed a whole generation and raced the `.part` -> `.gz` rename
+// of the generation they had just overwritten (measured with ARCHIVES=999 and a 40KB cap:
+// 300 records written, 139 recoverable on disk, 161 lost — 54%). A monotonic, zero-padded
+// counter after the timestamp makes every generation distinct while keeping the lexical
+// sort chronological, which pruneArchives depends on.
+let rotateSeq = 0;
+function nextArchivePath() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const seq = String(++rotateSeq).padStart(6, '0');
+    const candidate = path.join(DIR, `games-${stamp}-${seq}.jsonl`);
+    // Belt and braces: never rename onto a path that already exists, whatever produced it
+    // (a restarted process resets rotateSeq, and its ring is still on disk).
+    if (!fs.existsSync(candidate) && !fs.existsSync(candidate + '.gz')
+      && !fs.existsSync(candidate + '.gz.part')) return candidate;
+  }
+  return null;
+}
+
 function rotate() {
   bytes = 0;
   try {
     if (!fs.existsSync(FILE)) return;
     if (ARCHIVES === 0) { fs.rmSync(FILE, { force: true }); return; }
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const closed = path.join(DIR, `games-${stamp}.jsonl`);
+    const closed = nextArchivePath();
+    if (!closed) throw new Error('no free archive path');
     fs.renameSync(FILE, closed);   // atomic: the live path is safe from here on
     compressArchive(closed);
   } catch (error) {
@@ -100,6 +120,10 @@ function compressArchive(closed) {
         fs.rmSync(partPath, { force: true });
         console.warn('[GAMELOG] archive compression failed, keeping the plain file:',
           error?.message || error);
+      } else if (fs.existsSync(finalPath)) {
+        // Never clobber a complete archive with a different generation's bytes.
+        console.warn('[GAMELOG] archive target already exists, keeping the plain file:', finalPath);
+        fs.rmSync(partPath, { force: true });
       } else {
         fs.renameSync(partPath, finalPath);      // becomes visible only when complete
         fs.rmSync(closed, { force: true });

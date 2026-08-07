@@ -123,7 +123,43 @@ wss.on('close', () => clearInterval(heartbeat));
 // mitigation because a non-browser client sets Origin freely.
 wss.on('error', (err) => console.error('[WSS] server error:', err?.message || err));
 
-wss.on('connection', (ws) => {
+/* Connection caps. There were none: 400 sockets from one client opened in 0.1s
+   (sockets:401), and every one of them is an independent budget for the frame rate limit,
+   an independent chat_history amplifier, and a fan-out target for global chat. The per-IP
+   cap is the one that matters — the global cap is a backstop for a distributed flood so the
+   process runs out of sockets on its own terms rather than the OS's. */
+const MAX_SOCKETS_PER_IP = Math.max(1, Number(process.env.CHUD_MAX_SOCKETS_PER_IP) || 100);
+const MAX_SOCKETS_TOTAL = Math.max(1, Number(process.env.CHUD_MAX_SOCKETS) || 2000);
+const socketsByIp = new Map();
+
+// Behind Railway/any reverse proxy every socket shares the proxy's remoteAddress, which
+// would make a per-IP cap either useless or a global outage. The forwarded chain is
+// trusted only for its first hop, exactly as the platform sets it.
+function clientIp(req) {
+  const forwarded = req?.headers?.['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length) {
+    const first = forwarded.split(',')[0].trim();
+    if (first) return first;
+  }
+  return req?.socket?.remoteAddress || 'unknown';
+}
+
+wss.on('connection', (ws, req) => {
+  const ip = clientIp(req);
+  const liveForIp = (socketsByIp.get(ip) || 0) + 1;
+  socketsByIp.set(ip, liveForIp);
+  // Registered BEFORE the cap check so a refused socket still gives its slot back.
+  ws.on('close', () => {
+    const remaining = (socketsByIp.get(ip) || 1) - 1;
+    if (remaining > 0) socketsByIp.set(ip, remaining); else socketsByIp.delete(ip);
+  });
+  if (liveForIp > MAX_SOCKETS_PER_IP || wss.clients.size > MAX_SOCKETS_TOTAL) {
+    console.warn(`[WS] connection refused (${ip}: ${liveForIp} sockets, ${wss.clients.size} total)`);
+    ws.on('error', () => {});
+    try { ws.close(1013, 'Too many connections'); } catch { try { ws.terminate(); } catch {} }
+    return;
+  }
+
   const state = { playerId: null, roomCode: null };
   let windowStartedAt = Date.now();
   let messageCount = 0;

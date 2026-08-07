@@ -26,10 +26,11 @@
      ≤66px   band + name + glyph + coin                    (crowded hand, browser)
      ≤48px   band + glyph + coin — three marks             (your board)
      ≤34px   the card FLOODS its set colour and the glyph  (opponent boards, ups)
-             steps aside for the 3-character SET_MARK,
-             knocked out in bone. One mark, and it is now
-             TYPE, not a 20px drawing (ART §6 amendment,
-             2026-08-07 — see .ca-mark below).
+             knocks out in bone. ONE MARK, and it is a
+             DRAWING — seven of the ten swap to a small-tier
+             cut of the same subject (.ca-glyph-mini). The
+             three-letter codes that owned this tier for one
+             round are gone; see the ≤34px block for why.
 
    Measured against the real widths in table.css: hand 37–95, board 32–48,
    opponent board 26–40, opponent upgrades 16–23, deck/discard 42–95, discard
@@ -262,22 +263,52 @@
   color: var(--ca-mute);
 }
 
-/* THE SECOND MARK (ART §6 amendment, 2026-08-07). The drawn glyph answers from
-   the table tier up; below 34px this owns the card instead. `inset: 0` on the
-   .ca-art padding box, so the tier's 14% art padding does not squeeze it — the
-   three characters get the card's full width and set at 54% of it. */
-.ca-mark {
-  position: absolute;
-  inset: 0;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--ca-mono);
-  font-weight: 700;
-  letter-spacing: -.03em;
-  line-height: 1;
-  color: var(--ca-onset);
+/* THE SMALL-TIER DRAWING (owner ruling, 2026-08-07 — see the ≤34px block).
+   Seven of the ten set marks carry a second drawing of the SAME subject, cut for
+   the size it is seen at: fewer strokes, heavier weight, interior detail gone.
+   Both ship in the one markup because table/cardnode.js builds a face ONCE and
+   only reparents it (§0.4) — the ≤34px tier cannot ask for a rebuild — and the
+   stylesheet chooses. Two drawings of one subject is still ONE vocabulary; a
+   drawing beside a letter is two, which is the defect this reverses.
+   Exactly one of the pair is ever displayed, so every box that holds a glyph
+   (.ca-art and .ca-half are grids, .ca-pairhalf is a block) centres the
+   survivor without any extra positioning. */
+.ca-glyph-mini { display: none; }
+
+/* ── THE WORDMARK PLATE ───────────────────────────────────────────────────
+   The home hero (public/index.html) — drawn geometry, not type. It lives in
+   THIS file rather than ui.css for two reasons: cardart.css is the last sheet
+   index.html loads, so it wins without a specificity fight; and the plate is
+   bone stock with ink printing, which makes it the same class of object as a
+   card and not a piece of chrome. ui.css's `.brand-title` still owns the
+   element's position in the home grid; only the mark inside it is ours.
+
+   Sized in px, not em: `.brand-title` sets `font-size: clamp(2.1em, 5.2vw,
+   3.4em)`, so an em-relative width would resolve against a font size that is
+   itself viewport-relative, and the plate would grow twice as fast as the
+   viewport does. */
+.brand-title:has(.brand-mark) {
+  /* the drawn mark carries the letterform now; the text treatment underneath it
+     would only apply to a text node that no longer exists */
+  letter-spacing: 0;
+  line-height: 0;
+  text-shadow: none;
 }
+.brand-mark {
+  /* The mark's hard offset. ART §6's drawing law allows exactly one shadow in
+     the corpus — "a hard zero-blur offset block behind a WARNING box" — and
+     this is it. It cannot be --ink-mute: that token flips with the theme, and
+     the plate is bone stock in both themes exactly as a card is. A warm neutral
+     rather than a hue, so it claims no colour §2 has reserved; on #FBF8F1 stock
+     it measures 2.5:1, which is a shadow's job (separating a shape) and not
+     type's, and checkContrast reads it as decorative for that reason. */
+  --ca-drop: #A2977E;
+  display: block;
+  width: 100%;
+  max-width: 440px;
+  height: auto;
+}
+@media (max-width: 560px) { .brand-mark { max-width: 330px; } }
 
 /* ── RENT — the face IS the colours (§6.3, the owner defect) ──────────────
    No cream chassis, no band: the colour bleeds to the trim. That single
@@ -438,7 +469,13 @@
    absolutely-positioned ::before; these put them back on top of the screen */
 .ca-back-word, .ca-back-sub, .ca-back-art { position: relative; z-index: 1; }
 .ca-back .ca-tick { border-color: rgba(251, 248, 241, .45); }
-.ca-back-word { font-weight: 800; text-transform: uppercase; letter-spacing: .26em; text-indent: .26em; }
+/* The wordmark is DRAWN now (see the ALPHA alphabet in table/cardart.js), so
+   the back's word is an <svg> and not a text run. It was set in
+   `var(--font-display)`, which resolves to SF Pro Rounded on macOS, Segoe UI
+   Variable Display on Windows and something else again on Linux — the deck's
+   name had no fixed letterform, and screenshot.mjs, which hashes PNGs, has been
+   measuring whatever face the machine happened to have. */
+.ca-back-word { display: block; flex: none; height: auto; }
 .ca-back-sub { font-family: var(--ca-mono); font-weight: 400; letter-spacing: .14em; text-indent: .14em; opacity: .62; }
 .ca-back-art { display: block; flex: none; opacity: .9; }
 
@@ -473,7 +510,7 @@
 
 /* back at hand size */
 .ca-hand.ca-back { gap: 5cqw; padding: 8cqw 4cqw; }
-.ca-hand.ca-back .ca-back-word { font-size: 8.6cqw; }
+.ca-hand.ca-back .ca-back-word { width: 66%; }
 .ca-hand.ca-back .ca-back-art { width: 52%; }
 
 /* ── ≤66px — a crowded hand, the discard browser. Drop the ladder. ──────── */
@@ -499,6 +536,17 @@
   /* The FUNDS band already says these are millions; the suffix only collided
      with the rosette. */
   .ca-hand .ca-mnum i { display: none; }
+
+  /* A PAIRED glyph is drawn at HALF the card's width, so it is always one tier
+     smaller than the card it is on: at 66px the two halves of a wild measure
+     30px each, which is the mini tier exactly. They therefore take the
+     small-tier cut here, a whole tier before a single-set card does. This is
+     the row the owner was looking at — a wild between the two singles it is
+     wild between — and it is why both must be drawn from the same cut. */
+  .ca-hand .ca-pairhalf .ca-glyph-full,
+  .ca-hand .ca-half .ca-glyph-full { display: none; }
+  .ca-hand .ca-pairhalf .ca-glyph-mini,
+  .ca-hand .ca-half .ca-glyph-mini { display: block; }
 }
 
 /* ── ≤60px — your own board, a landscape hand. THREE MARKS: band, glyph, coin.
@@ -555,12 +603,40 @@
 /* ── ≤34px — opponent boards and upgrade rows, down to 16px. ONE MARK. ────
    The card floods its set colour and the glyph knocks out white. This is the
    only tier where the property card is a colour chip rather than a card, and
-   it is the tier where "which set is that" is the ONLY question being asked. */
+   it is the tier where "which set is that" is the ONLY question being asked.
+
+   ── WHAT THE LETTERS COST, AND WHY THEY ARE GONE (owner ruling 2026-08-07) ──
+   For one round this tier printed a 3-character code (DRN / OSB / T&E …) in
+   place of the drawing, exempting `.ca-wild` because a wild's two glyphs are
+   its identity. The exemption is the whole failure. A wild stands in the same
+   row as the singles it is wild between, so an opponent's board read as
+   pictures-on-the-wild, letters-on-its-neighbours — two vocabularies in one
+   row, and the card that most needs to be distinguishable was the one that
+   looked least like the rest. The owner: "its too confusing when the wild cards
+   are next to them".
+
+   The premise had also gone stale. The codes were chosen against the OLD
+   glyphs — a Space Force mark that thresholded into a witch's hat, a Fighters
+   mark that was a fat arrow with a stub — which genuinely did not survive here.
+   Seven marks were then redrawn and never re-measured at this size. Re-measured
+   now, on a 30px card with the art padding at 8%: the drawing renders at 25.2px
+   with white on a saturated flood behind it, and the 40px reference row one tier
+   up already prints the SAME drawing at 23px in set colour on cream — a harder
+   contrast case that reads. Four of the ten answer unchanged at 25px. Six do
+   not, and the fix for those is .ca-glyph-mini: the same subject drawn again
+   with fewer strokes and no interior detail. Not a letter. */
 @container (max-width: 34px) {
   .ca-hand { padding: 0; gap: 0; }
   .ca-hand .ca-band,
   .ca-hand .ca-foot,
   .ca-hand .ca-rents,
+  /* `.ca-hand.ca-action .ca-code` in the ≤60px block is (0,3,0) and this list
+     was (0,2,0), so the action code was NEVER dropped at the one-mark tier — it
+     printed --ca-mute on the ink flood at 4.5px, which is 1.9:1 and unreadable
+     as either type or texture. It is the same defect the set codes were, on the
+     other family: a letter standing beside a drawing at the tier that gets one
+     mark. Matching the selector's specificity is the whole fix. */
+  .ca-hand.ca-action .ca-code,
   .ca-hand .ca-code { display: none; }
 
   .ca-hand.ca-prop {
@@ -570,27 +646,20 @@
   }
   .ca-hand.ca-prop .ca-art > .ca-glyph { color: #fff; }
 
-  /* THE TWO-MARK SWAP. A plain property hands the card to its 3-character code
-     here and the drawing steps off. Measured on the proof sheet: this tier runs
-     26–34px, so the drawing was being rendered into 20–24px minus its own 14%
-     padding, and three redraws of the ten glyphs were spent losing that fight —
-     the pink mark thresholded into a witch's hat chasing it. Three mono
-     characters at 30cqw set 7.8–10.2px, which is the first card mark to clear
-     checkContrast's 8px type/texture line at this size.
-
-     Scoped to :not(.ca-wild) deliberately. A wild's two glyphs at half size are
-     the only thing separating it from its neighbour, and a rent's identity here
-     is the split colour field (the owner defect fix, §6.3) — neither can spare
-     the room for two codes, and neither is asking "which ONE set is this". */
-  .ca-hand.ca-prop:not(.ca-wild) .ca-art > .ca-glyph { display: none; }
-  .ca-hand.ca-prop:not(.ca-wild) .ca-mark {
-    display: flex;
-    font-size: max(8px, 30cqw);
-  }
   .ca-hand.ca-action { background: var(--ca-ink); --ca-knock: var(--ca-ink); }
   .ca-hand.ca-action .ca-art > .ca-glyph { color: var(--ca-paper); }
-  .ca-hand .ca-art { padding: 14%; }
+  /* 8%, not 14%. The glyph is a SQUARE fitted into the art box, so its size is
+     the box's WIDTH and every point of horizontal padding is spent twice.
+     MEASURED across the tier (26 / 30 / 34px): 14% drew the mark at
+     18.7 / 21.6 / 24.5px, 8% draws it at 21.8 / 25.2 / 28.6 — a 17% linear gain
+     for margin the flood already provides, because the set colour runs to the
+     trim and the card's own edge is the clearance. */
+  .ca-hand .ca-art { padding: 8%; }
   .ca-hand .ca-glyph { width: 100%; height: 100%; }
+
+  /* THE SWAP. Seven subjects hand over to their small-tier cut here. */
+  .ca-glyph-full { display: none; }
+  .ca-glyph-mini { display: block; }
 
   /* A WILD keeps its cream chassis at every size — that is the whole chassis
      contract that separates it from a rent. It never floods. */
@@ -599,6 +668,22 @@
   .ca-hand.ca-wild .ca-band-name { display: none; }
   .ca-hand.ca-wild .ca-art { padding: 8%; }
   .ca-hand.ca-wild .ca-art > .ca-glyph { color: var(--ca-set); }
+
+  /* THE WILD'S TWO GLYPHS GO DIAGONAL HERE, and this is the card the owner was
+     actually looking at. MEASURED on a 30px wild before the change: each half
+     was 12.1px wide and the glyph inside it was 10.2px — capped by the hand
+     tier's `max-height: 34cqw`, which resolves to 10.2px on a 30px card — and
+     then top-aligned in a 30.5px box, so the mark sat in the upper fifth with
+     two thirds of the card blank. Side by side, two glyphs can never have more
+     than half the card's width; the card is 5:7, so stacking them buys the
+     HEIGHT instead. Staggered — first half top-left, second bottom-right — each
+     glyph gets 16.5px, +62%, and the diagonal preserves the left-to-right order
+     of the band's colour split, which a plain vertical stack would break. */
+  .ca-hand.ca-wild .ca-art-pair { flex-direction: column; padding: 4%; gap: 0; }
+  .ca-hand.ca-wild .ca-pairhalf { flex: 0 0 50%; width: 64%; height: auto; }
+  .ca-hand.ca-wild .ca-pairhalf:first-child { align-self: flex-start; }
+  .ca-hand.ca-wild .ca-pairhalf:last-child { align-self: flex-end; }
+  .ca-hand.ca-wild .ca-pairhalf .ca-glyph { max-height: none; }
 
   /* MONEY keeps the stock and the numeral: the number IS the identity. */
   .ca-hand.ca-money { background: var(--ca-paper); }
@@ -667,7 +752,7 @@
 .ca-peek .ca-pairhalf .ca-glyph { width: 100%; height: 100%; max-height: 92px; }
 .ca-peek .ca-wheel-art { width: 116px; height: 116px; }
 .ca-peek.ca-back { gap: 16px; }
-.ca-peek.ca-back .ca-back-word { font-size: 17px; }
+.ca-peek.ca-back .ca-back-word { width: 62%; }
 .ca-peek.ca-back .ca-back-sub { font-size: 8px; }
 .ca-peek.ca-back .ca-back-art { width: 58%; }
 

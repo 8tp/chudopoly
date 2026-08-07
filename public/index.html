@@ -122,7 +122,63 @@
       </div>
 
       <div class="home-mark">
-        <h1 class="brand-title">CHUDOPOLY GO</h1>
+      <!-- THE WORDMARK. Drawn geometry, not type: the letters are the ALPHA
+           alphabet in src/table/cardart.js and this markup is its home-screen
+           lockup. Keep the two in step — the card back builds the same letters
+           from the same table, and a drift between them is two marks.
+
+           §0.3's font amendment permits self-hosted faces and says in the same
+           breath that a LOGO IS DRAWN, NOT SET; the old mark was set in
+           --font-display, which is SF Pro Rounded on macOS and Segoe UI Variable
+           Display on Windows, so the game had no fixed letterform at all.
+
+           Chamfered technical caps: square corners and mitred 16-unit chamfers
+           per ASME Y14.2, two weights at 2:1 (20-unit stem, 10-unit rule), and
+           ONE hard zero-blur offset — the single shadow ART §6's drawing law
+           sanctions. The frame's corner brackets are the card back's own datum
+           device, so the plate and the deck mark are visibly one system.
+
+           None of it is measured against Hasbro's mark: the owner asked for the
+           heavy keyline and the dimension, which are universal, and Jack
+           Daniel's v. VIP (2023) is why the letterforms, the banner and the DEAL
+           badge are not borrowed with them. -->
+      <h1 class="brand-title">
+        <svg class="brand-mark" viewBox="0 0 724 220" fill-rule="evenodd"
+             role="img" aria-label="Chudopoly GO"><title>Chudopoly GO</title>
+          <rect width="724" height="220" fill="var(--card-stock)"/>
+          <path fill="var(--ink)" d="M13 13 H711 V207 H13 Z M20 20 H704 V200 H20 Z"/>
+          <g fill="var(--ink)">
+            <path d="M5 5 H84 V12 H12 V60 H5 Z"/>
+            <path d="M719 5 V60 H712 V12 H640 V5 Z"/>
+            <path d="M5 215 V160 H12 V208 H84 V215 Z"/>
+            <path d="M719 215 H640 V208 H712 V160 Z"/>
+          </g>
+          <g transform="translate(73 53)">
+            <path fill="var(--ca-drop, #A2977E)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
+           V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
+           M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100
+           H298.0 L282.0 84 V16 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100 H350.0 Z M429.0 0
+           H459.0 L475.0 16 V84 L459.0 100 H429.0 L413.0 84 V16 Z M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z
+           M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48 V100 H555.0 V48 Z"/>
+          </g>
+          <g transform="translate(64 44)">
+            <path fill="var(--ink)" d="M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z M72.0 0 H92.0 V40 H114.0 V0 H134.0 V100 H114.0
+           V60 H92.0 V100 H72.0 Z M144.0 0 H164.0 V80 H186.0 V0 H206.0 V84 L190.0 100 H160.0 L144.0 84 Z
+           M216.0 0 H262.0 L278.0 16 V84 L262.0 100 H216.0 Z M236.0 20 H254.0 L258.0 24 V76 L254.0 80
+           H236.0 Z M298.0 0 H328.0 L344.0 16 V84 L328.0 100 H298.0 L282.0 84 V16 Z M306.0 20 H320.0 L324.0
+           24 V76 L320.0 80 H306.0 L302.0 76 V24 Z M350.0 0 H396.0 L412.0 16 V44 L396.0 60 H370.0 V100
+           H350.0 Z M370.0 20 H388.0 L392.0 24 V36 L388.0 40 H370.0 Z M429.0 0 H459.0 L475.0 16 V84 L459.0
+           100 H429.0 L413.0 84 V16 Z M437.0 20 H451.0 L455.0 24 V76 L451.0 80 H437.0 L433.0 76 V24 Z
+           M480.0 0 H500.0 V80 H542.0 V100 H480.0 Z M534.0 0 H556.0 L565.0 26 L574.0 0 H596.0 L575.0 48
+           V100 H555.0 V48 Z"/>
+          </g>
+          <rect x="623.8" y="146" width="66.2" height="48" fill="var(--ink)"/>
+          <g transform="translate(636.8 155) scale(0.3)">
+            <path fill="var(--card-stock)" d="M16 0 H46 L62 16 V20 H20 V80 H42 V64 H32 V46 H62 V84 L46 100 H16 L0 84 V16 Z M88.0 0 H118.0 L134.0 16 V84 L118.0 100 H88.0 L72.0 84 V16 Z M96.0 20 H110.0 L114.0 24 V76 L110.0 80 H96.0 L92.0 76 V24 Z"/>
+          </g>
+        </svg>
+      </h1>
+
         <p class="brand-sub">Monopoly Deal, flight-line edition. Three complete sets and you are wheels up.</p>
       </div>
 

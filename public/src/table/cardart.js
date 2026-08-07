@@ -57,25 +57,23 @@ const SET_CODE = {
   yellow: 'MOB', green: 'ELITE', darkblue: 'CMD', base: 'BASE', intel: 'INTEL',
 };
 
-/** The SECOND of the two marks (ART §6 amendment, 2026-08-07).
+/* THE THREE-LETTER CODES ARE GONE FROM THE MINI TIER (owner ruling, 2026-08-07).
  *
- *  MIL-STD-2525 carries air platform type as a Sector-1 letter — B bomber,
- *  C cargo, F fighter, K tanker, R recon — precisely because a drawing cannot
- *  be asked to survive every size. Below 34px this client stops asking the
- *  drawing and asks the code instead.
+ *  The previous round gave the ≤34px tier a uniform 3-character SET_MARK —
+ *  DRN TRN SPC T&E FTR MOB ELT CMD OSB INT — and exempted `.ca-wild`, on the
+ *  reasoning that a wild's two glyphs are its identity at that size. The
+ *  exemption is what broke it. The owner, on the live build:
  *
- *  Uniformly THREE characters, not SET_CODE's 3–5: ten of these stand in a row
- *  on an opponent's board and a ragged set width reads as noise. Measured, the
- *  mini tier is 26–34px wide (style/cardart.css header), and three mono
- *  characters advance 1.8em, so `max(8px, 30cqw)` sets 7.8–10.2px type inside a
- *  26–34px card at 54% of its width — the 8px floor is checkContrast's own line
- *  between type and texture and this is the first card mark to clear it at that
- *  tier. SET_CODE is unchanged: it still owns the band and the wild's title,
- *  where there is room for the longer form. */
-const SET_MARK = {
-  brown: 'DRN', lightblue: 'TRN', pink: 'SPC', orange: 'T&E', red: 'FTR',
-  yellow: 'MOB', green: 'ELT', darkblue: 'CMD', base: 'OSB', intel: 'INT',
-};
+ *    "I dont like how when other players have cards it shows DRN or OSB I want
+ *     the actual svg drawn small like pentagon etc so you can see exactly what
+ *     it is its too confusing when the wild cards are next to them"
+ *
+ *  A wild stands in the same row as the singles it is wild BETWEEN, so the
+ *  exemption made one row speak two vocabularies — pictures on the wild,
+ *  letters on its neighbours — and the card that most needs to be told apart
+ *  from its neighbours was the one that looked least like them. ONE VOCABULARY
+ *  AT EVERY TIER, and it is pictures. SET_CODE survives; it owns the band and
+ *  the wild's title, where there is room for words. */
 
 /** Short face name where the deck name will not fit a small card on two lines.
  *  Every key is a real name from game.js buildDeck(). */
@@ -231,11 +229,15 @@ function wedge(cx, cy, R, i, n) {
      • base    read as an X / crossed swords, not as an airfield.
      • intel   read as a pie chart with a clock hand.
 
-   The mandate is retired and replaced by TWO MARKS per set: this drawing,
-   which only has to answer from the table tier (≈25px) upward, and SET_MARK
-   below, a 3-character code that owns the ≤34px tier. That is MIL-STD-2525's
-   own split (air platform type is a Sector-1 letter) and it is what buys these
-   drawings the right to carry interior detail.
+   The mandate is retired and replaced by TWO CUTS per set: this drawing, which
+   answers from the table tier (≈25px) upward and is free to carry interior
+   detail, and — for the seven that need one — the small-tier cut in
+   SET_GLYPHS_MINI below.
+
+   For one round the second mark was a three-character CODE instead, on
+   MIL-STD-2525's precedent (air platform type is a Sector-1 letter). The owner
+   reversed it; see SET_GLYPHS_MINI for what that cost and why a second drawing
+   is not the same trade.
 
    ── HOW THEY ARE DRAWN ────────────────────────────────────────────────────
    MIL-STD-38784B / ASME Y14.2: exactly two weights at 2:1 — heavy 4 units for
@@ -422,6 +424,155 @@ const SET_GLYPHS = {
     </g>`,
 };
 
+/* ── SMALL-TIER CUTS ──────────────────────────────────────────────────────
+   The SAME subject drawn again for the size it is actually seen at.
+
+   ── THE MEASUREMENT THAT PRODUCED THESE ──────────────────────────────────
+   The ≤34px tier was measured properly for the first time: every set rendered
+   at a real 30px card at deviceScaleFactor 1, then upscaled nearest-neighbour
+   so the pixels could be judged instead of the vector. With the art padding cut
+   from 14% to 8% the drawing gets 25.2px, and four of the ten answer there with
+   no change at all:
+
+     brown   the quadcopter — four rotor rings, an X frame and a body. The
+             clearest mark in the corpus at this size, as it was at 150px.
+     orange  the reticle — a 6-unit ring and 5.2-unit spikes; nothing in it is
+             thinner than 2.7px at 25px, and it is pin-sharp.
+     red     the fighter planform — the canopy and fin knockouts soften but the
+             silhouette is unmistakably an aircraft.
+     (green passes too, but marginally; see below.)
+
+   The other six did NOT, and each failed in a specific, nameable way:
+
+     lightblue the pitch ladder, the wings symbol and the bank index are all
+               2-unit marks — 1.05px at 25px. They smeared into two grey bands
+               inside a circle inside a square: it read as a FACE.
+     pink      the solar-array cell rules are 2-unit knockouts. At 1px they went
+               to grey and the mark read as a BARCODE.
+     yellow    four nacelles 3.4 units wide with 1-unit gaps became a COMB
+               sitting on the wing.
+     darkblue  four nested pentagons at 5.5 / 4.5 / 5 units: the innermost void
+               (R6 = 3.1px) closed and the rings went soft.
+     base      four threshold bars at 2.6 units and three centreline dashes at
+               2.2 units — the whole interior became a smear. It read as a
+               MATCHBOX.
+     intel     the worst. An open arc band, a strut, a feed horn and two panel
+               rules; at 25px it read as a MICROSCOPE.
+
+   ── WHY A SECOND DRAWING AND NOT A LETTER ────────────────────────────────
+   For one round this tier printed three-character codes instead, and the owner
+   reversed it: a wild card was exempted from the swap, so an opponent's board
+   showed pictures on the wilds and letters on the singles beside them — one row
+   speaking two vocabularies, with the most confusable card looking least like
+   its neighbours. Two drawings of one subject is still ONE vocabulary. A
+   drawing plus a letter is two.
+
+   ── HOW THEY ARE CUT ─────────────────────────────────────────────────────
+   Same drawing law (MIL-STD-38784B / ASME Y14.2: square corners, no gradient,
+   no round cap). The floor is that NOTHING in a cut is thinner than 4 units on
+   the 48 viewBox — 2.1px at 25px — and load-bearing marks are 5–7. Interior
+   detail is dropped rather than shrunk, silhouettes are kept connected where a
+   gap would close, and no cut adds a subject the full drawing does not have. */
+
+/** One ship of the mini four-ship: the same swept delta as shipPath() reduced
+ *  from eleven points to four. The fins and nozzles that give the big mark its
+ *  planform character are 1-unit features at this size and only ever printed as
+ *  fringe. */
+/*  NO trailing-edge notch. Measured at 30px: a notch of any depth turned each
+ *  ship into an apex-up CHEVRON — the enlisted rank device 32 C.F.R. §507.9
+ *  forbids executing, and the exact mark lightblue was redrawn to get away
+ *  from. At 7px a ship has room for a silhouette and nothing else, and a solid
+ *  delta is both the honest planform and not anybody's insignia. */
+function miniShipPath(cx, cy, s) {
+  const P = [[0, -6.5], [5.5, 6], [-5.5, 6]];
+  return 'M' + P.map(([x, y]) =>
+    (cx + x * s).toFixed(2) + ' ' + (cy + y * s).toFixed(2)).join(' L') + ' Z';
+}
+
+const SET_GLYPHS_MINI = {
+  /* Training — the ADI reduced to the one thing an attitude indicator is: a
+     dial with a horizon across it and the ground solid below. The square case,
+     the pitch ladder, the wings symbol and the bank index all go; the ring is
+     6.5 units (3.4px) and the ground seats on its inner edge so the lower half
+     becomes one connected mass instead of four thin ones. Nothing else in the
+     ten is a ring with half of it filled — orange is a ring with spikes. */
+  lightblue: `
+    <path d="${ringPath(24, 24, 21, 14.5)}"/>
+    <path d="M9.53 25 A14.5 14.5 0 0 0 38.47 25 Z"/>`,
+
+  /* Space Force — the satellite with the array cells and the antenna dish
+     detail gone: two panels, a taller bus, and ONE 3-unit rule knocked across
+     each panel so a wing still reads as a wing rather than as a slab. The
+     panels touch the bus instead of floating 2 units off it — a 1px gap closes
+     at this size, and a connected silhouette is the whole point of a cut. The
+     nadir antenna survives as a mast and a bar, because a body with wings and
+     nothing hanging off it is where "battery" comes from. */
+  pink: `
+    <rect x="1.5" y="12" width="17" height="17"/>
+    <rect x="29.5" y="12" width="17" height="17"/>
+    <rect x="18.5" y="7" width="11" height="25"/>
+    <rect x="21.5" y="32" width="5" height="4.5"/>
+    <rect x="17" y="36.5" width="14" height="4.5"/>
+    <g fill="var(--ca-knock)">
+      <rect x="1.5" y="19" width="17" height="3"/>
+      <rect x="29.5" y="19" width="17" height="3"/>
+    </g>`,
+
+  /* Mobility — the airlifter with its four nacelles merged into two 9-unit
+     pods and its wing squared off. Four pods at 3.4 units read as a comb; two
+     at 9 read as engines. The high straight wing, the T-tail and the untapered
+     fuselage are what separate it from the fighter, and all three are kept. */
+  yellow: `
+    <path d="M24 2.5 L28.5 10 V40 L24 45.5 L19.5 40 V10 Z"/>
+    <rect x="2" y="19" width="44" height="7"/>
+    <rect x="7.5" y="11" width="9" height="9"/>
+    <rect x="31.5" y="11" width="9" height="9"/>
+    <rect x="11" y="35.5" width="26" height="6"/>`,
+
+  /* Elite Programs — the same four-ship diamond, each ship cut to four points
+     and spread so no two touch. The arrangement is the mark; the individual
+     planform is 6px of it and was only ever printed as fringe. */
+  green: `
+    <path d="${miniShipPath(24, 9.5, 1.1)}"/>
+    <path d="${miniShipPath(10.5, 24, 1.1)}"/>
+    <path d="${miniShipPath(37.5, 24, 1.1)}"/>
+    <path d="${miniShipPath(24, 38.5, 1.1)}"/>`,
+
+  /* Command — the Pentagon in plan at two rings instead of four. Outer ring
+     6.5 units, courtyard void 5.5, solid core to R9. The full mark's innermost
+     void is 3.1px here and closed anyway, so this loses nothing that was
+     printing. Still one path on evenodd, so the voids show the true card. */
+  darkblue: `
+    <path d="${ngonPath(24, 26, 21, 5)} ${ngonPath(24, 26, 14.5, 5)}
+             ${ngonPath(24, 26, 9, 5)}"/>`,
+
+  /* Overseas Bases — the runway reduced to a slab and a DASHED CENTRELINE, with
+     the threshold bars dropped entirely. Cut to two 5×10 bars they stopped
+     being piano keys and became two windows, and the mark read as a domino;
+     three 5×8 dashes on the long axis read as pavement, which is the thing.
+     The slab widens to 22 units to carry them and the 22° lay is kept, because
+     that is what makes it a field rather than a ruler. */
+  base: `
+    <g transform="rotate(-22 24 24)">
+      <rect x="13" y="4" width="22" height="40"/>
+      <g fill="var(--ca-knock)">
+        <rect x="21.5" y="9" width="5" height="8"/>
+        <rect x="21.5" y="20" width="5" height="8"/>
+        <rect x="21.5" y="31" width="5" height="8"/>
+      </g>
+    </g>`,
+
+  /* Intelligence — the dish as a SOLID reflector rather than an open arc band.
+     The full mark's aperture, feed horn, strut and panel rules are all
+     ≤2.4-unit features and together they read as a microscope; a filled half
+     disc tilted to boresight up-right, on a 6-unit mast with a plinth, is the
+     same object with only its mass kept. */
+  intel: `
+    <path d="M24 17 L35.31 28.31 A16 16 0 0 1 12.69 5.69 Z"/>
+    <rect x="21" y="17" width="6" height="22"/>
+    <rect x="12" y="38.5" width="24" height="6"/>`,
+};
+
 /* ── ACTION GLYPHS ────────────────────────────────────────────────────────
    Achromatic by law (§1: "actions concern no colour, and that absence is
    itself the signal"). Solid-first for the same silhouette reason.
@@ -462,22 +613,34 @@ const ACTION_GLYPHS = {
     <path d="M24 3.5 L41 9.5 V22.5 C41 34.5 24 44.5 24 44.5 S7 34.5 7 22.5 V9.5 Z"/>
     <rect x="13.5" y="18" width="21" height="7" fill="var(--ca-knock)"/>`,
 
-  /* Midnight Requisition — the supply crate WALKING OFF on its own two legs,
-     motion dashes trailing. The previous crescent-over-footlocker was two
-     disconnected blobs at 14px (a "C" over a tiny window) and said nothing
-     about theft; "the crate grew legs overnight" is the actual joke the phrase
-     means, it is one connected silhouette, and nothing else in the family is a
-     box on legs. The crescent survives as a stencil knocked out of the crate
-     face — at hand size it says midnight, at 14px it closes gracefully. */
+  /* Midnight Requisition — A PALLET WITH ONE CRATE GONE. The previous version
+     was the crate WALKING OFF on two legs, and the last round named it the
+     weakest mark in the corpus for a reason the owner agreed with: a box with
+     legs reads as a ROBOT before it reads as theft, and the joke needed a
+     caption to land.
+     What the card actually does is take ONE item out of a group, so that is
+     what the drawing shows: a pallet with three bays, two crates still strapped
+     down, the third bay empty and the third crate tilted away above it. The
+     crescent stays — it is the MIDNIGHT half of the name and the one shape in
+     the action family that is neither rectilinear nor a tool — but it is a mark
+     in its own right at the top-left now instead of a stencil hidden inside a
+     silhouette, where it never had the pixels to read.
+     Nothing here is thinner than 3 units (1.6px at the 25px mini tier): two
+     solid crates, one tilted crate, a pallet rule, a crescent. */
   midnight_requisition: `
-    <path d="M8 11 h32 v21 h-32 z"/>
-    <path d="M15 32 L21.5 32 L18.5 41.5 L12 41.5 Z"/>
-    <path d="M8 40.5 h10.5 v5 h-10.5 z"/>
-    <path d="M26.5 32 L33 32 L36 41.5 L29.5 41.5 Z"/>
-    <path d="M29.5 40.5 h10.5 v5 h-10.5 z"/>
-    <path d="M1.5 14.5 h4.5 v4.5 h-4.5 z M1.5 23 h4.5 v4.5 h-4.5 z"/>
-    <circle cx="30" cy="20.5" r="5" fill="var(--ca-knock)"/>
-    <circle cx="32.5" cy="18.5" r="5"/>`,
+    <circle cx="10.5" cy="11.5" r="8.5"/>
+    <circle cx="14.5" cy="7.5" r="8.5" fill="var(--ca-knock)"/>
+    <g transform="rotate(-18 34 14)">
+      <rect x="26.5" y="4" width="15" height="19"/>
+      <rect x="28.5" y="12" width="11" height="3" fill="var(--ca-knock)"/>
+    </g>
+    <rect x="2" y="29" width="16" height="15"/>
+    <rect x="20" y="29" width="16" height="15"/>
+    <rect x="1" y="44" width="46" height="4"/>
+    <g fill="var(--ca-knock)">
+      <rect x="4" y="35" width="12" height="3"/>
+      <rect x="22" y="35" width="12" height="3"/>
+    </g>`,
 
   /* TDY Orders — the two-way trade as two heavy arc bands with solid heads,
      built geometrically (bandArc/arcHead) instead of the old hand-sketched
@@ -582,6 +745,21 @@ function svg(body, cls = 'ca-glyph') {
     fill-rule="evenodd" aria-hidden="true" focusable="false">${body}</svg>`;
 }
 
+/** A set mark, with its small-tier cut alongside it where one exists.
+ *
+ *  BOTH drawings ship in the one markup and the stylesheet chooses, because
+ *  table/cardnode.js builds a face ONCE and only reparents the node (§0.4) — a
+ *  card that moves from your hand to an opponent's board must not need a
+ *  rebuild to change which cut it is showing. Exactly one is ever displayed, so
+ *  the pair costs one hidden <svg> and no layout. */
+function setGlyph(key) {
+  const k = SET_GLYPHS[key] ? key : 'base';
+  const full = svg(SET_GLYPHS[k], SET_GLYPHS_MINI[k] ? 'ca-glyph ca-glyph-full' : 'ca-glyph');
+  return SET_GLYPHS_MINI[k]
+    ? full + svg(SET_GLYPHS_MINI[k], 'ca-glyph ca-glyph-mini')
+    : full;
+}
+
 /** The ten-colour wheel, hard-edged. Used by the any-rent and the any-wild.
  *  Explicitly NOT a conic-gradient: browsers antialias conic stops into a soft
  *  smear at small sizes, and §6.3 says a gradient reads as decoration. */
@@ -602,8 +780,6 @@ const FALLBACK = {
 };
 
 function setVar(key) { return `var(--set-${key}, ${FALLBACK[key]})`; }
-
-function setGlyph(key) { return svg(SET_GLYPHS[key] || SET_GLYPHS.base); }
 
 /* ── Shared fragments ─────────────────────────────────────────────────── */
 
@@ -661,13 +837,9 @@ function propFace(card, tier, opts) {
       <div class="ca-art">${setGlyph(key)}</div>
       ${ladderRows(key)}${rule(card, opts)}${foot(card, tier)}</div>`;
   }
-  // Both marks ship in the one markup, because table/cardnode.js builds a face
-  // ONCE and only reparents it (§0.4) — the ≤34px tier cannot ask for a rebuild.
-  // The stylesheet shows the drawing above 34px and the mark below it.
-  const mark = `<span class="ca-mark" aria-hidden="true">${SET_MARK[key]}</span>`;
   return `<div class="${cls}">${TICKS}${band}
     <div class="ca-title">${esc(name)}</div>
-    <div class="ca-art">${setGlyph(key)}${mark}${code}</div>
+    <div class="ca-art">${setGlyph(key)}${code}</div>
     ${ladderStrip(key)}${foot(card, tier)}</div>`;
 }
 
@@ -799,6 +971,149 @@ function actionFace(card, tier, opts) {
     ${foot(card, tier)}</div>`;
 }
 
+/* ── THE WORDMARK ─────────────────────────────────────────────────────────
+   Nine letterforms authored as geometry: CHAMFERED TECHNICAL CAPS.
+
+   ── WHY DRAWN AND NOT SET ────────────────────────────────────────────────
+   ARCHITECTURE §0.3 amendment (b) now permits self-hosted webfonts, and says in
+   the same breath that a logo is drawn, not set. It is right: a wordmark typed
+   in someone else's face carries that face's identity, and the wordmark is the
+   one mark that has to be the game's own. So these are paths. The old mark was
+   set in `var(--font-display)`, which resolves to SF Pro Rounded on macOS,
+   Segoe UI Variable Display on Windows and something else on Linux — the game
+   had no fixed letterform at all, and a rounded UI face is the opposite of what
+   the deck is.
+
+   ── WHAT THE OWNER ASKED FOR, AND WHAT HE GETS ───────────────────────────
+   "something similar to the Monopoly DEAL text where the deal has that black
+   outline but make chudopoly text/wordmark as a whole just look much better."
+   The instinct is right and the technique — heavy display caps, a hard keyline,
+   flat dimension — is generic and unownable. The specific MONOPOLY letterforms,
+   the red-and-white banner and the DEAL badge are not, and a wordmark on a title
+   screen and a card back is the highest-risk possible use of someone else's
+   trade dress: Jack Daniel's v. VIP Products (2023) removes the Rogers
+   protection that lets this game name real aircraft the moment a mark becomes a
+   source identifier for our own goods. Nothing here is traced from or measured
+   against Hasbro's mark.
+
+   ── HOW THE LETTERS ARE BUILT ────────────────────────────────────────────
+   ASME Y14.2 / MIL-STD-38784B, the same drawing law as the set glyphs: square
+   corners, mitre joins, butt caps, two weights at 2:1, no gradient and no blur.
+   A round corner is forbidden anywhere in this system, so C D G O P U are
+   SQUARED with 16-unit mitred CHAMFERS where the bowl would be. On a 100-unit
+   cap the stem is 20 and the thin weight is 10; the body is 62 wide on a 72
+   advance, which is condensed — a heavy condensed cap is what carries at 9px on
+   a card back, and a wide one does not.
+
+   ── THE BRIDGES ARE GONE, AND THAT IS A MEASUREMENT ──────────────────────
+   The first cut was a true bridged stencil, on the reasoning that a bridged cut
+   is a real device with real provenance on real aircraft and is therefore better
+   than borrowing a boardgame lockup. Rendered, it failed outright: a keyline
+   stroked on every contour eats half the thin weight from each side of a void,
+   so the bridges had to be widened to 22 units to survive it, and at 22 the D
+   read as a C, the P as an F and the O as a pair of parentheses. The letters
+   were being destroyed to accommodate the outline. Four reference marks
+   confirmed the same thing independently — none of them uses a bridge; the
+   CHAMFER is what does the military work. So the chamfer stays and the bridge
+   goes, and the mark is legible at every size instead of authentic at none.
+
+   ── ONE ALPHABET, TWO LOCKUPS ────────────────────────────────────────────
+   Same principle as the set glyphs' two cuts. The HOME PLATE (index.html) sets
+   the word on bone stock inside a 2:1 frame with the card back's own corner
+   datum brackets, with a hard zero-blur offset behind the letters — the one
+   sanctioned shadow in the corpus (ART §6: "a hard zero-blur offset block
+   behind a WARNING box"). The STAMP (BACK_WORD, below) is the same letters
+   reversed on the dark back with no frame and no offset, because the back is
+   the one dark object in the design and the alignment target already owns it.
+
+   ── AND "GO" ─────────────────────────────────────────────────────────────
+   The MARK is CHUDOPOLY. The home screen said CHUDOPOLY GO and the card back
+   said CHUDOPOLY, which is two marks by accident, and a two-letter tail on a
+   nine-letter block wrecks the plate's proportion. GO is now a small drawn
+   legend inside the plate's frame at 34% cap — the position a drawing number
+   occupies on a technical order — so the product name is intact and the mark
+   the two surfaces share is one word. */
+
+/** Nine letterforms on a 62×100 body. Each entry is [outline, ...counters];
+ *  the counters are separate subpaths on one evenodd fill. */
+const ALPHA = {
+  C: ['M16 0 H62 V20 H20 V80 H62 V100 H16 L0 84 V16 Z'],
+  H: ['M0 0 H20 V40 H42 V0 H62 V100 H42 V60 H20 V100 H0 Z'],
+  U: ['M0 0 H20 V80 H42 V0 H62 V84 L46 100 H16 L0 84 Z'],
+  D: ['M0 0 H46 L62 16 V84 L46 100 H0 Z',
+      'M20 20 H38 L42 24 V76 L38 80 H20 Z'],
+  O: ['M16 0 H46 L62 16 V84 L46 100 H16 L0 84 V16 Z',
+      'M24 20 H38 L42 24 V76 L38 80 H24 L20 76 V24 Z'],
+  P: ['M0 0 H46 L62 16 V44 L46 60 H20 V100 H0 Z',
+      'M20 20 H38 L42 24 V36 L38 40 H20 Z'],
+  L: ['M0 0 H20 V80 H62 V100 H0 Z'],
+  Y: ['M0 0 H22 L31 26 L40 0 H62 L41 48 V100 H21 V48 Z'],
+  G: ['M16 0 H46 L62 16 V20 H20 V80 H42 V64 H32 V46 H62 V84 L46 100 H16 L0 84 V16 Z'],
+};
+
+/** Body 62, advance 72 — a 10-unit sidebearing, uniform. Nine heavy caps in a
+ *  row with ragged fitting reads as a mistake; this is a plate cut on a pitch. */
+const ALPHA_ADV = 72;
+
+/** Translate absolute H/V/M/L path data along x. The alphabet is authored with
+ *  absolute commands only, so this is a lexical shift rather than a transform —
+ *  a transform on a <path> would scale any stroke on it too. */
+function shiftPath(d, dx) {
+  if (!dx) return d;
+  return d.replace(/([MLHV])\s*(-?[\d.]+)(?:\s+(-?[\d.]+))?/g, (m, cmd, a, b) => {
+    if (cmd === 'V') return `V${a}`;
+    if (cmd === 'H') return `H${(+a + dx).toFixed(1)}`;
+    return `${cmd}${(+a + dx).toFixed(1)} ${b}`;
+  });
+}
+
+/** Kerning, in alphabet units, for the pairs CHUDOPOLY actually contains.
+ *
+ *  A uniform advance is right for a plate cut on a pitch, and wrong wherever a
+ *  CHAMFER meets a flat side: the chamfer opens a 16-unit triangle of daylight
+ *  that a flat neighbour does not fill. MEASURED off the first render, where the
+ *  word read as "CHUDOPOL Y" — L's foot runs the full body width along the
+ *  baseline and Y's mass is a stem at mid-body with two arms above it, so the
+ *  pair leaves a hole three times the size of any other. Only the pairs in this
+ *  word are listed; the alphabet is not a typeface and does not need to fit
+ *  strings nobody will set. */
+const ALPHA_KERN = {
+  DO: -6, OP: -4, PO: -9, OL: -5, LY: -18,
+};
+
+/** `text` as one path-data string.
+ *  @param {string} text
+ *  @param {'full'|'outline'} [cut] 'outline' drops the counters, which is what
+ *         a keyline or an offset layer wants: a stroke centred on a counter's
+ *         contour eats the counter, and a shadow has no counters anyway.
+ *  @param {number} [x0] left edge in alphabet units. */
+function wordPath(text, cut = 'full', x0 = 0) {
+  const s = text.toUpperCase();
+  let x = x0;
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    const parts = ALPHA[s[i]];
+    if (parts) for (const d of (cut === 'outline' ? parts.slice(0, 1) : parts)) {
+      out.push(shiftPath(d, x));
+    }
+    x += ALPHA_ADV + (ALPHA_KERN[s.slice(i, i + 2)] || 0);
+  }
+  return out.join(' ');
+}
+
+/** The width of `text` in alphabet units, trailing sidebearing trimmed. */
+function wordWidth(text) {
+  const s = text.toUpperCase();
+  let w = s.length * ALPHA_ADV - (ALPHA_ADV - 62);
+  for (let i = 0; i < s.length - 1; i++) w += ALPHA_KERN[s.slice(i, i + 2)] || 0;
+  return w;
+}
+
+const WORD = 'CHUDOPOLY';
+const WORD_W = wordWidth(WORD);                       // 596
+const WORD_FULL = wordPath(WORD);
+const WORD_OUTLINE = wordPath(WORD, 'outline');
+
 /* ── The back — the ONE dark object in the whole design (§2) ───────────── */
 
 /** The deck mark: a stencil-cut ALIGNMENT TARGET.
@@ -837,17 +1152,31 @@ const BACK_MARK = `
     <rect x="78" y="47" width="3" height="6"/>
   </g>`;
 
+/** The wordmark as the back wears it: the SOLID cut, no keyline, no drop.
+ *
+ *  MEASURED: the back's word is 66% of the card, so on a 110px card it is 72.6px
+ *  wide and its cap height is 11.4px — the stem lands at 2.3px, which a heavy
+ *  condensed cap survives and a wide one would not. That measurement is why the
+ *  alphabet is 62 units wide on a 72 advance rather than the 76/94 the first cut
+ *  used. The plate, the frame, the corner brackets and the offset drop all stay
+ *  on the home screen: the back is the ONE dark object in the design and the 45°
+ *  halftone screen and the alignment target already own it, so a wordmark with
+ *  its own frame and its own shadow would be competing for the same card. */
+const BACK_WORD = `<svg class="ca-back-word" viewBox="-4 -6 604 112"
+  fill="currentColor" fill-rule="evenodd" aria-hidden="true" focusable="false"
+  ><title>CHUDOPOLY</title><path d="${WORD_FULL}"/></svg>`;
+
 function backMarkup(tier) {
   const mark = `<svg class="ca-back-art" viewBox="0 0 100 100"
     fill="currentColor" fill-rule="evenodd" aria-hidden="true" focusable="false"
     >${BACK_MARK}</svg>`;
   if (tier === 'peek') {
     return `<div class="ca ca-peek ca-back">${TICKS}
-      <div class="ca-back-word">CHUDOPOLY</div>${mark}
+      ${BACK_WORD}${mark}
       <div class="ca-back-sub">PROPERTY COMMAND DECK</div></div>`;
   }
   return `<div class="ca ca-hand ca-back">${TICKS}
-    <div class="ca-back-word">CHUDOPOLY</div>${mark}</div>`;
+    ${BACK_WORD}${mark}</div>`;
 }
 
 /* ── Materialise ──────────────────────────────────────────────────────── */
@@ -897,4 +1226,7 @@ export function glyphNode(color) {
   return parse(svg(SET_GLYPHS[color] || SET_GLYPHS.base));
 }
 
-export { SET_CODE, SET_MARK, ACTIONS, SET_GLYPHS, ACTION_GLYPHS, BACK_MARK };
+export {
+  SET_CODE, ACTIONS, SET_GLYPHS, SET_GLYPHS_MINI, ACTION_GLYPHS, BACK_MARK,
+  ALPHA, ALPHA_ADV, wordPath, wordWidth, WORD, WORD_W, WORD_FULL, WORD_OUTLINE,
+};

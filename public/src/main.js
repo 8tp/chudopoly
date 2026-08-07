@@ -30,7 +30,14 @@ const ready = new Promise((resolve) => { resolveReady = resolve; });
 
 /** The single funnel every `state` message goes through — socket or harness. */
 function applyState(msg, opts = {}) {
-  const result = store.applyState(msg, { snap: !!opts.snap });
+  // `harness` travels too. harness.js has always set it and this funnel has
+  // always dropped it, so an injected fixture was indistinguishable from a game
+  // a player had just started — and ui/screens.js has to tell them apart, since
+  // a view transition costs 320ms of document-wide hit-testing and a fixture
+  // teleport buys nothing with it. It is NOT `snap`: the tools deliberately
+  // exercise the animated reconcile (setInstant(false), driftCount), so the
+  // choreography must stay exactly as it is.
+  const result = store.applyState(msg, { snap: !!opts.snap, harness: !!opts.harness });
   table.setSelf(store.store.self.id);
   choreographer.setSelf(store.store.self.id);
   if (result.snapshot) choreographer.enqueue(result.snapshot, result.events, { snap: result.snap });

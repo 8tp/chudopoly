@@ -11,6 +11,12 @@ import { EVENTS } from '../core/bus.js';
 export const store = {
   connected: false,
   screen: 'home',                                  // 'home' | 'lobby' | 'game'
+  // Did the CURRENT screen arrive by teleport (reconnect, resume, fixture,
+  // rematch) rather than by a change the player performed? The same `snap` the
+  // choreographer and ui/feed.js already act on — "a snapped state performs
+  // nothing" — read by ui/screens.js, which must not spend a view transition on
+  // a screen nobody walked into.
+  screenSnapped: false,
   self: { id: null, name: null },
   room: { code: null, phase: 'home', players: [], hostId: null },
   snapshot: null,                                  // getPlayerView() output
@@ -49,9 +55,16 @@ export function setSelf(id, name) {
   if (name) store.self.name = name;
 }
 
-export function setScreen(screen) {
+/**
+ * @param {'home'|'lobby'|'game'} screen
+ * @param {{snap?:boolean}} [opts] snap = this screen was arrived at by teleport
+ *        (see store.screenSnapped). The flag is set BEFORE the event so a
+ *        listener dispatched synchronously from here reads the right value.
+ */
+export function setScreen(screen, opts = {}) {
   if (store.screen === screen) return;
   store.screen = screen;
+  store.screenSnapped = !!opts.snap;
   bus.emit(EVENTS.STATE_SCREEN, screen);
 }
 
@@ -71,8 +84,10 @@ export function reset() {
 /**
  * Apply a server `state` message.
  * @param {object} msg  the broadcast
- * @param {{snap?:boolean, source?:string}} opts  snap forces no animation
- *        (reconnect, fixture injection — §5).
+ * @param {{snap?:boolean, harness?:boolean, source?:string}} opts
+ *        snap forces no animation (reconnect, fixture injection — §5).
+ *        harness marks a state INJECTED by the §9 bridge: it still animates,
+ *        but no player performed the screen change it causes.
  * @returns {{snapshot:object|null, events:Array, snap:boolean}}
  */
 export function applyState(msg, opts = {}) {
@@ -125,7 +140,8 @@ export function applyState(msg, opts = {}) {
   }
 
   store.snapshot = game;
-  setScreen(game ? 'game' : (store.room.code ? 'lobby' : 'home'));
+  setScreen(game ? 'game' : (store.room.code ? 'lobby' : 'home'),
+    { snap: snap || !!opts.harness });
 
   const payload = { snapshot: game, room: store.room, events, snap };
   bus.emit(EVENTS.STATE_APPLIED, payload);

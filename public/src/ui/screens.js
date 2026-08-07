@@ -34,7 +34,39 @@ export function showScreen(name) {
     for (const screen of SCREENS) setHidden($(`screen-${screen}`), screen !== name);
   };
   if (name === shownScreen) { paint(); return; }
+  /* THE FIRST SCREEN IS A PAINT, NOT A CHANGE (§P9 FEEL round 4).
+   *
+   * boot() ends with showScreen(store.screen), and `shownScreen` is '' there,
+   * so the very first screen the player ever sees was being transitioned INTO
+   * — from a document with nothing in it. MEASURED on the shipped build: the
+   * class went on <html> 39ms after navigation and came off at 322ms, and for
+   * all 283ms of that `document.elementFromPoint()` returned <html> from every
+   * coordinate on the page, because a running view transition captures the live
+   * subtree and hit-tests against the pseudo tree instead. The whole UI was
+   * unreachable to a pointer for a third of a second at boot, to cross-fade a
+   * blank page into the home screen. The screenshot gate landed inside that
+   * window and reported "4/4 hand cards are not hit-testable, first blocked by
+   * html.vt-screen-home" on ten surfaces; a player who taps fast gets the same
+   * dead third of a second, which is the part that is not a gate problem.
+   *
+   * There is nothing to transition FROM on the first paint, so there is no
+   * transition. Everything after it is a real change and still gets one.
+   *
+   * AND A TELEPORT IS NOT A CHANGE EITHER. A reconnect, a resume after a
+   * reload, a rematch, a fixture injected by a tool: store.setScreen marks all
+   * of them, the choreographer refuses to animate the snapped ones and
+   * ui/feed.js refuses to narrate them, for the one reason that covers this
+   * file too — nothing was performed. MEASURED, phone, the discard-limit
+   * fixture applied to a fresh document: 250ms after the state landed <html>
+   * still carried `vt-screen-game`, `document.elementFromPoint()` over the
+   * centre of an enabled, 85×44, un-occluded END TURN button returned <html>,
+   * and a real CDP finger tap on it did nothing at all. That is a fair price
+   * for a change the player asked for and is watching (Quick play, Start,
+   * Leave room all still get one) and no price at all for arriving somewhere
+   * they were already meant to be. */
+  const first = !shownScreen;
   shownScreen = name;
+  if (first || store.store.screenSnapped) { paint(); return; }
   transition.screenChange(paint, `screen-${name}`);
 }
 

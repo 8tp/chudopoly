@@ -250,37 +250,91 @@ function line(ev) {
  * that grew when it had something to say pushed the whole felt down 28–42px at
  * the exact moment the player was being told to read it.
  */
-/* Tokens, not colours. --act / --act-fg is the app's solid ink slab (17.08:1,
- * and it flips with the theme); --ink is a CARD token — dark stock ink — and
- * using it here is what made the first cut of this file render dark grey text
- * on the dark apron, invisible in every frame of the play session it was built
- * from. --danger is hazard MATERIAL and is only ever spent on the lines that
- * happened to this player. */
+/* ── A BEAT IS A MARKING, NOT A PILL (§P9 FEEL round 4) ────────────────────
+ *
+ * The first cut of this stylesheet drew each line as a rounded, bordered,
+ * shadowed plate floating over the felt, and landed it on the discard pile —
+ * §3.7's named anti-pattern ("floating hint pills over the board"), which the
+ * design agent had removed from the coach layer one round earlier. They had to
+ * put the correction in content.css, behind an extra class (`.feed-stack
+ * .feed-row`) purely to out-specify these rules, because this <style> is
+ * injected into <head> AFTER their stylesheet and would otherwise win the tie.
+ *
+ * A module that has to be corrected from another agent's file is a module that
+ * does not own its own look. Their verdict is folded in here verbatim and the
+ * override can go:
+ *
+ *   MATERIAL  painted ON the apron, in the apron's own colour with a dashed
+ *             stencil edge, exactly like .hint-card. The weight rail stays —
+ *             it is the only thing carrying note/big/hit in grayscale — but as
+ *             a hazard-width stencil rule, not a pill's rounded border.
+ *   PLACE     on a wide screen it leaves the table entirely for the ~350×130 of
+ *             dead concrete in the dock between the hand bar and the fan, the
+ *             one region of that viewport nothing is ever placed on. On a phone
+ *             there is no such column, so the feed becomes a ONE-LINE TICKER:
+ *             MEASURED on five-player@phone, a three-row stack stood on the
+ *             whole second row of the player's own mats and the buried-text
+ *             count for that shot alone was 22. The rows are still built and
+ *             still timed out — nothing above this comment changes — only the
+ *             last one is shown.
+ *
+ * Tokens, not colours, and CARD tokens are not APP tokens: the very first cut
+ * used --ink (dark stock ink, a card token) and rendered dark grey on the dark
+ * apron, invisible in every frame of the play session it was built from.
+ * --danger / --hazard-fine is hazard MATERIAL and is only ever spent on the
+ * lines that happened to this player. */
 const CSS = `
 #chud-feed{position:relative;height:0;z-index:41}
 #chud-feed .feed-stack{position:absolute;left:.5em;right:.5em;bottom:.3em;
   display:flex;flex-direction:column;align-items:flex-start;gap:.18em;
   pointer-events:none}
-@media (min-width:760px){#chud-feed .feed-stack{right:auto;max-width:34em}}
 #chud-feed .feed-row{display:flex;align-items:baseline;gap:.42em;
-  max-width:100%;padding:.16em .55em;border-radius:var(--radius,4px);
+  max-width:100%;padding:.3em .6em;border:0;border-radius:0;box-shadow:none;
   font:700 .82em/1.3 var(--font-body,system-ui,sans-serif);
-  letter-spacing:.01em;
-  color:var(--act-fg,#FBF8F1);background:var(--act,#14161A);
-  border-left:.22em solid var(--act,#14161A);
-  box-shadow:0 1px 3px var(--shade-2,rgba(0,0,0,.34));
+  letter-spacing:.01em;color:var(--fg,#14161A);
+  background:
+    linear-gradient(var(--stencil-hi),var(--stencil-hi)) 0 0/3px 100% no-repeat,
+    repeating-linear-gradient(90deg,var(--stencil-hi) 0 8px,transparent 8px 14px) 0 0/100% 2px no-repeat,
+    repeating-linear-gradient(90deg,var(--stencil-hi) 0 8px,transparent 8px 14px) 0 100%/100% 2px no-repeat,
+    var(--ground);
   opacity:0;transform:translateY(.3em);
   transition:opacity .16s linear,transform .16s ease-out}
 #chud-feed .feed-row.is-in{opacity:1;transform:none}
 #chud-feed .feed-row.is-out{opacity:0}
-#chud-feed .feed-mark{flex:none;opacity:.85}
+#chud-feed .feed-mark{flex:none;opacity:1;color:var(--fg-mute)}
 #chud-feed .feed-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#chud-feed .feed-row.is-big{border-left-color:var(--foil,#6E4E19)}
-#chud-feed .feed-row.is-hit{border-left-color:var(--danger,#AB2707);
-  background:var(--danger,#AB2707);color:var(--act-fg,#FBF8F1)}
-#chud-feed .feed-you{flex:none;font-size:.72em;letter-spacing:.1em;
-  padding:0 .3em;border-radius:.12em;
-  background:var(--act-fg,#FBF8F1);color:var(--danger,#AB2707)}
+/* the rail is the weight: ink for texture, foil for the race, hazard for you */
+#chud-feed .feed-row.is-big{
+  background:
+    linear-gradient(var(--foil),var(--foil)) 0 0/3px 100% no-repeat,
+    repeating-linear-gradient(90deg,var(--stencil-hi) 0 8px,transparent 8px 14px) 0 0/100% 2px no-repeat,
+    repeating-linear-gradient(90deg,var(--stencil-hi) 0 8px,transparent 8px 14px) 0 100%/100% 2px no-repeat,
+    var(--ground)}
+#chud-feed .feed-row.is-hit{
+  color:var(--fg,#14161A);
+  background:
+    var(--hazard-fine) 0 0/5px 100% no-repeat,
+    repeating-linear-gradient(90deg,var(--stencil-hi) 0 8px,transparent 8px 14px) 0 0/100% 2px no-repeat,
+    repeating-linear-gradient(90deg,var(--stencil-hi) 0 8px,transparent 8px 14px) 0 100%/100% 2px no-repeat,
+    var(--ground)}
+#chud-feed .feed-you{flex:none;font-size:.72em;letter-spacing:0;
+  padding:0 .3em;border-radius:0;
+  background:var(--danger,#AB2707);color:var(--card-stock,#FBF8F1)}
+/* PHONE AND SHORT LANDSCAPE: one line, ~20px tall. The Mission Log has the rest. */
+@media (max-width:759px){
+  #chud-feed .feed-row:not(:last-child){display:none}
+  #chud-feed .feed-row{font-size:.8em;padding:.18em .5em}}
+@media (orientation:landscape) and (max-height:560px){
+  #chud-feed .feed-row:not(:last-child){display:none}}
+/* wide enough for a column, not yet wide enough for the dock's dead concrete */
+@media (min-width:760px){#chud-feed .feed-stack{right:auto;max-width:34em}}
+/* fixed, not absolute: the host is a height:0 div pinned above #prompt, and the
+   dock is the box this belongs in. Bottom-anchored so the newest line is always
+   the one nearest the hand. (.hints steps up to share the column — that rule is
+   the design agent's and stays in content.css.) */
+@media (min-width:1024px){
+  #chud-feed.floaters .feed-stack{position:fixed;left:13.2em;right:auto;top:auto;
+    bottom:calc(env(safe-area-inset-bottom) + .5em);max-width:21em}}
 @media (prefers-reduced-motion:reduce){
   #chud-feed .feed-row{transition:none;transform:none}}
 `;

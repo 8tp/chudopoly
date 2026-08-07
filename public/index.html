@@ -154,71 +154,142 @@
 
         <button class="btn btn-ghost home-help" data-action="help">How to play</button>
 
-        <!-- §7's music bed starts on the first pointerdown anywhere, and until
-             now the only switch for it lived inside the game screen's settings
-             sheet — so a player who tapped Quick Play got a bed they could not
-             silence until the table had loaded. audio/engine.js documents
-             setMusicEnabled() as safe to call before a gesture, and pointer.js
-             dispatches on window capture, ahead of main.js's unlock listener,
-             so pressing this as the FIRST gesture of the session mutes the bed
-             before it is ever attached. -->
-        <button id="btn-home-sound" class="btn btn-ghost home-sound" data-action="home-sound"
-                aria-pressed="true">
-          <svg class="home-sound-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path class="home-sound-cone" d="M3 9 H7 L12 4.5 V19.5 L7 15 H3 Z"/>
-            <path class="home-sound-wave" d="M15.4 8.2 A5.2 5.2 0 0 1 15.4 15.8 L14.1 14.1
-                     A3 3 0 0 0 14.1 9.9 Z M18.1 5.1 A9 9 0 0 1 18.1 18.9 L16.9 17.3
-                     A6.9 6.9 0 0 0 16.9 6.7 Z"/>
-            <path class="home-sound-cut" d="M15.2 8.6 L16.6 7.2 L22.4 13 L21 14.4 Z
-                     M21 7.2 L22.4 8.6 L16.6 14.4 L15.2 13 Z"/>
-          </svg>
-          <span id="home-sound-label">Sound on</span>
+        <!-- THE SOUND MARK FOLDED INTO THIS ONE, and the fold is the point.
+             This corner used to carry a music toggle, added because §7's bed
+             starts on the first pointerdown anywhere and the only switch lived
+             inside the game screen's HUD — so tapping Quick Play bought a bed
+             you could not silence until the table loaded. That control was a
+             MITIGATION for a missing surface, and its own comment said so.
+             The surface exists now, on all three screens, so keeping both would
+             leave two adjacent marks in the same rail that both mean "audio",
+             one of them a subset of the other — which is the redundancy ART
+             §3.2 exists to stop, and it would also cost the rail a third corner
+             it has no room for on a phone.
+
+             The one thing the mark uniquely bought is kept and MEASURED, not
+             assumed: pointer.js dispatches on window CAPTURE while main.js's
+             audio unlock is a bubble-phase listener on the same window, so a
+             press here runs first. ui/settings.js is imported for its side
+             effect at module scope and opens the sheet from that capture-phase
+             dispatch; the Sound and Music switches are the first two rows of
+             it. Measured cold, mute-as-the-first-gesture: see ui/settings.js. -->
+        <button id="btn-home-settings" class="btn btn-ghost home-settings mark-dial" data-action="settings">
+          <span>Settings</span>
         </button>
       </div>
 
     </div>
   </section>
 
-  <!-- ── LOBBY ──────────────────────────────────────────────────────── -->
-  <section id="screen-lobby" class="screen screen-lobby" hidden>
-    <div class="panel lobby-panel">
-      <h2 class="lobby-title">ROOM <span id="lobby-code" class="lobby-code"></span></h2>
-      <button id="btn-invite" class="btn btn-ghost" data-action="copy-invite">Copy invite link</button>
-      <div id="lobby-players" class="lobby-players"></div>
+  <!-- ── LOBBY ──────────────────────────────────────────────────────────
+       THE SAME THREE REGISTERS AS THE HOME SCREEN (see the comment above it,
+       and commit 5c0bdc7). This screen was the one nobody had looked at — the
+       owner has only ever played bot games — and the measurement says so.
+       Measured in a REAL host lobby at 1280x720, host + 3 bots, the advanced
+       disclosure CLOSED (tools cannot reach this state: a lobby broadcast
+       carries no `game`, so store.self.id is never set and every shot on disk
+       named `lobby@*` is the GUEST view with the host controls hidden):
 
-      <div id="lobby-host" class="lobby-host" hidden>
-        <div class="row">
-          <label class="field-label" for="bot-mode">BOT</label>
-          <select id="bot-mode" class="field">
-            <option value="random">Random</option>
-            <option value="conservative">Conservative</option>
-            <option value="neutral" selected>Neutral</option>
-            <option value="aggressive">Aggressive</option>
-            <option value="chud">CHUD</option>
-          </select>
-          <button id="btn-add-bot" class="btn" data-action="add-bot">Add bot</button>
-        </div>
-        <div class="row">
-          <label class="field-label" for="turn-timeout">TURN</label>
-          <select id="turn-timeout" class="field">
-            <option value="0">off</option>
-            <option value="30">30s</option>
-            <option value="60" selected>60s</option>
-            <option value="120">120s</option>
-          </select>
-          <label class="field-label" for="response-timeout">REPLY</label>
-          <select id="response-timeout" class="field">
-            <option value="0">off</option>
-            <option value="15">15s</option>
-            <option value="30" selected>30s</option>
-            <option value="60">60s</option>
-          </select>
-        </div>
-        <button id="btn-start" class="btn btn-primary" data-action="start-game">Launch Mission</button>
+         .lobby-panel     431 x 720, content 1138 -> 418px unreachable
+         panel top        y -197   (the room code was ABOVE the viewport)
+         Copy invite      y -124..-80   entirely off the top
+         Launch Mission   y  805..849   85px past the bottom
+         off-viewport     54 controls
+         ink box          431 x 2531 = 33.6% x 351.5% of the viewport
+         dead apron       33.2% either side
+
+       `.screen-lobby` is `overflow: hidden` and the ONLY scroller was the
+       58px seat list, so none of that was reachable by scrolling: on a
+       1280x720 desktop with four seats the host could not press the one
+       button the screen exists for. That is not a design complaint.
+
+       So: head / body / rail, markings to the frame edge, objects inside it.
+
+         head   ROOM + code + the invite, with a full-bleed rule under it —
+                the same plate-and-rule the home screen opens with
+         body   the 1fr row and the ONLY scroll container: two columns on a
+                pointer screen (THE ROOM against THE RULES), one on a phone
+         rail   the hold-short line, edge to edge, with Launch Mission painted
+                in the marshalling area and the two secondary marks at the
+                frame's corners — Leave room, and Settings
+
+       Nothing in the rail can be pushed off the bottom by anything in the
+       body, which is the invariant the old single column had no way to hold.
+       The rail's corner marks are the SAME vocabulary as the home rail's, so
+       Settings sits in the same place on both screens. -->
+  <section id="screen-lobby" class="screen screen-lobby" hidden>
+    <div class="lobby">
+
+      <header class="lobby-head">
+        <h2 class="lobby-title">ROOM <span id="lobby-code" class="lobby-code"></span></h2>
+        <button id="btn-invite" class="btn btn-ghost lobby-invite" data-action="copy-invite">Copy invite link</button>
+      </header>
+
+      <!-- THE ONLY SCROLLER ON THIS SCREEN. No env(safe-area-inset-*) here or
+           on anything inside it: `.screen` is the single inset owner and
+           tools/checkClient.mjs fails a second one. -->
+      <div id="lobby-body" class="lobby-body">
+
+        <section class="lobby-col lobby-col-room" aria-labelledby="lobby-seats-head">
+          <h3 id="lobby-seats-head" class="lobby-legend">The room</h3>
+          <div id="lobby-players" class="lobby-players"></div>
+
+          <div id="lobby-host" class="lobby-host" hidden>
+            <div class="row">
+              <label class="field-label" for="bot-mode">BOT</label>
+              <select id="bot-mode" class="field">
+                <option value="random">Random</option>
+                <option value="conservative">Conservative</option>
+                <option value="neutral" selected>Neutral</option>
+                <option value="aggressive">Aggressive</option>
+                <option value="chud">CHUD</option>
+              </select>
+              <button id="btn-add-bot" class="btn" data-action="add-bot">Add bot</button>
+            </div>
+            <div class="row">
+              <label class="field-label" for="turn-timeout">TURN</label>
+              <select id="turn-timeout" class="field">
+                <option value="0">off</option>
+                <option value="30">30s</option>
+                <option value="60" selected>60s</option>
+                <option value="120">120s</option>
+              </select>
+              <label class="field-label" for="response-timeout">REPLY</label>
+              <select id="response-timeout" class="field">
+                <option value="0">off</option>
+                <option value="15">15s</option>
+                <option value="30" selected>30s</option>
+                <option value="60">60s</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- ui/lobby.js builds the ruleset picker into this column (host), or
+             the "the host is choosing" note into it (guest). -->
+        <section id="lobby-rules" class="lobby-col lobby-col-rules"></section>
       </div>
 
-      <p id="lobby-hint" class="hint" aria-live="polite">Waiting for the host to launch&hellip;</p>
-      <button class="btn btn-ghost" data-action="leave-room">Leave room</button>
+      <!-- the hold-short line and everything painted along it -->
+      <div class="lobby-rail">
+        <button class="btn btn-ghost lobby-mark lobby-leave" data-action="leave-room">Leave room</button>
+        <div class="lobby-actions">
+          <!-- The hint is ABOVE the slab, not under it. Under it, the last line
+               of the screen was a sentence rather than the action, and at 1280×720
+               it was the thing the viewport's bottom edge cut. It also reads in
+               the right order now: the state, then the control that acts on it. -->
+          <p id="lobby-hint" class="hint" aria-live="polite">Waiting for the host to launch&hellip;</p>
+          <!-- MOVED OUT OF #lobby-host (P9). It used to be the last child of the
+               host block, under ~850px of bot picker, clocks and presets, which
+               is exactly how it ended up 85px below a 720px fold. It is pinned
+               in the rail now and no amount of content above it can move it. -->
+          <button id="btn-start" class="btn btn-primary lobby-go" data-action="start-game" hidden>Launch Mission</button>
+        </div>
+        <button class="btn btn-ghost lobby-mark lobby-settings mark-dial" data-action="settings">
+          <span>Settings</span>
+        </button>
+      </div>
+
     </div>
   </section>
 

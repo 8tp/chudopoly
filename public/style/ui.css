@@ -281,7 +281,7 @@
      which is the same off-centre-weight defect this round exists to fix, only
      mirrored. */
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  grid-template-areas: "help actions sound";
+  grid-template-areas: "help actions settings";
   align-items: center;
   gap: .7em 1.2em;
   padding: clamp(.8em, 2.2vh, 1.4em) var(--home-pad) clamp(.5em, 1.6vh, 1.1em);
@@ -355,7 +355,7 @@
    the rail would flatten the hierarchy the slab exists to carry, and these sit
    at the frame's corners where a real apron puts its lettering. They keep the
    §0.9 44px box; only the fill is gone. */
-.home-help, .home-sound {
+.home-help, .home-settings {
   min-height: var(--tap);
   padding: 0;
   box-shadow: none;
@@ -365,24 +365,33 @@
   --btn-ink: var(--fg-mute);
 }
 .home-help { grid-area: help; justify-self: start; }
-.home-sound { grid-area: sound; justify-self: end; gap: .45em; }
+.home-settings { grid-area: settings; justify-self: end; gap: .45em; }
 .home-help > span, .home-help,
-.home-sound #home-sound-label {
+.home-settings > span, .lobby-mark {
   text-decoration: underline;
   text-underline-offset: .28em;
   text-decoration-thickness: 1px;
   text-decoration-color: var(--stencil-hi);
 }
 .home-help:active:not(:disabled),
-.home-sound:active:not(:disabled) { transform: none; box-shadow: none; }
+.home-settings:active:not(:disabled) { transform: none; box-shadow: none; }
 
-.home-sound-mark { width: 1.15em; height: 1.15em; flex: none; fill: currentColor; }
-/* Two states from one drawing: the waves are the ON state, the strike is the
-   OFF state, and exactly one of them is ever present. A speaker with BOTH would
-   be a speaker with a slash through its own waves. */
-.home-sound-cut { display: none; }
-.home-sound.is-off .home-sound-wave { display: none; }
-.home-sound.is-off .home-sound-cut { display: block; }
+/* ── the dial, on a rail mark ─────────────────────────────────────────────
+   The SAME --ico-dial the HUD's settings button wears, painted the same way
+   (a currentColor mask), rather than a second settings glyph drawn to sit next
+   to a word. §3.8's failure is one motif reskinned; its inverse is two motifs
+   for one action, and a player who learns the dial in the HUD should not have
+   to learn a gear on the menu. It is a MARK, not a .btn-icon: the icon button
+   is a 44px square with no label, and these carry their word. */
+.mark-dial::before {
+  content: "";
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  background-color: currentColor;
+  -webkit-mask: var(--ico-dial) center / contain no-repeat;
+  mask: var(--ico-dial) center / contain no-repeat;
+}
 
 /* ── first-timer vs returning ──────────────────────────────────────────────
    These rendered identically: the saved call sign was pushed into the field and
@@ -414,7 +423,7 @@
     grid-template-columns: 1fr 1fr;
     grid-template-areas:
       "actions actions"
-      "help    sound";
+      "help    settings";
     gap: .5em .8em;
   }
 
@@ -474,48 +483,322 @@
   .home-greet { display: none; }
 }
 
-/* ── THE HOST'S CTA IS ALWAYS ON SCREEN ───────────────────────────────────
-   MOBILE REVIEW round 5, measured in the real host flow with two bots added and
-   the hint reading "Ready when you are.": #btn-start sat at y=1121 in an 844
-   viewport (321px below the fold) portrait and y=639 in 390 landscape. The
-   screen was one long column inside a scrolling <section>, so every row added
-   above the button — and this round the seat list grew a per-bot paragraph —
-   pushed the one control the hint had just told the player to press off the
-   bottom. The earlier landscape fix pinned it for the GUEST state only.
+/* ══ LOBBY — the same three registers as the home screen ══════════════════
 
-   Same three-part frame the win overlay uses: the box is capped at the
-   viewport, the SEAT LIST is the only thing that scrolls, and everything after
-   it (host controls, the hint, Leave room) is pinned in flow below. Nothing
-   below the seat list can be pushed off screen by anything above it. */
-.screen-lobby { align-items: center; justify-content: center; overflow: hidden; }
-.lobby-panel {
-  width: min(27em, 100%);
-  max-height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: none;
-  box-shadow: none;
-  padding: 1.4em 1.6em 1.6em;
+   OWNER, 2026-08-07: "I never really looked at this cause I only ever did games
+   with bots but this definitely needs to be reworked… mobile scrollable,
+   desktop take up two columns."
+
+   WHY NOBODY HAD LOOKED. A lobby broadcast carries no `game` object
+   (server/broadcast.js broadcastRoom), so state/store.js applyState never
+   learns which seat is ours — `store.self.id` stays null and ui/lobby.js's
+   `host` test is false. Every `lobby@*.png` in tools/shots is therefore the
+   GUEST view, with #lobby-host, the clocks and the entire ruleset picker
+   hidden. The host lobby has never appeared in a review set. These numbers
+   come from driving the real flow instead (create room, add three bots):
+
+     1280×720, host + 3 bots, disclosure CLOSED
+       .lobby-panel      431 × 720, content 1138  →  418px unreachable
+       panel top         y −197        the room code sat ABOVE the viewport
+       Copy invite link  y −124..−80   entirely off the top
+       Launch Mission    y  805..849   85px past the bottom
+       off-viewport      54 controls
+       ink box           431 × 2531 = 33.6% × 351.5% of the viewport
+       dead apron        33.2% either side, which is the owner's ~72%
+     1920×1080  ink 468 × 2662 = 24.4% × 246.5%, apron 37.8% either side
+     390×844    ink 387 × 2284 = 270.6% of the viewport height
+     844×390    ink 600 × 1891 = 484.9%
+     with the disclosure OPEN, #ruleset goes 504 → 2041 and Launch Mission
+       lands at y 2342.
+
+   `.screen-lobby` was `overflow: hidden` and the ONLY scroller was the 58px
+   seat list, so none of the overflow was reachable by scrolling in either
+   direction. On a 1280×720 desktop with four seats the host could not press
+   the button the screen exists for, and could not read the room code they were
+   there to share. That is a defect, not a taste note.
+
+   The fix is the home screen's, because this should be recognisably the same
+   screen (5c0bdc7): MARKINGS RUN TO THE EDGE OF THE FRAME AND OBJECTS DO NOT.
+   Three registers at every width —
+
+     head   ROOM + code + the invite, with a full-bleed rule under it: the
+            same plate-and-rule the home screen opens with
+     body   the 1fr row and the ONLY scroll container. Two columns on a
+            pointer screen, one on a phone. Nothing else on the screen scrolls.
+     rail   the hold-short line edge to edge, Launch Mission painted in the
+            marshalling area, and the two secondary marks at the frame's
+            corners — Leave room, and Settings, in the same corner the home
+            rail puts Settings in.
+
+   The invariant this buys, which the single column had no way to hold: the
+   rail is a fixed grid row, so NOTHING in the body can push the primary action
+   off the bottom. Not four presets, not five seats, not the deck editor with
+   thirteen steppers, not a future stats logbook.
+
+   The stencilled marshalling box (hard corner ticks) is gone with the panel it
+   framed. It drew a box around 33% of the screen, and a box that stops short of
+   the frame is the exact thing §3.3 rules against — the head's rule and the
+   rail's hold-short line are the markings now, and they reach both edges. */
+
+.screen-lobby {
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
 }
-.lobby-panel > * { flex: 0 0 auto; }
-.lobby-players { flex: 1 1 auto; min-height: 3.5em; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-/* the stencilled marshalling box: hard corner ticks, no rounded rect */
-.lobby-panel::before {
+
+.lobby {
+  --lobby-pad: clamp(1em, 4.5vw, 3.5em);
+
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "head" "body" "rail";
+  /* NO horizontal padding, for the reason .home carries the same note: the two
+     rules are MARKINGS, and a marking that stops short of the edge is a box.
+     The inset lives on the contents. */
+  padding: clamp(.4em, 1.6vh, 1.1em) 0 0;
+}
+
+/* ── head: the plate ──────────────────────────────────────────────────── */
+
+.lobby-head {
+  grid-area: head;
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: .3em 1em;
+  padding: 0 var(--lobby-pad) clamp(.5em, 1.5vh, .9em);
+}
+/* the rule under the plate, edge to edge — .home-head::after's twin */
+.lobby-head::after {
   content: "";
   position: absolute;
-  inset: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--stencil-hi);
+  pointer-events: none;
+}
+.lobby-invite { flex: 0 0 auto; }
+
+/* ── body: the only scroll container on this screen ───────────────────── */
+
+/* NO env(safe-area-inset-*) here or on anything inside it. `.screen` is the
+   single inset owner and tools/checkClient.mjs fails the build on a second
+   one — the gutter would be counted twice. */
+.lobby-body {
+  grid-area: body;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* `safe center`, and the `safe` is the whole point — lobby.css records the
+     measurement that earned it. A centred item taller than its scroll container
+     overflows in BOTH directions and the half above the scrollport can never be
+     scrolled back to; `safe` centres while there is free space and falls back
+     to start alignment the moment there is not. Measured: 1920×1080 body 881
+     tall against ~570 of content, so centring is what stops the screen hanging
+     off the head rule with 300px of nothing under it; 390×844 body 618 against
+     939 of content, where `safe` keeps the seat list reachable at scrollTop 0. */
+  align-content: safe center;
+  gap: 1em;
+  padding: clamp(.6em, 2vh, 1.1em) var(--lobby-pad);
+}
+.lobby-col { display: flex; flex-direction: column; gap: .5em; min-width: 0; }
+/* A column head is a legend with a rule under it, not a panel title: it names
+   the half without adding a second chassis around it (§3.2), and the rule is
+   the same marking the head plate and the hold-short line are.
+
+   It matches .ruleset-title EXACTLY (lobby.css gives that one the same rule),
+   because they are the two heads of the two halves of one screen and the first
+   pass had them at var(--t-micro) and var(--t-lede) — the left column read as a
+   caption on the seat list and the right as a section of its own. */
+.lobby-legend {
+  margin: 0;
+  font-size: var(--t-lede);
+  font-weight: 700;
+  color: var(--fg);
+  box-shadow: inset 0 -2px 0 var(--shade);
+  padding-bottom: .2em;
+}
+/* One column at phone widths, so the legend is doing no work there — the seat
+   list is the first thing under the room code and needs no label to say so. */
+.lobby-legend { display: none; }
+
+/* ── rail: the hold-short line and everything painted along it ────────── */
+
+.lobby-rail {
+  grid-area: rail;
+  position: relative;
+  display: grid;
+  /* minmax(0, 1fr) on the sides, NOT a bare 1fr — the same measurement
+     .home-rail records: a bare 1fr is minmax(AUTO, 1fr), so each side column
+     floors at its own min-content and the free space divides unevenly, which
+     lands the centre block off-centre.
+
+     minmax(auto, 26em) in the MIDDLE, not `auto`, and this one is its own
+     measurement. The home rail can use `auto` because its centre block is a
+     call-sign field plus an ink slab plus two alternates and is naturally wide.
+     This one holds a button and a sentence, so `auto` sized the track to the
+     button's own text and `.lobby-actions { width: min(26em, 100%) }` then
+     resolved 100% against that — Launch Mission came out 171px wide at 1280,
+     a primary action narrower than the two ghost marks either side of it. */
+  grid-template-columns: minmax(0, 1fr) minmax(auto, 26em) minmax(0, 1fr);
+  grid-template-areas: "leave actions settings";
+  align-items: center;
+  gap: .5em 1.2em;
+  /* The bottom inset clears the SLAB'S DROP, not just the slab. .lobby-go runs
+     --btn-drop: 6px and the shadow is painted outside the border box, so a
+     bottom pad sized to the text left the primary action's shadow touching the
+     frame at 1280×720 — the one control on the screen that must not look
+     cropped. 1.1em of a 16px root is 17.6px against 6px of drop. */
+  padding: clamp(.7em, 2vh, 1.2em) var(--lobby-pad) clamp(.7em, 2vh, 1.3em);
+}
+/* ── phone: the rail's three cells become two rows ────────────────────────
+   Exactly the home rail's fallback at the same breakpoint, and for the same
+   arithmetic: at 390px the two corner marks are ~86px and ~100px, which left
+   the centre track ~170px — so the primary action was the narrowest control in
+   its own marshalling area. Full width for the slab, the two marks under it. */
+@media (max-width: 719px) {
+  .lobby-rail {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "actions actions"
+      "leave   settings";
+    gap: .5em .8em;
+  }
+}
+/* the hold-short line, identical to the home rail's: two solid, two dashed */
+.lobby-rail::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 11px;
   pointer-events: none;
   background:
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 2.2em 3px no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 3px 2.2em no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 0 / 2.2em 3px no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 0 / 3px 2.2em no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 100% / 2.2em 3px no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 100% / 3px 2.2em no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 100% / 2.2em 3px no-repeat,
-    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 100% 100% / 3px 2.2em no-repeat;
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 0 / 100% 2px no-repeat,
+    linear-gradient(var(--stencil-hi), var(--stencil-hi)) 0 3px / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 12px, transparent 12px 22px) 0 7px / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--stencil-hi) 0 12px, transparent 12px 22px) 0 10px / 100% 2px no-repeat;
 }
+.lobby-actions {
+  grid-area: actions;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .25em;
+  width: min(26em, 100%);
+  min-width: 0;
+}
+/* The slab gets the deepest press in the app, for the reason .home-go records:
+   4px of --press-ink against near-black reads as less travel than the same 4px
+   under a transparent secondary, and the primary action must not press
+   shallower than the buttons beside it. */
+.lobby-go { width: 100%; font-size: 1.1em; min-height: calc(var(--tap) * 1.15); --btn-drop: 6px; }
+#lobby-hint { margin: 0; text-align: center; }
+
+/* The two corner marks, drawn to .home-help / .home-settings' rules: painted
+   lettering, not a third and fourth ink slab, and they keep the §0.9 44px box
+   with only the fill removed. */
+.lobby-mark {
+  min-height: var(--tap);
+  padding: 0;
+  box-shadow: none;
+  font-weight: 700;
+  font-size: var(--t-small);
+  color: var(--fg-mute);
+  --btn-ink: var(--fg-mute);
+}
+.lobby-leave { grid-area: leave; justify-self: start; }
+.lobby-settings { grid-area: settings; justify-self: end; }
+.lobby-mark:active:not(:disabled) { transform: none; box-shadow: none; }
+
+/* ── two columns where there is width for two ─────────────────────────────
+   THE SPLIT IS MEASURED, not assumed. Content heights at 1280×720 with host +
+   3 bots, disclosure closed:
+     seats (4 rows)              196px
+     bot picker + its blurb       84px
+     the two clocks + the note   134px
+     the ruleset picker          504px   (2041px with the disclosure open)
+   THE ROOM against THE RULES puts 414 beside 504, which is the balanced cut.
+   The obvious alternative — clocks filed with the rules, since they are
+   rules — puts 280 beside 638 and leaves a third of the left column empty.
+   The clocks also belong here on their content: describeClocks() reads
+   store.room.players and warns about the server's two-human floors, so the
+   sentence it writes is about the people in this room, not the ruleset.
+
+   1024, not 900: at 900 the two columns are 400px each after the apron inset,
+   which is under the 431px the single column already had, and the preset name
+   row ("Long Game" + "Longest" + "≈67 turns") stops fitting on one line. */
+@media (min-width: 1024px) {
+  .lobby-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    gap: 1em clamp(1.2em, 3vw, 2.6em);
+    /* The rules column is the taller of the two and must be free to grow past
+       the room column without dragging it; align-content: start already keeps
+       both anchored to the top of the scrollport. */
+    align-items: start;
+  }
+  .lobby-legend { display: block; }
+  /* A hairline between the two halves, cut into the concrete rather than drawn
+     as a border (§3.2): it is a marking on the ground, so it runs the full
+     height of the scrolled content. */
+  .lobby-col-rules { box-shadow: inset 1px 0 0 var(--stencil); padding-left: clamp(1.2em, 3vw, 2.6em); }
+  .lobby-body { padding-inline: clamp(1.5em, 5vw, 5em); }
+}
+
+/* The screen has real width to give at desktop sizes and no reason to spend it
+   all: past ~86em the body stops widening and centres, so a 2560px monitor gets
+   two readable columns rather than two 1200px ones. The MARKINGS still reach
+   both edges — only the objects between them stop. */
+@media (min-width: 1500px) {
+  .lobby-body { width: min(86em, 100%); margin-inline: auto; }
+}
+
+/* ── A GUEST IS NOT A HOST WITH THE CONTROLS REMOVED ───────────────────────
+   Measured at 1280×720 on a real three-seat room joined from a second context
+   (no shot has ever shown this state either — the host's own page cannot
+   render it): the guest's body is a 3-row seat list and one sentence, 160px of
+   content in a 553px scrollport, and the two-column grid put those two objects
+   in the top corners with ~500px of unmarked apron between and below them.
+   That is the composition fault this whole round exists to fix, arriving from
+   the other direction — a form laid out for content that is not there.
+
+   So the guest gets the HOME SCREEN's arrangement rather than the host's: one
+   column, the seat list as the object, sized and centred like the deck. The
+   head's rule and the rail's hold-short line still reach both frame edges, so
+   the screen is still marked to the edge — only the objects stop, which is the
+   rule (§3.3), not a violation of it.
+
+   Selected on #ruleset-guest rather than on a class, because ui/lobby.js
+   already unhides exactly that node for exactly this seat: one source of truth
+   for "am I the host", and no second flag to fall out of step with it. */
+.lobby-body:has(#ruleset-guest:not([hidden])) {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  width: min(34em, 100%);
+  margin-inline: auto;
+  padding-inline: var(--lobby-pad);
+}
+.lobby-body:has(#ruleset-guest:not([hidden])) .lobby-col-rules {
+  box-shadow: none;
+  padding-left: 0;
+}
+.lobby-body:has(#ruleset-guest:not([hidden])) .lobby-legend { display: none; }
+#ruleset-guest { text-align: center; text-wrap: pretty; }
 
 /* ── the wordmark: PAINTED on the concrete, not set in a panel ───────────── */
 
@@ -544,10 +827,24 @@
   color: var(--fg-mute);
 }
 
-/* ── lobby ────────────────────────────────────────────────────────────── */
+/* ── lobby: the plate, and a seat ─────────────────────────────────────── */
 
-.lobby-title { text-align: center; font-size: var(--t-title); color: var(--fg); }
-.lobby-code { color: var(--fg); font-size: 1.2em; }
+.lobby-title {
+  margin: 0;
+  font-size: var(--t-title);
+  color: var(--fg-mute);
+  font-weight: 700;
+}
+/* The room code is the one thing on this screen a player reads OUT LOUD to
+   someone else, so it is set like a figure and not like a heading: mono,
+   tabular, and the only --fg-weight ink in the plate. */
+.lobby-code {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.35em;
+  letter-spacing: .06em;
+}
 .lobby-players { display: flex; flex-direction: column; gap: .3em; }
 /* a seat in the lobby is the same recess a seat at the table is */
 .lobby-row {
@@ -562,26 +859,14 @@
 }
 .lobby-seat-name { flex: 0 1 auto; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lobby-seat-tag { margin-left: auto; white-space: nowrap; }
-/* The per-seat bot blurb is a paragraph, and as a third flex item on the same
-   line its min-content width squeezed the NAME to 9px — measured on
-   lobby@desktop, "Bolt"/"Cobra"/"Jester"/"Shadow" all rendered as one letter
-   and an ellipsis. A sentence gets its own line under the nameplate. */
+/* Wraps because a long call sign plus a tag plus Remove is more than one line
+   at 342px, and the NAME is the thing that must never be the part that gives:
+   measured on lobby@desktop when a per-seat paragraph shared this row,
+   "Bolt"/"Cobra"/"Jester"/"Shadow" all rendered as one letter and an ellipsis.
+   (The `.lobby-seat-why` rule that paragraph needed is deleted with it — the
+   owner's directive removed the per-seat personality line, and CSS for markup
+   nothing builds is a rule the next reader has to disprove.) */
 .lobby-row { flex-wrap: wrap; }
-/* Four bots × a four-line paragraph is 320px of lobby, which is the whole of
-   the host CTA's measured 321px overflow. Two lines names the behaviour; the
-   full text is one tap away in How to play. A clamp is a decision, and
-   tools/lib/audit.mjs exempts a clamped box from the clipped-text gate for
-   exactly that reason. */
-.lobby-seat-why {
-  flex: 1 1 100%;
-  min-width: 0;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 .lobby-host { display: flex; flex-direction: column; gap: .5em; }
 .lobby-host .row .field-label { flex: 0 0 auto; margin-bottom: 0; }
 
@@ -891,6 +1176,45 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   border-radius: 999px;
   background: var(--fg-mute);
   opacity: .5;
+}
+/* ── a sheet stops being a bottom sheet at 720px, not 900 ─────────────────
+   A bottom sheet is a phone gesture. At 1280 it was a 490px-wide phone drawer
+   glued to the bottom edge of an empty void and cut off at y=720
+   (help@desktop). That was already fixed — but inside the `min-width: 900px`
+   desktop block, alongside the comms drawer and the win box, which put the
+   boundary in the wrong place for two reasons.
+
+   720 is where this app's phone layout already ends: both rails (.home-rail
+   and .lobby-rail) fall back to two rows at `max-width: 719px`, so the sheet
+   now changes shape on the same line as everything else instead of on a line
+   of its own.
+
+   AND IT IS THE LANDSCAPE PHONE THAT GAINS MOST, which is the opposite of the
+   intuition. 844×390 is 844 WIDE, so it sat in the 720..900 band still getting
+   the phone treatment. Measured on the settings sheet at 844×390, same content,
+   the only difference being which of these two blocks applies:
+
+     bottom drawer   panel 360 × 320   body 246 / 279  →  33px past the fold
+     centred dialog  panel 528 × 335   body 255 / 265  →  10px past the fold
+
+   The height barely moves — 390px of viewport is 390px either way. The WIDTH is
+   the whole gain, +47%: content.css lays .settings out as two columns in short
+   landscape, and that is the axis two columns are spent on. A settings panel is
+   scanned, not glanced at.
+
+   The transient card read the drawer was designed for (ui/details.js) is
+   unharmed: it is three lines, and three lines centred is three lines. */
+@media (min-width: 720px) {
+  .sheet { align-items: center; padding: 2em 1em; }
+  .sheet-panel {
+    width: min(44em, 100%);
+    max-height: min(86vh, 44em);
+    border-radius: var(--radius-lg);
+    padding: 1.2em 1.4em 1.3em;
+    box-shadow: var(--card-drop-air);
+  }
+  /* the drag handle is a touch affordance and means nothing to a mouse */
+  .sheet-panel::before { display: none; }
 }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: .5em; }
 .sheet-head h3 { margin: 0; font-size: var(--t-title); }
@@ -1236,25 +1560,33 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   #btn-rematch { grid-column: 1; }
   #btn-win-leave { grid-column: 2; }
 
-  .screen-lobby { align-items: center; }
-  .lobby-panel {
-    width: min(50em, 100%);
-    max-height: 100%;
-    padding: .5em 1.1em .7em;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-    grid-auto-rows: min-content;
-    align-content: start;
-    gap: .35em .9em;
+  /* THE LOBBY NEEDS NO LANDSCAPE SPECIAL CASE ANY MORE, and that is the point
+     of the three registers: head and rail are `auto` rows, the body is the 1fr
+     between them, so 390px of height simply gives the body less to scroll in.
+     The previous block here was a bespoke five-area grid that existed only
+     because Launch Mission had no fixed home; it is deleted rather than ported.
+
+     Two things do change, and both are height, not arrangement. The two-column
+     body is worth having at 844 wide even though the min-width query is 1024 —
+     that query is about READING WIDTH on a tall screen, and here the scarce
+     axis is the other one. And the head loses its vertical air. */
+  .lobby { padding-top: .3em; }
+  .lobby-head { padding-bottom: .35em; }
+  .lobby-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    gap: .5em 1.2em;
+    padding-block: .5em;
   }
-  .lobby-title { grid-area: 1 / 1 / 2 / 3; margin: 0; }
-  #btn-invite { grid-area: 2 / 1 / 3 / 2; }
-  .lobby-players { grid-area: 3 / 1 / 4 / 2; min-height: 0; max-height: 11em; overflow-y: auto; }
-  /* the host controls INCLUDING Launch Mission own the right column, so the
-     primary action sits beside the seat list instead of 290px under it */
-  .lobby-host { grid-area: 2 / 2 / 4 / 3; }
-  #lobby-hint { grid-area: 4 / 1 / 5 / 2; margin: 0; align-self: center; }
-  .lobby-panel > [data-action="leave-room"] { grid-area: 4 / 2 / 5 / 3; }
+  .lobby-legend { display: block; }
+  .lobby-col-rules { box-shadow: inset 1px 0 0 var(--stencil); padding-left: 1.2em; }
+  /* .35em was 5.6px against .lobby-go's 6px drop shadow, and the slab came out
+     2px clipped by the frame at 844×390 (button bottom 386 + 6 = 392 in a 390
+     viewport). The bottom inset on this rail is sized by the SHADOW at every
+     width, not by the text. */
+  .lobby-rail { padding-top: .6em; padding-bottom: .8em; }
+  .lobby-actions { flex-direction: row; align-items: center; gap: .6em; width: min(32em, 100%); }
+  .lobby-go { width: auto; flex: 0 0 auto; }
+  #lobby-hint { flex: 1 1 auto; text-align: left; }
 }
 
 .emotes { position: fixed; inset: 0; pointer-events: none; z-index: 80; }
@@ -1292,21 +1624,6 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
     box-shadow: -14px 0 34px var(--scrim), -1px 0 0 var(--shade-2);
   }
   .panel { width: min(26em, 100%); }
-
-  /* A bottom sheet is a phone gesture. On a 1280px screen it was a 490px-wide
-     phone drawer glued to the bottom edge of an empty void and cut off at
-     y=720 (help@desktop). On a pointer screen the same content is a centred
-     dialog that can use the height it needs. */
-  .sheet { align-items: center; padding: 2em 1em; }
-  .sheet-panel {
-    width: min(44em, 100%);
-    max-height: min(86vh, 44em);
-    border-radius: var(--radius-lg);
-    padding: 1.2em 1.4em 1.3em;
-    box-shadow: var(--card-drop-air);
-  }
-  /* the drag handle is a touch affordance and means nothing to a mouse */
-  .sheet-panel::before { display: none; }
 
   .win-box { width: min(34em, 88%); padding: 1.2em 1.6em 1.2em; gap: .4em; }
   #win-title { font-size: 2.4em; }

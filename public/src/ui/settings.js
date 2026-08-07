@@ -1,4 +1,4 @@
-// ui/settings.js — sound and the way back to the rules.
+// ui/settings.js — sound, appearance, and the way back to the rules.
 //
 // The audio engine (P5) already persists its own preferences; this is only the
 // control surface. Every control is a native form element so keyboard operation
@@ -8,6 +8,46 @@
 // SFX and MUSIC are two independent pairs, persisted separately by the engine,
 // because "kill the music, keep the card sounds" is the setting people actually
 // want (audio agent, P7: there is now a menu bed and an in-match drone).
+//
+// ── ONE SHEET, THREE SCREENS (P9) ─────────────────────────────────────────
+// This used to be reachable only from ui/hud.js's dial, which lives in
+// .hud-right inside #screen-game. §7 attaches the music bed on the first
+// pointerdown ANYWHERE (main.js), so a player who tapped Quick Play bought a
+// bed they could not touch until the table finished loading, and the lobby had
+// no route to it at all. The rail's right corner on both home and lobby now
+// carries the same `data-action="settings"` mark, and ui/screens.js's
+// openSheet() supplies the focus trap, Escape, scrim-tap and return-focus, so
+// there is exactly one settings chassis in the product (ART §3.2).
+//
+// ── THE FIRST-GESTURE PATH, AND WHAT THE FOLD ACTUALLY COSTS ──────────────
+// The home rail used to carry a one-tap music mark whose whole value was that
+// interact/pointer.js dispatches on window CAPTURE while main.js's audio unlock
+// is a bubble-phase listener on the same window, so pressing it FIRST set the
+// preference before init() ever ran. Folding it in here had to be paid for with
+// a number, not an argument. Measured on a cold load with pristine storage, no
+// autoplay flag, polling audio.musicStats() every 50ms from the first gesture
+// (the settings mark) — t is milliseconds after that pointerdown:
+//
+//   AudioContexts constructed with NO gesture at all      0   (§10 holds)
+//   AudioContext constructed                           t+22
+//   graph ready, ctx 'running'                         t+145
+//   PROCEDURAL lobby bed audible                       t+145
+//   lobby.opus takes over from the synth bed           t+351
+//   sheet open, titled Settings, Sound + Music the
+//     first two rows                                   within 3ms of the
+//                                                      window seeing pointerdown
+//   Music switch off -> mode 'off', bed null, and
+//     chud.audio persisted {"music":false}             immediate, on tap two
+//
+// So the honest cost of the fold is ONE EXTRA TAP AND ABOUT A SECOND OF BED —
+// t+145ms is faster than any hand, and the old mark only ever beat it by being
+// the literal first press. Everything else moves the other way: the lobby had
+// no audio control whatsoever before this round, the sheet also carries volume
+// (which a toggle never could), and the rail keeps two corner marks instead of
+// three. REQUEST TO THE ARCHITECT (main.js is not this agent's): having the
+// unlock listener skip a pointerdown whose target is `[data-action="settings"]`
+// would take that second back and costs one line — the next pointerdown still
+// unlocks, since the listener is `{ once: true }` and would not have fired.
 
 import { el, setAttr, setText } from '../core/dom.js';
 import * as audio from '../audio/engine.js';
@@ -116,6 +156,103 @@ function applyScale(n) {
 // resolves before boot() runs, so this lands before first paint.
 applyScale(getScale());
 
+/* ══ THEME ══════════════════════════════════════════════════════════════════
+   ART §2 ships two full appearances — "apron, daylight" and "apron, night" —
+   selected three ways: bare `:root` is light, `prefers-color-scheme: dark`
+   flips it, and `:root[data-theme]` overrides both (variables.css:268). The
+   third of those had NO user control. The app followed the OS and nothing else,
+   which is a design system half-delivered: a player on a dark-set laptop who
+   wants to look at the cards in daylight had no way to ask.
+
+   THE OVERRIDE WAS VERIFIED BEFORE IT WAS PROMISED, not assumed from reading
+   the stylesheet. tools/lib/theme.mjs already drives exactly this path as its
+   `override` mode — media dark plus [data-theme=light] — and checkContrast.mjs
+   measures all three, so "the attribute did not beat the media query" is
+   already a gate failure and has been passing. Setting the attribute from JS is
+   the same mutation applyTheme() performs.
+
+   THREE VALUES, NOT TWO. 'auto' is the default and is the ABSENCE of the
+   attribute, not a third token set — that matters twice over:
+     · it is the only value that tracks an OS light/dark schedule, which is
+       what most people actually want, so a two-way switch would force everyone
+       to give that up to express a preference once;
+     · determinism. tools/lib/harness.mjs pristineStorage clears localStorage
+       before every capture, so the gate reads 'auto', removeAttribute() is a
+       no-op on a document that never had one, and every screenshot hash is
+       what it was before this control existed. applyTheme() then sets or clears
+       the attribute itself, AFTER this module has run, so the tools still win.
+
+   THE ACCESSIBILITY FLOOR IS NOT AT RISK HERE, and that is a property of the
+   design rather than a promise: both branches are complete, ratified token sets
+   that checkContrast measures at 0 violations. This control cannot mix them —
+   it selects one whole appearance. That is the difference between it and the
+   scale slider, which had to be clamped because it interpolates.
+
+   NO SYSTEM LISTENER. Under 'auto' the media query is the cascade's own job;
+   adding a matchMedia('change') handler that re-asserted the attribute would
+   only give this module a way to fight tools/lib/theme.mjs mid-capture. */
+const THEME_KEY = 'chud.theme';
+const THEMES = ['auto', 'light', 'dark'];
+const THEME_DEFAULT = 'auto';
+const THEME_LABEL = { auto: 'System', light: 'Light', dark: 'Dark' };
+
+export function getTheme() {
+  try {
+    const raw = localStorage.getItem(THEME_KEY);
+    return THEMES.includes(raw) ? raw : THEME_DEFAULT;
+  } catch { return THEME_DEFAULT; }        // private mode
+}
+
+export function setTheme(value) {
+  const next = THEMES.includes(value) ? value : THEME_DEFAULT;
+  applyTheme(next);
+  try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
+}
+
+/** The only writer of [data-theme]. 'auto' REMOVES it rather than writing a
+ *  token, so the cascade falls back to prefers-color-scheme exactly as it did
+ *  before this setting existed. */
+function applyTheme(value) {
+  const root = document.documentElement;
+  if (value === THEME_DEFAULT) root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', value);
+}
+
+// Module scope, for the same reason applyScale is: boot() has already built the
+// table by the time mount() runs, and repainting the whole apron there is a
+// visible flash on every load for anyone not on 'auto'.
+applyTheme(getTheme());
+
+/**
+ * A segmented radio group, not a <select> and not a switch. Three mutually
+ * exclusive values want a radiogroup's semantics (arrow keys traverse, the
+ * group has one accessible name), and lobby.css already draws this exact
+ * control for "Sets to win" — `.rule-seg` / `.seg` / `.seg-face` — so this is
+ * the app's existing segmented strip rather than a fourth control shape.
+ * The inputs stay real and merely visually hidden (.rule-input), which is the
+ * rule that file states: never a <div role="radio">.
+ */
+function themeRow(body) {
+  const current = getTheme();
+  const strip = el('div', {
+    class: 'rule-seg', attrs: { role: 'radiogroup', 'aria-label': 'Theme' },
+  }, THEMES.map((value) => {
+    const input = el('input', {
+      class: 'rule-input',
+      attrs: { type: 'radio', name: 'chud-theme', value, ...(value === current ? { checked: true } : {}) },
+    });
+    input.addEventListener('change', () => { if (input.checked) setTheme(value); });
+    return el('label', { class: 'seg seg-wide' }, [
+      input, el('span', { class: 'seg-face', text: THEME_LABEL[value] }),
+    ]);
+  }));
+
+  body.appendChild(el('div', { class: 'settings-row' }, [
+    el('span', { class: 'settings-label', text: 'Theme' }),
+    strip,
+  ]));
+}
+
 /**
  * One switch + slider bound to one pair of engine getters/setters.
  * @param {{id:string, label:string, isOn:Function, setOn:Function,
@@ -221,6 +358,7 @@ export function show() {
     preview: false,
   });
 
+  themeRow(body);
   scaleRow(body);
 
   body.appendChild(el('p', {

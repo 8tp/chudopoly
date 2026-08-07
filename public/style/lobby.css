@@ -19,24 +19,21 @@
    Zero `border: 1px solid` anywhere in this file (§3.2): the recesses are cut,
    not outlined. */
 
-/* ── one borrowed selector, and the measurement that forced it ──────────
+/* ── the borrowed selector is GONE, and so is what it was patching ──────
  *
- * NOT MINE, AND FLAGGED IN THE REPORT AS A REQUEST TO FOLD INTO base.css.
- * base.css centres the lobby with `.screen-lobby { justify-content: center }`
- * over `.panel { margin: auto }`. That is correct while the panel is shorter
- * than the viewport, and it was: 530px on a 390×844 phone, 564px at 1280×720.
- * The picker adds ~420px, and a centred flex item taller than its scroll
- * container overflows in BOTH directions — the top half goes above the
- * scrollport and cannot be scrolled back to. Measured before this rule:
- * panel 980px tall, scrollHeight 912, panel top −68px at scrollTop 0 and −136px
- * at max scroll. The room code and Copy invite link were simply unreachable.
+ * This file used to carry `.screen-lobby { justify-content: safe center }`,
+ * flagged in its own comment as not-mine and as a request to fold into
+ * base.css. It was patching a centred flex item taller than its scroll
+ * container, which overflows in BOTH directions and strands its top half above
+ * the scrollport. `safe center` demoted that to overflowing in ONE direction.
  *
- * `safe center` is the one-keyword fix and it changes nothing when the panel
- * fits: it centres while there is free space and falls back to start alignment
- * the moment there is not. It is scoped to .screen-lobby so no other screen's
- * layout can be touched by this file.
+ * ui.css now lays the lobby out as three grid registers with the body as the
+ * only scroller, so there is no centred over-tall item left to align safely,
+ * and the rule has been deleted rather than kept as a no-op. The measurement
+ * that says the patch was never enough is in ui.css's lobby block: with the
+ * picker present and four seats, Launch Mission was still 85px below a 720px
+ * fold and the room code 197px above the top.
  */
-.screen-lobby { justify-content: safe center; }
 
 /* ── the block ────────────────────────────────────────────────────────── */
 
@@ -47,14 +44,19 @@
   min-width: 0;
 }
 
+/* The rule under it is ui.css's `.lobby-legend` marking, on the other column's
+   head. Both halves of the lobby now open the same way — a name, and a line
+   under it that runs the width of its column. */
 .ruleset-head {
   display: flex;
   align-items: baseline;
   gap: .5em;
   flex-wrap: wrap;
   min-width: 0;
+  box-shadow: inset 0 -2px 0 var(--shade);
+  padding-bottom: .2em;
 }
-.ruleset-title { margin: 0; font-size: var(--t-lede); color: var(--fg); }
+.ruleset-title { margin: 0; font-size: var(--t-lede); font-weight: 700; color: var(--fg); }
 
 /* The resolved name, live. It is computed by ui/ruleset.js matchPreset(), which
    is game.js resolveRules()'s detection loop — so it says "Custom" exactly when
@@ -87,19 +89,29 @@
 
 /* ── presets: four plates ─────────────────────────────────────────────── */
 
-/* ONE column at every width. ui.css sets .lobby-panel to `min(27em, 100%)`, so
-   the picker's container is 431px at 1280×720 and 387px at 390×844 — the panel
-   does not get wider on a desktop, only the apron around it does. A viewport
-   media query that switched to two columns therefore produced two 185px
-   columns, where "≈67 turns" no longer fit on the name row and every
-   consequence line ran to five rows.
-   The trade is measured and taken deliberately: one column costs 46px of height
-   on desktop (474 → 520) and buys back the wrapping. Height is the cheap axis
-   here — the panel scrolls (see the .screen-lobby note above) and line length
-   does not. */
+/* THE PRESETS ARE THE DECISION THIS SCREEN EXISTS FOR, so they get the width
+   the screen now has. The previous rule here was one column at every width, and
+   its reasoning was correct for the layout it was written against: ui.css
+   capped .lobby-panel at `min(27em, 100%)`, so the picker's container was 431px
+   at 1280×720 and 387px at 390×844 — the container did NOT widen on a desktop,
+   only the dead apron around it did. Two columns of that were 185px each, where
+   "≈67 turns" stopped fitting on the name row.
+
+   That cap is gone (ui.css's lobby block). The rules column is 570px at
+   1280×720 and 840px at 1920×1080, so the same two columns are 275px and 410px
+   — wider than the 431px the WHOLE picker used to get.
+
+   auto-fit + minmax rather than a media query, because the breakpoint that
+   matters is this column's width and not the viewport's: the same grid has to
+   be right in a 570px desktop column, an 840px wide-screen one, a 342px phone
+   and a 300px landscape half. 15em is the measured floor — below it the name
+   row ("Long Game" + "Longest" + "≈67 turns") wraps.
+
+   It buys height as well as prominence, which is what puts all four in view at
+   once: 4 stacked tiles at 1280 were 356px; the same four in 2×2 are ~190px. */
 .preset-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(15em, 1fr));
   gap: .35em;
   min-width: 0;
 }
@@ -231,17 +243,41 @@
 
 /* The native input is the control — it keeps arrow-key group traversal, Space
    to toggle, the accessible name from its own <label>, and the checked state a
-   screen reader announces. It is only ever moved out of sight, never replaced
-   by a <div role="checkbox">. */
+   screen reader announces. It is only ever made invisible, never replaced by a
+   <div role="checkbox">.
+
+   IT FILLS ITS LABEL RATHER THAN BEING CLIPPED TO 1×1, and that is a §0.9 fix
+   with a gate behind it. The old rule was the classic screen-reader clip
+   (`width: 1px; clip-path: inset(50%)`), which leaves a real, focusable,
+   pointer-accepting 1×1 input sitting under a 44px plate. tools/lib/audit.mjs
+   auditTapTargets measures the INPUT — deliberately, and its own comment says
+   why: "the element with opacity: 0 IS the hit target, and refusing to measure
+   it means refusing to measure the control". Measured: touchtest reported
+   `settings sheet: input.rule-input 1×1` the moment a radiogroup built with
+   this class appeared on a surface the gate visits.
+
+   The lobby's picker has always had the same defect and it has never been
+   caught, because no gate can reach a HOST lobby: a lobby broadcast carries no
+   `game`, so store.self.id is null, the host block stays hidden, and
+   touchtest's lobby surface is the guest view. This one rule fixes the theme
+   strip, all four presets, three win-rule rows, three sets segments and four
+   sudden-death rows at once.
+
+   `inset: 0` needs a positioned ancestor and has one in all three wrappers by
+   construction — .preset, .rule-row and .seg are each `position: relative` and
+   each is the input's own <label> parent. opacity, not visibility: the element
+   must keep taking pointer events, which is the whole point. */
 .rule-input {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+  appearance: none;
+  -webkit-appearance: none;
+  opacity: 0;
+  cursor: inherit;
 }
 
 .rule-row {
@@ -305,12 +341,25 @@
 
 /* ── sets-to-win: a stamped segmented strip ───────────────────────────── */
 
+/* SHARED WITH THE SETTINGS SHEET (ui/settings.js's Theme row), deliberately.
+   It is a segmented strip of mutually exclusive values drawn from the app's
+   material vocabulary — deboss for unchosen, the achromatic ink slab for
+   chosen — and building a second one in another file for the same job is the
+   duplication ART §3.2 is about. It lives here because this is where it was
+   first needed; if a third caller appears it wants promoting to base.css, and
+   that is a standing request in this agent's report. */
 .rule-seg {
   display: flex;
   gap: .3em;
   padding: 0;
+  min-width: 0;
 }
 .seg { position: relative; display: block; cursor: pointer; touch-action: manipulation; }
+/* A strip of WORDS, not digits: "System" needs more than the 44px square that
+   holds a "3". flex: 1 keeps the three faces equal, which is what makes them
+   read as one control rather than three buttons of different weights. */
+.seg-wide { flex: 1 1 0; min-width: 0; }
+.seg-wide .seg-face { width: 100%; padding: 0 .6em; font-family: var(--font-display); }
 .seg-face {
   display: flex;
   align-items: center;
@@ -330,6 +379,11 @@
   color: var(--act-fg);
   box-shadow: none;
 }
+/* The strip is the ROW's control in the settings sheet, so it takes the space
+   .settings-label leaves rather than hugging three words. content.css owns
+   .settings-row and is not this agent's file; this reaches it from the strip's
+   own side, which is the half that has to change anyway. */
+.settings-row > .rule-seg { flex: 1 1 auto; }
 
 /* ── focus: the same cobalt ring the rest of the app uses ─────────────── */
 

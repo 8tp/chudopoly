@@ -105,16 +105,24 @@ function describeClocks() {
   const reply = Number($('response-timeout')?.value ?? DEFAULT_REPLY);
   const humans = store.room.players.filter(p => !p.isBot).length;
 
+  /* TIGHTENED, not cut. §6 agency still requires the CONSEQUENCE of each clock
+     to be legible before the host picks a number — an expiring answer clock is
+     the one board change nobody chooses, and server/timers.js pays the charge
+     out of your cheapest cards on your behalf. What is gone is only the
+     restatement: the old copy said "you have 45s" after a heading that already
+     read "ANSWER CLOCK 45s". Measured at 390×844 in the rebuilt lobby, the two
+     sentences were 409 characters and ran to SIX lines above the presets, which
+     is a wall in front of the decision this screen exists for; they are 258 and
+     run to four. Both auto-resolutions are still named. */
   const bits = [];
   bits.push(reply > 0
-    ? `ANSWER CLOCK ${reply}s — when a card is played against you, you have ${reply}s to OPSEC `
-      + 'it or pay. Run it out and it is accepted for you, and a charge is paid automatically '
-      + 'from your cheapest cards.'
-    : 'ANSWER CLOCK OFF — a card played against you waits for an answer forever. One player '
-      + 'who walks away freezes the table.');
+    ? `ANSWER CLOCK ${reply}s — a card played against you must be OPSEC'd or paid inside it. `
+      + 'Let it run out and it is accepted for you, out of your cheapest cards.'
+    : 'ANSWER CLOCK OFF — a card played against you waits forever. One player who walks away '
+      + 'freezes the table.');
   bits.push(turn > 0
-    ? `TURN CLOCK ${turn}s — a turn that runs out is ended automatically, discarding down to `
-      + 'the hand limit if it has to.'
+    ? `TURN CLOCK ${turn}s — a turn that runs out is ended for you, discarding to the hand `
+      + 'limit if it has to.'
     : 'TURN CLOCK OFF — turns never expire.');
   // The floors are server-side and silent; a lobby that shows a number the
   // server will overrule is a label that lies (server/handlers.js MIN_HUMAN_*).
@@ -406,15 +414,20 @@ function syncPicker() {
 }
 
 /**
- * index.html is architect-owned (§1) and ships no picker, so it is built here —
- * once, then only mutated. Inserted before Launch Mission because the ruleset
- * is a decision you make BEFORE you launch, not a footnote under the button.
+ * index.html ships no picker, so it is built here — once, then only mutated.
+ *
+ * IT NOW HAS A COLUMN OF ITS OWN (#lobby-rules). It used to be inserted into
+ * #lobby-host directly above Launch Mission, which put ~500px of presets — and
+ * 2041px with the disclosure open — between the seat list and the one button
+ * the screen exists for, inside a `overflow: hidden` screen that could not
+ * scroll to reach it. Measured at 1280×720 with host + 3 bots and the
+ * disclosure CLOSED: Launch Mission at y 805..849 in a 720px viewport. The
+ * button is pinned in the rail now and this block scrolls beside the room.
  */
 function ensurePicker() {
   if (pickerRoot) return;
-  const hostBox = $('lobby-host');
-  const start = $('btn-start');
-  if (!hostBox || !start) return;
+  const column = $('lobby-rules');
+  if (!column) return;
 
   pending = loadHostRules();
 
@@ -480,24 +493,28 @@ function ensurePicker() {
 
   pickerRoot.addEventListener('change', onPick);
   pickerRoot.addEventListener('click', onDeckStep);
-  hostBox.insertBefore(pickerRoot, start);
+  column.appendChild(pickerRoot);
   syncPicker();
 }
 
 /**
  * What a seat that is NOT the host sees. Not a picker and not a guess at one:
  * a statement of who decides and where the answer will appear.
+ *
+ * It goes in the RULES column, which is where the picker would have been — a
+ * guest's rules column is otherwise an empty half of the screen, and the note
+ * answers the question that empty half raises.
  */
 function ensureGuestNote() {
   if ($('ruleset-guest')) return;
-  const hint = $('lobby-hint');
-  if (!hint) return;
-  hint.parentNode.insertBefore(el('p', {
+  const column = $('lobby-rules');
+  if (!column) return;
+  column.insertBefore(el('p', {
     class: 'ruleset-guest hint',
     attrs: { id: 'ruleset-guest', hidden: true },
     text: 'The host is choosing the ruleset. Whatever they pick, the table and How to play '
       + 'describe the game you are actually in, from the first hand.',
-  }), hint);
+  }), column.firstChild);
 }
 
 function clockValue(id, fallback) {
@@ -520,6 +537,10 @@ function render() {
 
   const host = store.room.hostId === store.self.id;
   setHidden($('lobby-host'), !host);
+  // Launch Mission lives in the rail now, outside #lobby-host, so hiding the
+  // host block no longer hides it — it is hidden on its own or every guest
+  // gets a button the server would refuse.
+  setHidden($('btn-start'), !host);
   ensureGuestNote();
   setHidden($('ruleset-guest'), host);
   if (host) { describeBots(); ensureClocks(); ensurePicker(); syncPicker(); }

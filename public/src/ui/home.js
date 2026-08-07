@@ -1,13 +1,12 @@
 // ui/home.js — call sign, create/join/quick play, and the deck on the table.
 
-import { $, el, setText, setAttr } from '../core/dom.js';
+import { $, el, setText } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import * as socket from '../net/socket.js';
 import * as send from '../net/send.js';
 import { store } from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
-import * as audio from '../audio/engine.js';
 import { faceNode, backNode } from '../table/cardart.js';
 
 const NAME_KEY = 'chud_name';
@@ -73,23 +72,24 @@ function buildDeck() {
   });
 }
 
-/* ══ SOUND, FROM THE MENU ════════════════════════════════════════════════
-   §7 attaches the music bed on the first pointerdown anywhere in the document
-   (main.js), and until now the only switch lived in the game screen's settings
-   sheet — so a player whose first gesture was Quick Play got a bed they could
-   not silence until the table had finished loading. engine.js documents
-   setMusicEnabled() as safe before a gesture (the score is a no-op until the
-   graph attaches) and pointer.js listens on window CAPTURE while main.js's
-   unlock listener is on the bubble phase, so this button pressed as the very
-   first gesture of a session sets the preference before init() ever runs. */
-function paintSound() {
-  const on = audio.isMusicEnabled();
-  const btn = $('btn-home-sound');
-  if (!btn) return;
-  btn.classList.toggle('is-off', !on);
-  setAttr(btn, 'aria-pressed', String(on));
-  setText($('home-sound-label'), on ? 'Sound on' : 'Sound off');
-}
+/* ══ SOUND, FROM THE MENU — NOW THE SETTINGS MARK ════════════════════════
+   This file used to own a music toggle in the rail's right corner. It existed
+   because §7 attaches the bed on the first pointerdown anywhere (main.js) and
+   the only switch lived inside the game screen's HUD, so tapping Quick Play
+   bought a bed you could not silence until the table loaded — it was a
+   MITIGATION for a missing surface, and its own comment said so.
+
+   ui/settings.js is now reachable from home, lobby and the table, and Sound
+   and Music are its first two rows, so the same corner opens the whole sheet.
+   Keeping both would have left two adjacent marks in one rail that both mean
+   "audio", one a strict subset of the other (ART §3.2), and would have needed
+   a third corner the phone's two-column rail has no room for.
+
+   The ordering property the old mark had is KEPT, and it is why this is a
+   `data-action` rather than a click handler: interact/pointer.js dispatches on
+   window CAPTURE and main.js's audio unlock is a bubble-phase listener on the
+   same window, so the sheet is open before init() ever runs. What that costs
+   in practice is measured in ui/settings.js, not asserted here. */
 
 function savedName() {
   try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; }
@@ -145,14 +145,12 @@ export function mount() {
   if (input && !input.value) input.value = saved;
   paintIdentity(saved);
   buildDeck();
-  paintSound();
 
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();
   if (room && $('code-input')) $('code-input').value = room;
 
   pointer.registerActions({
-    'home-sound': () => { audio.setMusicEnabled(!audio.isMusicEnabled()); paintSound(); },
     'quick-play': () => go((name) => send.quickPlay(name)),
     'create-room': () => go((name) => send.createRoom(name)),
     'join-room': () => go((name) => {

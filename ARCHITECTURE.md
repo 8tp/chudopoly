@@ -18,9 +18,38 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
 2. **No build step.** The client ships as native ES modules served statically from `public/`.
    `npm start` must remain the entire deployment story (Railway, single instance).
    `<script type="module" src="/src/main.js?v=...">` — one entry, real imports below it.
-3. **Zero external binary assets.** No .png/.jpg/.mp3/.woff/.glb — ever. Every texture,
-   card face, card back, icon, and sound is generated in code (CSS, inline SVG / SVG data-URIs
-   authored as text, canvas, WebAudio). Enforced by `tools/checkAssets.mjs`.
+3. **Zero external binary assets, with ONE amendment.** No .png/.jpg/.woff/.glb — ever.
+   Every texture, card face, card back and icon is generated in code (CSS, inline SVG /
+   SVG data-URIs authored as text, canvas). Enforced by `tools/checkAssets.mjs`.
+
+   **AMENDED 2026-08-07 — recorded music, and only music, may ship as files.** Scope:
+   `public/audio/*.opus`, at most **four** tracks (one lobby bed, two match beds, one Final
+   Approach bed). **Every sound effect stays procedural** and that is not a purity argument:
+   a synthesised click fires at zero latency with no load path, and its pitch and timing
+   jitter per call, which is what stops a cue heard 400× a match from becoming a woodpecker.
+   Samples would ship the *same* click 400 times.
+
+   The music case is different in kind and the numbers say so. A 3-minute bed is ~1.5MB at
+   64k Opus against a **381KB gzipped client** — one track is four times the whole game — so
+   this is not a cheap amendment and it carries conditions:
+   - **Nothing on first paint.** Lobby bed on first user gesture; match bed at game start;
+     Final Approach bed prefetched when a seat reaches two sets. A session pays for one
+     lobby + one match + at most one climax, never the set.
+   - **The procedural beds stay and stay working.** They cover the gap before a file loads
+     (no dead air, no spinner) and they are the fallback when a fetch fails or the player is
+     offline. `music.js` does not become a file player with synthesis deleted behind it.
+   - `checkAssets.mjs` is narrowed, not weakened: it must still fail on any binary outside
+     that exact directory and extension, and must fail if the track count exceeds four.
+
+   *Why the amendment, given the previous ruling went the other way:* the research found
+   Gatecrash's music is 100% synthesised, which killed the "sampled sounds better" premise
+   outright, and separately found five real defects in our own chain — the music never
+   touches the reverb at all, the bed is mono, nothing lives above ~2.5kHz, ART §7's "air"
+   layer was specified and never built, and the menu→match handoff is a 0.4s unaligned fade
+   the spec explicitly names as a failure. **Those four procedural fixes ship regardless and
+   ship first.** This amendment is for the thing synthesis genuinely cannot do in reasonable
+   code — a composed arrangement that develops — not a shortcut around a chain we hadn't
+   finished wiring.
 4. **Every card on screen is a persistent DOM node keyed by card id** (`data-card-id`).
    Cards move between zones by reparenting + FLIP transforms. **`innerHTML` rebuilding of any
    zone that contains card nodes is banned.** (Chat/log building nodes via `textContent` is fine

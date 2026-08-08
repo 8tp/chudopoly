@@ -163,6 +163,12 @@ export function playSelected() {
   mode.kind = 'target';
   mode.hint = HINTS[mode.needs[0]] || 'Choose a target';
   changed();
+  // §P10 FEEL: Play was ACCEPTED and targeting armed, and the only feedback
+  // was the marks appearing — zero sfx/haptic until the broadcast returned.
+  // The press cue never covers this tap (press() fires on CARDS, not on the
+  // strip's buttons). ui_tick + the 6ms pattern, rate-limited in engine.js
+  // and by haptics.js's floor.
+  cueEl(CUE.TARGET_STEP, true, false, getNode(mode.cardId));
 }
 
 export function bankSelected() {
@@ -494,8 +500,22 @@ export function pick(step, value) {
       break;
     default: return false;
   }
+  // The acceptance beat (§P10 FEEL): a tap on a marked victim board changed
+  // the mode with no sfx/haptic at all until the server answered. Fired HERE —
+  // the ONE place every route (tap, keyboard, drop) records a pick — so the
+  // three routes cannot disagree about what got acknowledged.
+  cueEl(CUE.TARGET_STEP, true, false, stepAnchor(step, value));
   advance();
   return true;
+}
+
+/** Where the accepted answer lives on the felt, for the cue's pan/epicentre. */
+function stepAnchor(step, value) {
+  if (step === 'player') return table.boardEl(value);
+  if (step === 'theirCard' || step === 'myCard' || step === 'swapCard') return getNode(value);
+  // a colour step: the mat, on whichever board the step was about
+  const ownerId = step === 'theirSet' ? mode.picks.targetId : store.self.id;
+  return table.boardEl(ownerId)?.querySelector(`.propcol[data-color="${value}"]`) || null;
 }
 
 function handleTargetTap(el) {
@@ -996,7 +1016,25 @@ function revealMarks(key) {
   } catch { marks[0].scrollIntoView(false); }
 }
 
+/**
+ * The pick-open fan (table.css's :has() rules over [data-targetable]) is a
+ * LAYOUT change armed by this very mark pass, and it used to arrive in one
+ * frame — no FLIP runs on a mark, because nothing reparents (§P10 FEEL,
+ * measured in table.flipStrip's header). So a pass that opens, closes or
+ * re-aims the fan is routed through table.flipStrip(), which measures the
+ * strip's cards around the mutation and flies the deltas. Screened here so
+ * the common pass (no fan involved) pays zero rect reads: the fan exists iff
+ * a theirCard step is arming, or its marks are already in the strip's DOM.
+ * Reduced motion collapses to the instant layout change (flipStrip bails).
+ */
 export function applyMarks() {
+  const fanNext = mode.kind === 'target' && mode.needs[0] === 'theirCard';
+  const fanNow = !!document.querySelector('.opponents .zone-props > .card[data-targetable="1"]');
+  if (fanNext || fanNow) table.flipStrip(applyMarksNow);
+  else applyMarksNow();
+}
+
+function applyMarksNow() {
   clearMarks();
   const snap = store.snapshot;
   if (!snap) return;

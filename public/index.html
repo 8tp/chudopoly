@@ -178,6 +178,29 @@
             </div>
           </div>
           <p id="home-error" class="error" role="alert" aria-live="polite"></p>
+          <!-- Opt-in public listing (owner directive 2026-08-07): meaningful
+               only for Create room, DEFAULT OFF, read by ui/home.js at the
+               moment create-room fires. A native checkbox, no data-action —
+               its state IS its meaning. -->
+          <label class="home-public" for="public-toggle">
+            <!-- The settings sheet's own switch pattern (content.css .switch):
+                 the 44px wrapper is the control, the input fills it at opacity
+                 0, the face is the drawing — the audited, contrast-measured
+                 way this app draws a toggle. A bare 15px checkbox is a §0.9
+                 refusal waiting to be measured. -->
+            <span class="switch">
+              <input id="public-toggle" class="switch-input" type="checkbox">
+              <span class="switch-face" aria-hidden="true"></span>
+            </span>
+            <span>List my room publicly</span>
+          </label>
+          <!-- OPEN TABLES (owner directive 2026-08-07): the public-rooms
+               browse. HIDDEN unless the poll finds at least one public lobby
+               ("dont show browse games if there isnt any actual ones") — with
+               zero rooms this screen is unchanged. Rows are built by
+               ui/home.js via textContent only; joining goes through the same
+               join path as a typed code. -->
+          <div id="home-tables" class="home-tables" hidden></div>
         </div>
 
         <!-- THE RAIL'S LEFT CORNER IS THE READING CORNER, and it now carries
@@ -203,6 +226,25 @@
           <button class="btn btn-ghost home-help" data-action="help">How to play</button>
           <button id="btn-flight-log" class="btn btn-ghost home-help home-log"
                   data-action="flight-log" hidden>Flight log</button>
+          <!-- OWNER, 2026-08-07: "add a github icon/emblem to the home page so
+               people can click on it easily and get to the project repository."
+               The reading corner is where it belongs — a repository is a thing
+               you go and READ, like the two marks beside it. A plain anchor, no
+               data-action: pointer.js's route() ignores elements without one,
+               so navigation is the browser's own. The mark is GitHub's octicon
+               path inline (§0.3: authored as text, no binary), uncoloured —
+               currentColor follows the ghost-button ink, which is the plain
+               mark in both themes, not a recolour. -->
+          <!-- NOT .btn-icon: that class paints the chrome glyph set's mask in
+               a ::before (default --ico-close), which put a ✕ beside the
+               octocat. This mark ships its own inline SVG. -->
+          <a id="home-github" class="btn home-github"
+             href="https://github.com/8tp/chudopoly" target="_blank" rel="noopener noreferrer"
+             aria-label="Chudopoly on GitHub">
+            <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+          </a>
         </div>
 
         <!-- THE SOUND MARK FOLDED INTO THIS ONE, and the fold is the point.
@@ -279,7 +321,7 @@
       <!-- THE ONLY SCROLLER ON THIS SCREEN. No env(safe-area-inset-*) here or
            on anything inside it: `.screen` is the single inset owner and
            tools/checkClient.mjs fails a second one. -->
-      <div id="lobby-body" class="lobby-body">
+      <div id="lobby-body" class="lobby-body scroll-edge">
 
         <section class="lobby-col lobby-col-room" aria-labelledby="lobby-seats-head">
           <h3 id="lobby-seats-head" class="lobby-legend">The room</h3>
@@ -427,7 +469,7 @@
         <h3 id="sheet-title"></h3>
         <button class="btn btn-icon is-close" data-action="close-sheet" aria-label="Close"></button>
       </div>
-      <div id="sheet-body" class="sheet-body"></div>
+      <div id="sheet-body" class="sheet-body scroll-edge"></div>
     </div>
   </div>
 
@@ -440,7 +482,7 @@
       </div>
       <h1 id="win-title"></h1>
       <p id="win-reason" class="hint"></p>
-      <div id="win-summary" class="win-summary"></div>
+      <div id="win-summary" class="win-summary scroll-edge"></div>
       <button id="btn-rematch" class="btn btn-primary" data-action="rematch">Rematch</button>
       <button id="btn-win-leave" class="btn btn-ghost" data-action="leave-room">Leave room</button>
     </div>

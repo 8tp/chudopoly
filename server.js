@@ -133,6 +133,46 @@ handlers.init({ G, Bot, broadcast, timers, absent, rooms, globalChat, CHAT_MAX, 
 app.get('/api/config', (req, res) => {
   res.json({ giphyKey: process.env.GIPHY_KEY || '' });
 });
+
+/* ── Public rooms (owner directive 2026-08-07) ─────────────────────────
+   The home screen's browse list. Opt-in only: a room appears here iff its
+   host created it with `public: true` (strictly validated in
+   server/protocol.js), it is still in the lobby, and a seat is open. Five
+   fields per room and NOTHING else — no player ids, no tokens, no chat —
+   pinned by test/public-rooms.test.js, which also proves a private room's
+   code is absent. Rate-limited per IP with the same window arithmetic the
+   WS frame limit uses, so polling clients are fine and a scraper is not:
+   the codes listed are public by the host's choice, but the endpoint must
+   not become a cheap liveness oracle hammered per-millisecond. */
+const LIST_WINDOW_MS = 5000;
+const LIST_MAX_PER_WINDOW = 20;
+const listHits = new Map();          // ip -> { at, n }
+app.get('/api/public-rooms', (req, res) => {
+  const ip = clientIp(req);
+  const now = Date.now();
+  let hit = listHits.get(ip);
+  if (!hit || now - hit.at >= LIST_WINDOW_MS) { hit = { at: now, n: 0 }; listHits.set(ip, hit); }
+  if (++hit.n > LIST_MAX_PER_WINDOW) { res.status(429).json({ error: 'Slow down' }); return; }
+  if (listHits.size > 10000) listHits.clear();   // bounded, cheap amnesty
+  const out = [];
+  for (const room of rooms.values()) {
+    if (room.public !== true || room.phase !== 'lobby') continue;   // lobby only, never a live game
+    if (room.players.length >= 5) continue;                         // full is not joinable
+    // A lobby whose humans have all dropped is a dead end for a joiner — the
+    // reaper will collect it, but it must not be advertised in the meantime.
+    if (!room.players.some(p => !p.isBot && p.ws?.readyState === 1)) continue;
+    const host = room.players.find(p => p.id === room.hostId);
+    out.push({
+      code: room.code,
+      host: host?.name || 'Host',
+      seats: room.players.length,
+      capacity: 5,                              // handlers.js's own cap, restated
+      preset: (room.pendingRules && room.pendingRules.preset) || 'custom',
+    });
+    if (out.length >= 50) break;                // a page, not a firehose
+  }
+  res.set('Cache-Control', 'no-store').json({ rooms: out });
+});
 const STARTED_AT = Date.now();
 app.get('/health', (req, res) => res.json({
   ok: true,

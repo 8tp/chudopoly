@@ -898,6 +898,9 @@ const SFX_FOR_CUE = Object.freeze({
   [CUE.PICKUP]: 'card_pickup',
   [CUE.DENIED]: 'denied',
   [CUE.DETAILS]: 'ui_tick',
+  // §7: quiet chrome, through the existing bank — no new sound. ui_tick is
+  // tier 4, weight 1, and RATE_DEFAULT (0.08s) floors a fast tap-tap-tap.
+  [CUE.TARGET_STEP]: 'ui_tick',
   [CUE.SET_COMPLETED]: null,
   [CUE.STEAL_LANDED]: null,
   [CUE.OPSEC_CLASH]: null,

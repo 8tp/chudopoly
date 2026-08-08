@@ -1,6 +1,6 @@
 // ui/home.js — call sign, create/join/quick play, and the deck on the table.
 
-import { $, el, setText } from '../core/dom.js';
+import { $, el, setText, setHidden, clear } from '../core/dom.js';
 import * as bus from '../core/bus.js';
 import { EVENTS } from '../core/bus.js';
 import * as socket from '../net/socket.js';
@@ -8,6 +8,7 @@ import * as send from '../net/send.js';
 import { store } from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
 import { faceNode, backNode } from '../table/cardart.js';
+import { presetLabel } from './ruleset.js';
 // The flight log's entry point is a mark on this screen's rail, so this screen
 // mounts it. main.js is architect-owned (§1) and does not need a new import for
 // a surface that only exists on the home rail.
@@ -124,6 +125,63 @@ function go(fn) {
   fn(name);
 }
 
+/* ══ OPEN TABLES — the public-rooms browse (owner directive 2026-08-07) ════
+   GET /api/public-rooms on arrival, then a gentle poll while this screen is
+   the one on show. The section renders ONLY when at least one public lobby
+   exists — the owner's ruling, verbatim: "dont show browse games if there
+   isnt any actual ones" — so with zero rooms the home screen is unchanged.
+   Joining a row is send.joinRoom() with the row's code: byte-for-byte the
+   same path a typed code takes, no new join semantics. Every string lands
+   via el()'s textContent (XSS discipline); the host name is server-validated
+   but that is defence in depth, not a licence. A 10s poll is a fetch, not a
+   frame source, so §0.6's one-clock rule is not in play; the tick stands
+   down entirely off-screen and in hidden tabs. */
+const TABLES_POLL_MS = 10000;
+let tablesTimer = 0;
+let tablesKey = '';                  // last painted listing, to skip no-op repaints
+
+function paintTables(list) {
+  const host = $('home-tables');
+  if (!host) return;
+  const rooms = Array.isArray(list) ? list.slice(0, 8) : [];
+  const key = rooms.map(r => `${r.code}:${r.seats}:${r.host}:${r.preset}`).join('|');
+  if (key === tablesKey) return;
+  tablesKey = key;
+  clear(host);
+  if (!rooms.length) { setHidden(host, true); return; }
+  host.appendChild(el('p', { class: 'home-tables-label', text: 'OPEN TABLES' }));
+  for (const room of rooms) {
+    if (!/^[A-HJ-NP-Z2-9]{4}$/.test(String(room.code || ''))) continue;   // server said, but verify
+    host.appendChild(el('button', {
+      class: 'btn home-table-row',
+      attrs: { type: 'button' },
+      dataset: { action: 'join-public', code: room.code },
+    }, [
+      el('span', { class: 'home-table-host', text: String(room.host || 'Host') }),
+      el('span', { class: 'home-table-meta', text: `${room.seats}/${room.capacity} seats · ${presetLabel(room.preset)}` }),
+      el('span', { class: 'home-table-code mono', text: room.code }),
+    ]));
+  }
+  setHidden(host, false);
+}
+
+async function refreshTables() {
+  if (store.screen && store.screen !== 'home') return;
+  if (document.hidden) return;
+  try {
+    const res = await fetch('/api/public-rooms');
+    if (!res.ok) return;                       // rate limit / server trouble: keep what we have
+    const data = await res.json();
+    paintTables(data?.rooms);
+  } catch { /* offline home stays a home screen */ }
+}
+
+function startTablesPoll() {
+  if (tablesTimer) return;
+  refreshTables();
+  tablesTimer = setInterval(refreshTables, TABLES_POLL_MS);
+}
+
 /* ══ FIRST-TIMER vs RETURNING ════════════════════════════════════════════
    These looked identical, which is the gap: the returning player's call sign
    was silently prefilled and nothing on screen acknowledged it, so the field
@@ -159,7 +217,10 @@ export function mount() {
 
   pointer.registerActions({
     'quick-play': () => go((name) => send.quickPlay(name)),
-    'create-room': () => go((name) => send.createRoom(name)),
+    // The public flag is read at the moment of creation, never remembered:
+    // an opt-in that silently persisted across sessions would list a room
+    // the host did not choose to list today.
+    'create-room': () => go((name) => send.createRoom(name, !!$('public-toggle')?.checked)),
     'join-room': () => go((name) => {
       const code = ($('code-input')?.value || '').trim().toUpperCase();
       if (!/^[A-HJ-NP-Z2-9]{4}$/.test(code)) {
@@ -168,7 +229,14 @@ export function mount() {
       }
       send.joinRoom(code, name, socket.creds());
     }),
+    // A row in OPEN TABLES: the ordinary join, with the row's code.
+    'join-public': (elx) => go((name) => {
+      const code = String(elx?.dataset?.code || '').toUpperCase();
+      if (!/^[A-HJ-NP-Z2-9]{4}$/.test(code)) return;
+      send.joinRoom(code, name, socket.creds());
+    }),
   });
+  startTablesPoll();
 
   // Enter submits from either field.
   for (const id of ['name-input', 'code-input']) {

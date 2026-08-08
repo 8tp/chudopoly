@@ -356,6 +356,66 @@
 .home-join .btn { flex: 0 0 auto; padding: 0 .9em; }
 .home #home-error { flex: 1 1 100%; margin: 0; text-align: center; }
 
+/* ── the opt-in public toggle (owner directive 2026-08-07) ────────────────
+   Painted lettering by the marshalling area's own rules — mute ink, no
+   chassis — with §0.9's 44px box on the whole label so the words are the
+   target, not the 16px square. */
+.home-public {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35em;
+  min-height: var(--tap);
+  font-size: var(--t-small);
+  font-weight: 700;
+  color: var(--fg-mute);
+  cursor: pointer;
+  user-select: none;
+}
+.home-public:has(input:checked) { color: var(--fg); }
+
+/* ── OPEN TABLES (public rooms) ───────────────────────────────────────────
+   Furniture on the apron: the same debossed well the comms log sits in, not a
+   1px-bordered card list (§3.2). Present only while the poll finds a public
+   lobby — ui/home.js keeps it `hidden` otherwise, so the zero-rooms home is
+   unchanged. Rows are full-width 44px targets; the code is the only mono. */
+.home-tables {
+  flex: 1 1 100%;
+  width: min(30em, 100%);
+  margin: .35em auto 0;
+  padding: .35em .5em .45em;
+  border-radius: var(--radius);
+  background: var(--ground);
+  box-shadow: var(--deboss);
+}
+.home-tables-label {
+  margin: 0 0 .15em;
+  font-size: var(--t-micro);
+  font-weight: 800;
+  letter-spacing: var(--track-display);
+  color: var(--fg-mute);
+}
+.home-table-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  gap: .6em;
+  min-height: var(--tap);
+  padding: 0 .3em;
+  font-size: var(--t-small);
+  --btn-face: transparent;
+  --btn-edge: transparent;
+  --btn-drop: 0px;
+  box-shadow: inset 0 -1px 0 var(--shade);
+  border-radius: 0;
+}
+.home-table-row:last-child { box-shadow: none; }
+.home-table-host { color: var(--fg); font-weight: 800; }
+.home-table-meta { flex: 1 1 auto; text-align: left; color: var(--fg-mute); font-weight: 600; min-width: 0; }
+.home-table-code { color: var(--fg-mute); letter-spacing: .08em; }
+
 /* The two corner marks. Painted, not buttons: a fourth and fifth ink slab in
    the rail would flatten the hierarchy the slab exists to carry, and these sit
    at the frame's corners where a real apron puts its lettering. They keep the
@@ -380,6 +440,27 @@
 }
 .home-help:active:not(:disabled),
 .home-settings:active:not(:disabled) { transform: none; box-shadow: none; }
+
+/* The repository mark (owner directive 2026-08-07: "add a github icon/emblem
+   to the home page so people can click on it easily"). GitHub's own octicon,
+   inline as text (§0.3), drawn to the painted-mark rules above: same mute ink,
+   same §0.9 44px box, no slab, no press travel. An ANCHOR, not a button — the
+   browser owns the navigation — so the text marks' underline is stripped:
+   iconography carries no rule, and the accessible name is on the anchor. */
+.home-github {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  box-shadow: none;
+  align-self: center;
+  color: var(--fg-mute);
+  --btn-ink: var(--fg-mute);
+  text-decoration: none;
+}
+.home-github:active { transform: none; box-shadow: none; }
+@media (hover: hover) {
+  .home-github:hover { background: transparent; color: var(--fg); --btn-ink: var(--fg); }
+}
 
 /* ── the dial, on a rail mark ─────────────────────────────────────────────
    The SAME --ico-dial the HUD's settings button wears, painted the same way
@@ -606,18 +687,13 @@
   overscroll-behavior: contain;
   scrollbar-width: thin;
   /* ROUND-2 LOOK #6: the fold cut the deck editor mid-row ("TDY Orders" sliced
-     at the frame edge) with no cue that the column continues — the harness
-     hides scrollbars, so a cut row was the END of the screen as far as the
-     picture could say. The travelling shades are .opponents' own device
-     (table.css records why it beat a static fade): each `local` layer rides
-     the content, so a shade can only appear at an end that has rows behind
-     it, and a row sliced by the fold now sits under a shadow that says
-     "scroll" instead of under nothing. */
-  background:
-    linear-gradient(180deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 0 / 100% 1.2em no-repeat local,
-    linear-gradient(0deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 100% / 100% 1.2em no-repeat local,
-    linear-gradient(180deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 100% .9em no-repeat,
-    linear-gradient(0deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 100% / 100% .9em no-repeat;
+     at the frame edge) with no cue that the column continues. The device that
+     fixed it — .opponents' travelling shades — is now the SHARED .scroll-edge
+     rule-set above (P10 LOOK unified six surfaces on it); this element carries
+     the class in index.html and only its ground colour here. P10 also adds the
+     feather the shades alone lacked: the sliced stepper row now fades at the
+     fold instead of cutting mid-glyph under a shadow. */
+  --edge-ground: var(--ground);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   /* `safe center`, and the `safe` is the whole point — lobby.css records the
@@ -1362,6 +1438,57 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: .5em; }
 .sheet-head h3 { margin: 0; font-size: var(--t-title); }
 .sheet-body { overflow-y: auto; scrollbar-width: thin; }
+
+/* ══ THE SCROLL-EDGE TREATMENT — one device for every sheet scroller ═══════
+   P10 LOOK: six modal surfaces hard-cut text mid-glyph at their fold with no
+   cue that anything continues — win-recap sliced a row behind "Open the full
+   log", settings cut "Show first-game hints again", help-cards its last
+   sentence, flightlog a row above its footer, the discard browser its bottom
+   card row, the lobby's deck editor a stepper. The opponents strip already
+   carries the correct device (table.css ~112-134, with the measurements that
+   shaped it); this is that device as ONE shared rule-set instead of a fifth
+   hand copy.
+
+   Three layers, each already ratified somewhere:
+   • two `local` covers in the surface's own ground — they travel with the
+     content, so a shade can only appear at an end that has rows behind it
+     (the strip's ROUND-6 ruling: a cue that appears while resting at an edge
+     reads as a rendering fault);
+   • two static --shade-2 ramps — the "more below/above" signal, the same
+     material checkContrast has been green over on .lobby-body since LOOK #6;
+   • a short FEATHER mask at each end, so a line crossing the fold fades out
+     instead of slicing mid-glyph. .45em, not the .9em the strip rolled back:
+     ROUND-6 measured a full text row held at the ramp's alpha failing 4.5:1,
+     and at .45em the feather eats at most the descender half of a 1.4-line-
+     height row — the hosts below pad their resting content clear of it.
+     A mask, not an overlay node: screenshot's buried-text audit ignores paint,
+     and a DOM overlay would be an occluder (the jr-more note in content.css
+     records the same choice).
+
+   Hosts opt out of the BOTTOM feather when a sticky footer IS their bottom
+   edge (the flight log, the win recap) — masking that region would erase the
+   footer, and the footer's own shade ramp carries the cue there. */
+.scroll-edge {
+  --edge-ground: var(--surface);
+  --edge-feather-top: .45em;
+  --edge-feather-bot: .45em;
+  background:
+    linear-gradient(180deg, var(--edge-ground) 46%, rgba(0, 0, 0, 0)) 0 0 / 100% 1.2em no-repeat local,
+    linear-gradient(0deg, var(--edge-ground) 46%, rgba(0, 0, 0, 0)) 0 100% / 100% 1.2em no-repeat local,
+    linear-gradient(180deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 100% .9em no-repeat,
+    linear-gradient(0deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 100% / 100% .9em no-repeat;
+  -webkit-mask-image: linear-gradient(transparent,
+    #000 var(--edge-feather-top),
+    #000 calc(100% - var(--edge-feather-bot)), transparent);
+  mask-image: linear-gradient(transparent,
+    #000 var(--edge-feather-top),
+    #000 calc(100% - var(--edge-feather-bot)), transparent);
+}
+/* Resting content sits clear of the feather; only scrolled-under text fades. */
+.sheet-body.scroll-edge { padding-top: .45em; padding-bottom: .45em; }
+/* The flight log's footer rides the scroller's bottom (content.css .fl-footer,
+   sticky): the bottom edge is the footer's, and its ramp is the cue. */
+.sheet-body.scroll-edge:has(.fl-footer) { --edge-feather-bot: 0em; }
 .sheet-confirm { display: flex; flex-direction: column; gap: .55em; }
 .emote-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .45em; }
 .emote-grid .btn { padding: 0 .3em; font-size: .85em; }

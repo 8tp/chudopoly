@@ -322,12 +322,18 @@ function handleMessage(ws, msg, state) {
       // touches the picker. `set_rules` replaces it; start_game launches whatever it holds.
       const room = { code, phase: 'lobby', hostId: state.playerId, players: [player], state: null, chat: [],
         turnTimeout: DEFAULT_TURN_TIMEOUT, responseTimeout: DEFAULT_RESPONSE_TIMEOUT,
-        pendingRules: G.resolveRules({}) };
+        pendingRules: G.resolveRules({}),
+        // Opt-in, DEFAULT OFF (owner directive 2026-08-07): only `public: true`
+        // — validated strictly boolean in protocol.js — puts this room's code
+        // in GET /api/public-rooms (server.js). A private room's code never
+        // leaves the people the host gave it to; test/public-rooms.test.js
+        // pins the absence.
+        public: msg.public === true };
       rooms.set(code, room);
       sendJoined(ws, room, player);
       broadcast.send(ws, { type: 'chat_history', scope: 'global', msgs: globalChat.slice(-CHAT_MAX) });
       broadcast.broadcastRoom(room);
-      console.log(`[ROOM] ${code} created by ${player.name}`);
+      console.log(`[ROOM] ${code} created by ${player.name}${room.public ? ' (public)' : ''}`);
       break;
     }
 

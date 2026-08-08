@@ -234,3 +234,46 @@ test('scoop timing, the clocks, and the full-zone note are stated', () => {
   assert.match(details, /no room for this card/,
     'a full zone among a hand wild\'s counts-as rows must say it cannot take the card');
 });
+
+/* ── P-round 3 CLARITY: the break-list and the TDY copy on a CHUD-less deck ─
+ *
+ * breakBullets() taught "THE CHUD CARD — the only card that can pull ONE card
+ * out of a set" unconditionally, including under the shipped MD Faithful preset
+ * (chud: 0) — while the same brief's Cards page correctly said "Not in this
+ * table's deck: THE CHUD CARD". Same class, smaller: ACTION_RULES.tdy_orders
+ * ended "…which is what separates it from CHUD", a comparison to a card the
+ * table may not contain. */
+test('the Goal page break-list follows the deck, and the TDY copy stops naming CHUD', async () => {
+  // Engine half: under MD Faithful the game genuinely deals no CHUD card.
+  const state = game.createGame(
+    [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], { seed: 'nochud', preset: 'mdFaithful' });
+  const view = game.getPlayerView(state, 'a');
+  assert.equal(view.rules.deck.chud, 0, 'MD Faithful ships chud: 0');
+  const dealt = game.buildDeck(view.rules.deck);
+  assert.equal(dealt.some(c => c.action === 'chud'), false,
+    'buildDeck honours the count — no CHUD card exists in this game');
+  const { totalsFor } = await load('public/src/ui/deckcensus.js');
+  assert.equal(totalsFor(view.rules.deck).get('act:chud'), 0,
+    'the census resolver the help must consult agrees');
+
+  // Renderer half (help.js imports DOM helpers → source gates, ui-contract style).
+  const help = read('public/src/ui/help.js');
+  const body = /function breakBullets\(active\)[\s\S]*?\n\}/.exec(help);
+  assert.ok(body, 'breakBullets must take the ACTIVE rules — with no argument it '
+    + 'cannot know which deck it is describing');
+  assert.match(body[0], /totalsFor\(active\.deck\)/,
+    'the break-list must filter through the same resolver pageCards uses');
+  assert.match(body[0], /'chud'/,
+    'and the CHUD bullet must be conditional on the deck holding one');
+  assert.doesNotMatch(help, /breakBullets\(\)/,
+    'no call site may ask for the list without saying whose deck it is');
+  assert.match(body[0], /Not in this table's deck/,
+    'an absent break card is NAMED absent (the Cards page policy), not silently dropped');
+
+  // core/cards.js is dependency-free and loads: the card copy itself.
+  const cards = await load('public/src/core/cards.js');
+  assert.doesNotMatch(cards.ACTION_RULES.tdy_orders, /CHUD/,
+    'the TDY rule text must not define itself against a card the deck may hold zero of');
+  assert.match(cards.ACTION_RULES.tdy_orders, /give a card back/,
+    'the fact the comparison carried — a trade, never a one-way take — must survive the cut');
+});

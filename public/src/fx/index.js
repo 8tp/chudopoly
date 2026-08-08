@@ -435,6 +435,11 @@ function onCue(payload) {
   // No particles and no trauma: the finger is already on the card.
   if (kind === CUE.PICKUP) { if (mine) hap.haptic('pickup'); return; }
 
+  // A targeting answer the machine ACCEPTED (§P10 FEEL): same acknowledgement
+  // contract as the press — the lightest pattern, priority 0, no particles.
+  // The audible half is engine.js's ui_tick off the same cue.
+  if (kind === CUE.TARGET_STEP) { if (mine) hap.haptic('pickup'); return; }
+
   // Guard BEFORE the overlay is built: the cues fx deliberately ignores are the
   // frequent ones (flight_start, deal_done, turn_start, details, and every card
   // landing that is not yours), and a game that only ever fires those must
@@ -612,6 +617,7 @@ function onCue(payload) {
  */
 const HAPTIC_FOR_CUE = Object.freeze({
   [CUE.PICKUP]: 'pickup',
+  [CUE.TARGET_STEP]: 'pickup',
   [CUE.LANDED]: 'land',
   [CUE.DENIED]: 'denied',
   [CUE.SET_COMPLETED]: 'setComplete',

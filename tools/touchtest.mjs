@@ -105,6 +105,23 @@ const BRIDGE_MS = 30000;
 
 const r = reporter(`touchtest  ${dim(`${PHONE.width}×${PHONE.height} DPR${PHONE_DPR} + ${LANDSCAPE.width}×${LANDSCAPE.height}, real touch only`)}`);
 const server = await startServer({ seed });
+
+/* A PUBLIC room on the ephemeral server, opened BEFORE any page loads, so the
+ * home surface renders OPEN TABLES (owner directive 2026-08-07) and its rows
+ * are inside every §0.9 audit this file runs on 'home'. The census minted
+ * `layer:home-tables` the day the section shipped, and a hidden-when-empty
+ * surface no gate can see is the exact failure tools/coverage.mjs exists for.
+ * The socket stays open for the whole run — a lobby with no connected human
+ * is deliberately not listed (server.js /api/public-rooms), so closing it
+ * early would blank the light-theme home and fail the geometry parity check. */
+const require2 = (await import('node:module')).createRequire(new URL('../package.json', import.meta.url));
+const PubWS = require2('ws');
+const pubWs = new PubWS(server.url.replace('http', 'ws'));
+await new Promise((resolve) => {
+  pubWs.on('open', () => { pubWs.send(JSON.stringify({ type: 'create_room', name: 'Open Table', public: true })); resolve(); });
+  pubWs.on('error', () => resolve());          // no room = the section stays hidden; home audits still run
+});
+
 let browser = null;
 let code = EXIT_PASS;
 
@@ -635,11 +652,51 @@ try {
     drive: 'flight-log', expect: 'flightlog:open', label: 'flight log (3)',
   });
 
+  /* ── END TURN exists only on your own turn (owner directive 2026-08-07) ──
+   * "hide end turn on screen unless it is actually your turn — better player
+   * feedback if the button disappears." Both halves are asserted on recorded
+   * fixtures whose turn-holder is known: mid-game is this seat's turn,
+   * payment-pending is Iceman's. GONE means gone — `[hidden]`/display:none
+   * with no box — not merely disabled, which is the state the owner named as
+   * bad feedback. PROVEN TO FAIL: with hud.js's setHidden(endBtn) reverted to
+   * the old disable-only line, the off-turn half reports the button visible
+   * (red run recorded in this round's report). */
+  const endTurnState = () => page.evaluate(() => {
+    const b = document.getElementById('btn-end-turn');
+    if (!b) return { present: false, visible: false, myTurn: null };
+    const st = getComputedStyle(b);
+    const box = b.getBoundingClientRect();
+    return {
+      present: true,
+      visible: !b.hidden && st.display !== 'none' && box.width > 0 && box.height > 0,
+      disabled: !!b.disabled,
+      myTurn: window.__CHUD.snapshot?.currentPlayerId === window.__CHUD.selfId,
+    };
+  });
+
   /* Sheets first, over a recorded table, so their numbers are reproducible. */
-  if (await stage('mid-game')) await measureSheets();
+  if (await stage('mid-game')) {
+    const et = await endTurnState();
+    if (!et.present || et.myTurn !== true) {
+      r.fail(`end-turn: mid-game did not stage this seat's turn (${JSON.stringify(et)}) — measured nothing`);
+    } else if (et.visible && !et.disabled) {
+      r.pass('END TURN is on screen and live on your own turn');
+    } else {
+      r.fail(`END TURN missing or dead on the player's own turn — ${JSON.stringify(et)} (§0.9: the keyboard/tap path to ending a turn must exist)`);
+    }
+    await measureSheets();
+  }
 
   /* ── payment by touch, and §D occlusion of the confirm bar ───────────── */
   if (await stage('payment-pending')) {
+    const et = await endTurnState();
+    if (!et.present || et.myTurn !== false) {
+      r.fail(`end-turn: payment-pending did not stage another seat's turn (${JSON.stringify(et)}) — measured nothing`);
+    } else if (et.visible) {
+      r.fail('END TURN is on screen during another seat\'s turn — the owner asked for it GONE off-turn, not greyed');
+    } else {
+      r.pass('END TURN is gone from the dock off-turn (owner directive 2026-08-07)');
+    }
     await tapSel('[data-action="begin-payment"]');
     await page.waitForTimeout(300);
     const payable = await page.evaluate(
@@ -1312,6 +1369,7 @@ try {
   console.log(red(`  ✗ ${e.stack || e.message}`));
   code = EXIT_FAIL;
 } finally {
+  try { pubWs.close(); } catch { /* already down */ }
   if (browser) await browser.close().catch(() => {});
   await server.stop();
 }

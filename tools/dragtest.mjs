@@ -988,6 +988,123 @@ try {
     }
   }
 
+  /* ── §H1 the pick-open fan OPENS — motion, not teleportation ─────────────
+   *
+   * §P10 FEEL: entering the theirCard step is pure CSS :has() layout
+   * (table.css ~1346-1385 — grid spans, --card-w, negative margins, the seats
+   * track), and before table.flipStrip existed the whole fan arrived in ONE
+   * frame: the victim seat grew ~140→~250px with no motion anywhere, because
+   * no FLIP runs on a mark — nothing reparents. The fix measures the strip's
+   * cards around interact/'s mark pass and flies the inverted deltas on the
+   * one clock.
+   *
+   * The measurement is §E's own rAF sampler pointed at a card the fan moves:
+   * installed BEFORE the arming tap, so frame 0 is the resting stack. A
+   * teleport is exactly {≤1 moving frame, ~0ms spread, max step == total};
+   * motion is many frames spread over real time. PROVEN TO FAIL: with
+   * interact/applyMarks routed straight to applyMarksNow (the flipStrip call
+   * disabled) this reads "1 moving frame over 0ms" — red run recorded in this
+   * round's report. Reduced motion is not sampled here: the collapse to the
+   * instant change is the specified §0.9 behaviour, not a regression.
+   */
+  {
+    const sb = stealBoard();
+    await stage(page, sb.state);
+    await tap(page, CARD(sb.mr.id));
+    await tap(page, '[data-action="play-card"]');
+    await page.waitForTimeout(240);
+    const m = await mode(page);
+    if (m.kind !== 'target' || m.needs[0] !== 'player') {
+      r.fail(`§H1 never reached the player step (mode ${m.kind}, needs ${JSON.stringify(m.needs)})`);
+    } else {
+      // Sampler first, THEN the tap that arms the fan — centroid + width per rAF.
+      await page.evaluate((sel) => {
+        const node = document.querySelector(sel);
+        const t0 = performance.now();
+        const trace = { frames: [], done: false };
+        window.__FAN_TRACE = trace;
+        const tick = () => {
+          const b = node.getBoundingClientRect();
+          trace.frames.push([
+            Math.round(performance.now() - t0),
+            Math.round((b.left + b.width / 2) * 10) / 10,
+            Math.round((b.top + b.height / 2) * 10) / 10,
+            Math.round(b.width * 10) / 10,
+          ]);
+          if (performance.now() - t0 < 900) requestAnimationFrame(tick);
+          else trace.done = true;
+        };
+        tick();
+      }, CARD(sb.top.id));
+      await tap(page, '.board[data-player="p2"]');           // arms theirCard → the fan
+      await page.waitForFunction(() => window.__FAN_TRACE && window.__FAN_TRACE.done,
+        null, { timeout: 4000 });
+      const armed = await mode(page);
+      const frames = await page.evaluate(() => window.__FAN_TRACE.frames);
+      const s = springShape(frames);
+      if (armed.needs?.[0] !== 'theirCard') {
+        r.fail(`§H1 the victim tap never armed theirCard (needs ${JSON.stringify(armed.needs)})`);
+      } else if (s.total < 8) {
+        // §8: a gate that measured nothing must not pass — if the fan stops
+        // moving this card, sample a card it does move.
+        r.fail(`§H1 the sampled card moved only ${s.total}px opening the fan — this run measured nothing`);
+      } else if (s.moving < 3 || s.spreadMs < 60 || s.maxStep > s.total * 0.8) {
+        r.fail(`§H1 the pick-open fan SNAPS open — ${s.moving} moving frame(s) over ${s.spreadMs}ms, `
+          + `biggest single-frame jump ${s.maxStep}px of ${s.total}px total (§P10: the fan's `
+          + 'opening must be >1 frame of motion on the one clock)');
+      } else {
+        r.pass(`§H1 the fan opens as motion: ${s.moving} frames over ${s.spreadMs}ms `
+          + dim(`(${s.total}px, max step ${s.maxStep}px)`));
+      }
+      // …and it still settles into §G's guarantees, which ran above.
+    }
+  }
+
+  /* ── §H2 the drag lean relaxes when the pointer parks ────────────────────
+   *
+   * §P10 FEEL, measured on the pre-fix build: table.dragCard() computes the
+   * velocity pose only on pointermove, so a fast sweep followed by a 260ms
+   * hold left the card at −4.2° / scaleX 1.055 for the whole hold. The fix
+   * decays rec.vx toward 0 from drag.js's follow() subscriber (τ ≈ 120ms,
+   * table.dragSettle). Asserted with a real CDP sweep: the lean must EXIST at
+   * the end of the sweep (or this run measured nothing) and be under 1° after
+   * a 450ms park — exp(−450/120) leaves ~2% of a saturated 6°. PROVEN TO
+   * FAIL: with the dragSettle call removed from follow(), the parked reading
+   * equals the hot one (red run recorded in this round's report).
+   */
+  {
+    await stage(page, board.state);
+    const from = await centre(page, CARD(board.handCard.id));
+    if (!from) {
+      r.fail('§H2 no hand card to sweep');
+    } else {
+      const tiltOf = () => page.evaluate(
+        (sel) => parseFloat(document.querySelector(sel)?.style.getPropertyValue('--tilt')) || 0,
+        CARD(board.handCard.id));
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      for (let i = 1; i <= 10; i++) {
+        await page.mouse.move(from.x + i * 28, from.y - i * 6);
+        await page.waitForTimeout(5);
+      }
+      const hot = await tiltOf();
+      await page.waitForTimeout(450);                        // the park, pointer still down
+      const parked = await tiltOf();
+      await page.keyboard.press('Escape');
+      await page.mouse.up().catch(() => {});
+      await page.waitForTimeout(300);
+      if (Math.abs(hot) < 1.5) {
+        r.fail(`§H2 the sweep built only ${hot}° of lean — this run measured nothing `
+          + '(V_REF or the sweep speed moved; make the gesture faster)');
+      } else if (Math.abs(parked) > 1) {
+        r.fail(`§H2 the lean FROZE at a parked pointer: ${hot}° at sweep end, still `
+          + `${parked}° after a 450ms hold (τ=120ms decay predicts <0.2°)`);
+      } else {
+        r.pass(`§H2 the lean relaxes while parked ${dim(`(${hot}° hot → ${parked}° after 450ms)`)}`);
+      }
+    }
+  }
+
   ensureDir(SHOT_DIR);
   fs.writeFileSync(path.join(SHOT_DIR, 'coverage-dragtest.json'), JSON.stringify({
     tool: 'dragtest',

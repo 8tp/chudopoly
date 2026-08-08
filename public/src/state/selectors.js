@@ -8,6 +8,7 @@ import { store, selfPlayer, playerById } from './store.js';
 import {
   COLOR_KEYS, isComplete, zoneFull, requisitionable, legalColorsFor,
   upgradeKinds, upgradeCards, rentFor, setSize, ACTION_NEEDS, COLORS,
+  SWAP_COST,
 } from '../core/cards.js';
 
 export function snapshot() { return store.snapshot; }
@@ -279,8 +280,11 @@ export function swapColors(cardId) {
     && swapPartners(cardId, color).length > 0);
 }
 
-/** Mirror of game.js swapProperties()'s budget check — a swap draws TWO. */
-export const SWAP_COST = 2;
+/** Mirror of game.js swapProperties()'s budget check — a swap draws TWO.
+ *  The number lives in core/cards.js beside REARRANGE_BUDGET so the help and
+ *  this predicate quote the same mirror; re-exported so existing importers of
+ *  this module keep working. */
+export { SWAP_COST };
 
 export function canSwap() {
   return rearrangeWindowOpen() && rearrangesLeft() >= SWAP_COST;

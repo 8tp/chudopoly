@@ -93,19 +93,28 @@ function propertyContext(card) {
   // set. Measured: two "any" wilds in Command printed "Command 2/2 — COMPLETE ·
   // rent 8M" while the engine's completedSets for that seat was 0.
   const rules = sel.activeRuleFlags();
+  // A card still IN HAND is asking a placement question, and for it a full zone
+  // is not just a fact, it is a refusal: zoneFull() in playProperty means the
+  // card cannot land there (game.js playProperty → zoneFull; the client mirror
+  // is placementColors()). The peek listed "Command 2/2 — COMPLETE" among a
+  // hand wild's counts-as rows with no hint that the column is closed, so the
+  // strongest-looking destination was the one unplayable one. A card already
+  // on the board never gets the note — its own zone is "full" of itself.
+  const inHand = !!sel.handCard(card.id);
   for (const c of colors) {
     const held = me?.properties?.[c]?.length || 0;
     if (!color && !held) continue;                       // don't list ten empty columns
     const size = setSize(c);
     const done = isComplete(me, c, rules);
     const full = held >= size;
+    const closed = inHand && full ? ' · full — no room for this card' : '';
     out.push(row(`${colorName(c)}`,
-      done ? `${held}/${size} — COMPLETE · rent ${rentFor(me, c)}M`
+      done ? `${held}/${size} — COMPLETE · rent ${rentFor(me, c)}M${closed}`
         : full
           // The state that has no name on the board: nothing more fits, and it is
           // still not a set. Say WHY, because the rule is a lobby toggle and the
           // player may not know it is on.
-          ? `${held}/${size} — FULL, not a set: needs one real property · rent ${rentFor(me, c)}M`
+          ? `${held}/${size} — FULL, not a set: needs one real property · rent ${rentFor(me, c)}M${closed}`
           : `${held}/${size} · rent ${rentFor(me, c) || 0}M`,
       done ? 'good' : (full ? 'bad' : '')));
   }

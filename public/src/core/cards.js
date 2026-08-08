@@ -40,6 +40,19 @@ export function deckCycleNotice(limit = DECK_CYCLE_LIMIT) {
   return Math.ceil((limit || DECK_CYCLE_LIMIT) / 2);
 }
 
+/** game.js REARRANGE_BUDGET (347): accepted board moves per turn, refilled by
+ *  beginTurn() exactly like playsRemaining. The live snapshot carries
+ *  `rearrangeBudget` and always wins; this is the number the help quotes with
+ *  no game on screen. The brief said "Free, unlimited" while moveProperty()
+ *  (game.js:1987-1989) refused the 13th move of a turn — measured, and the
+ *  refusal copy names the rule the help never stated. */
+export const REARRANGE_BUDGET = 12;
+
+/** game.js SWAP_COST (352): the atomic two-card exchange moves TWO cards, so
+ *  it draws TWO from the same budget. state/selectors.js canSwap() reads this
+ *  mirror; test/property-swap.test.js pins the engine pair against each other. */
+export const SWAP_COST = 2;
+
 /** Which actions need what before play_action is legal (mirrors game.js playAction). */
 export const ACTION_NEEDS = Object.freeze({
   pcs_orders:            [],

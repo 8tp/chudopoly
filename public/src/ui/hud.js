@@ -22,6 +22,7 @@ import * as audio from '../audio/engine.js';
 import { haptic, HAPTICS } from '../fx/index.js';
 import { toast, openSheet, closeSheet } from './screens.js';
 import { el, clear } from '../core/dom.js';
+import { SUDDEN_DEATH_COPY } from './ruleset.js';
 
 let lastSeconds = -1;
 let urgency = 0;
@@ -244,11 +245,21 @@ function renderStrip(view) {
   const urgency = (p) => { const n = opponentTurns(p); return n == null ? 99 : n; };
   const worst = theirs.slice().sort((a, b) => urgency(a) - urgency(b))[0] || null;
 
+  // §3.10b — the fields getPlayerView ships for a contest (game.js:2419-2422):
+  // `contested`, `contestLaps`, `contestBar`. contestBar is what a conversion
+  // needs RIGHT NOW ("the HUD must never tell a player they need three when
+  // they need four" — the engine's own comment), so it is the ONLY set count
+  // this chip may print. No client surface read any of these before this.
+  const contested = !!snap.contested;
+  const bar = Number.isInteger(snap.contestBar) ? snap.contestBar : 0;
+  const raised = contested && bar > (snap.setsToWin || 0);
+
   const stamp = (p) => `${p.id}:${opponentTurns(p)}`;
   const key = [
     mineArmed.map(stamp).join(','),
     theirs.map(stamp).join(','),
     attrition ? `${cycle}/${limit}` : '',
+    contested ? `c${snap.contestLaps || 0}@${bar}` : '',
   ].join('|');
   if (key === stripKey) { setClass(box, 'is-empty', false); return; }
   stripKey = key;
@@ -291,6 +302,21 @@ function renderStrip(view) {
     setAttr(box, 'title', countdownText(mineArmed[0], true));
   } else {
     setAttr(box, 'title', null);
+  }
+
+  if (contested) {
+    // Reuses the strip's own chip classes; the mode's one-line rule rides the
+    // title, worded by ui/ruleset.js SUDDEN_DEATH_COPY — the same sentence the
+    // lobby and the help Goal page carry, so three surfaces cannot drift.
+    const mode = snap.rules?.suddenDeath;
+    const line = SUDDEN_DEATH_COPY[mode]?.line || 'Nobody converts while the approach is contested.';
+    box.appendChild(el('span', {
+      class: 'chip strip-chip is-hot',
+      // Under 'escalate' the raised bar IS the news; under the other modes the
+      // suspension is.
+      text: raised ? `CONTESTED · ${bar} sets to convert` : 'CONTESTED · wins on hold',
+      attrs: { title: line },
+    }));
   }
 
   if (attrition) {

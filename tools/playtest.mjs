@@ -213,6 +213,7 @@ try {
       }
       return {
         drift: window.__CHUD.driftCount,
+        hitstops: typeof window.__CHUD.hitstopCount === 'number' ? window.__CHUD.hitstopCount : null,
         driftLog: (window.__CHUD.driftLog || []).slice(0, 8),
         lastError: window.__CHUD.lastError ? String(window.__CHUD.lastError) : null,
         sfx: (window.__CHUD.sfxLog || []).length,
@@ -265,6 +266,25 @@ try {
       r.pass(`[animated] droppedPriority 0 over the whole replay ${dim(`(peak voice load ${anim.audio.peakVoices}, ${anim.audio.dropped} non-priority dropped)`)}`);
     } else {
       r.warn('[animated] __CHUD.audio.stats() absent — the live priority-drop counter was not read');
+    }
+
+    /* ART §4's hitstop had ZERO regression coverage: flight.hitstopCount() was
+     * exported, correct and measured (40–58ms freezes, one per landing beat) and
+     * no tool read it — zeroing HITSTOP_MS shipped green through the whole
+     * verify chain. Only the ANIMATED pass can assert it: the instant pass
+     * places cards without flights, so no landing ever reaches CONTACT there.
+     * The floor is deliberately far below the measured value (see the figure
+     * printed by the pass) so cadence jitter cannot flake it — it exists to
+     * catch the counter going to ~0, which is what every real regression
+     * (HITSTOP_MS zeroed, the arm dropped, contact never detected) looks like. */
+    const HITSTOP_FLOOR = 5;
+    if (anim.hitstops == null) {
+      r.fail('[animated] __CHUD.hitstopCount is absent — the hitstop counter fell off the bridge (§9)');
+    } else if (anim.hitstops < HITSTOP_FLOOR) {
+      r.fail(`[animated] only ${anim.hitstops} hitstop(s) over the whole replay (floor ${HITSTOP_FLOOR}) — `
+        + "ART §4's landing freeze is dead or disarmed");
+    } else {
+      r.pass(`[animated] ${anim.hitstops} hitstop(s) landed over the replay ${dim(`(floor ${HITSTOP_FLOOR})`)}`);
     }
 
     if (anim.sfx === 0) r.fail('[animated] no sfx at all reached the recorder');

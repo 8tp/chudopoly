@@ -118,7 +118,14 @@ function deadlockBoard() {
   for (const color of ['brown', 'lightblue', 'pink', 'orange', 'red', 'yellow']) {
     putProperty(state, me, color);
   }
-  return { state, wild, partner, full: 'darkblue', room: 'orange' };
+  // A HAND card, for §E: the spring-home teleport was specific to cards that
+  // rest in the fan (hand.reset → layout → setRest → writeRest overwrites the
+  // drag offsets before the spring reads them; a board card's rest is never
+  // rewritten on release). orange has room, so the card is legal SOMEWHERE and
+  // draggable, and green refuses it — a full mat of the wrong colour.
+  const handCard = take(state, (x) => x.type === 'property' && x.color === 'orange');
+  me.hand.push(handCard);
+  return { state, wild, partner, full: 'darkblue', room: 'orange', handCard };
 }
 
 const stateMessage = (state) => ({
@@ -474,6 +481,161 @@ try {
       r.pass(`§C an unanswered drop leaves the card on the board ${dim(`(zone ${where})`)}`);
     }
   }
+
+  /* ── §E a card let go travels HOME, it does not teleport there ──────────
+   *
+   * ART §4: "invalid drops lerp home over 260ms, never teleport." MEASURED
+   * before the fix, frame-by-frame with a real mouse drag: at t=818ms the held
+   * card was at the finger (--fx −67px, --fy −609px); at t=831ms — the NEXT
+   * FRAME — it was at its fan rest (0px, −26.1px), ~620px in 13ms, then sat
+   * motionless ~240ms with `is-flying` set while card_slide + card_snap played
+   * over a stationary card. Cause: dragEnd ran table.releaseCard BEFORE
+   * springBack, and releaseCard's hand relayout (hand.reset → layout → setRest
+   * → retarget → writeRest) rewrote the drag offsets to the rest pose, so
+   * flight.springHome launched a zero-length flight.
+   *
+   * The measurement is a rAF sampler on the released card's own rect: the
+   * teleport is exactly {1 moving frame, 0ms spread, max step == total}, so a
+   * genuine lerp must show many moving frames, spread over real time, with no
+   * single frame carrying most of the distance. All three return paths are
+   * sampled: the refused drop, the Escape cancel, and the targeting-return
+   * (§A′'s swapCard drop, which goes home to wait for its answer).
+   *
+   * PROVEN TO FAIL (§8): make flight.springHome ignore its fromX/fromY (the
+   * pre-fix read of vars releaseCard already rewrote) and all three go red —
+   * "1 moving frame over 0ms, jump 383px of 383px". Red run recorded in this
+   * round's report; the injection is two characters in anim/flight.js. */
+  function springShape(frames) {
+    let firstMove = -1, lastMove = -1, moving = 0, movingFlying = 0, maxStep = 0;
+    for (let i = 1; i < frames.length; i++) {
+      const d = Math.hypot(frames[i][1] - frames[i - 1][1], frames[i][2] - frames[i - 1][2]);
+      if (d <= 1) continue;
+      moving++;
+      if (frames[i][3]) movingFlying++;
+      if (firstMove < 0) firstMove = frames[i][0];
+      lastMove = frames[i][0];
+      if (d > maxStep) maxStep = d;
+    }
+    const a = frames[0], z = frames[frames.length - 1];
+    return {
+      total: Math.round(Math.hypot(z[1] - a[1], z[2] - a[2])),
+      moving,
+      movingFlying,
+      spreadMs: firstMove < 0 ? 0 : lastMove - firstMove,
+      maxStep: Math.round(maxStep * 10) / 10,
+      frames: frames.length,
+    };
+  }
+
+  /** A real drag whose RELEASE is frame-sampled: the sampler is installed with
+   *  the pointer still down, so frame 0 is the drop point, not a guess. */
+  async function dragSampled(page, fromSel, toSel, { escape = false } = {}) {
+    const from = await centre(page, fromSel);
+    const to = await centre(page, toSel);
+    if (!from || !to) throw new Error(`dragtest: no drag path ${fromSel} → ${toSel}`);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(from.x + ((to.x - from.x) * i) / 10, from.y + ((to.y - from.y) * i) / 10);
+      await page.waitForTimeout(16);
+    }
+    await page.mouse.move(to.x, to.y);
+    await page.waitForTimeout(120);
+    await page.evaluate((sel) => {
+      const node = document.querySelector(sel);
+      const t0 = performance.now();
+      const trace = { frames: [], done: false };
+      window.__SPRING_TRACE = trace;
+      const tick = () => {
+        const r = node.getBoundingClientRect();
+        trace.frames.push([
+          Math.round(performance.now() - t0),
+          Math.round((r.left + r.width / 2) * 10) / 10,
+          Math.round((r.top + r.height / 2) * 10) / 10,
+          node.classList.contains('is-flying') ? 1 : 0,
+        ]);
+        if (performance.now() - t0 < 900) requestAnimationFrame(tick);
+        else trace.done = true;
+      };
+      // Frame 0 is taken NOW, synchronously, with the pointer still down: the
+      // CDP mouse-up can land before the first rAF fires, and a teleport that
+      // completed before frame 0 measured "0px of travel" instead of naming
+      // itself (seen on the first proof-of-failure run).
+      tick();
+    }, fromSel);
+    if (escape) await page.keyboard.press('Escape');
+    else await page.mouse.up();
+    await page.waitForFunction(() => window.__SPRING_TRACE && window.__SPRING_TRACE.done,
+      null, { timeout: 4000 });
+    if (escape) await page.mouse.up().catch(() => {});
+    await page.waitForTimeout(80);
+    return page.evaluate(() => window.__SPRING_TRACE.frames);
+  }
+
+  const springTraces = {};
+
+  function assertSpring(label, s, { minTravel = 100, minMoving = 6, minSpread = 150, needFlying = false } = {}) {
+    const teleport = s.maxStep > s.total * 0.6;
+    if (s.total < minTravel) {
+      // §8: a gate that measured nothing must not pass — a release next to its
+      // rest pose proves nothing about how the card got home.
+      r.fail(`§E ${label}: only ${s.total}px between release and rest (< ${minTravel}) — this run measured nothing`);
+    } else if (s.moving < minMoving || s.spreadMs < minSpread || teleport) {
+      r.fail(`§E ${label}: the return home is not a ~260ms lerp — ${s.moving} moving frame(s) `
+        + `over ${s.spreadMs}ms, biggest single-frame jump ${s.maxStep}px of ${s.total}px total `
+        + '(ART §4: refused drops lerp home over 260ms, never teleport)');
+    } else if (needFlying && s.movingFlying < minMoving) {
+      r.fail(`§E ${label}: the card moved but only ${s.movingFlying} moving frame(s) carried .is-flying — `
+        + 'the slide/snap cues are anchored on a flight that is not the motion');
+    } else {
+      r.pass(`§E ${label}: home over ${s.spreadMs}ms in ${s.moving} frames `
+        + dim(`(${s.total}px, max step ${s.maxStep}px${needFlying ? `, ${s.movingFlying} flying` : ''})`));
+    }
+  }
+
+  /* §E.1 — the refused drop: an orange property released dead centre on the
+   * full green mat (wrong colour, full zone) is refused by resolve() step 1a
+   * and must LERP home to the fan. */
+  await stage(page, board.state);
+  {
+    const frames = await dragSampled(page, CARD(board.handCard.id), MAT('green'));
+    springTraces.refused = frames;
+    assertSpring('refused drop (hand → illegal mat)', springShape(frames), { needFlying: true });
+  }
+
+  /* §E.2 — Escape mid-drag: dragCancel takes the same ordering path as the
+   * refusal (teardown → releaseCard → springBack), so it teleported the same
+   * way. */
+  await stage(page, board.state);
+  {
+    const frames = await dragSampled(page, CARD(board.handCard.id), MAT('green'), { escape: true });
+    springTraces.escape = frames;
+    assertSpring('Escape cancel (hand)', springShape(frames), { needFlying: true });
+  }
+
+  /* §E.3 — the targeting-return: §A′'s drop on the full mat is ACCEPTED by the
+   * machine (it arms the swapCard step) and the card goes home to wait for its
+   * answer — springBack again, this time from a board source (the CSS-spring
+   * branch, which transitions FROM the painted pose and so must also be handed
+   * the true drop point). Thresholds are lower only because two mats on one
+   * board are nearer each other than the fan is to the felt — the teleport
+   * signature (1 frame, 0ms) is still unambiguously red. */
+  await stage(page, board.state);
+  {
+    const frames = await dragSampled(page, CARD(board.wild.id), MAT(board.full));
+    springTraces.targeting = frames;
+    assertSpring('targeting-return (board, swapCard step)', springShape(frames),
+      { minTravel: 40, minMoving: 5, minSpread: 100 });
+  }
+
+  ensureDir(SHOT_DIR);
+  fs.writeFileSync(path.join(SHOT_DIR, 'springtrace-dragtest.json'), JSON.stringify({
+    tool: 'dragtest',
+    generatedAt: new Date().toISOString(),
+    format: '[tMs, cx, cy, isFlying] per rAF frame, t0 = sampler start (pointer still down)',
+    traces: springTraces,
+  }, null, 1) + '\n');
+  r.info('release trajectories → springtrace-dragtest.json');
 
   /* ── §D the new step, on the phone the bar was measured against ─────────
    *

@@ -326,6 +326,13 @@ function dragEnd(x, y) {
   // file can name better than the plan can, because the plan's `reason` is
   // about the card and this one is about the column under the finger.
   const refusedMat = hit ? null : live.refused;
+  // WHERE THE CARD IS, read off the node BEFORE releaseCard. On a refused drop
+  // releaseCard's hand relayout (hand.reset → layout → setRest → writeRest)
+  // rewrites --fx/--fy to the rest pose, and a springBack that read the vars
+  // afterwards launched from a pose already home: measured, the card crossed
+  // ~620px in one 13ms frame and then sat still for the 240ms "flight". The
+  // capture is the whole fix — the spring is handed the drop point explicitly.
+  const from = shownPose(node);
   teardown();
   live = null;
   // The clipping chain stays open on a tail timer (table.releaseCard) so the
@@ -344,7 +351,7 @@ function dragEnd(x, y) {
     // finger for COMMIT_HOLD_MS. MEASURED: a drag started inside that window
     // produced no pointerdown and sent nothing at all. It goes home and waits
     // for its answer where it lives.
-    if (api.targeting?.()) { springBack(node, cardId, plan.source); return; }
+    if (api.targeting?.()) { springBack(node, cardId, plan.source, from); return; }
     node.classList.add('is-dropping');
     holdRelease(node, cardId, plan.source);
     return;                                    // the landing cue belongs to the flight
@@ -354,7 +361,7 @@ function dragEnd(x, y) {
   // third in its own chain — measured ["card_pickup","card_flight_start",
   // "card_landed","denied"]. The refusal is the reason the card is travelling.
   cue(CUE_DENIED, x, y);
-  springBack(node, cardId, plan.source);
+  springBack(node, cardId, plan.source, from);
   // §P7.3 — a refusal is a sentence, never a shrug. The mat the finger was on
   // outranks the card-level reason: the player aimed somewhere specific.
   const said = refusedMat
@@ -367,11 +374,26 @@ function dragEnd(x, y) {
 function dragCancel() {
   if (!live) return;
   const { node, cardId, plan } = live;
+  // Same capture as dragEnd, same reason: releaseCard rewrites the vars first.
+  const from = shownPose(node);
   teardown();
   live = null;
   api?.refreshMarks?.();
   table.releaseCard(cardId, { accepted: false });
-  springBack(node, cardId, plan.source);
+  springBack(node, cardId, plan.source, from);
+}
+
+/** The pose actually painted on the node right now — the last frame the player
+ *  saw. Read before anything downstream of releaseCard can rewrite it. */
+function shownPose(node) {
+  const x = parseFloat(node.style.getPropertyValue('--fx'));
+  const y = parseFloat(node.style.getPropertyValue('--fy'));
+  const s = parseFloat(node.style.getPropertyValue('--fs'));
+  return {
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+    s: Number.isFinite(s) ? s : 1,
+  };
 }
 
 /* ── drop resolution: aim is not the game (owner feedback, P7 round 1) ─────
@@ -638,16 +660,30 @@ function cueSpring(node, instant) {
   }, SPRING_MS);
 }
 
-function springBack(node, cardId, source) {
+/**
+ * @param {{x:number, y:number, s:number}|null} [from] the pose the card was
+ *        painted at when the gesture ended, captured by dragEnd/dragCancel
+ *        BEFORE table.releaseCard could rewrite the vars to the rest pose.
+ *        Omitted only by holdRelease's timeout path, where the vars really do
+ *        still hold the drop point (an accepted drop keeps its offset).
+ */
+function springBack(node, cardId, source, from) {
   if (!node) return;
   const reduced = prefersReducedMotion();
   // §P4 contract: the motion agent's table.moveCard(id,'hand',{springBack:true})
-  // reads the --fx/--fy this file left on the node and springs it to the card's
-  // rest pose in the fan. A wild dragged around my own board never left its
-  // column, so that call does not apply to it — the CSS spring below does.
+  // springs the card from the captured drop pose to its rest pose in the fan.
+  // A wild dragged around my own board never left its column, so that call
+  // does not apply to it — the CSS spring below does.
   let handled = false;
   if (source === 'hand') {
-    try { handled = table.moveCard(cardId, 'hand', { springBack: true }) === true; } catch { handled = false; }
+    try {
+      handled = table.moveCard(cardId, 'hand', {
+        springBack: true, duration: SPRING_MS,
+        fromX: from ? from.x : undefined,
+        fromY: from ? from.y : undefined,
+        fromScale: from ? from.s : undefined,
+      }) === true;
+    } catch { handled = false; }
   }
   if (handled) {
     // Taken by flight.springHome, which cues for itself — unless it was the
@@ -658,6 +694,16 @@ function springBack(node, cardId, source) {
   }
 
   cueSpring(node, reduced);
+  // The CSS spring transitions FROM the currently painted pose, so if anything
+  // downstream of releaseCard rewrote the vars, the captured pose is put back
+  // first — without a transition, and committed with one forced reflow (once
+  // per release, never per frame) — so the transition has a true start point.
+  if (!reduced && from && (from.x !== homeX(node) || from.y !== homeY(node))) {
+    node.style.transition = 'none';
+    setStyle(node, '--fx', `${Math.round(from.x * 10) / 10}px`);
+    setStyle(node, '--fy', `${Math.round(from.y * 10) / 10}px`);
+    void node.offsetWidth;
+  }
   node.style.transition = `transform ${SPRING_MS}ms ${SPRING_EASE}`;
   setStyle(node, '--fx', `${homeX(node)}px`);
   setStyle(node, '--fy', `${homeY(node)}px`);

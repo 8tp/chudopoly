@@ -67,7 +67,10 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    forces the format: iOS `apple-touch-icon` and Android maskable install icons require
    raster files — an installed app with no icon renders a screenshot thumbnail, which is
    worse brand damage than the rule was written to prevent. Conditions: every PNG is
-   **rendered by a checked-in generator** (`tools/genicons.mjs`, canvas) from the game's own
+   **rendered by a checked-in generator** (`tools/genicons.mjs` — implemented over the
+   project's own pure-JS `server/raster.js`, not node-canvas, which would have added a
+   native binary dependency; the generator imports `server/icon.js`'s existing drawn mark
+   so the committed files cannot drift from what the server serves) from the game's own
    hand-authored geometry — the source of truth stays code, the PNGs are a build artifact
    that happens to be committed; regeneration must be reproducible (`node tools/genicons.mjs`
    rewrites the set byte-for-byte or the gate fails); `checkAssets.mjs` is narrowed to permit

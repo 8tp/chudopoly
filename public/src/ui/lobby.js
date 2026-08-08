@@ -429,7 +429,81 @@ function ensurePicker() {
   const column = $('lobby-rules');
   if (!column) return;
 
+  /* THE HOST'S BODY LEADS WITH THE DECISION, AND IT IS MOVED IN THE DOM.
+   *
+   * Measured at 390×844 with host + 4 bots, disclosure closed, at rest:
+   * .lobby-body was scrollHeight 996 in a 618px scrollport, the room column ran
+   * y86..606, and #ruleset therefore started at y620 — 23px of summary line
+   * against a fold at 688, with 0 of the 4 preset plates fully in view. The
+   * ruleset's position was a function of the seat count (the room column grows
+   * 54px per seat, the rules column does not grow at all), so the one decision
+   * this screen exists for sank further out of sight as the lobby filled.
+   * After this move, at the same scrollTop 0: .ruleset-head y86..109, all four
+   * plates in the scrollport, the win-rule sentence at y414..465, and 158px of
+   * the room column — its legend and two and a half seats — still under it at
+   * every seat count.
+   *
+   * IN THE DOM, NOT WITH `order`. A CSS reorder under a phone query was tried
+   * and measured first: it puts tab order and reading order in opposite
+   * sequences inside a container that scrolls to whatever takes focus, so a
+   * host tabbing off Copy invite went DOWN past the fold into the seat list
+   * (scrollTop 0 → 366) and then back UP 816px to the presets. Moving the node
+   * keeps one sequence at every width and lets ui.css drop `order` entirely;
+   * ui.css THE DECISION LEADS carries the two focus walks side by side.
+   *
+   * HERE RATHER THAN IN index.html because that file is architect-owned (§1),
+   * and HOST-ONLY because it is the host's decision that earns the lead: a
+   * guest's rules column holds one sentence (ensureGuestNote) and keeps the
+   * seat list first, which is what a guest is there to read. A request to make
+   * this the shipped source order is in this agent's report.
+   */
+  column.parentNode?.prepend(column);
+
   pending = loadHostRules();
+
+  /* ── THE PICKER FOLDS ON A PHONE (P10, MOBILE critic finding 3) ─────────
+   *
+   * MEASURED at 390×844, host + 4 bots: .lobby-body is 1022px of content in a
+   * 618px scrollport, and the tail below the fold is the ROOM's — the last two
+   * Remove marks sliced mid-row under the rail, the bot picker and Add bot at
+   * y835 and both clocks at y934, entirely off-viewport in the cold frame.
+   * The ui.css DECISION LEADS note already proved no ordering fixes a 400px
+   * shortfall; the only thing left to move is the 340px the preset plates and
+   * the win sentence occupy — behind a disclosure, on the screens where they
+   * do not fit. The resolved ruleset stays readable while folded: the head's
+   * live name/bits line ("Chudopoly · Final Approach · 3 sets") is OUTSIDE the
+   * fold, so the fold hides the CONTROLS, never the answer. After, same
+   * viewport: every control on this screen sits inside the 618px port — the
+   * off-viewport and clipped-by-scroller counts on `lobby (host)` go to zero
+   * instead of being re-aimed.
+   *
+   * ≥720px (ui.css's own rail breakpoint) the fold ships OPEN and its summary
+   * row is hidden by lobby.css, so a desktop host sees exactly the round-9
+   * screen: decision first, all four plates up. The listener re-opens it when
+   * a window widens across the breakpoint; it deliberately never CLOSES on
+   * shrink — snatching an open picker out from under a host mid-choice is a
+   * board change nobody chose. */
+  const wide = typeof matchMedia === 'function' ? matchMedia('(min-width: 720px)') : null;
+  const fold = el('details', {
+    class: 'ruleset-fold',
+    attrs: wide && !wide.matches ? {} : { open: '' },
+  }, [
+    el('summary', { class: 'ruleset-summary ruleset-fold-summary' }, [
+      el('span', { class: 'ruleset-summary-text', text: 'Choose the ruleset' }),
+      el('span', { class: 'ruleset-caret', attrs: { 'aria-hidden': 'true' }, text: '▸' }),
+    ]),
+    el('div', {
+      class: 'preset-grid',
+      attrs: { role: 'radiogroup', 'aria-label': 'Ruleset preset' },
+    }, PRESET_ORDER.map(presetTile)),
+    el('p', { class: 'ruleset-win hint', attrs: { id: 'ruleset-win' } }),
+    buildAdv(),
+  ]);
+  if (wide) {
+    const reopen = () => { if (wide.matches) fold.open = true; };
+    if (wide.addEventListener) wide.addEventListener('change', reopen);
+    else if (wide.addListener) wide.addListener(reopen);
+  }
 
   pickerRoot = el('section', {
     class: 'ruleset',
@@ -442,12 +516,19 @@ function ensurePicker() {
         el('span', { class: 'ruleset-bits', attrs: { id: 'ruleset-bits' } }),
       ]),
     ]),
-    el('div', {
-      class: 'preset-grid',
-      attrs: { role: 'radiogroup', 'aria-label': 'Ruleset preset' },
-    }, PRESET_ORDER.map(presetTile)),
-    el('p', { class: 'ruleset-win hint', attrs: { id: 'ruleset-win' } }),
-    el('details', { class: 'ruleset-adv' }, [
+    fold,
+  ]);
+
+  pickerRoot.addEventListener('change', onPick);
+  pickerRoot.addEventListener('click', onDeckStep);
+  column.appendChild(pickerRoot);
+  syncPicker();
+}
+
+/** The advanced disclosure, unchanged from round 9 — only extracted so the
+ *  fold above can nest it. */
+function buildAdv() {
+  return el('details', { class: 'ruleset-adv' }, [
       el('summary', { class: 'ruleset-summary' }, [
         el('span', { class: 'ruleset-summary-text', text: 'Change individual rules' }),
         el('span', { class: 'ruleset-caret', attrs: { 'aria-hidden': 'true' }, text: '▸' }),
@@ -488,13 +569,7 @@ function ensurePicker() {
           ...DECK_ORDER.map(deckStepper),
         ]),
       ]),
-    ]),
   ]);
-
-  pickerRoot.addEventListener('change', onPick);
-  pickerRoot.addEventListener('click', onDeckStep);
-  column.appendChild(pickerRoot);
-  syncPicker();
 }
 
 /**

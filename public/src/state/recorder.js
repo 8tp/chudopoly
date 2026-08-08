@@ -80,6 +80,10 @@ export function isEndEvent(ev) {
  *        Composition over the WHOLE game, not at the final frame — see
  *        `observe()` for why the two differ.
  * @param {number} args.gaps                           journal.gapCount()
+ * @param {boolean} [args.sawStart]  did this client see `game_start` for THIS
+ *   game? The live recorder passes its sticky `started` flag (set while the
+ *   event is still in the ring, surviving the splice). When absent, the beats
+ *   are scanned — correct only for callers that hand over the FULL stream.
  * @returns {import('./stats.js').StatsRow|null} null when the beats contain no
  *   ending at all (nothing finished, nothing to record).
  */
@@ -90,7 +94,8 @@ export function deriveRow(args) {
 /** The real body. Guarded by `deriveRow` because every field here comes off the
  *  wire or out of storage, and `Array.isArray` alone throws on a revoked Proxy
  *  (tools/statsfuzz.mjs found it). */
-function deriveRowUnguarded({ beats = [], snapshot = null, selfId = '', code = '', seats = [], gaps = 0 }) {
+function deriveRowUnguarded({ beats = [], snapshot = null, selfId = '', code = '', seats = [],
+  gaps = 0, sawStart = undefined }) {
   const list = Array.isArray(beats) ? beats : [];
   const seatList = Array.isArray(seats) ? seats : [];
   let endEv = null;
@@ -109,9 +114,17 @@ function deriveRowUnguarded({ beats = [], snapshot = null, selfId = '', code = '
     : (typeof endEv?.reason === 'string' ? endEv.reason : null)
       || (typeof snapshot?.endReason === 'string' ? snapshot.endReason : 'sets');
 
-  // Trap 3: no `game_start` in the record means the record starts mid-game.
-  const sawStart = list.some(b => b?.ev?.t === 'game_start');
-  const integrityGaps = Math.max(0, Number(gaps) || 0) + (sawStart ? 0 : 1);
+  // Trap 3: a record that never saw `game_start` starts mid-game. BUT the beat
+  // ring is bounded (ui/journal.js MAX_BEATS) and `game_start` is beat #1, so
+  // any game longer than the ring loses it FIRST — re-deriving "did we see the
+  // start?" from the spliced ring scored every long COMPLETED game as
+  // incomplete and excluded it from every personal best. The live recorder
+  // watched the whole stream and passes `sawStart` in; scanning the beats is
+  // only the fallback for a caller that replays the full, unspliced stream.
+  const started = sawStart === undefined
+    ? list.some(b => b?.ev?.t === 'game_start')
+    : !!sawStart;
+  const integrityGaps = Math.max(0, Number(gaps) || 0) + (started ? 0 : 1);
 
   const humans = seatList.filter(s => s && s.human).length;
   const bots = seatList.filter(s => s && !s.human).length;
@@ -299,6 +312,10 @@ export function observe({ snapshot, room, selfId, beats, gaps, sink = stats }) {
       code: room?.code || '',
       seats: [...composition.values()],
       gaps,
+      // The sticky flag, not a ring scan: `started` was set while `game_start`
+      // was still in the bounded ring and survives the splice. Trap 3, fixed at
+      // the only place that actually held the truth.
+      sawStart: started,
     });
     if (!row) return null;
 

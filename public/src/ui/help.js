@@ -12,10 +12,14 @@ import { el, clear, setAttr, setClass } from '../core/dom.js';
 import * as pointer from '../interact/pointer.js';
 import { openSheet } from './screens.js';
 import {
-  COLORS, COLOR_KEYS, HAND_LIMIT, ACTION_RULES, ACTION_COUNTS,
+  COLORS, COLOR_KEYS, HAND_LIMIT, ACTION_RULES,
   RENT_COUNTS, colorName, opsecFlag, DECK_CYCLE_LIMIT, deckCycleNotice,
+  REARRANGE_BUDGET, SWAP_COST,
 } from '../core/cards.js';
-import { activeRules, winRuleSummary, WIN_RULE_NAMES } from './ruleset.js';
+import {
+  activeRules, winRuleSummary, WIN_RULE_NAMES, SUDDEN_DEATH_COPY, sameDeck, DECK_BASE,
+} from './ruleset.js';
+import { totalsFor } from './deckcensus.js';
 import { BOT_LABEL, BOT_BLURB, BOT_ORDER, botLabel, botBlurb } from '../core/bots.js';
 import { store } from '../state/store.js';
 
@@ -56,6 +60,14 @@ function swatch(color) {
   return el('span', { class: 'brief-swatch', dataset: { color } });
 }
 
+/** The per-turn board-move allowance. game.js getPlayerView ships
+ *  `rearrangeBudget` (2395); the core/cards.js mirror covers the home-screen
+ *  help, where there is no snapshot to read. */
+function rearrangeBudget() {
+  const n = store.snapshot?.rearrangeBudget;
+  return Number.isInteger(n) && n > 0 ? n : REARRANGE_BUDGET;
+}
+
 /* ── page: goal & the ACTIVE win rule ─────────────────────────────────────
  *
  * P8: this page used to describe Final Approach unconditionally. The engine
@@ -76,6 +88,19 @@ function ruleBadge(active) {
   // wilds in a 2-card zone is NOT a set, but one wild + one property IS.
   if (active.pureSetRequired) bits.push('every set needs at least one real property');
   if (active.passGoRestartsTurn) bits.push('PCS Orders restarts your plays');
+  // §3.10b rides the badge as well as the Goal row: a guest at a host-enabled
+  // table meets the rule here first. game.js normalizeSuddenDeath forces 'off'
+  // under 'instant', so the bit can never appear beside Blitz.
+  if (active.suddenDeath && active.suddenDeath !== 'off') {
+    bits.push(`contested approach: ${SUDDEN_DEATH_COPY[active.suddenDeath]?.label
+      || active.suddenDeath}`);
+  }
+  // The deck knob (§3 amendment): `rules.deck` is the count map game.js
+  // buildDeck() was handed. sameDeck/DECK_BASE are ui/ruleset.js's mirror,
+  // pinned by test/deckconfig.test.js. MD Faithful ships a non-stock deck
+  // (chud 0, wildPairs 9), so its badge carries this bit too — the Cards
+  // page's counts follow the same map, so the two surfaces agree.
+  if (active.deck && !sameDeck(active.deck, DECK_BASE)) bits.push('edited deck');
   return el('p', { class: 'brief-note' }, [
     el('b', { text: active.live ? 'THIS GAME: ' : 'DEFAULT RULES: ' }),
     el('span', { text: bits.join(' · ') }),
@@ -244,6 +269,24 @@ function pageGoal() {
       // armedPlayers() is a list; first player whose beginTurn passes the check wins.
       ['Several can be armed at once',
         `The first one to reach their own checkpoint still holding ${n} wins.`],
+      // §3.10b — game.js syncContest() (774-793) opens a contest the moment TWO
+      // seats are armed at once and closes it when the field drops back to one;
+      // contestBlocks() (820-840) suspends the checkpoint while it is open, and
+      // CONTEST_LAP_CAP = 2 bounds every mode. The sentence is ui/ruleset.js
+      // SUDDEN_DEATH_COPY — the same one the lobby picker shows, so the two
+      // surfaces cannot drift. Under 'escalate', getPlayerView's contestBar
+      // (game.js:2419-2422) is setsToWin + 1 while the contest is live, and the
+      // HUD reads that field — the number here says why it moved.
+      ...(active.suddenDeath && active.suddenDeath !== 'off' ? [[
+        `Contested approach — ${SUDDEN_DEATH_COPY[active.suddenDeath]?.label
+          || active.suddenDeath}`,
+        `On this table, two players armed at once suspend the win. ${
+          SUDDEN_DEATH_COPY[active.suddenDeath]?.line || ''}${
+          active.suddenDeath === 'escalate'
+            ? ` While the contest is live, converting takes ${n + 1} complete sets here, `
+            + `not ${n} — the HUD's win count follows it.`
+            : ''}`,
+      ]] : []),
     ]),
     el('h5', { class: 'brief-sub', text: 'How you break someone on final approach' }),
     breakBullets(),
@@ -269,14 +312,32 @@ function pageTurn() {
       // moveProperty() never touches playsRemaining — and §3.1b routes
       // moveUpgrade() (game.js:1517-1541) through the same command, so an
       // Upgrade/FOC relocates on the same free terms. Verified with
-      // playsRemaining at 0: the move still returns ok.
-      ['Free, unlimited', 'Moving a wild that is already on your board from one set to another '
-        + 'costs no play, and you may do it as often as you like on your turn. So does moving '
-        + 'an Upgrade or FOC from one of your complete sets to another — the target set has to '
-        + 'be complete, and an FOC needs an Upgrade already standing there.'],
+      // playsRemaining at 0: the move still returns ok. FREE OF PLAYS is not
+      // UNLIMITED, which is what this row used to claim: rearrangesLeft()
+      // (game.js REARRANGE_BUDGET, 347) allows 12 accepted board moves a turn,
+      // swapProperties() draws SWAP_COST = 2 for its two cards (game.js:352),
+      // a refused move spends nothing, and beginTurn() refills the allowance.
+      // The 13th accepted move returns "No free rearranges left this turn —
+      // end your turn to reset them" (game.js:1987-1989).
+      ['Free — costs no play', 'Moving a wild that is already on your board from one set to '
+        + 'another costs none of your three plays. Neither does moving an Upgrade or FOC from '
+        + 'one of your complete sets to another — the target set has to be complete, and an '
+        + `FOC needs an Upgrade already standing there. You get ${rearrangeBudget()} such `
+        + `board moves a turn (a two-card swap counts as ${SWAP_COST} of them), and the `
+        + 'allowance resets when your next turn starts.'],
       // endTurn(): hand.length > HAND_LIMIT → needDiscard with the excess.
       [`3 · Hand limit ${HAND_LIMIT}`, `End your turn holding at most ${HAND_LIMIT} cards. `
         + 'Over the limit, you choose what goes to the discard.'],
+      // server/timers.js onTurnTimeout (36-43): the turn is force-ended and the
+      // excess over the hand limit auto-discarded, narrated as `turn_timeout`.
+      // onResponseTimeout (218-236): the demand is auto-accepted and
+      // autoPickPayment (274-315) settles it cheapest-first — bank, then
+      // upgrades, then properties, each sorted by ascending value. Quick Play
+      // runs with the turn clock off, so the row is worded conditionally.
+      ['Clocks, where the table runs them',
+        'Run out the turn clock and your turn ends itself — anything over the hand limit is '
+        + 'discarded for you. Run out the answer clock on a demand and it is accepted for '
+        + 'you, paid with your cheapest cards first.'],
     ]),
     note('Money cards are only ever banked — there is nothing else to do with them.'),
     bullets([
@@ -479,6 +540,15 @@ function cardEntry({ title, value, count, qty, rule, flag, kind }) {
 }
 
 function pageCards() {
+  const active = activeRules();
+  // The deck THIS game is played with, not the build's constant (§3 deck knob).
+  // ui/deckcensus.js totalsFor() resolves `rules.deck` the way game.js
+  // buildDeck() does — pinned against it by test/deck-census.test.js and
+  // test/deckconfig.test.js. The frozen ACTION_COUNTS this page used to print
+  // is the STOCK deck: under the shipped MD Faithful preset (chud: 0) it read
+  // "THE CHUD CARD ×2" for a card that is not in the game. Rent and money are
+  // not editable (validateDeck refuses them), so RENT_COUNTS stays a constant.
+  const totals = totalsFor(active.deck);
   const out = [
     p('Face value is what the card is worth in the bank — the strongest cards are also the '
       + 'best money you will never want to spend.', 'brief-lede'),
@@ -511,11 +581,18 @@ function pageCards() {
   }));
 
   out.push(el('h5', { class: 'brief-sub', text: 'Action cards' }));
+  // A kind the deck holds ZERO of is not listed with a ×0 — the same policy
+  // ui/deckcensus.js applies to its rows — but it is NAMED below, because a
+  // player who has read about THE CHUD CARD elsewhere deserves to know this
+  // table has none rather than to infer it from an absence.
+  const absent = [];
   for (const action of CARD_ORDER) {
+    const count = totals.get(`act:${action}`) || 0;
+    if (!count) { absent.push(CARD_TITLES[action]); continue; }
     out.push(cardEntry({
       title: CARD_TITLES[action],
       value: CARD_VALUES[action],
-      count: ACTION_COUNTS[action],
+      count,
       rule: ACTION_RULES[action],
       // One source for the OPSEC sentence — cards.js. The boolean this used to
       // take could not express OPSEC itself, which creates no pendingAction and
@@ -524,6 +601,10 @@ function pageCards() {
       flag: opsecFlag({ type: 'action', action }),
       kind: action === 'chud' ? 'chud' : '',
     }));
+  }
+  if (absent.length) {
+    out.push(note(`Not in this table's deck: ${absent.join(', ')}. `
+      + 'The counts above follow the deck this game was built with.'));
   }
   out.push(note('Upgrade, FOC, Surge Operations and PCS Orders aim at nobody, so there is '
     + 'nothing for an OPSEC to answer. OPSEC itself is answered only by another OPSEC.'));
@@ -621,6 +702,12 @@ function pageEndings() {
     ]),
     el('h5', { class: 'brief-sub', text: 'What scooping actually does' }),
     bullets([
+      // scoop() (game.js:2173-2186) checks ensurePlaying() and the seat, and
+      // nothing else — no whose-turn guard, no turnPhase guard, no
+      // pendingAction guard. A demand pointed at the scooper is unwound
+      // (pa.targets filtered) rather than blocking the scoop.
+      'You can scoop at any moment while the game is running — on your own turn or anybody '
+      + 'else\'s, even with a demand pointed at you.',
       // scoop(): hand, bank and every property zone are emptied into discardPile,
       // then discardUpgrades() per colour.
       'Every card you own — hand, bank, properties and upgrades — goes to the discard pile, '
@@ -658,9 +745,13 @@ function pageControls() {
       ['Drop on an opponent\'s board', 'Aims a steal, swap or demand at that player.'],
       ['Drop on your bank', 'Banks the card for its face value.'],
       ['Drop in the middle of the table', 'Means "play it" — you then aim on the table.'],
+      // Same engine facts as the Turn page's row: moveProperty() costs no play,
+      // rearrangesLeft() caps accepted moves at the per-turn budget
+      // (game.js REARRANGE_BUDGET, 347), and a swap draws two (SWAP_COST, 352).
       ['Drag a wild that is already on your board',
-        'Move it to another set column. Free, and as often as you like on your turn. An '
-        + 'Upgrade or FOC moves the same way, between complete sets.'],
+        `Move it to another set column. Free of plays — up to ${rearrangeBudget()} board `
+        + `moves a turn, a swap into a full column counting as ${SWAP_COST}. An Upgrade or `
+        + 'FOC moves the same way, between complete sets.'],
       ['Long-press any card', 'Opens its full rules card, wherever it is on the table.'],
       ['Targeting happens on the table',
         'Eligible boards, columns and cards glow. Tap the one you want.'],

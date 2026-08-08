@@ -200,13 +200,19 @@ export function moveCard(id, zoneKey, opts = {}) {
   const same = node.parentElement === zone;
 
   // The interaction agent's drop-cancel: the card never left the hand, it is
-  // just sitting wherever the finger let go of it.
+  // just sitting wherever the finger let go of it. `fromX/fromY/fromScale` is
+  // where that actually was: by the time this runs, releaseCard's hand relayout
+  // has already rewritten the node's --fx/--fy to the REST pose (setRest →
+  // retarget → writeRest), so springHome must be told the drop point rather
+  // than left to read vars that no longer hold it — the un-told version was a
+  // measured 620px/13ms teleport followed by 240ms of stationary "flight".
   if (opts.springBack) {
     if (!same) zone.appendChild(node);
     if (reduceMotion || flight.isDragging(node)) { flight.writeRest(node); return true; }
     const r = node.getBoundingClientRect();
     flight.springHome(node, {
       dur: opts.duration || 240, key: id,
+      fromX: opts.fromX, fromY: opts.fromY, scale: opts.fromScale,
       cx1: r.left + r.width / 2, cy1: r.top + r.height / 2,
     });
     return true;

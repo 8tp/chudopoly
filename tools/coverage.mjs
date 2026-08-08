@@ -193,7 +193,19 @@ if (args.prove) {
   // A second, sharper demonstration: the six surfaces this round added. If the
   // census cannot tell that they are covered NOW, it could not have told that
   // they were uncovered before, and its green is a decoration.
-  const NEW = ['layer:lobby-host', 'layer:btn-start', 'step:myColor', 'layer:emotes'];
+  const NEW = [
+    'layer:lobby-host', 'layer:btn-start', 'step:myColor', 'layer:emotes',
+    /* P10, the flight log. Same argument one round later: this surface has no
+     * server state at all — it renders `chud.stats.v1` — so no fixture can
+     * reach it and every gate that wants it has to seed storage before the
+     * document runs (tools/lib/logbook.mjs). `is-gapped` is the sharpest of the
+     * three: it is the mark on a flight whose record has a hole in it, and it
+     * only exists if the RECORDING really lost events. It went unseen on the
+     * first attempt, because withholding a dozen broadcasts is entirely covered
+     * by the next 120-event tail — the gap had to be made in event sequence,
+     * not in broadcast count. A green here means that whole chain held. */
+    'layer:btn-flight-log', 'class:is-won', 'class:is-gapped',
+  ];
   const missing = NEW.filter((k) => byKey.has(k) && !seen.has(k));
   if (missing.length) {
     r.fail(`--prove: markers the P9 surfaces were built to reach are still unseen (${missing.join(', ')})`);

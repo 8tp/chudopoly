@@ -279,8 +279,13 @@
      centre column then divides unevenly. Measured on the first pass: the
      marshalling area's midpoint landed at 42% of the viewport instead of 50%,
      which is the same off-centre-weight defect this round exists to fix, only
-     mirrored. */
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+     mirrored.
+     AMENDED: minmax(10em, 1fr), still symmetric. The defect above was UNEQUAL
+     content-driven floors (86 vs 118), not floors as such — an equal floor on
+     both sides cannot move the centre. Measured by the flight-log agent: at
+     minmax(0) the outer tracks resolved to 92.9px at 1280 against "How to play"
+     alone at 80px, so a SECOND reading mark had nowhere to go but underneath. */
+  grid-template-columns: minmax(10em, 1fr) minmax(0, auto) minmax(10em, 1fr);
   grid-template-areas: "help actions settings";
   align-items: center;
   gap: .7em 1.2em;
@@ -631,9 +636,21 @@
   box-shadow: inset 0 -2px 0 var(--shade);
   padding-bottom: .2em;
 }
-/* One column at phone widths, so the legend is doing no work there — the seat
-   list is the first thing under the room code and needs no label to say so. */
-.lobby-legend { display: none; }
+/* THE LEGEND IS BACK AT PHONE WIDTHS, and the rule it replaces is the reason.
+
+   It used to read "the seat list is the first thing under the room code and
+   needs no label to say so" — true while the room column led the stack. It does
+   not lead any more (see THE DECISION LEADS, below): a host's phone body opens
+   on the ruleset, so the seat list is now the SECOND block, arriving under the
+   ruleset's own disclosure summary with nothing to say what it is. An unlabelled
+   list of names after "Change individual rules" reads as part of the rules.
+
+   Measured cost at 390×844, host + 4 bots: 25px, which moves the seat list from
+   y530 to y555 in a scrollport that ends at 688 — 2.7 rows visible at rest
+   instead of 3.0. The guest keeps its old arrangement and its old answer: a
+   guest's column order is untouched, and the `:has(#ruleset-guest)` block below
+   still hides the legend there, where the seat list IS the first thing. */
+.lobby-legend { display: block; }
 
 /* ── rail: the hold-short line and everything painted along it ────────── */
 
@@ -726,17 +743,94 @@
 .lobby-settings { grid-area: settings; justify-self: end; }
 .lobby-mark:active:not(:disabled) { transform: none; box-shadow: none; }
 
-/* ── two columns where there is width for two ─────────────────────────────
-   THE SPLIT IS MEASURED, not assumed. Content heights at 1280×720 with host +
-   3 bots, disclosure closed:
+/* ── THE DECISION LEADS, AND IT LEADS AT EVERY WIDTH ──────────────────────
+   The host's column order is THE RULES then THE ROOM. It used to be the other
+   way round, and the phone is where that cost something real.
+
+   Measured at 390×844, host + 4 bots, disclosure closed, at rest (scrollTop 0):
+     .lobby-body        scrollHeight 996 in a clientHeight 618 scrollport
+     .ruleset-head      y620..643 — the last 23px before the fold
+     .preset-grid       y650..942 — 38px of the first plate, then nothing
+     presets fully in the scrollport                     0 of 4
+   The host saw the summary line "Rules · Chudopoly · Final Approach · 3 sets"
+   sitting on the bottom edge like a footnote, and a sliver. The four plates —
+   the decision this screen exists for — were discoverable only by accident.
+
+   THE ORDER IS THE FIX BECAUSE THE HEIGHTS ARE THE PROBLEM. 996px of content
+   in a 618px port means 378px is below the fold no matter what is done to it;
+   the only question is WHICH 378px. The room column grows 54px per seat and the
+   rules column does not grow at all, so with the room column leading, the
+   ruleset's position was a function of how many people were in the room — it
+   sank further out of sight exactly as the lobby filled and launch approached.
+   Leading with the rules makes the ruleset's position invariant: .lobby-col-
+   rules is 430px at every seat count, so 158px of the room column — the legend
+   and two and a half seats — is always in view under it. That is the rail's own
+   invariant one register down: nothing in the body can move the primary action,
+   and now nothing in the room can move the ruleset.
+
+   After, same state, same viewport, still scrollTop 0:
+     .ruleset-head      y 86..109        presets in the scrollport   4 of 4
+     .preset-grid       y115..408        whole #ruleset in the port  yes
+     #ruleset-win       y414..465        seat list                   y556..828
+     .ruleset-summary   y472..516        scrollHeight                1022
+   Nothing was deleted to do it; the 26px the scrollHeight gained is the room
+   legend, which had been hidden on a phone and is needed again (see it above).
+   All four plates keep their explanatory line and the win-rule sentence is
+   still under them (§3.9).
+
+   THE ALTERNATIVE WAS MEASURED AND IS WORSE. Opening the body pre-scrolled to
+   the ruleset (scrollTop 378) also puts all four plates in view — and puts the
+   ENTIRE seat list at y−292..−20 — above the scrollport, all four Remove marks
+   with it — on a screen that gives no cue that anything is above the fold, and
+   it leaves both clocks clipped as well. Reordering keeps the screen at
+   scrollTop 0, where a phone expects to open, and leaves a HALF-CUT SEAT ROW on
+   the fold, which is the one kind of cut edge that advertises itself: a
+   repeating row sliced in two reads as "scroll"; a single plate sliced in two,
+   which is what the old order left there, reads as the end of the screen.
+
+   NO `order` PROPERTY, ANYWHERE, AND THAT IS THE POINT. The move is done in the
+   DOM (ui/lobby.js ensurePicker), so tab order and reading order are the same
+   sequence at every width. `order: -1` under a phone query was built first and
+   measured against it — Tab pressed from Copy invite, recording each focused
+   element's position in the scrolled document:
+     DOM move   47 → 402 → 539 → 596 → 653 → 709 → 765 → 863
+                scrollTop 0 → 0 → 0 → 22 → 366 → 366 → 366, 0 backward jumps
+     order:-1   539 → 596 → 653 → 709 → 765 → 863 → 47 → 402
+                scrollTop 0 → 22 → 366 … → 366 → 0, ONE backward jump of 816px
+   .lobby-body scrolls to whatever takes focus, so that jump is not abstract:
+   the host tabs past the fold into the seat list and the screen then throws
+   itself back to the top for the presets they were already looking at. The
+   two-column widths would additionally need `order` to restore ROOM-left, which
+   relocates the same mismatch instead of removing it, so the columns lead with
+   the rules there too and the property is not used at all.
+
+   WHAT THIS DOES NOT FIX, AND WHY NOTHING DOES. 1022px of content in a 618px
+   port means ~400px is below the fold in every arrangement, so touchtest's
+   off-viewport and clipped-by-a-scrolling-ancestor findings on `lobby (host)`
+   cannot be zeroed by any layout — only re-aimed. They move from the ruleset
+   (3 off-viewport, 4 clipped: preset inputs and the disclosure summary) to the
+   room's tail (4 off-viewport, 5 clipped: the last two Remove marks, the bot
+   picker, Add bot, the two clocks), because the room's tail simply holds more
+   controls than the rules' tail — 8 against 5. The one control in that list
+   whose absence would be a defect is Add bot, and it is measured at rest for
+   the only seat count that needs it: 1 seat → y607..651 against a fold at 688,
+   fully in view; 2 seats → y664..708, half in view; 3+ seats → below, and at
+   3+ seats the rail's own hint has already stopped asking for players. What was
+   bought for it is the four preset plates, which were 0 of 4 in view at EVERY
+   seat count. Deleting explanatory copy to buy the difference was costed and
+   refused: #bot-blurb 34px + #clock-note 85px + #ruleset-win 51px = 170px
+   against a 400px shortfall, and all three are §3.9 teaching text.
+
+   ── the split itself is unchanged and still measured ─────────────────────
+   Content heights at 1280×720 with host + 3 bots, disclosure closed:
      seats (4 rows)              196px
      bot picker + its blurb       84px
      the two clocks + the note   134px
      the ruleset picker          504px   (2041px with the disclosure open)
-   THE ROOM against THE RULES puts 414 beside 504, which is the balanced cut.
+   THE RULES against THE ROOM puts 504 beside 414, which is the balanced cut.
    The obvious alternative — clocks filed with the rules, since they are
-   rules — puts 280 beside 638 and leaves a third of the left column empty.
-   The clocks also belong here on their content: describeClocks() reads
+   rules — puts 638 beside 280 and leaves a third of the other column empty.
+   The clocks also belong with the room on their content: describeClocks() reads
    store.room.players and warns about the server's two-human floors, so the
    sentence it writes is about the people in this room, not the ruleset.
 
@@ -745,18 +839,21 @@
    row ("Long Game" + "Longest" + "≈67 turns") stops fitting on one line. */
 @media (min-width: 1024px) {
   .lobby-body {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    /* The wider track is the rules track, and it is the first one now. */
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
     gap: 1em clamp(1.2em, 3vw, 2.6em);
-    /* The rules column is the taller of the two and must be free to grow past
-       the room column without dragging it; align-content: start already keeps
-       both anchored to the top of the scrollport. */
+    /* Either column can be the taller one — the rules column at 1280×720 is
+       343px closed and 2041px open, the room column 563px at five seats — so
+       neither may stretch to the other's height; align-items: start anchors
+       both to the top of the scrollport and lets the tall one grow alone. */
     align-items: start;
   }
-  .lobby-legend { display: block; }
   /* A hairline between the two halves, cut into the concrete rather than drawn
      as a border (§3.2): it is a marking on the ground, so it runs the full
-     height of the scrolled content. */
-  .lobby-col-rules { box-shadow: inset 1px 0 0 var(--stencil); padding-left: clamp(1.2em, 3vw, 2.6em); }
+     height of the scrolled content. It sits on the SECOND column's leading
+     edge, which is the room's now — the marking divides the two halves, so it
+     moves with the order rather than with either column's name. */
+  .lobby-col-room { box-shadow: inset 1px 0 0 var(--stencil); padding-left: clamp(1.2em, 3vw, 2.6em); }
   .lobby-body { padding-inline: clamp(1.5em, 5vw, 5em); }
 }
 
@@ -793,7 +890,7 @@
   margin-inline: auto;
   padding-inline: var(--lobby-pad);
 }
-.lobby-body:has(#ruleset-guest:not([hidden])) .lobby-col-rules {
+.lobby-body:has(#ruleset-guest:not([hidden])) .lobby-col-room {
   box-shadow: none;
   padding-left: 0;
 }
@@ -869,6 +966,21 @@
 .lobby-row { flex-wrap: wrap; }
 .lobby-host { display: flex; flex-direction: column; gap: .5em; }
 .lobby-host .row .field-label { flex: 0 0 auto; margin-bottom: 0; }
+
+/* ── P10: the phone lobby fits its port ───────────────────────────────────
+   With the picker folded (ui/lobby.js .ruleset-fold) the phone body's last
+   ~60px of shortfall is density, not structure: five 52px seat recesses, a 1em
+   block gap and two body-sized teaching notes. MEASURED at 390×844, host + 4
+   bots: these three trims plus the fold take .lobby-body from 1022px of
+   content in a 618px port to everything inside it — the cold frame slices no
+   seat row and parks no select off-viewport. The notes stay whole (§3.9 —
+   deleting them was costed and refused in the DECISION LEADS note); they set
+   at the micro size the rest of the app's captions already use. */
+@media (max-width: 719px) {
+  .lobby-row { padding-top: .1em; padding-bottom: .1em; }
+  .lobby-body { gap: .6em; }
+  #lobby-host .hint { font-size: var(--t-micro); line-height: 1.35; }
+}
 
 /* ══ THE CHROME GLYPH SET ══════════════════════════════════════════════════
    ROUND-4 REVIEW, and it is the fair hit: the cards carry 21 bespoke glyphs and
@@ -1573,12 +1685,13 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   .lobby { padding-top: .3em; }
   .lobby-head { padding-bottom: .35em; }
   .lobby-body {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    /* Rules first, room second, the same order the phone stack uses — see THE
+       DECISION LEADS. The wider track is still the rules track. */
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
     gap: .5em 1.2em;
     padding-block: .5em;
   }
-  .lobby-legend { display: block; }
-  .lobby-col-rules { box-shadow: inset 1px 0 0 var(--stencil); padding-left: 1.2em; }
+  .lobby-col-room { box-shadow: inset 1px 0 0 var(--stencil); padding-left: 1.2em; }
   /* .35em was 5.6px against .lobby-go's 6px drop shadow, and the slab came out
      2px clipped by the frame at 844×390 (button bottom 386 + 6 = 392 in a 390
      viewport). The bottom inset on this rail is sized by the SHADOW at every

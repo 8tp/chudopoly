@@ -89,6 +89,14 @@ function surgeLabel(pa) {
   return Number.isFinite(m) && m > 1 ? ` — SURGED x${m}` : ' — SURGED';
 }
 
+/** The card an id names, as its display title — '' when the snapshot cannot
+ *  resolve it (an older broadcast, a half-applied state), so every caller can
+ *  fall back to the generic sentence rather than print "undefined". */
+function pendingCardName(cardId) {
+  if (cardId == null) return '';
+  return cardName(sel.findCard(cardId)) || '';
+}
+
 function describePending(pa) {
   const who = seatName(pa.sourceId);
   const title = ACTION_TITLE[pa.action] || pa.action;
@@ -97,8 +105,28 @@ function describePending(pa) {
     return `${who} charges ${pa.amount}M — ${title}${on}${surgeLabel(pa)}`;
   }
   if (pa.type === 'steal_set') return `${who} is seizing your ${colorName(pa.color)} set — ${title}`;
-  if (pa.type === 'steal_property') return `${who} is taking one of your properties — ${title}`;
-  if (pa.type === 'swap') return `${who} wants to swap properties — ${title}`;
+  // The card at stake is on the wire — startPending ships `targetCardId` for
+  // both steals (game.js:1508-1512, 1588-1592) and `myCardId` + `targetCardId`
+  // for the swap (game.js:1532-1536), and the defender's own board is public in
+  // every snapshot — but this bar never read the ids, so the one decision that
+  // is ABOUT a specific card ("do I spend an OPSEC on this?") named no card.
+  // Strings only, rendered through setText/textContent (§0.10): a card name is
+  // player-adjacent data and must never be interpolated into markup.
+  if (pa.type === 'steal_property') {
+    const take = pendingCardName(pa.targetCardId);
+    return take
+      ? `${who} is taking your ${take} — ${title}`
+      : `${who} is taking one of your properties — ${title}`;
+  }
+  if (pa.type === 'swap') {
+    // `myCardId` is the ATTACKER's card (their side of the trade); this bar is
+    // only ever read by the defender, so "your X for their Y".
+    const take = pendingCardName(pa.targetCardId);
+    const give = pendingCardName(pa.myCardId);
+    return take && give
+      ? `${who} wants your ${take} for their ${give} — ${title}`
+      : `${who} wants to swap properties — ${title}`;
+  }
   return `${who} plays ${title}`;
 }
 
@@ -255,7 +283,14 @@ function handOptions() {
 function leaderChip() {
   const snap = store.snapshot;
   if (!snap || snap.phase !== 'playing') return null;
-  const need = snap.setsToWin || snap.rules?.setsToWin || 3;
+  // §3.10b — `contestBar` (game.js getPlayerView, 2419-2422) is what a
+  // conversion needs RIGHT NOW, and under a live 'escalate' contest that is
+  // setsToWin + 1. The engine's own comment beside the field: "the HUD must
+  // never tell a player they need three when they need four." setsToWin is the
+  // fallback for a snapshot predating the field.
+  const need = Number.isInteger(snap.contestBar) && snap.contestBar > 0
+    ? snap.contestBar
+    : (snap.setsToWin || snap.rules?.setsToWin || 3);
   let best = null;
   for (const p of snap.players || []) {
     if (p.eliminated) continue;
@@ -270,8 +305,10 @@ function leaderChip() {
   // and a progress bar that has gone past its own end is not a progress bar.
   // Past the winning count the interesting fact is not the ratio, it is that
   // the seat is ARMED — the engine's own word (armedIds), and the one ui/hud.js's
-  // strip uses for the same state.
-  const armed = best.n >= need;
+  // strip uses for the same state. Read from armedIds first: under a raised
+  // contest bar an armed seat can sit BELOW `need` (3 sets against a bar of 4),
+  // and "3/4 sets" without the ARMED word would hide the one fact that matters.
+  const armed = (snap.armedIds || []).includes(best.id) || best.n >= need;
   return chip('lead', armed ? `${who} ARMED · ${best.n} sets` : `${who} ${best.n}/${need} sets`,
     `chip prompt-lead${isMe && tied.length === 1 ? ' is-mine' : ''}`
     + (armed || best.n >= need - 1 ? ' is-hot' : ''));

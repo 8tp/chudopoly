@@ -410,3 +410,49 @@ test('a wild bound for a different set is not pulled onto the rent pile', () => 
     assert.notEqual(plan.targetColor, 'red', 'the wild was pulled onto the rent pile');
   }
 });
+
+/* ── 7. finish the set before the rent — any colour (round 9) ────────── */
+
+test('a cross-colour set-completing property goes down before the rent fires', () => {
+  // Owner: "if bots are going to finish a set that turn, have them finish the set before
+  // they play any rent cards." Worth zero millions (verified: order cannot change what the
+  // charge collects), but it is the order a human expects to see. FAILS on round-8 code,
+  // whose booster only knew the rent's own colour.
+  for (const mode of ['conservative', 'neutral', 'aggressive']) {
+    const state = build();
+    const bot = state.players[0];
+    setOf(state, bot, 'brown');                    // the rent target, already complete
+    prop(state, bot, 'lightblue'); prop(state, bot, 'lightblue');   // 2/3 — one card short
+    state.players[1].bank.push(money(state, 5));
+    bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('brown') && c.colors[0] !== 'any'));
+    bot.hand.push(take(state, c => c.type === 'property' && c.color === 'lightblue'));
+    always(0.99);
+    const plan = decideBotPlay(state, 'p1', mode);
+    setRng(null);
+    assert.ok(plan, `${mode} produced no plan`);
+    assert.equal(plan.type, 'play_property', `${mode} charged before finishing the set`);
+    assert.equal(bot.hand[plan.cardIndex].color, 'lightblue');
+    assert.ok(applyBotAction(state, 'p1', plan).ok);
+    assert.equal(G.completedSets(bot), 2);
+  }
+});
+
+test('the completing play never eats the last play the rent needed', () => {
+  const state = build();
+  const bot = state.players[0];
+  setOf(state, bot, 'brown');
+  prop(state, bot, 'lightblue'); prop(state, bot, 'lightblue');
+  state.players[1].bank.push(money(state, 5));
+  bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('brown') && c.colors[0] !== 'any'));
+  bot.hand.push(take(state, c => c.type === 'property' && c.color === 'lightblue'));
+  state.playsRemaining = 1;
+  always(0.99);
+  // Aggressive is the mode whose own plan is the rent here (rent is its priority 2,
+  // properties its 9) — neutral would play the property first by personality, which is
+  // exactly the build-before-charge style the ordering pass must not overrule.
+  const plan = decideBotPlay(state, 'p1', 'aggressive');
+  setRng(null);
+  assert.ok(plan && plan.type === 'play_action');
+  assert.equal(bot.hand[plan.cardIndex].type, 'rent',
+    'burned the last play on the property instead of the charge the planner chose');
+});

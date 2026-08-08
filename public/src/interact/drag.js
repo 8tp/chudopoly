@@ -212,6 +212,9 @@ function dragStart(cardId, node, press) {
   for (const t of plan.targets) setAttr(t.el, 'data-droppable', t.rank === 2 ? '2' : '1');
   markIllegal(plan);
   markSource(plan);
+  // The mats answer BEFORE the finger lets go: interact/index.js applyMarks()
+  // paints its placement/TRADE chits for a live board drag off heldCardId().
+  api?.refreshMarks?.();
   if (!unfollow && !prefersReducedMotion()) unfollow = subscribe(follow);
   return true;
 }
@@ -225,8 +228,29 @@ function dragStart(cardId, node, press) {
 function markIllegal(plan) {
   if (!plan.myBoard) return;
   const legal = new Set(plan.targets.map(t => t.el));
+  // THE COLUMN THE CARD CAME FROM IS NOT AN ILLEGAL TARGET — it is home.
+  // resolve() step 0 already treats a release there as a change of mind rather
+  // than a refusal, and dropRefusal() returns '' for `color === board.from`.
+  //
+  // It is also the one column that must not carry the illegal treatment, and
+  // that is the whole of the second defect this round. MEASURED at 1280×720
+  // under real CDP, a rainbow wild dragged out of a full Elite Programs mat:
+  //   ancestors of the held card that establish a stacking context
+  //   ["div.propcol[green] → filter: saturate(0.5) + opacity: 0.55",
+  //    "div#self-board → z-index: 1"]
+  // `opacity: .55` and `filter:` both create a stacking context, so `z-index:60`
+  // on `.card.is-dragging` was being resolved INSIDE the mat the card had not
+  // left — liftCard() opens the clipping chain, it deliberately does not
+  // reparent — while the mat itself, `position: relative; z-index: auto`, paints
+  // at the z-index-0 step of #self-board in TREE ORDER. Every mat later in
+  // document order therefore drew over the card in the player's hand, and the
+  // held card was additionally painted at 55% opacity and desaturated.
+  // With the source column skipped the chain is ["div#self-board → z-index: 1"]
+  // and `document.elementFromPoint` at the held card's own centre goes from
+  // `card#20` — a card in the mat it was crossing — to the held card itself.
+  const source = live?.node?.closest?.('.propcol') || null;
   for (const col of plan.myBoard.querySelectorAll('.propcol')) {
-    if (!legal.has(col)) setAttr(col, 'data-drop-illegal', '1');
+    if (col !== source && !legal.has(col)) setAttr(col, 'data-drop-illegal', '1');
   }
 }
 
@@ -302,16 +326,34 @@ function dragEnd(x, y) {
   // file can name better than the plan can, because the plan's `reason` is
   // about the card and this one is about the column under the finger.
   const refusedMat = hit ? null : live.refused;
+  // WHERE THE CARD IS, read off the node BEFORE releaseCard. On a refused drop
+  // releaseCard's hand relayout (hand.reset → layout → setRest → writeRest)
+  // rewrites --fx/--fy to the rest pose, and a springBack that read the vars
+  // afterwards launched from a pose already home: measured, the card crossed
+  // ~620px in one 13ms frame and then sat still for the 240ms "flight". The
+  // capture is the whole fix — the spring is handed the drop point explicitly.
+  const from = shownPose(node);
   teardown();
   live = null;
   // The clipping chain stays open on a tail timer (table.releaseCard) so the
   // flight the drop is about to start is not cut off at the zone's edge.
   table.releaseCard(cardId, { accepted: !!hit });
 
+  api?.refreshMarks?.();                       // the drag's own mat chits come off with it
   const accepted = hit ? api.dropCommit(cardId, hit.drop) : false;
   if (accepted) {
+    // A drop the MACHINE took but the SERVER has not heard about. The mode is
+    // still collecting targets — §3.5's swapCard step is exactly this, and so is
+    // a steal that has answered `player` and still needs `theirCard` — so there
+    // is no broadcast on the way and nothing for the FLIP to continue.
+    // `is-dropping` is `pointer-events: none` (interact.css), so holding the
+    // card at the drop point left the card the question is ABOUT dead to the
+    // finger for COMMIT_HOLD_MS. MEASURED: a drag started inside that window
+    // produced no pointerdown and sent nothing at all. It goes home and waits
+    // for its answer where it lives.
+    if (api.targeting?.()) { springBack(node, cardId, plan.source, from); return; }
     node.classList.add('is-dropping');
-    holdRelease(node, cardId);
+    holdRelease(node, cardId, plan.source);
     return;                                    // the landing cue belongs to the flight
   }
   // The ANSWER first, then the card going home. Under reduced motion the spring
@@ -319,7 +361,7 @@ function dragEnd(x, y) {
   // third in its own chain — measured ["card_pickup","card_flight_start",
   // "card_landed","denied"]. The refusal is the reason the card is travelling.
   cue(CUE_DENIED, x, y);
-  springBack(node, cardId, plan.source);
+  springBack(node, cardId, plan.source, from);
   // §P7.3 — a refusal is a sentence, never a shrug. The mat the finger was on
   // outranks the card-level reason: the player aimed somewhere specific.
   const said = refusedMat
@@ -332,10 +374,26 @@ function dragEnd(x, y) {
 function dragCancel() {
   if (!live) return;
   const { node, cardId, plan } = live;
+  // Same capture as dragEnd, same reason: releaseCard rewrites the vars first.
+  const from = shownPose(node);
   teardown();
   live = null;
+  api?.refreshMarks?.();
   table.releaseCard(cardId, { accepted: false });
-  springBack(node, cardId, plan.source);
+  springBack(node, cardId, plan.source, from);
+}
+
+/** The pose actually painted on the node right now — the last frame the player
+ *  saw. Read before anything downstream of releaseCard can rewrite it. */
+function shownPose(node) {
+  const x = parseFloat(node.style.getPropertyValue('--fx'));
+  const y = parseFloat(node.style.getPropertyValue('--fy'));
+  const s = parseFloat(node.style.getPropertyValue('--fs'));
+  return {
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+    s: Number.isFinite(s) ? s : 1,
+  };
 }
 
 /* ── drop resolution: aim is not the game (owner feedback, P7 round 1) ─────
@@ -547,7 +605,7 @@ function clearGhost() {
  *  FLIP can continue the motion from there. If the server refuses (illegal
  *  actions get {type:'error'} and NO rebroadcast — net/socket.js) nothing would
  *  ever move it back, so the offset is only held for COMMIT_HOLD_MS. */
-function holdRelease(node, cardId) {
+function holdRelease(node, cardId, source) {
   if (prefersReducedMotion()) { rest(node); return; }     // §0.9: no flourish to continue
   const parent = node.parentElement;
   clearTimeout(node.__dragTimer);
@@ -555,7 +613,15 @@ function holdRelease(node, cardId) {
     node.classList.remove('is-dropping');
     if (node.classList.contains('is-flying')) return;     // the FLIP owns it now
     if (node.parentElement !== parent) { rest(node); return; }  // already re-homed, no flight to fake
-    springBack(node, cardId, 'hand');
+    // `source`, not a hardcoded 'hand'. table.moveCard(id,'hand',{springBack})
+    // APPENDS the node to the hand zone (table/index.js:204-205) before it
+    // springs, so a BOARD card that was accepted but never answered by the
+    // server — the swapCard step is exactly that, an accepted drop with no
+    // frame behind it — was reparented into the fan after COMMIT_HOLD_MS.
+    // "suddenly I have cards back in my hand when they were literally on the
+    // board" (owner, ccea2c4) has a second cause, and this is it. A board card
+    // takes the CSS spring below, which moves nothing but the transform.
+    springBack(node, cardId, source);
   }, COMMIT_HOLD_MS);
 }
 
@@ -594,16 +660,30 @@ function cueSpring(node, instant) {
   }, SPRING_MS);
 }
 
-function springBack(node, cardId, source) {
+/**
+ * @param {{x:number, y:number, s:number}|null} [from] the pose the card was
+ *        painted at when the gesture ended, captured by dragEnd/dragCancel
+ *        BEFORE table.releaseCard could rewrite the vars to the rest pose.
+ *        Omitted only by holdRelease's timeout path, where the vars really do
+ *        still hold the drop point (an accepted drop keeps its offset).
+ */
+function springBack(node, cardId, source, from) {
   if (!node) return;
   const reduced = prefersReducedMotion();
   // §P4 contract: the motion agent's table.moveCard(id,'hand',{springBack:true})
-  // reads the --fx/--fy this file left on the node and springs it to the card's
-  // rest pose in the fan. A wild dragged around my own board never left its
-  // column, so that call does not apply to it — the CSS spring below does.
+  // springs the card from the captured drop pose to its rest pose in the fan.
+  // A wild dragged around my own board never left its column, so that call
+  // does not apply to it — the CSS spring below does.
   let handled = false;
   if (source === 'hand') {
-    try { handled = table.moveCard(cardId, 'hand', { springBack: true }) === true; } catch { handled = false; }
+    try {
+      handled = table.moveCard(cardId, 'hand', {
+        springBack: true, duration: SPRING_MS,
+        fromX: from ? from.x : undefined,
+        fromY: from ? from.y : undefined,
+        fromScale: from ? from.s : undefined,
+      }) === true;
+    } catch { handled = false; }
   }
   if (handled) {
     // Taken by flight.springHome, which cues for itself — unless it was the
@@ -614,6 +694,16 @@ function springBack(node, cardId, source) {
   }
 
   cueSpring(node, reduced);
+  // The CSS spring transitions FROM the currently painted pose, so if anything
+  // downstream of releaseCard rewrote the vars, the captured pose is put back
+  // first — without a transition, and committed with one forced reflow (once
+  // per release, never per frame) — so the transition has a true start point.
+  if (!reduced && from && (from.x !== homeX(node) || from.y !== homeY(node))) {
+    node.style.transition = 'none';
+    setStyle(node, '--fx', `${Math.round(from.x * 10) / 10}px`);
+    setStyle(node, '--fy', `${Math.round(from.y * 10) / 10}px`);
+    void node.offsetWidth;
+  }
   node.style.transition = `transform ${SPRING_MS}ms ${SPRING_EASE}`;
   setStyle(node, '--fx', `${homeX(node)}px`);
   setStyle(node, '--fy', `${homeY(node)}px`);
@@ -664,3 +754,7 @@ export function revalidate() {
 /** Is a card under the finger right now? Callers use it to tell "the state
  *  broadcast interrupted me" from "I put it down". */
 export function holding() { return !!live; }
+
+/** WHICH card, for the mat advice a drag has to print while it is still live
+ *  (interact/index.js applyMarks). `null` when nothing is held. */
+export function heldCardId() { return live ? live.cardId : null; }

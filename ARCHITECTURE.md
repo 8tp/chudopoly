@@ -63,8 +63,34 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    typeface's identity, not ours, and it is the one mark that has to be ours.
 
    **AMENDED 2026-08-07 — recorded music, and only music, may ship as files.** Scope:
-   `public/audio/*.opus`, at most **six** tracks (one lobby bed, two match beds, one Final
-   Approach bed, and a victory / defeat pair).
+   `public/audio/*.opus`, at most **eight** tracks (one lobby bed, **four** match beds, one
+   Final Approach bed, and a victory / defeat pair).
+
+   *Raised six → eight on 2026-08-07 (e), owner directive, and the load policy is what makes
+   it nearly free: **a session pays for ONE match bed no matter how many exist**, because the
+   bed is chosen at game start and never rotated inside a match. So the extra tracks cost
+   repository size and a first-fetch on the day a player happens to roll one — not per-session
+   payload. More beds also fix the thing that prompted this: at two, a player sees the same
+   bed twice in a row 50% of the time, which reads as "there is only one track". At five with
+   no-immediate-repeat, never — and the rotation spans strings, electronics and brass, which
+   is real texture rather than variations on one.*
+
+   *A fifth bed, a percussion-only "checklist", was generated, measured, placed and **rejected
+   by the owner as "way too repetitive" — and it had the BEST score on the metric being used
+   to judge these**, 1.6% thin frames against the shipped pair's 24.7% and 34.0%. That is the
+   lesson worth keeping: **`thin %` measures LEVEL uniformity, not musical variety.** A bed
+   with no harmony and no development is perfectly steady and therefore perfectly monotonous;
+   the metric was optimising for exactly the failure it could not see. It remains a good guard
+   against a bed that sags or goes silent mid-match, which is what it was built for — it is
+   not evidence that a bed is good.*
+
+   *One of the five is a known mix problem and is being taken with its eyes open:
+   **honor-guard puts 63% of its energy in the 150–500Hz band** — the octave every card cue's
+   dominant energy sits in, and the one the music bus already cuts to let those cues through.
+   Compare tape-loops at 24%. It will therefore be thinned harder than its siblings by the
+   shared cut, and if it does not survive that, the answer is a **per-track EQ on that bed
+   alone** rather than relaxing the masking floor. The floor is the assertion that keeps card
+   sounds audible and is not the thing to trade.*
 
    *The cap moved four → six on 2026-08-07 (c), owner directive, and the endgame pair is
    cheap in a way the beds are not: 40s rather than 3 minutes, so **322KB + 317KB** against

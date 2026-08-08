@@ -8,6 +8,10 @@ import * as send from '../net/send.js';
 import { store } from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
 import { faceNode, backNode } from '../table/cardart.js';
+// The flight log's entry point is a mark on this screen's rail, so this screen
+// mounts it. main.js is architect-owned (§1) and does not need a new import for
+// a surface that only exists on the home rail.
+import * as flightlog from './stats.js';
 
 const NAME_KEY = 'chud_name';
 
@@ -145,6 +149,9 @@ export function mount() {
   if (input && !input.value) input.value = saved;
   paintIdentity(saved);
   buildDeck();
+  // Registers `flight-log` and decides whether the rail's second reading mark
+  // is on the screen at all. It reads state/stats.js, which never throws.
+  flightlog.mount();
 
   const params = new URLSearchParams(location.search);
   const room = (params.get('room') || '').toUpperCase();

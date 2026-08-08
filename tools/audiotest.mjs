@@ -27,6 +27,14 @@
  *   • the recording actually ARRIVES when the buffer lands mid-render (11) —
  *     the path every player takes on the first use of a track, and the one
  *     every other assertion here skips
+ *   • the four match beds rotate, never repeat back to back, and hold a
+ *     25±2.5% share each over 4000 rooms (12)
+ *   • a bed whose pass ran out while rAF was parked (hidden tab) comes back
+ *     when the clock does (13) — the owner's "music stops and won't play at
+ *     all", reproduced live before this existed
+ *   • a suspended AudioContext is retaken on the next gesture (14) — the
+ *     other permanent-silence mechanism, and the only live-context assertion
+ *     in the file: everything above renders offline and so cannot see it
  *
  * Needs the audio engine (P5) to expose a render hook. Exits 2 until then.
  */
@@ -49,7 +57,12 @@ let browser = null;
 let code = EXIT_PASS;
 
 try {
-  browser = await launchBrowser();
+  // The autoplay flag exists for assertions 13b/14, which drive a LIVE
+  // AudioContext in a page with no harness recorder (the recorder makes
+  // engine.init() a permanent no-op, which is why every prior assertion here
+  // was blind to anything that only happens to a running context). It changes
+  // nothing for the OfflineAudioContext renders.
+  browser = await launchBrowser(['--autoplay-policy=no-user-gesture-required']);
   const h = await openPage(browser, `${server.url}/?harness=1&seed=${seed}&mute=1`);
   await requireBridge(h.page, 8000);
 
@@ -285,7 +298,7 @@ try {
   const MASK_FLOOR = 6;
   const GATE_CUES = ['shuffle_riffle', 'card_slide', 'card_snap', 'card_flip',
     'chip', 'prop_place'].filter((n) => names.includes(n));
-  const IN_MATCH = ['match', 'match1', 'match2', 'final'];
+  const IN_MATCH = ['match', 'match1', 'match2', 'match3', 'match4', 'final'];
   const MENU_BEDS = ['menu', 'lobby'];
 
   if (!hasMusic) {
@@ -461,7 +474,17 @@ try {
    *   a HOLE   — dead air. This is what caught the two real bugs in the round:
    *              stopDrone() cancelling from `now` instead of from its
    *              scheduled time (6.0s at -114 dBFS), and the synth transport
-   *              not re-basing on a mode change (1.3s at -105 dBFS).           */
+   *              not re-basing on a mode change (1.3s at -105 dBFS).
+   *
+   * The hole is graded AGAINST A CONTROL: the same bed, same length, no
+   * transition. A flat "no gap longer than N" was a threshold on the MUSIC, not
+   * on the transition, and it went off the moment a sparser bed entered the
+   * rotation — match-3 "Night Watch" is deliberately the loosest of the four
+   * (13.5% thin, p5 −37.7 dB against its own median) and its own quiet stretches
+   * ran 0.7s under the bar with nothing wrong at all. What this has to answer is
+   * "did the transition make a hole the bed does not already have", so it asks
+   * exactly that, and the answer is allowed 0.3s of slack for the crossfade
+   * itself.                                                                    */
   const hasTrans = await h.page.evaluate(() => typeof window.__CHUD.audio.renderTransition === 'function');
   if (!hasTrans) {
     r.warn('__CHUD.audio.renderTransition absent — the four transitions are not measured');
@@ -509,11 +532,27 @@ try {
         }
         return { worst, worstAt, hole: hole * 0.1, holeAt };
       }, [steps, seconds]);
-      // 0.7s: match-2 is a genuinely sparse composition and its own quietest
-      // stretch measured 0.4s under -62 dBFS with nothing wrong at all.
+      // The control: the same opening state, no transition, same duration.
+      const ctrl = await h.page.evaluate(async ([st, sec]) => {
+        const o = await window.__CHUD.audio.renderTransition(st, sec, {});
+        const sr = o.sampleRate, L = o.channels[0], R = o.channels[1];
+        const db = (v) => (v > 0 ? 20 * Math.log10(v) : -120);
+        const W = Math.round(sr * 0.1);
+        let hole = 0, run = 0;
+        const end = Math.round(sr * (sec - 1.5));
+        for (let i = 0; i + W <= end; i += W) {
+          let s2 = 0;
+          for (let j = i; j < i + W; j++) { const x = (L[j] + R[j]) * 0.5; s2 += x * x; }
+          if (db(Math.sqrt(s2 / W)) < -62) { run++; if (run > hole) hole = run; } else run = 0;
+        }
+        return hole * 0.1;
+      }, [[steps[0]], seconds]);
+      const allow = Math.max(0.7, ctrl + 0.3);
       if (m.worst > 2) bad.push(`${label}: click at ${m.worstAt.toFixed(2)}s (${m.worst.toFixed(1)}× the render's own p99.99 |dx|)`);
-      else if (m.hole > 0.7) bad.push(`${label}: ${m.hole.toFixed(1)}s of dead air at ${m.holeAt.toFixed(1)}s`);
-      else good.push(`${label} ${m.worst.toFixed(2)}×/${m.hole.toFixed(1)}s`);
+      else if (m.hole > allow) {
+        bad.push(`${label}: ${m.hole.toFixed(1)}s of dead air at ${m.holeAt.toFixed(1)}s — `
+          + `the same bed with no transition holds ${ctrl.toFixed(1)}s`);
+      } else good.push(`${label} ${m.worst.toFixed(2)}×/${m.hole.toFixed(1)}s`);
     }
     if (bad.length) {
       r.fail(`${bad.length} of ${PLANS.length} bed transition(s) are audibly broken`);
@@ -546,10 +585,16 @@ try {
     r.warn('__CHUD.audio.renderTransition absent — the synth/file handoff is not measured');
   } else {
     const SOLO_FLOOR = 60;
+    // Withhold EVERY track, read off the module's own table rather than a list
+    // written here. A hardcoded list went stale the moment two beds were added:
+    // the picker chose one of the new ones, that one was resident, and the
+    // "fallback" scene quietly stopped exercising the fallback.
+    const allTracks = await h.page.evaluate(() =>
+      (typeof window.__CHUD.audio.tracks === 'function' ? window.__CHUD.audio.tracks() : []));
     const SCENES = [
-      ['menu', [{ at: 0, do: 'menu' }], 26, ['lobby']],
-      ['match', [{ at: 0, do: 'match' }], 26, ['lobby', 'match1', 'match2', 'final']],
-      ['climax', [{ at: 0, do: 'match' }, { at: 12, do: 'arm' }], 30, ['lobby', 'match1', 'match2', 'final']],
+      ['menu', [{ at: 0, do: 'menu' }], 26, allTracks],
+      ['match', [{ at: 0, do: 'match' }], 26, allTracks],
+      ['climax', [{ at: 0, do: 'match' }, { at: 12, do: 'arm' }], 30, allTracks],
     ];
     /* The WHOLE render, deliberately. A window that starts after the handoff has
      * settled is vacuous against the bug this exists for: the shipped defect was
@@ -714,25 +759,31 @@ try {
    * one (past it, where the fallback covers and must then hand over).           */
   if (hasTrans && hasMusic) {
     const CASES = [
-      ['lobby, fast arrival', [{ at: 0, do: 'menu' }], 20, { lobby: 0.2 }, 0.2],
-      ['lobby, slow arrival', [{ at: 0, do: 'menu' }], 20, { lobby: 3.0 }, 3.0],
-      ['match bed, fast arrival', [{ at: 0, do: 'match' }], 20, { match1: 0.2, match2: 0.2 }, 0.2],
-      ['match bed, slow arrival', [{ at: 0, do: 'match' }], 20, { match1: 3.0, match2: 3.0 }, 3.0],
-      ['climax, arrival on arm', [{ at: 0, do: 'match' }, { at: 8, do: 'arm' }], 22, { final: 8.2 }, 8.2],
+      ['lobby, fast arrival', [{ at: 0, do: 'menu' }], 20, { lobby: 0.2 }, 0.2, null],
+      ['lobby, slow arrival', [{ at: 0, do: 'menu' }], 20, { lobby: 3.0 }, 3.0, null],
+      ['match bed, fast arrival', [{ at: 0, do: 'match' }], 20,
+        { match1: 0.2, match2: 0.2, match3: 0.2, match4: 0.2 }, 0.2, null],
+      // EVERY match bed on the slow path, not just whichever one the picker
+      // happens to land on: the rotation makes that a coin toss, and a bed that
+      // never arrives would hide behind three that do. `bed` forces the choice.
+      ...['match1', 'match2', 'match3', 'match4'].map((k) => [
+        `${k}, slow arrival`, [{ at: 0, do: 'match' }], 20, { [k]: 3.0 }, 3.0, k,
+      ]),
+      ['climax, arrival on arm', [{ at: 0, do: 'match' }, { at: 8, do: 'arm' }], 22, { final: 8.2 }, 8.2, null],
     ];
     const SETTLE = 4.0;          // seconds after the buffer lands
     const bad = [];
     const good = [];
-    for (const [label, steps, secs, arrive, at] of CASES) {
-      const m = await h.page.evaluate(async ([st, sec, ar, t0]) => {
+    for (const [label, steps, secs, arrive, at, bed] of CASES) {
+      const m = await h.page.evaluate(async ([st, sec, ar, t0, bd]) => {
         const db = (v) => (v > 0 ? 20 * Math.log10(v) : -200);
-        const o = await window.__CHUD.audio.renderTransition(st, sec, { solo: 'file', arrive: ar });
+        const o = await window.__CHUD.audio.renderTransition(st, sec, { solo: 'file', arrive: ar, bed: bd || undefined });
         const sr = o.sampleRate, L = o.channels[0], R = o.channels[1];
         const a = Math.round((t0 + 4.0) * sr), b = Math.min(L.length, Math.round((sec - 1) * sr));
         let s = 0, n = 0;
         for (let i = a; i < b; i++) { const x = (L[i] + R[i]) * 0.5; s += x * x; n++; }
         return { rms: db(Math.sqrt(s / Math.max(1, n))), log: o.log };
-      }, [steps, secs, arrive, at]);
+      }, [steps, secs, arrive, at, bed]);
       // -70 dBFS is 30dB under the quietest bed here: this is "is it playing at
       // all", not a level assertion. The level assertions are 6 and 6b.
       if (m.rms < -70) {
@@ -748,6 +799,171 @@ try {
       r.pass(`the recording arrives and reaches level in all ${CASES.length} cases `
         + dim(`(file bus dBFS: ${good.join(', ')})`));
     }
+  }
+
+  /* ---- 12. THE ROTATION NEVER REPEATS ITSELF -------------------------------
+   * §0.3's cap went to eight for two more match beds, and the reason was not
+   * variety for its own sake: a fair pick over TWO beds plays the same one twice
+   * running half the time, which is what the owner heard as "there is only one
+   * track". Four beds do not fix that on their own — a fair pick over four still
+   * repeats a quarter of the time. The no-repeat rule in pickMatchTrack() is
+   * what fixes it, and this is the only way to show it, because the property is
+   * statistical: it holds over hundreds of rooms or it does not hold.
+   *
+   * Three things are asserted, and the middle one is the point:
+   *   every bed is reachable            (a typo in the pool is silent otherwise)
+   *   no two consecutive picks are equal
+   *   the pool is not badly skewed      (no-repeat leaves three equally likely,
+   *                                      so ~25% each over a long run)          */
+  const hasRot = await h.page.evaluate(() => typeof window.__CHUD.audio.rotation === 'function');
+  if (!hasRot) {
+    r.warn('__CHUD.audio.rotation absent — the no-repeat rotation is not asserted');
+  } else {
+    // 4000, raised from 400: at 400 the per-bed share has a sampling sd of
+    // ~2.2 points, so a genuinely fair picker printed 20%–29% and the old
+    // 15–40% band could not tell fair from broken. At 4000 the sd is ~0.7
+    // points; the picker itself measures 24.8/25.1/25.1/25.0% over 40k keys
+    // (chi-square 0.77 against uniform, scratchpad fairness-sim), so the
+    // ±2.5-point band below is >3σ of headroom and the keys are deterministic
+    // anyway — the number cannot move between runs.
+    const N = 4000;
+    const seq = await h.page.evaluate((n) => {
+      const CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      const keys = [];
+      // Room-code shaped AND actually distinct. The previous generator
+      // (`(i*7 + c*31 + i*i%29) % 32`) moved every character by the same value,
+      // so it could only ever emit 32 codes / ~96 keys — the "400 rooms" run
+      // was 96 hash draws wearing 400 labels, and its per-bed shares swung ±9
+      // points on a picker that is provably uniform. FNV mixing with the HIGH
+      // bits folded down fixes it (measured: 3994 distinct codes in 4000; the
+      // low bits alone give EIGHT, because a multiply-only hash never diffuses
+      // downward). Deterministic, so this number cannot move between runs.
+      let hsh = 2166136261 >>> 0;
+      const mix = (x) => {
+        hsh = Math.imul(hsh ^ x, 16777619) >>> 0;
+        return ((hsh ^ (hsh >>> 16)) >>> 0);
+      };
+      for (let i = 0; i < n; i++) {
+        let code = '';
+        for (let c = 0; c < 4; c++) code += CH[mix(i * 4 + c) % CH.length];
+        keys.push(`${code}#${i % 3}`);
+      }
+      return window.__CHUD.audio.rotation(keys);
+    }, N);
+    const beds = await h.page.evaluate(() => window.__CHUD.audio.tracks()
+      .filter((k) => /^match\d+$/.test(k)));
+    const seen = new Set(seq);
+    const missing = beds.filter((b) => !seen.has(b));
+    let repeats = 0;
+    let firstRepeat = -1;
+    for (let i = 1; i < seq.length; i++) {
+      if (seq[i] === seq[i - 1]) { repeats++; if (firstRepeat < 0) firstRepeat = i; }
+    }
+    const counts = beds.map((b) => seq.filter((x) => x === b).length);
+    const lo = Math.min(...counts) / seq.length, hi = Math.max(...counts) / seq.length;
+    if (missing.length) {
+      r.fail(`${missing.join(', ')} never chosen in ${N} rooms — a bed nothing can reach is a bed nobody ships`);
+    } else if (repeats) {
+      r.fail(`${repeats} back-to-back repeat(s) in ${N} rooms, first at #${firstRepeat} (${seq[firstRepeat]}) — `
+        + 'the no-repeat rule is the whole reason the cap moved to eight');
+    } else if (lo < 0.225 || hi > 0.275) {
+      r.fail(`the rotation is skewed: ${beds.map((b, i) => `${b} ${(100 * counts[i] / seq.length).toFixed(1)}%`).join(', ')} `
+        + `over ${N} rooms — every bed must hold 25±2.5% (proven-to-fail: a squared-r pick reads 40.5/34.6/18.9/5.9)`);
+    } else {
+      r.pass(`${beds.length} beds, zero back-to-back repeats in ${N} rooms `
+        + dim(`(${beds.map((b, i) => `${b.replace('match', '')}:${(100 * counts[i] / seq.length).toFixed(0)}%`).join(' ')})`));
+    }
+  }
+
+  /* ---- 13. THE BED SURVIVES A PARKED CLOCK ---------------------------------
+   * OWNER BUG, live play: "occasionally music will stop during gameplay all
+   * together and just won't play at all." REPRODUCED (scratchpad repro-stall):
+   * a hidden/minimized tab parks rAF, so pump() stops and reloop() cannot arm
+   * the next pass; the current pass runs out (29–64s per bed), its onended
+   * fires while hidden, and on return leadVoice() is null — reloop()'s guard
+   * returns forever, with bedWant set, the buffer resident, and master RMS 0.0.
+   * Every render above pumps every 50ms without fail, which is why this file
+   * was green while the owner heard silence.
+   *
+   * 'hide' at 2s parks the pump exactly as a background tab does; match3's
+   * trimmed pass (29.09s) runs out inside the window; 'show' at 38s is the
+   * player coming back. The bed must be back on its feet shortly after. */
+  if (hasTrans) {
+    const m = await h.page.evaluate(async () => {
+      const db = (v) => (v > 0 ? 20 * Math.log10(v) : -200);
+      const o = await window.__CHUD.audio.renderTransition(
+        [{ at: 0, do: 'match' }, { at: 2, do: 'hide' }, { at: 38, do: 'show' }],
+        46, { bed: 'match3' });
+      const sr = o.sampleRate, L = o.channels[0], R = o.channels[1];
+      const rms = (a, b) => {
+        let s = 0, n = 0;
+        for (let i = Math.round(a * sr); i < Math.min(L.length, Math.round(b * sr)); i++) {
+          const x = (L[i] + R[i]) * 0.5; s += x * x; n++;
+        }
+        return db(Math.sqrt(s / Math.max(1, n)));
+      };
+      // 10..25s: the pass is still sounding while hidden (audio does not stop
+      // when a tab hides — if this is silent the render staged the wrong bug).
+      // 42..45s: 4s after the return the bed must be BACK.
+      return { during: rms(10, 25), after: rms(42, 45), log: o.log };
+    });
+    if (m.during < -70) {
+      r.fail(`parked-clock render is silent at 10–25s (${m.during.toFixed(1)} dBFS) — the bed never `
+        + 'started, so the recovery assertion below would be vacuous');
+    } else if (m.after < -55) {
+      r.fail(`the bed never comes back after a parked clock: ${m.after.toFixed(1)} dBFS at 42–45s `
+        + `against ${m.during.toFixed(1)} while it played — the owner's "music stops and won't play at all" `
+        + `(log tail: ${m.log.slice(-3).join(' | ')})`);
+    } else {
+      r.pass(`the bed survives a parked clock ${dim(`(${m.during.toFixed(1)} dBFS playing, `
+        + `pass runs out hidden, ${m.after.toFixed(1)} dBFS 4s after return)`)}`);
+    }
+  }
+
+  /* ---- 14. A SUSPENDED CONTEXT IS RETAKEN ----------------------------------
+   * The second stop mechanism, and it takes the card sounds with it: a phone
+   * call, Siri, an app switch or an audio-route change puts the context in
+   * 'suspended'/'interrupted', and the client had NO resume path — no
+   * visibilitychange, no onstatechange, no gesture hook (grep: zero callers of
+   * engine.resume()). REPRODUCED live: suspend() then a real click left the
+   * context suspended forever.
+   *
+   * This one needs a LIVE context, so it runs in a second page WITHOUT the
+   * harness recorder (which makes init() a no-op). The autoplay flag on the
+   * launch stands in for the first gesture; the click is a real, trusted
+   * Playwright gesture — the same input the fix's listener must catch. */
+  {
+    const live = await openPage(browser, `${server.url}/`);
+    const state0 = await live.page.evaluate(async () => {
+      const engine = await import('/src/audio/engine.js');
+      window.__live = { engine, meter: null };
+      engine.init();
+      window.__live.meter = engine.__meter();
+      return window.__live.meter ? window.__live.meter().state : 'no-graph';
+    });
+    if (state0 !== 'running') {
+      r.warn(`live context never reached 'running' (${state0}) — suspension recovery not asserted here`);
+    } else {
+      await live.page.evaluate(() => window.__live.engine.suspend());
+      const st1 = await live.page.evaluate(() => window.__live.meter().state);
+      if (st1 === 'running') {
+        r.fail('suspend() did not suspend — the recovery assertion below is vacuous');
+      } else {
+        await live.page.mouse.click(400, 300);
+        let st2 = st1;
+        for (let i = 0; i < 20 && st2 !== 'running'; i++) {
+          await new Promise((res) => setTimeout(res, 100));
+          st2 = await live.page.evaluate(() => window.__live.meter().state);
+        }
+        if (st2 === 'running') {
+          r.pass('a suspended context is retaken on the next gesture ' + dim(`(${st1} → ${st2})`));
+        } else {
+          r.fail(`a suspended context stays ${st2} after a real click — a phone call or app switch `
+            + 'silences the whole game until reload');
+        }
+      }
+    }
+    await live.close();
   }
 
   if (h.errors.length) {

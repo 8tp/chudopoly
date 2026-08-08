@@ -578,6 +578,34 @@ export function init() {
     const p = ctx.resume();
     if (p && typeof p.catch === 'function') p.catch(() => {});
   }
+  /* ── THE CONTEXT THE OS TOOK AWAY (owner: "music will stop … and just won't
+   * play at all") ─────────────────────────────────────────────────────────
+   * A phone call, Siri, an app switch or an audio-route change moves a live
+   * context to 'suspended' (iOS: 'interrupted'), and this module had no
+   * resume path at all — no visibilitychange, no gesture hook, zero callers
+   * of resume(). MEASURED live before this block existed: suspend() then a
+   * real click left the context suspended forever; every voice, card cue and
+   * bed silent until reload. Both listeners are registered HERE, inside the
+   * gesture-driven init(), so §7's "no AudioContext before a gesture" holds
+   * unchanged — before init() there is nothing to resume. A resume that the
+   * platform refuses (mid-interruption iOS) rejects and is retried by the
+   * next gesture; deliberate suspension via the exported suspend() is not
+   * fought from onstatechange for the same reason — only the player's own
+   * input and their return to the tab retake the context. */
+  const retake = () => {
+    if (!graph || graph.ctx.state === 'running' || graph.ctx.state === 'closed') return;
+    try {
+      const rp = graph.ctx.resume();
+      if (rp && typeof rp.then === 'function') {
+        rp.then(() => { status = graph && graph.ctx.state === 'running' ? 'ready' : status; },
+          () => {});
+      }
+    } catch { /* retried on the next gesture */ }
+  };
+  window.addEventListener('pointerdown', retake);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') retake();
+  });
   status = ctx.state === 'running' ? 'ready' : 'suspended';
   if (armed.size) startBed();
   // The score can only exist after this point, which is what makes §7's "no
@@ -1371,7 +1399,8 @@ export function stats() {
 
 /** The §9 contract the P2 harness asked for. */
 export function harnessApi() {
-  return { list, renderOffline, renderMix, renderMusic, renderTransition, stats };
+  return { list, renderOffline, renderMix, renderMusic, renderTransition, stats,
+    rotation: music.__rotation, tracks: music.tracks };
 }
 
 /**

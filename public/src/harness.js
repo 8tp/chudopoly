@@ -7,6 +7,7 @@
 
 import * as table from './table/index.js';
 import * as choreographer from './anim/choreographer.js';
+import * as flight from './anim/flight.js';
 import * as store from './state/store.js';
 import * as audio from './audio/engine.js';
 import * as fx from './fx/index.js';
@@ -71,6 +72,13 @@ export function install(readyPromise, applyStateFn) {
   });
   Object.defineProperty(bridge, 'driftLog', {
     get: () => table.lastCorrections(),
+    enumerable: true,
+  });
+  // ART §4's hitstop, countable from outside. flight.hitstopCount() was correct
+  // and measured (40–58ms stalls, one per landing beat) while NO tool read it —
+  // zeroing HITSTOP_MS shipped green. Additive; the §9 contract is unchanged.
+  Object.defineProperty(bridge, 'hitstopCount', {
+    get: () => flight.hitstopCount(),
     enumerable: true,
   });
 

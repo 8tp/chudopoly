@@ -44,7 +44,11 @@ const HINTS = {
   myCard: 'Tap one of your properties to offer',
   mySet: 'Tap one of your complete sets',
   myColor: 'Tap the set column to place it on',
-  swapCard: 'Tap the card to trade places with',
+  // Names the COST, because this step is where a swap is consented to and a
+  // player who meant "add this here" has to be able to recognise that it is not
+  // what they are about to get. 48 characters — beginMove()'s own hint is 82 and
+  // ui/prompt.js's 64px bar measurement is taken against that one.
+  swapCard: 'Tap the card to TRADE places with — both move',
 };
 
 function changed() {
@@ -442,16 +446,35 @@ export function pick(step, value) {
     case 'theirSet':
       if (!value) return false;
       mode.picks.targetColor = value;
-      // A FULL mat answered a rearrange: this is §3.5's swap, not a move. One
-      // partner is taken without asking (the same rule playSelected() states for
-      // a one-colour rent — never prompt for a decision with one answer); two or
-      // more is a real choice between two real cards, so it gets a step of its
-      // own rather than a silent pick. 55a014f's finding is the reason: a board
-      // change the player never chose is worse than any refusal.
-      if (mode.intent === 'move' && step === 'myColor') {
-        const partners = sel.swapPartners(mode.cardId, value);
-        if (partners.length === 1) mode.picks.withCardId = partners[0].id;
-        else if (partners.length > 1) mode.needs.splice(1, 0, 'swapCard');
+      // A FULL mat answered a rearrange: this is §3.5's swap, and the swapCard
+      // step is ALWAYS taken, however few partners there are.
+      //
+      // It used to be skipped for a single partner, under this file's own
+      // standing rule — never prompt for a decision with one answer. That rule
+      // is right and it was answering the wrong question. It correctly answers
+      // WHICH PARTNER: there is one, so do not ask. It does not answer DID YOU
+      // WANT A SWAP AT ALL, and that question has two answers on every full mat
+      // in the game, because the tap that chose the destination is byte-for-byte
+      // the same gesture for a move and for a swap.
+      //
+      // They are not the same move. A move relocates one card and draws one
+      // rearrange; a swap relocates TWO and draws TWO (selectors.js SWAP_COST).
+      // Owner, live: "im trying to add a wild to one that has a dual color one
+      // and they are just getting swapped over and over" — the swap fired
+      // silently, the board changed in a way the player had not chosen, they put
+      // it back, and the identical tap did it again. d05d523's own reasoning is
+      // the argument against what it shipped: "a board change the player never
+      // chose is worse than any refusal."
+      //
+      // So the step costs one tap and buys consent: no `swap_property` leaves
+      // this client until the player has pointed at the card being traded with,
+      // and the swapCard step is a thing a plain move never does. Rejected —
+      // refusing the mat and offering the swap as an alternative (that is a
+      // second surface, which ART §3.2 spends a clause refusing, and it makes
+      // the deadlock §3.5 ruled in harder to reach than before it existed).
+      if (mode.intent === 'move' && step === 'myColor'
+          && sel.swapPartners(mode.cardId, value).length) {
+        mode.needs.splice(1, 0, 'swapCard');
       }
       break;
     case 'swapCard':
@@ -700,8 +723,13 @@ function clearMarks() {
   for (const node of qsa('.propcol[role="button"]')) {
     node.removeAttribute('role');
     node.removeAttribute('tabindex');
-    node.removeAttribute('aria-label');
   }
+  // The NAME comes off separately, because a live board drag paints the advice
+  // (and therefore the sentence) on mats that were never promoted to buttons —
+  // markPropColumns is a targeting-step thing and a drag is not one. Keyed on
+  // the attribute rather than on the role, or a drag left ten stale sentences
+  // on the board describing a card that is back in its column.
+  for (const node of qsa('.propcol[aria-label]')) node.removeAttribute('aria-label');
   for (const node of qsa('[data-payable="1"]')) {
     node.removeAttribute('data-payable');
     // cardnode.js parks every card at tabindex -1; selection modes are the only
@@ -806,11 +834,10 @@ function zoneTally(ownerId, color) {
  * It exists only while the step does: applyMarks() builds it, clearMarks()
  * removes it, and clearMarks() runs first on every single pass.
  */
-function paintAdvice(colors, swap = []) {
+function paintAdvice(card, colors, kind, swap = []) {
   const board = table.boardEl(store.self.id);
   if (!board) return;
-  const kind = adviceKind();
-  const rows = sel.placementAdvice(mode.card, colors, kind, swap);
+  const rows = sel.placementAdvice(card, colors, kind, swap);
   for (const row of rows) {
     const col = board.querySelector(`.propcol[data-color="${row.color}"]`);
     if (!col) continue;
@@ -888,6 +915,35 @@ function buildChit(row) {
  */
 let revealKey = '';
 
+/* ── the payment brings its bank to the player (P10, MOBILE critic) ─────────
+ * MEASURED at 390×844 on payment-pending: #self-board is a scroller and the
+ * prompt says "tap your bank, property and Upgrade cards" while part of the
+ * board sits past the pane's bottom edge, laid out under the very bar that is
+ * asking — two value coins at 100% under #prompt in the cold frame. So
+ * entering payment scrolls the bank mat into the pane, exactly as revealMarks
+ * does for a targeting step, with the same two guards: once per payment (a
+ * broadcast-driven re-mark must not re-centre the pane under the thumb), and
+ * not at all when the bank is already substantially visible — the desktop
+ * grid, whose bank is pinned as the pane's last row, never scrolls. */
+let payRevealKey = '';
+
+function revealPayment() {
+  const key = `pay:${mode.amount}`;
+  if (key === payRevealKey) return;
+  const bank = document.querySelector('.board-self .board-bank')
+    || table.zoneFor('bank', store.self.id);
+  if (!bank) return;                       // board not built yet — next pass retries
+  payRevealKey = key;
+  if (visibleEnough(bank)) return;
+  try {
+    bank.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    });
+  } catch { bank.scrollIntoView(false); }
+}
+
 function visibleEnough(el) {
   const r = el.getBoundingClientRect();
   if (!r.width || !r.height) return false;
@@ -949,25 +1005,66 @@ export function applyMarks() {
       // §3.5. The candidates are the cards INSIDE the full mat just chosen —
       // the same on-the-table targeting §5 uses for a steal, aimed at my own
       // board. No sheet, no list, no new surface.
-      for (const card of sel.swapPartners(mode.cardId, mode.picks.targetColor)) mark(getNode(card.id));
+      // §0.9. The step is no longer skippable — a swap cannot be dispatched
+      // without answering it — so the cards that answer it have to be reachable
+      // without a pointer. lendFocus is the same 44px-gated promotion payment
+      // and discard use, and it is taken back in clearMarks().
+      for (const card of sel.swapPartners(mode.cardId, mode.picks.targetColor)) {
+        const node = getNode(card.id);
+        mark(node);
+        lendFocus(node);
+      }
     } else if (step === 'myColor') {
       const found = mode.intent === 'move' ? sel.boardMoveTarget(mode.cardId) : null;
       const colors = found
         ? offeredColors(found)
         : (mode.card?.type === 'rent' ? sel.rentColors(mode.card) : sel.placementColors(mode.card));
       markPropColumns(store.self.id, colors);
-      paintAdvice(colors, found && sel.canSwap() ? found.swap : []);
+      paintAdvice(mode.card, colors, adviceKind(), found && sel.canSwap() ? found.swap : []);
+    }
+  }
+
+  /* ── the same answer, while the card is in the air ────────────────────────
+   *
+   * MEASURED, 1280×720 real CDP, a rainbow wild dragged out of a full green mat
+   * onto a full darkblue mat: `document.querySelectorAll('.mat-advice').length`
+   * was 0 for the whole gesture, and the only marks on the destination were
+   * `data-droppable="1"` and `is-drop-hover` — the identical pair every ordinary
+   * move target carries. So on the DRAG route a swap mat was not merely
+   * under-explained, it was INDISTINGUISHABLE from a move mat, and the drag is
+   * the route the owner reported from.
+   *
+   * The tap route has said TRADE on that mat since d05d523 (paintAdvice above,
+   * armed by beginMove); the drag route never reaches beginMove until the finger
+   * is already up. So the same chit is painted from the same function for a live
+   * board drag — no new element, no new material, no new contrast figure, and
+   * the mats answer before they are aimed at instead of after.
+   *
+   * Board drags only. A hand card's placement question is asked after Play is
+   * pressed, and printing ten chits under a card that has not been committed to
+   * yet is a different decision from the one this round is fixing. */
+  if (mode.kind !== 'target') {
+    const heldId = drag.heldCardId();
+    const found = heldId == null ? null : sel.boardMoveTarget(heldId);
+    if (found) {
+      paintAdvice(found.card, offeredColors(found), found.isUpgrade ? 'upgrade' : 'place',
+        sel.canSwap() ? found.swap : []);
     }
   }
 
   if (mode.kind === 'payment') {
+    let marked = 0;
     for (const card of sel.payableCards()) {
       const node = getNode(card.id);
       if (!node) continue;
       setAttr(node, 'data-payable', '1');
       lendFocus(node);
       setClass(node, 'is-picked', mode.selected.has(card.id));
+      marked++;
     }
+    if (marked) revealPayment();
+  } else {
+    payRevealKey = '';
   }
 
   if (mode.kind === 'discard') {
@@ -1011,7 +1108,13 @@ function interruptedBy() {
 }
 
 export function mount() {
-  drag.mount({ dragPlan, dropCommit, dragCandidate, dropRefusal, refreshMarks: applyMarks, yanked });
+  drag.mount({
+    dragPlan, dropCommit, dragCandidate, dropRefusal, refreshMarks: applyMarks, yanked,
+    // "the machine took the drop but the server has not heard about it yet" —
+    // drag.js has to tell a committed landing from a landing that is still
+    // waiting on a step, and only this file knows which.
+    targeting: () => mode.kind === 'target',
+  });
   pointer.onEscape(() => cancel());
   pointer.onTargetTap((el) => handleTargetTap(el));
   pointer.onCardTap((id, node) => {

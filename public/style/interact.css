@@ -204,14 +204,36 @@ body.is-dragging-card {
   transition: filter .14s ease, opacity .14s ease;
 }
 /* the column a wild is LEAVING — a rearrange reads as an exchange, not as a
-   card vanishing from one place and appearing in another */
+   card vanishing from one place and appearing in another.
+
+   NOT A FILTER ON THE MAT, and this is the one line the second defect of this
+   round turned on. The held card never leaves this column: table.liftCard()
+   opens the clipping chain and deliberately does not reparent (table/index.js
+   "THE HELD CARD"). A `filter` — like the `opacity: .55` the illegal rule used
+   to put here too, before interact/drag.js markIllegal() stopped calling the
+   source column illegal — makes this mat a STACKING CONTEXT, and `z-index: 60`
+   inside a stacking context is 60 against that mat's own children, not against
+   the table. The mat itself is `position: relative; z-index: auto`, so it
+   paints at the z-index-0 step of #self-board in TREE ORDER, and every mat
+   later in document order drew straight over the card the player was holding.
+
+   MEASURED, 1280×720, real CDP, a rainbow wild dragged out of a full Elite
+   Programs mat onto Command: `elementFromPoint` at the held card's own centre
+   returned `card#20` — a card in the mat it was crossing — at all three sample
+   points; ART §5 requires the held card to ride above the table. With the
+   filter moved off the mat and onto its RESTING cards the same three points
+   return the held card, and the stacking-context chain between the card and
+   #app goes from [propcol(green), #self-board] to [#self-board].
+
+   The look is unchanged: the mark was always the dashed outline plus a
+   desaturation of what is left behind, and what is left behind is the cards. */
 .propcol[data-drop-source="1"] {
   /* --steel-300 was deleted by ART §2; this declaration resolved to nothing,
      so a rearranging wild left no mark on the column it came from. */
   outline: 2px dashed var(--fg-mute);
   outline-offset: 2px;
-  filter: saturate(.5);
 }
+.propcol[data-drop-source="1"] .card:not(.is-dragging) { filter: saturate(.5); }
 
 /* ── THE MAT'S ANSWER: wild placement, decided on the table ────────────────
    §3.8 (free rearranging is a first-class VISIBLE interaction) + §3.9 (state

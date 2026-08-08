@@ -255,10 +255,14 @@ function step(r, p) {
       const at = r.flipAt; r.flipAt = -1;
       flip(node, r.flipUp, { mine: r.mine, big: r.big, dur: Math.max(120, r.dur * 1000 * (1 - at)) });
     }
-    // CONTACT — the card's centroid is on its mark. Take the hit.
+    // CONTACT — the card's centroid is on its mark. Take the hit. The counter
+    // counts FREEZES APPLIED, not contacts detected: gated on HITSTOP_MS > 0 so
+    // that a zeroed duration zeroes the count — playtest's animated pass reads
+    // hitstopCount over a full replay, and a counter that kept climbing while
+    // the table never actually froze would wave that regression through.
     if (r.hit && !r.hitDone && p >= CONTACT) {
       r.hitDone = true;
-      if (clockSec - lastHit >= HITSTOP_MIN_GAP_MS / 1000) {
+      if (HITSTOP_MS > 0 && clockSec - lastHit >= HITSTOP_MIN_GAP_MS / 1000) {
         lastHit = clockSec;
         freeze = HITSTOP_MS / 1000;
         hitCount++;
@@ -657,17 +661,35 @@ export function punch(node, dx, dy, o = {}) {
 /**
  * Spring a card home from wherever a finger left it. The interaction agent's
  * drop-cancel path (table.moveCard(id,'hand',{springBack:true})).
+ *
+ * `o.fromX/fromY` is WHERE THE FINGER LEFT IT, captured by the caller BEFORE
+ * table.releaseCard ran. Reading --fx/--fy here instead was the one-frame
+ * teleport: on a refused drop, releaseCard → hand.reset → layout → setRest →
+ * retarget → writeRest rewrites the vars to the rest pose first, so this
+ * function measured (0, −26.1) — the fan rest — launched a zero-length flight,
+ * and the card sat motionless for 240ms with `is-flying` set while
+ * card_slide/card_snap played over it (measured frame-by-frame 2026-08-07:
+ * −67, −609 at t=818ms → 0, −26.1 at t=831ms, ~620px in one 13ms frame).
+ * The vars stay as the fallback for callers whose offsets really are intact
+ * (interact's holdRelease timeout path).
  */
 export function springHome(node, o = {}) {
   if (!node) return null;
-  const x = readVar(node, '--fx');
-  const y = readVar(node, '--fy');
+  const x = o.fromX == null ? readVar(node, '--fx') : o.fromX;
+  const y = o.fromY == null ? readVar(node, '--fy') : o.fromY;
   const rx = node.__rx || 0, ry = node.__ry || 0;
+  // The landing centre is what callers can measure (the node paints at rest by
+  // now); the LAUNCH centre is it plus the offset the flight starts from, so
+  // the FLIGHT_START cue fires at the drop point instead of at (0,0).
+  const cx1 = o.cx1 || 0, cy1 = o.cy1 || 0;
   return fly(node, {
     dx: x - rx, dy: y - ry,
+    scale: o.scale,
     dur: o.dur || 240, arc: 0, spin: o.spin || 0,
     mine: true, quiet: !!o.quiet, key: o.key || 0,
-    cx0: o.cx0 || 0, cy0: o.cy0 || 0, cx1: o.cx1 || 0, cy1: o.cy1 || 0,
+    cx0: o.cx0 || (cx1 ? cx1 + (x - rx) : 0),
+    cy0: o.cy0 || (cy1 ? cy1 + (y - ry) : 0),
+    cx1, cy1,
   });
 }
 

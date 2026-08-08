@@ -1507,6 +1507,91 @@
 .opponents .board-props { grid-area: props; margin-top: .28em; }
 .zone-hand-oppo .card:not(:first-child) { margin-left: calc(var(--card-w) * -0.55); }
 
+/* ══ P10: THE PHONE BOARD FITS ITS PANE ════════════════════════════════════
+   The MOBILE critic's finding 1, measured on the staged fixtures at 390×844:
+
+     payment-pending   #self-board port 316, board 347  → last mat row 46×64
+                       rendering 46×36, two 2M coins 100% under the prompt
+                       that says "Confirm payment"
+     arc-6-late        port 331, board 415 (bank 140 + ten colours) → the
+                       whole bottom mat row under the prompt, 11 buried runs
+     final-approach    port 331, board 431 → 16 buried runs
+
+   The 68–140px of the overflow is the BANK: nine to eleven notes wrap to a
+   second row, and a head row captions a grid that is labelled ten times.
+   Three cuts, all of them ones another viewport already makes:
+
+   1. THE BANK IS ONE ROW AND SCROLLS SIDEWAYS (landscape's answer for the
+      mats, applied to the money). The 44px derived step is untouched, so every
+      visible note still exposes a thumb's width; the notes past the port are
+      behind a flick, with the travelling shades saying so, and the worth plate
+      in the head has always carried the total. A second row of notes was 68px
+      of the exact pane the payment prompt needs.
+   2. YOUR NAMEPLATE RIDES BESIDE YOUR BANK — the cut desktop and landscape
+      both already make ("head bank" / "props props"), worth 21px here.
+   3. DURING A PAYMENT, EMPTY MATS LEAVE THE TABLE. A payment is taps on
+      payable CARDS (interact/index.js dragCandidate returns null in payment
+      mode, so no drop target is lost); an empty mat can hold nothing payable,
+      and at ten colours the empties are a whole 84px row of the pane. Keyed on
+      the payment's own mark so it cannot drift from the machine.
+
+   Placed AFTER the base zone rules on purpose: `.board-self .zone-bank`
+   at line ~349 sets `justify-content: center` and would win on order. */
+@media (max-width: 1023px) {
+  .board-self {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "head bank" "props props";
+    align-content: start;
+    align-items: center;
+    column-gap: .5em;
+    row-gap: .2em;
+    min-width: 0;
+  }
+  .board-self .board-head {
+    grid-area: head;
+    align-self: center;
+    flex-wrap: nowrap;
+    gap: .5em;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+  .board-self .board-head .board-worth { margin-left: 0; }
+  .board-self .board-bank { grid-area: bank; width: auto; min-width: 0; justify-content: flex-start; }
+  .board-self .board-props { grid-area: props; }
+
+  .board-self .zone-bank {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    /* the travelling shades (the landscape property line's device): each can
+       only appear at an end that has notes behind it. NO mask — a mask would
+       cut a note mid-flight into the bank (the unclip landmine). */
+    background:
+      linear-gradient(90deg, var(--surface) 40%, rgba(0, 0, 0, 0)) 0 0 / 1.6em 100% no-repeat local,
+      linear-gradient(-90deg, var(--surface) 40%, rgba(0, 0, 0, 0)) 100% 0 / 1.6em 100% no-repeat local,
+      linear-gradient(90deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 1em 100% no-repeat,
+      linear-gradient(-90deg, var(--shade-2), rgba(0, 0, 0, 0)) 100% 0 / 1em 100% no-repeat;
+  }
+  .board-self .zone-bank::-webkit-scrollbar { height: 0; }
+
+  .board-self:has(.card[data-payable="1"]) .propcol[data-empty="1"] { display: none; }
+
+  /* While the prompt is up the pane's bottom edge is a decision boundary, not
+     a scroll hint: the fade held the exact cards the prompt names at ~30%
+     alpha. A hard cut is the honest edge — a card visibly cut mid-body reads
+     as "more below"; a dissolved one reads as a rendering fault. */
+  .screen-game:has(.prompt:not([hidden])) .self-board {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
 /* ══ DESKTOP: OPPONENTS ON TOP, YOUR MAT UNDER THEM ════════════════════════
    OWNER DIRECTIVE, 2026-08-06, verbatim: "layout wise I think it looked better
    before — the other players at top, chat opening on the right etc."
@@ -2648,8 +2733,23 @@
     overscroll-behavior: contain;
     scrollbar-width: thin;
     scrollbar-color: var(--fg-mute) transparent;
-    -webkit-mask-image: linear-gradient(#000 calc(100% - 1.4em), transparent);
-    mask-image: linear-gradient(#000 calc(100% - 1.4em), transparent);
+    /* P10, MOBILE critic finding 4: with five players this rail is a ~103px
+       window over ~190px of seats and the fade was its only cue. The portrait
+       strip's own affordances arrive: seat-boundary snap (suspended while a
+       card flies — the base `:has(.is-flying)` rule matches here too) and the
+       two travelling `local` shades, which can only appear at an end that has
+       a seat behind it. The fade shortens to a feather for the reason the
+       portrait strip's round-6 note gives: 1.4em of alpha over a nameplate is
+       a contrast failure, not a cue. */
+    scroll-snap-type: y proximity;
+    padding-bottom: .3em;
+    -webkit-mask-image: linear-gradient(#000 calc(100% - .3em), transparent);
+    mask-image: linear-gradient(#000 calc(100% - .3em), transparent);
+    background:
+      linear-gradient(180deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 0 / 100% 1.2em no-repeat local,
+      linear-gradient(0deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 100% / 100% 1.2em no-repeat local,
+      linear-gradient(180deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 100% .9em no-repeat,
+      linear-gradient(0deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 100% / 100% .9em no-repeat;
   }
   .opponents .board {
     flex: 0 0 auto;
@@ -2752,6 +2852,15 @@
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
+    /* P10, MOBILE critic finding 4: the row rested wherever a flick left it,
+       which is how a mat came to sit 90% hidden with no cue. Snap lands every
+       rest on a mat boundary (each .propcol below already carries
+       `scroll-snap-align: start`), so the cut at the right edge always falls
+       mid-mat — visibly cut, never invisibly absent. Suspended while a card is
+       in the air, same mechanism and same reason as every snap container in
+       this file: a transformed descendant inflates scrollWidth and a snap
+       container re-snaps on that lie. */
+    scroll-snap-type: x proximity;
     scrollbar-width: none;
     /* ROUND-5 REVIEW (landscape-mid): MEASURED scrollWidth 687 in a 591px port
        — mats 9 and 10 ran off the right edge — and the fade meant to say so was
@@ -2810,6 +2919,9 @@
   /* 50px of mat is narrow even for the tag */
   .board-self .propcol-name::after { font-size: 8px; }
   .board-self .board-props::-webkit-scrollbar { height: 0; }
+  .board-self .board-props:has(.card.is-flying, .card.is-dragging, .card.is-held) {
+    scroll-snap-type: none;
+  }
   .board-self .propcol {
     flex: 0 0 auto;
     min-width: calc(var(--card-tap) + 4px);

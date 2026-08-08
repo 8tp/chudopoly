@@ -967,6 +967,21 @@
 .lobby-host { display: flex; flex-direction: column; gap: .5em; }
 .lobby-host .row .field-label { flex: 0 0 auto; margin-bottom: 0; }
 
+/* ── P10: the phone lobby fits its port ───────────────────────────────────
+   With the picker folded (ui/lobby.js .ruleset-fold) the phone body's last
+   ~60px of shortfall is density, not structure: five 52px seat recesses, a 1em
+   block gap and two body-sized teaching notes. MEASURED at 390×844, host + 4
+   bots: these three trims plus the fold take .lobby-body from 1022px of
+   content in a 618px port to everything inside it — the cold frame slices no
+   seat row and parks no select off-viewport. The notes stay whole (§3.9 —
+   deleting them was costed and refused in the DECISION LEADS note); they set
+   at the micro size the rest of the app's captions already use. */
+@media (max-width: 719px) {
+  .lobby-row { padding-top: .1em; padding-bottom: .1em; }
+  .lobby-body { gap: .6em; }
+  #lobby-host .hint { font-size: var(--t-micro); line-height: 1.35; }
+}
+
 /* ══ THE CHROME GLYPH SET ══════════════════════════════════════════════════
    ROUND-4 REVIEW, and it is the fair hit: the cards carry 21 bespoke glyphs and
    the corner of every single shot carried ☰ ? ✕ ☺ ⚑ — Unicode dingbats in

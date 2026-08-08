@@ -915,6 +915,35 @@ function buildChit(row) {
  */
 let revealKey = '';
 
+/* ── the payment brings its bank to the player (P10, MOBILE critic) ─────────
+ * MEASURED at 390×844 on payment-pending: #self-board is a scroller and the
+ * prompt says "tap your bank, property and Upgrade cards" while part of the
+ * board sits past the pane's bottom edge, laid out under the very bar that is
+ * asking — two value coins at 100% under #prompt in the cold frame. So
+ * entering payment scrolls the bank mat into the pane, exactly as revealMarks
+ * does for a targeting step, with the same two guards: once per payment (a
+ * broadcast-driven re-mark must not re-centre the pane under the thumb), and
+ * not at all when the bank is already substantially visible — the desktop
+ * grid, whose bank is pinned as the pane's last row, never scrolls. */
+let payRevealKey = '';
+
+function revealPayment() {
+  const key = `pay:${mode.amount}`;
+  if (key === payRevealKey) return;
+  const bank = document.querySelector('.board-self .board-bank')
+    || table.zoneFor('bank', store.self.id);
+  if (!bank) return;                       // board not built yet — next pass retries
+  payRevealKey = key;
+  if (visibleEnough(bank)) return;
+  try {
+    bank.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    });
+  } catch { bank.scrollIntoView(false); }
+}
+
 function visibleEnough(el) {
   const r = el.getBoundingClientRect();
   if (!r.width || !r.height) return false;
@@ -1024,13 +1053,18 @@ export function applyMarks() {
   }
 
   if (mode.kind === 'payment') {
+    let marked = 0;
     for (const card of sel.payableCards()) {
       const node = getNode(card.id);
       if (!node) continue;
       setAttr(node, 'data-payable', '1');
       lendFocus(node);
       setClass(node, 'is-picked', mode.selected.has(card.id));
+      marked++;
     }
+    if (marked) revealPayment();
+  } else {
+    payRevealKey = '';
   }
 
   if (mode.kind === 'discard') {

@@ -461,6 +461,50 @@ function ensurePicker() {
 
   pending = loadHostRules();
 
+  /* ── THE PICKER FOLDS ON A PHONE (P10, MOBILE critic finding 3) ─────────
+   *
+   * MEASURED at 390×844, host + 4 bots: .lobby-body is 1022px of content in a
+   * 618px scrollport, and the tail below the fold is the ROOM's — the last two
+   * Remove marks sliced mid-row under the rail, the bot picker and Add bot at
+   * y835 and both clocks at y934, entirely off-viewport in the cold frame.
+   * The ui.css DECISION LEADS note already proved no ordering fixes a 400px
+   * shortfall; the only thing left to move is the 340px the preset plates and
+   * the win sentence occupy — behind a disclosure, on the screens where they
+   * do not fit. The resolved ruleset stays readable while folded: the head's
+   * live name/bits line ("Chudopoly · Final Approach · 3 sets") is OUTSIDE the
+   * fold, so the fold hides the CONTROLS, never the answer. After, same
+   * viewport: every control on this screen sits inside the 618px port — the
+   * off-viewport and clipped-by-scroller counts on `lobby (host)` go to zero
+   * instead of being re-aimed.
+   *
+   * ≥720px (ui.css's own rail breakpoint) the fold ships OPEN and its summary
+   * row is hidden by lobby.css, so a desktop host sees exactly the round-9
+   * screen: decision first, all four plates up. The listener re-opens it when
+   * a window widens across the breakpoint; it deliberately never CLOSES on
+   * shrink — snatching an open picker out from under a host mid-choice is a
+   * board change nobody chose. */
+  const wide = typeof matchMedia === 'function' ? matchMedia('(min-width: 720px)') : null;
+  const fold = el('details', {
+    class: 'ruleset-fold',
+    attrs: wide && !wide.matches ? {} : { open: '' },
+  }, [
+    el('summary', { class: 'ruleset-summary ruleset-fold-summary' }, [
+      el('span', { class: 'ruleset-summary-text', text: 'Choose the ruleset' }),
+      el('span', { class: 'ruleset-caret', attrs: { 'aria-hidden': 'true' }, text: '▸' }),
+    ]),
+    el('div', {
+      class: 'preset-grid',
+      attrs: { role: 'radiogroup', 'aria-label': 'Ruleset preset' },
+    }, PRESET_ORDER.map(presetTile)),
+    el('p', { class: 'ruleset-win hint', attrs: { id: 'ruleset-win' } }),
+    buildAdv(),
+  ]);
+  if (wide) {
+    const reopen = () => { if (wide.matches) fold.open = true; };
+    if (wide.addEventListener) wide.addEventListener('change', reopen);
+    else if (wide.addListener) wide.addListener(reopen);
+  }
+
   pickerRoot = el('section', {
     class: 'ruleset',
     attrs: { id: 'ruleset', 'aria-labelledby': 'ruleset-head' },
@@ -472,12 +516,19 @@ function ensurePicker() {
         el('span', { class: 'ruleset-bits', attrs: { id: 'ruleset-bits' } }),
       ]),
     ]),
-    el('div', {
-      class: 'preset-grid',
-      attrs: { role: 'radiogroup', 'aria-label': 'Ruleset preset' },
-    }, PRESET_ORDER.map(presetTile)),
-    el('p', { class: 'ruleset-win hint', attrs: { id: 'ruleset-win' } }),
-    el('details', { class: 'ruleset-adv' }, [
+    fold,
+  ]);
+
+  pickerRoot.addEventListener('change', onPick);
+  pickerRoot.addEventListener('click', onDeckStep);
+  column.appendChild(pickerRoot);
+  syncPicker();
+}
+
+/** The advanced disclosure, unchanged from round 9 — only extracted so the
+ *  fold above can nest it. */
+function buildAdv() {
+  return el('details', { class: 'ruleset-adv' }, [
       el('summary', { class: 'ruleset-summary' }, [
         el('span', { class: 'ruleset-summary-text', text: 'Change individual rules' }),
         el('span', { class: 'ruleset-caret', attrs: { 'aria-hidden': 'true' }, text: '▸' }),
@@ -518,13 +569,7 @@ function ensurePicker() {
           ...DECK_ORDER.map(deckStepper),
         ]),
       ]),
-    ]),
   ]);
-
-  pickerRoot.addEventListener('change', onPick);
-  pickerRoot.addEventListener('click', onDeckStep);
-  column.appendChild(pickerRoot);
-  syncPicker();
 }
 
 /**

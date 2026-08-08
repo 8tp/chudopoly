@@ -222,6 +222,20 @@
 }
 .ruleset-adv[open] .ruleset-caret { transform: rotate(90deg); }
 
+/* ── the phone fold (P10) ─────────────────────────────────────────────────
+   ui/lobby.js wraps the preset grid, the win sentence and the advanced
+   disclosure in `details.ruleset-fold`, closed below 720px — the measurement
+   and the reasoning live on that block. Here it only has to LOOK like what it
+   is: the same summary row the advanced disclosure already taught, and on a
+   pointer screen (where it ships open) no summary row at all, so the desktop
+   screen is unchanged from round 9. */
+.ruleset-fold { min-width: 0; }
+.ruleset-fold > *:not(summary) { margin-top: .45em; }
+.ruleset-fold[open] > .ruleset-fold-summary .ruleset-caret { transform: rotate(90deg); }
+@media (min-width: 720px) {
+  .ruleset-fold > .ruleset-fold-summary { display: none; }
+}
+
 .adv-body {
   display: flex;
   flex-direction: column;

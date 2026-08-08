@@ -203,7 +203,10 @@
   background: var(--act);
   color: var(--act-fg);
 }
-.rung.is-full b { color: var(--fg); }
+/* --act-fg, NOT --fg: the chip above just inverted to the ink slab, and --fg on
+   it is light ink on the cream slab in dark / dark ink on the ink slab in light
+   — measured 1.0:1, the amount a player actually plans around, invisible. */
+.rung.is-full b { color: var(--act-fg); }
 
 /* ── final approach diagram ───────────────────────────────────────────── */
 
@@ -561,33 +564,39 @@
    589px strip inside a 651px #hud, and a constant box with `overflow: hidden`
    is what makes that unrepresentable — out of flow it could not move the felt,
    but it could bury the table it is reporting on. */
+/* ── PHONE + LANDSCAPE: THE STRIP IS DOCKED, NOT FLOATED (P10) ────────────
+   The round-8 float anchored this strip over the top of #table-center, priced
+   at "the top ~21px of the two pile faces". Two independent critics measured
+   what that actually buys: on final-approach@phone and opponent-armed@phone
+   the banner buries the deck/discard value coins and card titles (the shot
+   gate counts them — 1M/3M at 100%), and ART §3.7 names a floating pill over
+   the board as a web-app tell. Landscape floated it over the first seat's
+   nameplate, which round 8's own comment called erasing "43% of the box".
+
+   So below 1024px the strip is IN THE FLOW — the .hud's own second row, where
+   the base rule already puts it — and occludes nothing. What changes against
+   the P8 reserve-always contract, stated plainly: `.is-empty` is `display:
+   none` here, so the row exists only while a seat is armed. That means arming
+   moves the felt ONCE (≈20px, and back on disarm), where P8's permanent
+   reserve was measured to cost every phone frame ~24px of #self-board and made
+   the buried-run and clipped-control gates WORSE (41→58 buried when it was
+   tried). One 20px step at the game's loudest announced moment, against a
+   permanent tax on the scrollport the payment prompt needs — the step is the
+   cheaper harm, and the arming beat is already announced by sound, the
+   .announce banner and the seat's own hazard treatment, so the reflow lands
+   inside a moment the player is being pointed at anyway.
+   The fixed-height/overflow-hidden box is KEPT: three armed players still
+   cannot grow it. */
 @media (max-width: 1023px) {
-  .hud { position: relative; }
   .hud-strip {
-    position: absolute;
-    left: .5em;
-    right: .5em;
-    top: 100%;
     margin-top: 0;
-    z-index: 8;
+    margin-bottom: .18em;
+    /* a docked stripe, not a second band: the tightest box one line of
+       .strip-text (.72em × 1.25 = 12.6px) and the .62em flag clear */
+    height: calc(.9em + .3em);
+    padding: .12em .5em;
   }
-  /* PORTRAIT ONLY, and that is measured, not caution. At 844×390 the felt is
-     two COLUMNS: #table-center is the 236px left one, so anchoring to it takes
-     the strip from 832px wide to 236 and clamps "You win at your next turn
-     start" to nothing. Every full-width band at that height is somebody's
-     cards. Landscape keeps the round-4 float and keeps its cost — the first
-     seat's nameplate — which is stated in the report, not hidden here. */
-  @supports (anchor-name: --a) {
-    @media (orientation: portrait) {
-      .hud-strip {
-        position: fixed;
-        position-anchor: --table-centre;
-        top: anchor(top);
-        left: anchor(left);
-        right: anchor(right);
-      }
-    }
-  }
+  .hud-strip.is-empty { display: none; }
 }
 /* ── DESKTOP: THE STRIP RIDES THE HUD ROW, IT IS NOT A SECOND BAND ────────
    ROUND-5 REVIEW. §3.1 names full-width stacked bands as the top slop pattern,
@@ -721,6 +730,36 @@
 /* the approach note is news, not a refusal: it keeps the bar, drops the alarm */
 .prompt-why.is-approach { background: var(--stencil-hi) left / 3px 100% no-repeat; }
 .prompt-why.is-approach::before { background: var(--fg); }
+
+/* ── the answer frame is hazard MATERIAL, not a coloured border (ART §1) ──
+   ui/deadline.js injects #chud-alarm — a fixed viewport frame — with an inline
+   style of `inset 0 0 0 .18rem var(--danger)` plus a soft glow: a plain
+   vermillion chip at viewport scale, and a glow, both of which §1/§3.5 ban.
+   The LOOK critic measured it on payment@desktop. The correct form is the
+   build's own final-approach rails (table.css `.board[data-final-approach]`):
+   45° caution stripes, top and bottom, inside the frame. Same geometry rule as
+   every alarm in the app — hazard INSIDE the object — and the injected pulse
+   (it animates the <i>'s opacity) carries over untouched.
+   `body #chud-alarm i` outranks the injected `#chud-alarm i` (0-0-1 more), so
+   this wins whatever order the runtime style lands in. */
+body #chud-alarm i {
+  box-shadow: none;
+  background:
+    var(--hazard) 0 0 / 100% 6px no-repeat,
+    var(--hazard) 0 100% / 100% 6px no-repeat;
+}
+
+/* The "YOUR ANSWER" chip wore the same flat vermillion fill (ui/prompt.js's
+   inline `#prompt .prompt-turn.is-alarm`). Same ruling as .strip-flag above:
+   the flag WEARS the hazard, it is not printed on it — a hazard rule struck
+   down its edge, danger ink beside it, on the bar's own ground. Extra .chip
+   in the selector outranks the injected rule at equal order. */
+#prompt .chip.prompt-turn.is-alarm {
+  color: var(--danger-ink);
+  background: var(--hazard-fine) left / 5px 100% no-repeat, var(--ground);
+  border-color: transparent;
+  padding-left: .8em;
+}
 
 /* ── first-game hints ─────────────────────────────────────────────────── */
 

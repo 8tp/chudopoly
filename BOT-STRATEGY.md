@@ -1441,3 +1441,164 @@ green including simbalance, playtest, touchtest, screenshot, checkContrast, audi
   would have made chud/random skip a wild rent whenever their random roll hit a broke seat
   even though a payer existed — erasing charges rather than retargeting them. Drawing the
   random victim from the payer pool keeps the charge and the chaos both.
+
+---
+
+## Round 11 (2026-08-08) — card awareness: counting the cards in play and unseen
+
+Owner directive: bots that reason about cards they cannot see — the discard pile, the deck
+composition, and how many counter-cards remain live — under a hard honesty rule: **a bot may
+count how many copies of a kind remain unseen, but the deck and opponents' hands are one
+undifferentiated pool. Peeking is a bug, not an optimization.** `unseenCounts()` reads the
+discard pile, every table and the bot's own hand, and is recomputed from visible state on
+every call — so a reshuffle, which returns the discard to the unseen pool, honestly REOPENS
+the window (the count rises again). Pinned in `test/bot-cardcount.test.js`: swapping an
+opponent's hidden hand for entirely different cards must not move any number the counter
+produces.
+
+Four angles, measured first over 400 four-player games (seed `aware-base`, every rotation of
+every 4-subset) and 500 five-player games (seed `aware-base5`). Two shipped, one shipped
+small, one measured and REJECTED. The new personality axis is `CARD_AWARENESS`
+(conservative 1, neutral .9, aggressive .75, chud .15, random 0): awareness is a planner
+skill, the gremlin rarely notices, random never does — and a zero-awareness mode consumes no
+RNG roll, so the chaotic seats' streams are untouched.
+
+### Angle 1 — counting the counter-cards (shipped)
+
+The deck holds 3 OPSEC against 4 hard breakers (2 IG + 2 CHUD), all of it countable once
+played. Two blind spots, measured at HEAD:
+
+| per 400 4p games | random | conservative | neutral | aggressive | chud |
+|---|---|---|---|---|---|
+| held a GUARANTEED breaker (0 OPSEC unseen, target live) — decision points | 146 | **75** | 36 | 22 | 11 |
+| declined to OPSEC a ≥4M charge with ZERO breakers unseen | 20 | 11 | 3 | **43** | 8 |
+
+The fixes, both gated by `CARD_AWARENESS`:
+
+- **A guaranteed breaker fires now.** Every OPSEC visible → the shot cannot be answered, and
+  the window closes at the next reshuffle. `tryGuaranteedBreaker()` runs ahead of the
+  personality plan and the holdback. CHUD still requires a steal worth the card — completes
+  one of our sets or takes from a complete set — a free shot at a 1M orphan is a wasted CHUD.
+- **A dead shield blocks.** When every IG and CHUD is accounted for, a ≥4M charge IS the top
+  of the remaining threat ladder, so an aware personality blocks it instead of saving the
+  shield for a card that no longer exists. (Aggressive's "never OPSEC money demands" keeps
+  its character everywhere else — this is the one countable exception.)
+
+After: held-guaranteed cons 75→**19** (IG residual **0**; the rest is the deliberate
+CHUD-orphan guard), neut 36→**10**, aggr 22→**3**; aggressive's dead-pool ≥4M declines
+43→**20** (the residual is property attacks, deliberately untouched — MR/TDY cannot reach a
+complete set). simbalance 2000 games × seeds `balance`/`balance2`: PASS both, every delta vs
+the round-10 pairs ≤2.4 points, avg turns 33.2 flat, FPA 25.2/25.8.
+
+### Angle 2 — the deck-cycle clock (shipped)
+
+`shuffleCount` is public (every shuffle is a table event) and §3.11 adjudicates on points at
+16 reshuffles. **A correction first, for the record:** the first version of this measurement
+counted end-of-turn nulls (playsRemaining 0) as "passes" and read ~100 per mode; the honest
+metric slices on plays still remaining. So corrected: in the last quarter of the cycle budget
+(shuffle ≥ 12), real holdback passes with plays left, per 500 5p games:
+
+| | random | conservative | neutral | aggressive | chud |
+|---|---|---|---|---|---|
+| before | 19 | **28** | 17 | 6 | 0 |
+| after | 17 | **2** | 5 | 2 | 0 |
+
+The endgame tail is not card-starved — passers held PCS Orders (~1.7 per pass), usable rents
+and even unbanked money; they were saving plays for a "later" the attrition cap was about to
+adjudicate away. And nobody played the points game: random won 12 of 37 points endings, more
+than any planner. Fix: an aware planner skips the human-like holdback while the clock is
+running (`shuffleCount >= DECK_CYCLE_LIMIT - 4`). Chud and random keep their character.
+After: random's points wins 12/37 → 6/38. 5p canary (paired 2500-game matrix, seed
+`aware-5p`): p90 83→82, points 6.56%→6.84%, avg turns 44.1→44.2 — flat. At 4 seats the
+window is effectively unreachable (0.3% of games), so the 4p matrix is untouched.
+
+### Angle 3 — rent-leverage set building (measured and REJECTED)
+
+The hypothesis: prefer building colours whose rent cards are still live (held, or unseen and
+drawable); 4.5–7.9% of planner set completions were "dead" (no matching rent in hand, none
+unseen). Built: a leverage tiebreak (+0.2 max against 0.33 per real progress step) in
+`findBestPropertyPlay()` and the wild colour choice, graded by awareness, tests proven red
+then green. **It moved nothing, on two seeds:**
+
+- Seed A (400 games): dead completions cons 6.8→6.9%, neut 4.5→4.8%; rent income cons +5.9M/400g.
+- Seed B (800 games): dead% "improved" — **equally in random and chud, which do not have the
+  change** (7.9→5.8 and 10.3→6.6): table-level noise, not the fix. Rent income for
+  conservative flipped sign (−2.9M).
+
+The mechanism explains it: a "dead" completion is usually decided by rents SPENT after the
+colour was committed — placement-time leverage cannot foresee it, and the completion itself
+is still correct (a set is a third of the win regardless of rent). Reverted per the round-9
+precedent; nothing of it remains in `bot.js`. Raising the weight was rejected without
+measurement: past 0.33 it stops being a tiebreak and starts distorting placement, which is
+the measured-and-working part.
+
+### Angle 4 — target focus (shipped, with a priced trade)
+
+Verified first, as the task demanded: rent (`chooseRentTarget`), Finance Office
+(`findFinanceTarget`) and the §3.10 break branch were ALREADY leader- and payability-aware
+(round 7) — planners chose the leader on 63–72% of targeted plays at HEAD. The measured blind
+spot was the STEAL finders: the "advance our set" loop walked opponents in **seat order** and
+took `cards[0]`, and `tryDefensiveOffense` iterated `findThreats()` in seat order too.
+
+Fix: `findBuildingSteal()` collects every candidate for the colour and picks by completed
+sets (leader denial), then card value (never the 0M rainbow wild over a 3M card, which
+`cards[0]` regularly was); `tryDefensiveOffense` ranks threats by sets then payable value and
+its MR pick takes the best requisitionable card. Colour choice and the chud/random finders
+are untouched.
+
+| non-leader steals with a legal leader alternative, per 400 4p games | cons | neut | aggr |
+|---|---|---|---|
+| before | 22 | 29 | 46 |
+| after | **5** | **9** | **20** |
+
+(The residual is equal-sets ties decided on card value, which is a coin's difference.)
+Leader-targeting spread preserved: random 48.5 / chud 56.8 / aggr 66.1 / neut 73.6 / cons
+78.8. simbalance 2000 × both seeds: PASS, avg turns 33.4/33.7, FPA 26.3/27.0.
+
+**The honest cost, and its attribution.** At five seats, sharper leader denial breaks more
+approaches, and round 5 already taught what that buys: a longer tail. Paired 2500-game 5p
+matrices: seed `aware-5p` points-endings 6.84→8.28%, p90 82→90; seed `aware-5p2` 8.04→9.04%,
+p90 87→88 (break rate +1.4/+2.0). An attribution experiment (threat-sort surgically disabled
+at c9ea0c0, same seed) splits the change: **the threat-sort carries the entire 5p cost**
+(9.04→7.24 points, p90 88→81) — but also carries the conservative/neutral fix (without it
+their defect reads 26/24, i.e. unfixed, because their steals flow through
+`tryDefensiveOffense`). `findBuildingSteal` alone is cost-free and fixes aggressive. Kept
+whole, per the round-5/round-7 precedent of shipping a named trade: the cost lands only at 5
+seats, inside the round-5 envelope (8.3% shipped then), and the dial is explicit — drop the
+threat-sort to trade cons/neut steal focus for ~1–2 points of 5p points-endings, or seat the
+round-6 `escalate` + 12–13 wilds variant, which remains the one measured remedy that improves
+every 5p axis at once. Worth watching if 5-player becomes common, same as round 5 said.
+
+### Lever finding, not forced: breaker timing
+
+60–72% of all IG/CHUD shots are fired while ≥2 OPSEC remain unseen — gambles, in counting
+terms. Not changed, deliberately: holding breakers until the pool thins would slow the tempo
+the whole table is balanced around, round 5 measured the OPSEC-chain headroom at ~0.3 points,
+and the guaranteed-shot branch already harvests the clean end of this lever (shots fired at a
+dead pool rose ~35→50 per 400 games). If an owner ever wants cagier breaker play, gate the
+personality plans' IG/CHUD priorities on `unseenCounts().opsec >= 2` — but measure the §3.6
+cost first; it will lengthen games the same way every break-rate buff has.
+
+### Distinctness, checked not assumed
+
+Action-mix shares moved <1.5 points everywhere across the round; every personality gap
+survives: rearranges/decision (chaotic 1.3–2.1% vs planners 5.4–6.0%), chud banking 11.7% vs
+planners' 16–18%, leader-targeting 48.5/56.8 chaotic vs 66–79 planners, random's holdback and
+blind OPSEC untouched. The graded `CARD_AWARENESS` axis is the round's contribution to the
+split, not a convergence: five modes that all count cards would be one mode, so two of them
+mostly don't.
+
+### What did not work / for the record
+
+- **Rent-leverage placement** (angle 3): measured on two seeds, rejected as pure noise — see
+  above. The measurement scripts live in the session scratchpad; the dead-completion
+  classifier is worth rebuilding if this is ever re-attempted with a different mechanism
+  (e.g. leverage-aware DISCARD choice, which nobody has measured).
+- **The first angle-2 metric** counted end-of-turn nulls as holdback passes (~100/mode,
+  off by 10×). Slice on `playsRemaining > 0`.
+- **Guaranteed-CHUD without a value guard** would fire at 1M orphans; the orphan guard is
+  test-pinned (`bot-cardcount.test.js`).
+
+Tests: 508/508 at this tree (496 at round 10 + 12 new in `test/bot-cardcount.test.js`, every
+positive proven red on the pre-fix commit first, per §8). `npm run check` green. Full
+`node tools/verify.mjs` run recorded in the round's closing commit.

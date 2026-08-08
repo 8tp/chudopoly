@@ -226,3 +226,46 @@ test('guard: random ignores the clock entirely', () => {
   always(0);
   assert.equal(decideBotPlay(state, 'p1', 'random'), null);
 });
+
+/* ── angle 4: target focus — steal from the player in front ─────────── */
+//
+// chooseRentTarget, findFinanceTarget and the §3.10 break branch are already leader- and
+// payability-aware (round 7). The one measured blind spot: the steal finders'
+// "advance our set" loop walked opponents in SEAT ORDER and took cards[0] from the
+// matching zone. Measured on pre-fix HEAD (400 4p games): 22 (conservative) / 29
+// (neutral) / 46 (aggressive) steals took the colour from a non-leader while the
+// leader offered the same card legally — feeding the win to whoever sat first.
+
+test('a requisition that advances our set comes from the LEADER when both offer it', () => {
+  const state = build(3);
+  const [me, p2, p3] = state.players;
+  prop(state, me, 'red');                    // we are building red
+  prop(state, p2, 'red');                    // seat-first non-leader has a red
+  prop(state, p3, 'red');                    // the leader has one too
+  setOf(state, p3, 'brown');                 // p3 leads on completed sets
+  me.hand.push(action(state, 'midnight_requisition'));
+
+  always(0);
+  const a = decideBotPlay(state, 'p1', 'aggressive');
+  assert.ok(a && a.type === 'play_action');
+  assert.equal(me.hand[a.cardIndex].action, 'midnight_requisition');
+  assert.equal(a.targetId, 'p3', 'same steal, taken from the player in front');
+});
+
+test('a CHUD steal takes the most valuable card in the matching zone, not cards[0]', () => {
+  const state = build(3);
+  const [me, p2] = state.players;
+  prop(state, me, 'red'); prop(state, me, 'red');   // building red, 2/3
+  // p2's red zone: a 0M rainbow wild FIRST, a 3M real red behind it
+  const w = take(state, c => c.type === 'wild_property' && c.colors[0] === 'any');
+  (p2.properties.red = p2.properties.red || []).push({ ...w, placedColor: 'red' });
+  prop(state, p2, 'red');
+  me.hand.push(action(state, 'chud'));
+
+  always(0);
+  const a = decideBotPlay(state, 'p1', 'aggressive');
+  assert.ok(a && a.type === 'play_action');
+  assert.equal(me.hand[a.cardIndex].action, 'chud');
+  const chosen = p2.properties.red.find(c => c.id === a.targetCardId);
+  assert.equal(chosen.value, 3, 'both cards advance our set equally; take the 3M, not the 0M wild');
+});

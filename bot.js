@@ -1493,6 +1493,12 @@ function findBestPropertyPlay(bot, hand) {
 function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
   if (threats.length === 0) return tryOffensiveActions(state, bot, botId, hand, opponents);
 
+  // Round 11, angle 4 — findThreats() returns SEAT order, so with two 2-set threats every
+  // loop below hit whoever sat first. Rank by who is actually in front: sets, then total
+  // payable value (the same tiebreak the leader metric uses).
+  threats = threats.slice().sort((a, b) =>
+    G.completedSets(b) - G.completedSets(a) || G.playerTotalValue(b) - G.playerTotalValue(a));
+
   // Inspector General — seize a set from the biggest threat
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'inspector_general') {
@@ -1521,14 +1527,16 @@ function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
     }
   }
 
-  // Midnight Requisition — steal from threat's incomplete sets
+  // Midnight Requisition — steal from threat's incomplete sets (best card, not cards[0])
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'midnight_requisition') {
       for (const threat of threats) {
+        let best = null;
         for (const [col, cards] of Object.entries(threat.properties)) {
           if (G.isSetComplete(threat, col)) continue;
-          if (cards.length > 0) return { type: 'play_action', cardIndex: i, targetId: threat.id, targetCardId: cards[0].id };
+          for (const c of cards) if (!best || c.value > best.value) best = c;
         }
+        if (best) return { type: 'play_action', cardIndex: i, targetId: threat.id, targetCardId: best.id };
       }
     }
   }
@@ -2048,19 +2056,41 @@ function findChudCompletionTarget(bot, opponents) {
   return null;
 }
 
-function findSmartChudTarget(bot, opponents) {
-  // First: property that completes one of our sets
+// Round 11, angle 4 — when several opponents offer the SAME steal, take it from the
+// player in front, and take the best card in the zone, not cards[0]. The colour choice
+// (what advances our board) is unchanged; only the victim and the copy sharpen. Measured
+// before: 22/29/46 steals per 400 games (conservative/neutral/aggressive) took the colour
+// from a non-leader while the leader offered it legally — the steal-order was seat order.
+function pickStealCandidate(candidates) {
+  return candidates.reduce((a, b) => {
+    if (b.sets !== a.sets) return b.sets > a.sets ? b : a;
+    return b.value > a.value ? b : a;
+  });
+}
+
+// The "advance one of our colours" steal, shared by the smart/aggressive CHUD finders.
+// `skipCompleteZones` is the Midnight Requisition rule (§3.1 bars it from complete sets);
+// CHUD reaches anywhere.
+function findBuildingSteal(bot, opponents, skipCompleteZones) {
   for (const [color, info] of Object.entries(G.COLORS)) {
     const have = (bot.properties[color] || []).length;
-    if (have > 0 && have < info.size) {
-      for (const opp of opponents) {
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) {
-          return { playerId: opp.id, cardId: c.id };
-        }
+    if (have === 0 || have >= info.size) continue;
+    const candidates = [];
+    for (const opp of opponents) {
+      if (skipCompleteZones && G.isSetComplete(opp, color)) continue;
+      for (const c of (opp.properties[color] || [])) {
+        candidates.push({ playerId: opp.id, cardId: c.id, value: c.value, sets: G.completedSets(opp) });
       }
     }
+    if (candidates.length > 0) return pickStealCandidate(candidates);
   }
+  return null;
+}
+
+function findSmartChudTarget(bot, opponents) {
+  // First: property that advances one of our colours — from the leader when tied
+  const building = findBuildingSteal(bot, opponents, false);
+  if (building) return building;
   // Fallback: highest value property from leader
   const leader = findLeader(opponents);
   if (!leader) return null;
@@ -2075,15 +2105,8 @@ function findSmartChudTarget(bot, opponents) {
 
 function findAggressiveChudTarget(state, bot, botId, opponents) {
   // Target what helps us most, then target leader's best
-  for (const [color, info] of Object.entries(G.COLORS)) {
-    const have = (bot.properties[color] || []).length;
-    if (have > 0 && have < info.size) {
-      for (const opp of opponents) {
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) return { playerId: opp.id, cardId: c.id };
-      }
-    }
-  }
+  const building = findBuildingSteal(bot, opponents, false);
+  if (building) return building;
   const leader = findLeader(opponents);
   if (!leader) return null;
   let best = null;
@@ -2119,19 +2142,9 @@ function findRandomChudTarget(opponents) {
 /* ── Steal targets (Midnight Requisition) ───────────────────────────── */
 
 function findSmartStealTarget(bot, opponents) {
-  // Prefer cards that complete our sets
-  for (const [color, info] of Object.entries(G.COLORS)) {
-    const have = (bot.properties[color] || []).length;
-    if (have > 0 && have < info.size) {
-      for (const opp of opponents) {
-        if (G.isSetComplete(opp, color)) continue;
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) {
-          return { playerId: opp.id, cardId: c.id };
-        }
-      }
-    }
-  }
+  // Prefer cards that advance our sets — from the player in front when several offer one
+  const building = findBuildingSteal(bot, opponents, true);
+  if (building) return building;
   // Fallback: most valuable stealable property
   let best = null;
   for (const opp of opponents) {

@@ -633,7 +633,25 @@ test('a reconnecting player never draws twice and never sees a draw phase', asyn
   const ws = await openClient();
   send(ws, { type: 'quick_play', name: 'Rejoin' });
   const joined = await waitFor(ws, m => m.type === 'joined');
-  const first = await waitFor(ws, m => m.type === 'state' && m.phase === 'playing');
+  // startRoomGame shuffles seats, so the human holds the first turn only ~1/4 of the
+  // time (measured 5/6 red here when the wait stopped at ANY 'playing' state). The
+  // hand is 7 only from this seat's OWN turn start — beginTurn() draws 2 onto the
+  // 5-card deal synchronously, before any broadcast — so the state that proves the
+  // auto-draw happened is currentPlayerId === me with turnPhase 'play'. Until then a
+  // bot can charge the human (turn-1 rent is legal), and an unanswered charge parks
+  // the table on the 45s response clock, so answer like a real client while waiting.
+  // With zero bank and zero properties an accept always resolves ('insolvent').
+  const answer = raw => {
+    let m; try { m = JSON.parse(raw); } catch { return; }
+    if (m.type === 'state' && m.game?.responders?.includes(joined.playerId)) {
+      send(ws, { type: 'respond', response: 'accept' });
+    }
+  };
+  ws.on('message', answer);
+  // Up to three bot turns run first at 0.3-2.8s per scheduled action (bot.js DELAYS).
+  const first = await waitFor(ws, m => m.type === 'state' && m.phase === 'playing'
+    && m.game?.currentPlayerId === joined.playerId && m.game.turnPhase === 'play', 60000);
+  ws.off('message', answer);
   const me = first.game.players.find(p => p.id === joined.playerId);
   assert.equal(first.game.turnPhase, 'play');
   assert.equal(me.hand.length, 7, 'auto-drawn without any client command');

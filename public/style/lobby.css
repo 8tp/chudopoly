@@ -236,14 +236,21 @@
   .ruleset-fold > .ruleset-fold-summary { display: none; }
 }
 
+/* ROUND-2 LOOK #6 (lobby-custom@desktop): the open disclosure was a floor-to-
+   fold near-black panel — "a dark left column that reads as a login form". The
+   panel is gone: advanced rules are STENCILLED ON THE APRON, inside the same
+   3px painted rule .fl-note and .jr-prose already use, so the column reads as
+   markings on the ground the presets stand on rather than as a second chassis
+   (§3.2, §3.7). Every ink here was already measured against --ground
+   (--fg 12.65 light, --fg-mute 8.87 light / 8.82 dark — variables.css), so
+   dropping the well RAISES the worst pair; the controls inside keep their own
+   material (deboss wells, ink-slab marks, --surface stepper plates). */
 .adv-body {
   display: flex;
   flex-direction: column;
   gap: .55em;
-  padding: .55em .6em;
-  border-radius: var(--radius);
-  background: var(--ground-deep);
-  box-shadow: var(--deboss);
+  padding: .55em .6em .55em .8em;
+  background: linear-gradient(var(--stencil-hi), var(--stencil-hi)) left / 3px 100% no-repeat;
 }
 .adv-group { margin: 0; padding: 0; border: 0; min-width: 0; }
 .adv-group-inline { display: flex; align-items: center; gap: .6em; flex-wrap: wrap; }
@@ -387,7 +394,12 @@
   min-width: var(--tap);
   min-height: var(--tap);
   border-radius: var(--radius);
-  background: var(--surface);
+  /* --ground-deep, not --surface. ROUND-2 LOOK: on the settings and flight-log
+     sheets (whose panel IS --surface) a --surface face left only the deboss's
+     1px inset edge visible, and the critic read the strip as "1px-bordered
+     pill tabs". A well steps DOWN from whatever plate it is cut into.
+     --fg on light --ground-deep measured 7.2:1; dark 17:1. */
+  background: var(--ground-deep);
   box-shadow: var(--deboss);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -438,6 +450,22 @@
   align-items: baseline;
   justify-content: space-between;
   gap: .6em;
+}
+/* THE TOTAL RIDES THE SCROLL. The head row (built as a div in ui/lobby.js —
+   the note there records why a <legend> cannot stick) pins to the top of
+   .lobby-body while the thirteen steppers pass under it, so "why did the +
+   go dead" is answerable at the row where it happened. Opaque in the apron's
+   own colour with a hairline under it, the same contract every other sticky
+   register in the app states: a row passing under it is a scroll, not a
+   collision. */
+.adv-legend-deck {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin-bottom: 0;
+  padding: .3em 0 .35em;
+  background: var(--ground);
+  box-shadow: 0 1px 0 var(--shade);
 }
 .deck-total {
   font-family: var(--font-mono);

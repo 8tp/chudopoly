@@ -944,11 +944,36 @@ function revealPayment() {
   } catch { bank.scrollIntoView(false); }
 }
 
+/* Visibility is measured against the CLIP CHAIN, not just the window.
+ * ROUND-2 MOBILE #3: in landscape the #opponents rail is a ~100px scroller
+ * inside a 390px viewport, so a seat scrolled out of the rail still has a rect
+ * entirely inside the WINDOW — the old window-only intersection called it
+ * "visible", revealMarks stayed its hand, and targeting armed with every
+ * eligible seat hidden behind a flick. Measured on five-player@l844: a marked
+ * seat at rect y158..247 (100% in-window) with 0% of it inside the rail's
+ * y54..156 clip. So the rect is intersected with every overflow-clipping
+ * ancestor on the way up; the ≥60% threshold and both callers' once-per-mode
+ * contracts are unchanged, and the strip's no-snap/no-anchor ruling
+ * (table.css) is untouched — this only ever ASKS for the scroll the two
+ * reveal helpers already perform. */
 function visibleEnough(el) {
   const r = el.getBoundingClientRect();
   if (!r.width || !r.height) return false;
-  const x = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
-  const y = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+  let left = r.left;
+  let top = r.top;
+  let right = r.right;
+  let bottom = r.bottom;
+  for (let a = el.parentElement; a; a = a.parentElement) {
+    const s = getComputedStyle(a);
+    if (!/(auto|scroll|hidden|clip)/.test(s.overflowX + ' ' + s.overflowY)) continue;
+    const c = a.getBoundingClientRect();
+    left = Math.max(left, c.left);
+    top = Math.max(top, c.top);
+    right = Math.min(right, c.right);
+    bottom = Math.min(bottom, c.bottom);
+  }
+  const x = Math.max(0, Math.min(right, window.innerWidth) - Math.max(left, 0));
+  const y = Math.max(0, Math.min(bottom, window.innerHeight) - Math.max(top, 0));
   return (x * y) / (r.width * r.height) >= 0.6;
 }
 

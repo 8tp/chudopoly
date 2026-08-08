@@ -43,8 +43,14 @@
   padding: 0 .8em;
   border: 0;
   border-radius: var(--radius);
-  background: none;
-  box-shadow: inset 0 0 0 1px var(--fg-mute);
+  /* ROUND-2 LOOK (help-cards@desktop, flightlog@desktop): "1px-bordered pill
+     tabs" — the exact §3.2 outline this file's own furniture rules refuse. A
+     tab is a WELL stamped into the sheet, one step down (--ground-deep), and
+     the open page is the ink slab. No border anywhere; the deboss is the edge.
+     Ink on the well: --fg-mute measured 4.59:1 on light --ground-deep
+     (variables.css's own figure) and 12.5:1 dark. */
+  background: var(--ground-deep);
+  box-shadow: var(--deboss);
   color: var(--fg-mute);
   font-family: var(--font-display);
   font-size: .84em;
@@ -61,7 +67,7 @@
   box-shadow: none;
 }
 @media (hover: hover) {
-  .brief-tab:hover:not(.is-on) { color: var(--fg); border-color: var(--fg-mute); }
+  .brief-tab:hover:not(.is-on) { color: var(--fg); }
 }
 .brief-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -1022,11 +1028,22 @@ body:has(#prompt:not([hidden])) .hints {
   opacity: 0;
   cursor: pointer;
 }
+/* ROUND-2 LOOK #1: "stock iOS-style blue toggle pills" (settings-dark@desktop).
+   §1 gives the primary/selected channel to the ACHROMATIC INK SLAB and reserves
+   cobalt for focus/selection strokes; a solid --accent fill was the one thing a
+   toggle must never be. The switch is now the app's own materials end to end:
+   a square-cornered channel CUT into the sheet (§6's drawing style: no rounded
+   pill), a slab knob wearing the §4 press mechanic (hard offset, zero blur,
+   collapses while the finger is down), and ON = the whole channel becomes the
+   ink slab with the knob knocked out — the same chosen-state grammar as
+   .seg-face and .rung.is-full, so it reads with the hue removed.
+   Measured: knob-off --fg-mute on --ground-deep 4.59:1 light / 12.5:1 dark;
+   knob-on --act-fg on --act 17.08:1 light / 15.63:1 dark. */
 .switch-face {
   display: block;
   width: 3.1em;
   height: 1.6em;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--ground-deep);
   box-shadow: var(--deboss-deep);
   transition: background .16s ease, box-shadow .16s ease;
@@ -1037,29 +1054,73 @@ body:has(#prompt:not([hidden])) .hints {
   width: 1.2em;
   height: 1.2em;
   margin: .2em;
-  border-radius: 50%;
+  border-radius: 2px;
   background: var(--fg-mute);
-  box-shadow: var(--card-drop);
+  box-shadow: var(--press-soft);
   transition: transform .16s cubic-bezier(.18, 1.5, .4, 1), background .16s ease;
 }
+/* the press: the knob's offset collapses while the input is held down */
+.switch-input:active + .switch-face::after { box-shadow: 0 0 0 var(--press-ink); }
 .switch-input:checked + .switch-face {
-  background: var(--accent);
-  box-shadow: var(--deboss);
+  background: var(--act);
+  box-shadow: none;
 }
 .switch-input:checked + .switch-face::after {
   transform: translateX(1.5em);
-  background: var(--card-stock);
+  background: var(--act-fg);
+  box-shadow: none;
 }
 .switch-input:focus-visible + .switch-face { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* ROUND-2 LOOK #1, same finding: `accent-color` rendered the browser's stock
+   blue slider. Drawn instead: a debossed channel cut into the sheet and an INK
+   DISC thumb — the value coin's own mark (§6: "filled ink disc"), achromatic,
+   with the cobalt ring kept for focus only. No text, so the §0.9 figures live
+   on the readout beside it; the 44px hit box is the input's own height. */
 .slider {
   flex: 1 1 auto;
   min-width: 0;
   height: var(--tap);
-  accent-color: var(--accent);
+  appearance: none;
+  -webkit-appearance: none;
   background: transparent;
   cursor: pointer;
 }
+.slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 2px;
+  background: var(--ground-deep);
+  box-shadow: var(--deboss);
+}
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 1.15em;
+  height: 1.15em;
+  margin-top: calc((8px - 1.15em) / 2);
+  border: 0;
+  border-radius: 50%;
+  background: var(--act);
+  box-shadow: var(--press-soft);
+}
+.slider:active::-webkit-slider-thumb { box-shadow: 0 0 0 var(--press-ink); }
+.slider::-moz-range-track {
+  height: 8px;
+  border-radius: 2px;
+  background: var(--ground-deep);
+  box-shadow: var(--deboss);
+}
+/* the travelled side fills achromatic — position said twice, never in hue */
+.slider::-moz-range-progress { height: 8px; border-radius: 2px; background: var(--act); }
+.slider::-moz-range-thumb {
+  width: 1.15em;
+  height: 1.15em;
+  border: 0;
+  border-radius: 50%;
+  background: var(--act);
+  box-shadow: var(--press-soft);
+}
+.slider:active::-moz-range-thumb { box-shadow: 0 0 0 var(--press-ink); }
 .slider:disabled { opacity: .4; cursor: not-allowed; }
 .slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -1726,7 +1787,22 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   margin-top: .25em;
   border-radius: 0;
   background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--fg-mute), 0 -1px 0 var(--shade-2);
+  /* ROUND-2 LOOK #4 (win@phone): the fold cut the last HOW IT WENT row
+     mid-line with nothing saying "there is more" — the round-5 fix removed the
+     scroller's mask (the note on .win-summary above) and left no cue at all.
+     The cue comes back as the FOOTER'S, not the scroller's: a soft rise of the
+     well's own --ground-deep above the button, so the sliced row sinks into
+     the well it is scrolling inside instead of ending at a hard edge. A
+     box-shadow, deliberately: it needs no DOM box, so it cannot re-enter the
+     buried-text hit test the way a pseudo-element overlay would, and it cannot
+     collide with the sticky button the old mask fought. Soft blur is
+     sanctioned here — this is inside #win-overlay, ART §1's ceremony carve-out
+     — and the wash is the well's own colour under cream type, so the sliced
+     row's contrast goes UP as it fades. */
+  box-shadow:
+    inset 0 0 0 1px var(--fg-mute),
+    0 -1px 0 var(--shade-2),
+    0 -18px 14px -6px var(--ground-deep);
 }
 
 /* The card's NAME, under its mini face. At the mini tier table.css degrades the

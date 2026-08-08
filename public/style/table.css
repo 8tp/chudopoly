@@ -1069,10 +1069,36 @@
   background: var(--shade);
   box-shadow: inset 0 0 0 1px var(--shade-2);
 }
-.gist-meter[data-have="1"] .gm-seg:nth-child(-n+1),
-.gist-meter[data-have="2"] .gm-seg:nth-child(-n+2),
-.gist-meter[data-have="3"] .gm-seg:nth-child(-n+3),
-.gist-meter[data-have="4"] .gm-seg:nth-child(-n+4) {
+/* THE LETTER CODE — the §6-amendment mini tier, built in layout.js (SET_CODE,
+   with the derivation and the 2525 precedent). It is the channel that is NOT
+   hue: a colourblind player reads "F ▮▮▯" where the fill alone said nothing.
+   --band-ink on the RAW band, not the lifted rail mix — ART §2's own table
+   certifies white-on-set at 5.07:1 (Mobility, worst) to 11.04:1, and the lift
+   exists for rails on dark ground, not for type on the set colour. 9px mono at
+   800: above the audit's 8px small-run line, and sized to the 13px segment
+   height beside it. */
+.gm-code {
+  display: inline-flex;
+  align-items: center;
+  height: 13px;
+  padding: 0 2px;
+  border-radius: 1px;
+  background: var(--band, var(--fg-mute));
+  color: var(--band-ink);
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+/* nth-OF-TYPE, not nth-child: the <b> code is the meter's first child now, and
+   an nth-child fill would count it — measured before the switch, data-have="1"
+   filled zero segments. The segs are the only <i>s in the meter. */
+.gist-meter[data-have="1"] .gm-seg:nth-of-type(-n+1),
+.gist-meter[data-have="2"] .gm-seg:nth-of-type(-n+2),
+.gist-meter[data-have="3"] .gm-seg:nth-of-type(-n+3),
+.gist-meter[data-have="4"] .gm-seg:nth-of-type(-n+4) {
   background: var(--band, var(--fg-mute));
   box-shadow: none;
 }
@@ -1601,14 +1627,31 @@
 
   .board-self:has(.card[data-payable="1"]) .propcol[data-empty="1"] { display: none; }
 
-  /* While the prompt is up the pane's bottom edge is a decision boundary, not
-     a scroll hint: the fade held the exact cards the prompt names at ~30%
-     alpha. A hard cut is the honest edge — a card visibly cut mid-body reads
-     as "more below"; a dissolved one reads as a rendering fault. */
-  .screen-game:has(.prompt:not([hidden])) .self-board {
+  /* While a DECISION is on the pane the bottom edge is a boundary, not a
+     scroll hint: the fade held the exact cards a payment prompt names at ~30%
+     alpha. But the old gate was `:has(.prompt:not([hidden]))`, and the prompt
+     bar is up in nearly every real state — so the mask was off for the whole
+     game and the ordinary cold frame ended in a HARD slice. ROUND-2 MOBILE #4
+     (mid-game@p360): the 360×740 cold clip cut the third mat row's titles
+     mid-word under the status strip, a title readable enough to look broken
+     and cut enough to be unreadable. Keyed now on the decision's own mark
+     (`[data-payable]` — payment and discard both set it, interact/index.js),
+     the same attribute the seat-expand rules key on, so it cannot drift from
+     the machine: ordinary turns keep the 1.6em fade and a sliced title
+     dissolves into "more below"; a payment still gets its honest hard edge. */
+  .screen-game:has(.card[data-payable="1"]) .self-board {
     -webkit-mask-image: none;
     mask-image: none;
   }
+  /* The other half of the same finding: with no clear padding, the LAST mat
+     row could never be seen unfaded — fully scrolled, it still sat inside the
+     1.6em mask. The same device .opponents uses at desktop (its own comment:
+     "the clear padding comes FIRST and is bigger than the fade"): 1.9em of
+     apron under the board, so at scroll end the fade falls on padding, and
+     mid-scroll it only ever falls on content that genuinely continues.
+     Padding on the SCROLLER, outside every card's container, so no card-art
+     tier can flip (the content-box landmine). */
+  .self-board { padding-bottom: 1.9em; }
 }
 
 /* ══ DESKTOP: OPPONENTS ON TOP, YOUR MAT UNDER THEM ════════════════════════

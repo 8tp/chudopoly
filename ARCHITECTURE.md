@@ -264,8 +264,10 @@ first-player advantage measured and reported).
    or Roll Call. Today's engine has both backwards.
 2. **Wild rent ("any")** targets **one chosen player**, like the color rents. (The old
    hit-everyone behavior was an undocumented buff.)
-3. **Surge Ops** doubles the **next charge you make this turn** — rent, Finance Office,
-   Roll Call, any demand — matching its card text. Still costs a play.
+3. ~~**Surge Ops** doubles the **next charge you make this turn** — rent, Finance Office,
+   Roll Call, any demand~~ **SUPERSEDED by §1c (2026-08-06 research):** Surge Ops is Double
+   The Rent — it stacks and applies to **rent only**. This line is kept struck through
+   because card text and help were written against it; §1c is the ruling.
 4. **Zero-value wilds**: keep value 0 (dead weight is their cost), but fix the insolvency
    exploit — a player whose only cards are zero-value cards must surrender them when they
    cannot otherwise pay ("pay with everything you have" already exists; make zero-value cards
@@ -300,7 +302,8 @@ first-player advantage measured and reported).
    > about which one matters. First, it is physical: you pick both cards up and put them down,
    > so there is no intermediate state to validate. Second, and more fundamentally, **MD has no
    > overstacking rule at all** — extra properties of a colour *start a second set of that
-   > colour* (Hasbro FAQ a_id/924; monopolydealrules.com Property §8). §3.5 is **ours**, added
+   > colour* (2011 archived official FAQ; monopolydealrules.com Property §8 — live FAQ
+   > a_id/924 answers a different question and was cited here in error). §3.5 is **ours**, added
    > to kill the armour exploit, so the blocker is a consequence of our own rule rather than a
    > divergence from MD's.
    >
@@ -319,8 +322,10 @@ first-player advantage measured and reported).
    > mode to an interaction model that already has enough.
 6. **Stalemate end**: when the deck and discard are both empty and a full round passes with no
    card leaving any hand, the game ends; most completed sets wins, net worth breaks ties.
-7. **Upgrades (FOC/hangar)** stay off-limits as payment (matches MD) but must be **shown** in
-   net worth display so the UI never lies.
+7. ~~**Upgrades (FOC/hangar)** stay off-limits as payment (matches MD)~~ **SUPERSEDED by §1b
+   (2026-08-06 research):** upgrades ARE payable per the modern rulebook and the engine
+   implements §1b. The surviving half of this line is the display rule: upgrades must be
+   **shown** in net worth display so the UI never lies.
 8. **Free wild rearranging** stays (it's good), but becomes a first-class visible interaction.
 10. **FINAL APPROACH (win grace cycle — owner directive 2026-08-06).** Reaching 3 complete
     sets does NOT win immediately. **This is FAITHFUL to Monopoly Deal, not a departure** —

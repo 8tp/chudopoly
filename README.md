@@ -134,7 +134,7 @@ the ones where we knowingly took the minority position.
 | `server.js`, `server/` | Express + `ws`, protocol validation, timers, reconnect, per-player redaction. |
 | `public/src/` | The client: `core/ net/ state/ table/ anim/ interact/ ui/ audio/ fx/`. |
 | `public/style/` | Design system CSS. One file holds literal colours; the rest read tokens. |
-| `test/` | 458 cases across 29 files, `node:test`, no framework. |
+| `test/` | 479 cases across 33 files, `node:test`, no framework. |
 | `tools/` | The gate chain, plus the Playwright harness and fixture recorder. |
 | `docs/` | Brand assets for this README. Nothing here is served to a player. |
 
@@ -202,12 +202,19 @@ to drive the real input pipeline, and the server still gained a proven watchdog 
 state a zero-timer bot room genuinely cannot recover from, because the class of bug is real even
 though this instance was not.
 
-The final round scored a build with all seventeen gates green. What the critics said still
-stands between 8 and higher, recorded so nobody has to rediscover it: the pick-open steal fan
-snaps open in a single frame (the one layout teleport left); the win-recap and several modals
-crop text runs mid-line at their scroll edges; the help's Goal page still teaches THE CHUD CARD
-on decks that do not contain it; a peek over an opponent's *banked* card describes the viewer's
-board; and the per-IP socket cap trusts the leftmost `X-Forwarded-For` hop. What no critic
+The final round scored a build with all seventeen gates green. The five findings the critics
+left standing between 8 and higher are **all closed as of the 2026-08-08 overnight audit**:
+the pick-open steal fan now flies open as motion (fixed in 263961b, re-verified with frame
+strips — 20 moving frames over 181ms, max single-frame step 16%); the modal scroll-edge
+mid-line crops were fixed in 263961b (re-verified: text crossing a fold fades over ~22 device
+px, pixel-measured); the Goal page drops the CHUD bullet on decks without it (re-verified on a
+chud:0 deck); the banked-card peek names the owner's board, not the viewer's (re-verified on a
+staged mid-game); and the per-IP caps now key on the rightmost trusted `X-Forwarded-For` hop
+(`CHUD_TRUST_PROXY_HOPS`, fixed in the audit — 8/8 spoofed sockets were admitted before, 4/8
+after). That audit also fixed three things the critics never saw: the Mission Log wiped itself
+on any reload past event 120; the lobby's deck steppers and sudden-death radios were dead
+controls whose choices never reached the wire; and the touch gate's 40-second turn wait
+predated shuffled seats, so it failed whenever the human wasn't first. What no critic
 could verify in this environment, stated rather than hidden: how the music and haptics actually
 feel on a real device (headless measurement only — and this project has already had one metric
 call a bed "best" that the owner rejected by ear), real iOS Safari safe-areas and soft keyboard,

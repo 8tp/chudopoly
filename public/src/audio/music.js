@@ -1614,6 +1614,23 @@ function pump() {
   }
   reloop(now);
   if (pendingArm && buffers.has('final')) cutToFinal();
+  /* ── THE BED RAN OUT ENTIRELY (owner: "music will stop during gameplay all
+   * together and just won't play at all") ──────────────────────────────────
+   * A hidden/minimized tab parks rAF, so this pump stops while the audio
+   * thread plays the current pass to its end; past ~29–64s away the pass runs
+   * out, its onended fires (it does fire hidden — measured live), and the
+   * voice is dead before the first pump after return. reloop() starts from
+   * leadVoice(), which skips dead voices, so its guard returned forever:
+   * MEASURED (headless Chromium, clock stopped 33s over match4's 29.09s pass)
+   * mode 'match', bedWant set, buffer resident, fileVoices 0, master RMS 0.0,
+   * permanently. So the no-bed state is detected here and the bed re-raised.
+   * raiseBed() covers both halves itself: buffer resident → the file starts;
+   * evicted or never landed → the synth covers and handoff() re-fetches.
+   * `ceremony` silences the bed on purpose and resumes it itself; a synth
+   * that is up or still fading (synthOffAt) means music IS playing. */
+  if (!ceremony && bedWant && !synthLive && !synthOffAt && !leadVoice()) {
+    raiseBed(now + 0.02, 0.35, bedWant);
+  }
   for (let i = voices.length - 1; i >= 0; i--) {
     if (voices[i].dead || voices[i].endAt < now - 0.2) voices.splice(i, 1);
   }
@@ -2207,7 +2224,15 @@ export function tracks() { return Object.keys(TRACKS); }
  * `bufs` is a {key: AudioBuffer} of already-decoded loop regions, because
  * decoding is async and scheduling here is not.
  *
- * @param {Array<{at:number, do:'menu'|'match'|'arm'|'break'|'lobby'|'off'|'win'|'lose'}>} steps
+ * 'hide'/'show' model a backgrounded tab: between them pump() is not called,
+ * which is the whole of what backgrounding does to this module (rAF stops —
+ * tools/tabaway.mjs measured 1 frame across 133 broadcasts hidden — while the
+ * audio thread and the main-thread event loop keep running). The `dead` flags
+ * are written by the tick loop below in both states because that is what live
+ * onended does: it fires whether or not the tab is visible (proven live in the
+ * scratchpad repro — after 33s hidden the voice came back dead).
+ *
+ * @param {Array<{at:number, do:'menu'|'match'|'arm'|'break'|'lobby'|'off'|'win'|'lose'|'hide'|'show'}>} steps
  */
 export async function offlineTransition(graph, seconds, steps, bufs, opts) {
   const save = {
@@ -2272,8 +2297,14 @@ export async function offlineTransition(graph, seconds, steps, bufs, opts) {
   try {
     const queue = steps.slice().sort((a, b) => a.at - b.at);
     let qi = 0;
+    let rafLive = true;                 // 'hide'/'show' — see the doc comment
     for (let t = 0; t < seconds; t += 0.05) {
       clockOffset = t;
+      // What src.onended does live: a source whose scheduled end has passed is
+      // dead, visible tab or not. Offline the real onended only fires after the
+      // whole render, so the flag is written here, on the same clock the stop
+      // was scheduled against.
+      for (const v of voices) if (!v.dead && t >= v.endAt) v.dead = true;
       // The render models an instant network for everything EXCEPT the tracks
       // named in `arrive`: release() legitimately evicts a bed on a mode change
       // (see LOAD POLICY) and a live client would re-fetch it, which cannot
@@ -2304,9 +2335,11 @@ export async function offlineTransition(graph, seconds, steps, bufs, opts) {
         else if (s.do === 'off') set('off');
         else if (s.do === 'win') ending('victory');
         else if (s.do === 'lose') ending('defeat');
+        else if (s.do === 'hide') rafLive = false;
+        else if (s.do === 'show') rafLive = true;
         else set(s.do === 'lobby' ? 'menu' : s.do, { key: s.key || 'offline' });
       }
-      pump();
+      if (rafLive) pump();
     }
   } finally {
     sub = held;

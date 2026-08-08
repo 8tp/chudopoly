@@ -27,7 +27,14 @@
  *   • the recording actually ARRIVES when the buffer lands mid-render (11) —
  *     the path every player takes on the first use of a track, and the one
  *     every other assertion here skips
- *   • the four match beds rotate and never repeat back to back (12)
+ *   • the four match beds rotate, never repeat back to back, and hold a
+ *     25±2.5% share each over 4000 rooms (12)
+ *   • a bed whose pass ran out while rAF was parked (hidden tab) comes back
+ *     when the clock does (13) — the owner's "music stops and won't play at
+ *     all", reproduced live before this existed
+ *   • a suspended AudioContext is retaken on the next gesture (14) — the
+ *     other permanent-silence mechanism, and the only live-context assertion
+ *     in the file: everything above renders offline and so cannot see it
  *
  * Needs the audio engine (P5) to expose a render hook. Exits 2 until then.
  */
@@ -50,7 +57,12 @@ let browser = null;
 let code = EXIT_PASS;
 
 try {
-  browser = await launchBrowser();
+  // The autoplay flag exists for assertions 13b/14, which drive a LIVE
+  // AudioContext in a page with no harness recorder (the recorder makes
+  // engine.init() a permanent no-op, which is why every prior assertion here
+  // was blind to anything that only happens to a running context). It changes
+  // nothing for the OfflineAudioContext renders.
+  browser = await launchBrowser(['--autoplay-policy=no-user-gesture-required']);
   const h = await openPage(browser, `${server.url}/?harness=1&seed=${seed}&mute=1`);
   await requireBridge(h.page, 8000);
 
@@ -807,14 +819,33 @@ try {
   if (!hasRot) {
     r.warn('__CHUD.audio.rotation absent — the no-repeat rotation is not asserted');
   } else {
-    const N = 400;
+    // 4000, raised from 400: at 400 the per-bed share has a sampling sd of
+    // ~2.2 points, so a genuinely fair picker printed 20%–29% and the old
+    // 15–40% band could not tell fair from broken. At 4000 the sd is ~0.7
+    // points; the picker itself measures 24.8/25.1/25.1/25.0% over 40k keys
+    // (chi-square 0.77 against uniform, scratchpad fairness-sim), so the
+    // ±2.5-point band below is >3σ of headroom and the keys are deterministic
+    // anyway — the number cannot move between runs.
+    const N = 4000;
     const seq = await h.page.evaluate((n) => {
       const CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       const keys = [];
+      // Room-code shaped AND actually distinct. The previous generator
+      // (`(i*7 + c*31 + i*i%29) % 32`) moved every character by the same value,
+      // so it could only ever emit 32 codes / ~96 keys — the "400 rooms" run
+      // was 96 hash draws wearing 400 labels, and its per-bed shares swung ±9
+      // points on a picker that is provably uniform. FNV mixing with the HIGH
+      // bits folded down fixes it (measured: 3994 distinct codes in 4000; the
+      // low bits alone give EIGHT, because a multiply-only hash never diffuses
+      // downward). Deterministic, so this number cannot move between runs.
+      let hsh = 2166136261 >>> 0;
+      const mix = (x) => {
+        hsh = Math.imul(hsh ^ x, 16777619) >>> 0;
+        return ((hsh ^ (hsh >>> 16)) >>> 0);
+      };
       for (let i = 0; i < n; i++) {
-        // Room-code shaped, so the picker is fed the kind of key it really sees.
         let code = '';
-        for (let c = 0; c < 4; c++) code += CH[(i * 7 + c * 31 + ((i * i) % 29)) % CH.length];
+        for (let c = 0; c < 4; c++) code += CH[mix(i * 4 + c) % CH.length];
         keys.push(`${code}#${i % 3}`);
       }
       return window.__CHUD.audio.rotation(keys);
@@ -835,13 +866,104 @@ try {
     } else if (repeats) {
       r.fail(`${repeats} back-to-back repeat(s) in ${N} rooms, first at #${firstRepeat} (${seq[firstRepeat]}) — `
         + 'the no-repeat rule is the whole reason the cap moved to eight');
-    } else if (lo < 0.15 || hi > 0.40) {
-      r.fail(`the rotation is skewed: ${beds.map((b, i) => `${b} ${(100 * counts[i] / seq.length).toFixed(0)}%`).join(', ')} `
-        + `over ${N} rooms — no-repeat should leave three of four equally likely`);
+    } else if (lo < 0.225 || hi > 0.275) {
+      r.fail(`the rotation is skewed: ${beds.map((b, i) => `${b} ${(100 * counts[i] / seq.length).toFixed(1)}%`).join(', ')} `
+        + `over ${N} rooms — every bed must hold 25±2.5% (proven-to-fail: a squared-r pick reads 40.5/34.6/18.9/5.9)`);
     } else {
       r.pass(`${beds.length} beds, zero back-to-back repeats in ${N} rooms `
         + dim(`(${beds.map((b, i) => `${b.replace('match', '')}:${(100 * counts[i] / seq.length).toFixed(0)}%`).join(' ')})`));
     }
+  }
+
+  /* ---- 13. THE BED SURVIVES A PARKED CLOCK ---------------------------------
+   * OWNER BUG, live play: "occasionally music will stop during gameplay all
+   * together and just won't play at all." REPRODUCED (scratchpad repro-stall):
+   * a hidden/minimized tab parks rAF, so pump() stops and reloop() cannot arm
+   * the next pass; the current pass runs out (29–64s per bed), its onended
+   * fires while hidden, and on return leadVoice() is null — reloop()'s guard
+   * returns forever, with bedWant set, the buffer resident, and master RMS 0.0.
+   * Every render above pumps every 50ms without fail, which is why this file
+   * was green while the owner heard silence.
+   *
+   * 'hide' at 2s parks the pump exactly as a background tab does; match3's
+   * trimmed pass (29.09s) runs out inside the window; 'show' at 38s is the
+   * player coming back. The bed must be back on its feet shortly after. */
+  if (hasTrans) {
+    const m = await h.page.evaluate(async () => {
+      const db = (v) => (v > 0 ? 20 * Math.log10(v) : -200);
+      const o = await window.__CHUD.audio.renderTransition(
+        [{ at: 0, do: 'match' }, { at: 2, do: 'hide' }, { at: 38, do: 'show' }],
+        46, { bed: 'match3' });
+      const sr = o.sampleRate, L = o.channels[0], R = o.channels[1];
+      const rms = (a, b) => {
+        let s = 0, n = 0;
+        for (let i = Math.round(a * sr); i < Math.min(L.length, Math.round(b * sr)); i++) {
+          const x = (L[i] + R[i]) * 0.5; s += x * x; n++;
+        }
+        return db(Math.sqrt(s / Math.max(1, n)));
+      };
+      // 10..25s: the pass is still sounding while hidden (audio does not stop
+      // when a tab hides — if this is silent the render staged the wrong bug).
+      // 42..45s: 4s after the return the bed must be BACK.
+      return { during: rms(10, 25), after: rms(42, 45), log: o.log };
+    });
+    if (m.during < -70) {
+      r.fail(`parked-clock render is silent at 10–25s (${m.during.toFixed(1)} dBFS) — the bed never `
+        + 'started, so the recovery assertion below would be vacuous');
+    } else if (m.after < -55) {
+      r.fail(`the bed never comes back after a parked clock: ${m.after.toFixed(1)} dBFS at 42–45s `
+        + `against ${m.during.toFixed(1)} while it played — the owner's "music stops and won't play at all" `
+        + `(log tail: ${m.log.slice(-3).join(' | ')})`);
+    } else {
+      r.pass(`the bed survives a parked clock ${dim(`(${m.during.toFixed(1)} dBFS playing, `
+        + `pass runs out hidden, ${m.after.toFixed(1)} dBFS 4s after return)`)}`);
+    }
+  }
+
+  /* ---- 14. A SUSPENDED CONTEXT IS RETAKEN ----------------------------------
+   * The second stop mechanism, and it takes the card sounds with it: a phone
+   * call, Siri, an app switch or an audio-route change puts the context in
+   * 'suspended'/'interrupted', and the client had NO resume path — no
+   * visibilitychange, no onstatechange, no gesture hook (grep: zero callers of
+   * engine.resume()). REPRODUCED live: suspend() then a real click left the
+   * context suspended forever.
+   *
+   * This one needs a LIVE context, so it runs in a second page WITHOUT the
+   * harness recorder (which makes init() a no-op). The autoplay flag on the
+   * launch stands in for the first gesture; the click is a real, trusted
+   * Playwright gesture — the same input the fix's listener must catch. */
+  {
+    const live = await openPage(browser, `${server.url}/`);
+    const state0 = await live.page.evaluate(async () => {
+      const engine = await import('/src/audio/engine.js');
+      window.__live = { engine, meter: null };
+      engine.init();
+      window.__live.meter = engine.__meter();
+      return window.__live.meter ? window.__live.meter().state : 'no-graph';
+    });
+    if (state0 !== 'running') {
+      r.warn(`live context never reached 'running' (${state0}) — suspension recovery not asserted here`);
+    } else {
+      await live.page.evaluate(() => window.__live.engine.suspend());
+      const st1 = await live.page.evaluate(() => window.__live.meter().state);
+      if (st1 === 'running') {
+        r.fail('suspend() did not suspend — the recovery assertion below is vacuous');
+      } else {
+        await live.page.mouse.click(400, 300);
+        let st2 = st1;
+        for (let i = 0; i < 20 && st2 !== 'running'; i++) {
+          await new Promise((res) => setTimeout(res, 100));
+          st2 = await live.page.evaluate(() => window.__live.meter().state);
+        }
+        if (st2 === 'running') {
+          r.pass('a suspended context is retaken on the next gesture ' + dim(`(${st1} → ${st2})`));
+        } else {
+          r.fail(`a suspended context stays ${st2} after a real click — a phone call or app switch `
+            + 'silences the whole game until reload');
+        }
+      }
+    }
+    await live.close();
   }
 
   if (h.errors.length) {

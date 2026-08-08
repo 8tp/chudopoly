@@ -87,6 +87,10 @@ function broadcastRoom(room) {
         // what a live game actually resolved to. startRoomGame re-points pendingRules at
         // rules the instant a game starts, so the two can never disagree on the wire.
         rules: room.pendingRules || room.rules || null,
+        // The host's own choice reflected back, so the lobby can SAY the room
+        // is listed. Never secret — a public room's code is public by the
+        // host's choice, and a private room's `false` reveals nothing.
+        public: !!room.public,
       }));
     }
   });

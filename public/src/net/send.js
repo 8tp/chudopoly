@@ -4,7 +4,11 @@
 
 import { send } from './socket.js';
 
-export const createRoom = (name) => send({ type: 'create_room', name });
+// `public` rides only when true: absent means private (server/protocol.js
+// validates it strictly boolean, default off — owner directive 2026-08-07).
+export const createRoom = (name, isPublic) => send({
+  type: 'create_room', name, ...(isPublic ? { public: true } : {}),
+});
 export const quickPlay = (name) => send({ type: 'quick_play', name });
 
 export const joinRoom = (code, name, resume) => send({

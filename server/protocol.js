@@ -77,6 +77,12 @@ function validateMessage(message) {
 
   switch (message.type) {
     case 'create_room':
+      if (!validName(message.name)) return fail('Call sign must be 1-16 letters, numbers, spaces, or . _ - characters');
+      // Opt-in public listing (owner directive 2026-08-07). Strictly boolean:
+      // a truthy string silently coerced is how a room ends up listed by a
+      // client bug nobody chose. Absent means private — the default.
+      if (!validOptionalBool(message.public)) return fail('Invalid public setting');
+      break;
     case 'quick_play':
       if (!validName(message.name)) return fail('Call sign must be 1-16 letters, numbers, spaces, or . _ - characters');
       break;

@@ -2613,28 +2613,6 @@
   box-shadow: inset 0 0 0 2px rgba(242, 238, 228, .30);
 }
 .card-back::after { content: none; }
-/* the roundel, debossed into the back: a dark disc with a light top edge and a
-   dark bottom one is a stamp struck INTO the card, not a badge glued on. */
-.card-back-roundel {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 46%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  color: rgba(242, 238, 228, .34);
-  font-size: calc(var(--card-w) * .26);
-  line-height: 1;
-  background: rgba(0, 0, 0, .45);
-  box-shadow:
-    inset 0 2px 3px rgba(0, 0, 0, .8),
-    inset 0 -1px 0 rgba(242, 238, 228, .16),
-    0 0 0 .05em rgba(242, 238, 228, .16),
-    0 0 0 .12em rgba(0, 0, 0, .5),
-    0 0 0 .15em rgba(242, 238, 228, .09);
-}
 
 /* Face/back VISIBILITY belongs to motion.css: a card with [data-facing] keeps
    both faces in the DOM and lets backface-visibility hide one. Only the pooled
@@ -3036,9 +3014,20 @@
        .opponents .board-props for the arithmetic that says a feather wide
        enough to "dissolve a whole mat edge" also takes that pair to 3.3:1. The
        cue was never the feather; it is the `local` shade below. */
+    /* ROUND-8 LOOK S3: that left the fade at .4em — MEASURED 4.8px at this
+       viewport's 12px root, which is not a fade: a card crossing the fold was
+       guillotined (landscape-mid cut the UP band mid-word; scrolled right, the
+       left edge sliced a value coin), and the `local` shades could not say so
+       because they are painted BEHIND opaque card stock — visible only in the
+       3px mat gaps and the end padding that mid-scroll never shows. The fix is
+       the vertical .scroll-edge device's own proportion (ui.css:1471): its
+       .45em feather eats about a third of the 1.4em text line crossing ITS
+       fold; 1.2em is the same third of a 50px mat crossing THIS one. The
+       nameplate arithmetic above still holds — the dissolving strip is the
+       mat's outer third, and the shades keep their job at the ends. */
     padding: 0 2em;
-    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 .4em, #000 calc(100% - .4em), transparent 100%);
-    mask-image: linear-gradient(90deg, transparent 0, #000 .4em, #000 calc(100% - .4em), transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 1.2em, #000 calc(100% - 1.2em), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 1.2em, #000 calc(100% - 1.2em), transparent 100%);
     background:
       linear-gradient(90deg, var(--ground) 40%, rgba(0, 0, 0, 0)) 0 0 / 3em 100% no-repeat local,
       linear-gradient(-90deg, var(--ground) 40%, rgba(0, 0, 0, 0)) 100% 0 / 3em 100% no-repeat local,
@@ -3048,28 +3037,6 @@
          apron, not a piece of scrollbar chrome */
       repeating-linear-gradient(90deg, var(--stencil) 0 12px, transparent 12px 22px)
       0 100% / 100% 2px no-repeat;
-  }
-  /* THE CONTINUATION MARK. The row is 785px of mats in a 591px port (measured),
-     so four mats are past the right edge and the LOOK review's word for the
-     result was "terminates at x=1688 with no fade and no scroll cue". A fade
-     cannot be the cue — a mask ramp is alpha over the nameplates and takes them
-     under 4.5:1 (the arithmetic is on .opponents .board-props) — so the cue is a
-     MARKING, the same vocabulary the apron uses everywhere else: a dashed rule
-     standing at the end of the line, pinned to the scrollport by `position:
-     sticky` on a flex item. With nothing to scroll to it comes to rest against
-     the last mat and reads as the end of the row; with something behind it, it
-     stands over the cut. Opaque, so it never touches a contrast ratio. */
-  .board-self .board-props::after {
-    content: "";
-    flex: 0 0 auto;
-    position: sticky;
-    right: 0;
-    align-self: stretch;
-    width: 5px;
-    margin-left: -5px;
-    background:
-      linear-gradient(var(--ground), var(--ground)) 0 0 / 100% 100% no-repeat,
-      repeating-linear-gradient(180deg, var(--stencil-hi) 0 6px, transparent 6px 11px) 1px 0 / 3px 100% no-repeat;
   }
   /* 50px of mat is narrow even for the tag */
   .board-self .propcol-name::after { font-size: 8px; }

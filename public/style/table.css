@@ -1296,6 +1296,92 @@
   grid-template-rows: auto minmax(var(--tap), auto) auto;
 }
 
+/* ══ THE MAT FANS OPEN FOR A PICK (§0.9 on the steal steps) ════════════════
+   OWNER, 2026-08-07: "when trying to steal someone's card it can be hard to
+   select exactly what you want if there is a property overlayed on top. PC
+   may have a similar issue though." Right on both counts.
+
+   MEASURED (dragtest §G's recorded red, 2026-08-07), Midnight Requisition's
+   theirCard step over Bases 3/4 + Elite 2/3 + Space 1/3:
+     phone 390×844     every seat card 30×42; each buried card exposed a 9×42
+                       sliver (27% of its own face), the 2-stack 17×42 — and a
+                       real CDP tap at the buried wild's visual centre STOLE
+                       THE CARD ON TOP OF IT (aimed #34, sent targetCardId 22),
+                       with no confirming step between the tap and the server.
+     desktop 1280×720  26×36 cards, 9×36 slivers, the identical wrong pick.
+   §0.9's floor is about EFFECTIVE targets, and this tap dispatches a steal —
+   the least forgiving surface in the client held the smallest targets on it.
+
+   The mechanism is the one the bank ratified two blocks up: a zone whose cards
+   carry live marks un-stacks, keyed on interact/'s own mark so the machine and
+   the fan cannot disagree, alive for exactly as long as the step is. A mat
+   differs from the bank in two ways, both paid for here:
+     · the CARD is the control (a theirCard/myCard step answers with a
+       data-card-id, where the bank's control is the zone), so the card itself
+       is floored at --tap and the derived overlap guarantees every card an
+       exposed strip ≥ --tap wide BY CONSTRUCTION at any interface scale;
+     · a fanned stack no longer fits the seat grid's 44px cell, so a mat
+       holding two or more marked cards takes the seat's full row for the
+       step, and the row — fixed by round 7's evenness argument, which is an
+       argument about seats at REST — gets minmax while a mark is inside it.
+   theirSet and player steps mark .propcols and .boards, never cards, so
+   nothing here moves during them; a single marked card keeps its cell (a
+   44px card stands whole in a 44px-floored cell and spanning more would
+   spend width on nothing).
+
+   The span is a LADDER, not `1 / -1`, and the cap is 3 — both measured:
+     · full-row spans put every marked mat on its own row, and at 1280×720
+       (§G's mouse leg, first cut of this fix) that made the victim seat
+       ~340px inside the 189px `fit-content(11.4em)` seats track — 5 of 6
+       pick targets scrolled out of the port entirely (0×0 effective) and
+       the buried-centre click hit the felt below the strip. Cells, like the
+       mini-step ladder above, take only the width the count needs;
+     · 3 is the explicit track count of the NARROWEST seat this grid makes
+       (11em = 183px at the 44px floor → 3 auto-fill tracks; the phone's
+       one-seat-per-line strip answers 5+) and a span wider than the explicit
+       grid mints implicit tracks that overflow the seat sideways. A span-3
+       mat always holds 3 floored cards (3×--tap + 2×2px gap ≤ 3 tracks +
+       2×4px gutters), and a fourth card wraps onto the row the minmax below
+       grants. */
+.opponents .propcol:has(> .zone-props > .card[data-targetable="1"]):has(> .zone-props > .card:nth-child(2)) {
+  grid-column: span 2;
+}
+.opponents .propcol:has(> .zone-props > .card[data-targetable="1"]):has(> .zone-props > .card:nth-child(3)) {
+  grid-column: span 3;
+}
+.opponents .board-props:has(> .propcol > .zone-props > .card[data-targetable="1"]) {
+  grid-template-rows: minmax(var(--mat-row), auto);
+  grid-auto-rows: minmax(var(--mat-row), auto);
+}
+.opponents .zone-props:has(> .card[data-targetable="1"]) {
+  --card-w: max(var(--tap), calc(var(--s) * 2.5));
+  flex-wrap: wrap;
+  gap: 2px;
+  overflow: visible;
+}
+.opponents .zone-props:has(> .card[data-targetable="1"]) > .card:not(:first-child) {
+  margin-left: calc(-1 * max(0px, var(--card-w) - var(--tap)));
+}
+/* a whole card shows its whole face: the cut edge is a stack treatment and
+   there is no stack for the length of the step */
+.opponents .zone-props:has(> .card[data-targetable="1"]) > .card:not(:last-child) {
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop);
+}
+/* The desktop seats track opens for the fan it now has to hold. 11.4em was
+   measured against seats at REST (the fit-content note in the desktop table
+   block); a fanned seat is head 24 + fan track 44 + two 88px mat rows ≈ 250px
+   ≈ 15.6em, MEASURED on §G's mouse leg — under the old cap 5 of 6 pick
+   targets sat below the strip's fold at the exact moment they became the only
+   thing on the table worth tapping. 22em holds a fanned five-colour victim;
+   past it the strip still scrolls and interact/'s revealMarks still brings
+   the first mark in. Keyed on the same mark as every rule above, so the
+   track opens when the step arms and closes when it resolves. */
+@media (min-width: 1024px) {
+  .table:has(.opponents .zone-props > .card[data-targetable="1"]) {
+    grid-template-rows: fit-content(22em) minmax(0, 1fr);
+  }
+}
+
 /* THE AFFORDANCE. A row that opens has to say so, and it says so in this app's
    own marking vocabulary rather than with an icon of an eye: a chevron drawn
    from two rules, which turns a quarter when the seat is open. `aria-expanded`

@@ -1015,14 +1015,26 @@ export function applyMarks() {
       }
     } else if (step === 'theirCard') {
       for (const { card } of sel.stealableCards(mode.picks.targetId, mode.card?.action)) {
-        mark(getNode(card.id));
+        const node = getNode(card.id);
+        mark(node);
+        // §0.9. The steal answer is a CARD NODE, and until table.css's
+        // pick-open fan a seat card was 30px wide — below lendFocus's own
+        // gate — so the theirCard step had no keyboard route at all. Fanned,
+        // the card clears 44 and the same gated promotion payment, discard
+        // and swapCard already use applies; taken back in clearMarks().
+        lendFocus(node);
       }
     } else if (step === 'theirSet') {
       markPropColumns(mode.picks.targetId, sel.completeSetsOf(mode.picks.targetId));
     } else if (step === 'myCard') {
       // Same §3.1 guard as dragPlan(): my side of a TDY trade cannot come out
-      // of one of my own complete sets.
-      for (const { card } of sel.tradeableProps()) mark(getNode(card.id));
+      // of one of my own complete sets. lendFocus for the same §0.9 reason as
+      // theirCard above — the answer is a card node.
+      for (const { card } of sel.tradeableProps()) {
+        const node = getNode(card.id);
+        mark(node);
+        lendFocus(node);
+      }
     } else if (step === 'mySet') {
       const needsHouse = mode.card?.action === 'foc';
       markPropColumns(store.self.id, sel.myCompleteSets({ needsHouse, needsNoHouse: !needsHouse }));

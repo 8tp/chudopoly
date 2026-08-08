@@ -272,6 +272,10 @@ function follow(dt) {
   live.sy = damp(live.sy, live.ty, FOLLOW_LAMBDA, step);
   setStyle(live.node, '--fx', `${Math.round(live.sx)}px`);
   setStyle(live.node, '--fy', `${Math.round(live.sy)}px`);
+  // The lean relaxes while the pointer parks — table/ owns the velocity pose,
+  // this subscriber is just the frame source (measured −4.2°/1.055 held
+  // through a 260ms park before this call existed; see table.dragSettle).
+  table.dragSettle(live.cardId, step);
 }
 
 function dragMove(dx, dy, x, y) {

@@ -509,6 +509,9 @@ function holdPlaceholder(snap) {
   setClass($('hud-turn'), 'is-mine', false);
   setText($('hud-plays'), '');
   setText($('hand-count'), '0');
+  // DEALING is nobody's turn on screen; the button appears with "YOUR TURN"
+  // (renderNarration), never before it.
+  setHidden($('btn-end-turn'), true);
 }
 
 /** The hand as of a GIVEN state — sel.myHand() only ever reads the live store,
@@ -556,7 +559,8 @@ function renderNarration() {
   const counted = turnId === snap.currentPlayerId;
   const hand = handOf(snap);
   setText($('hud-plays'),
-    mine && counted && snap.turnPhase === 'play' ? `${snap.playsRemaining} plays` : '');
+    mine && counted && snap.turnPhase === 'play'
+      ? `${snap.playsRemaining} play${snap.playsRemaining === 1 ? '' : 's'}` : '');
   setText($('hand-count'), String(hand.length));
   setClass($('hand-dock'), 'over-limit', hand.length > (snap.handLimit || 7));
 
@@ -566,7 +570,23 @@ function renderNarration() {
   // your hand is still in the air is the same lie as the counter that says you
   // are holding it. Both actions re-check the store when they fire, so a late
   // disable can never let an illegal one through.
-  setAttr($('btn-end-turn'), 'disabled',
+  //
+  // OWNER, 2026-08-07: "hide end turn on screen unless it is actually your turn
+  // — better player feedback if the button disappears." GONE, not greyed: the
+  // dock reflows (flex row), which is the feedback. `mine` is the NARRATED
+  // turn, so the button appears on the same beat as "YOUR TURN" rather than a
+  // broadcast early. It stays through your own discard step (End Turn is what
+  // entered that mode and confirm-discard is how it leaves) because the turn is
+  // still yours; a response window on someone else's turn hides it, because the
+  // turn is not. If the turn ends while the button holds keyboard focus, the
+  // focus dies with the hidden control — parked back on the dock's next
+  // control so Tab does not restart from <body> (§0.9).
+  const endBtn = $('btn-end-turn');
+  if (endBtn && endBtn.hidden !== !mine) {
+    if (!mine && document.activeElement === endBtn) $('btn-emote')?.focus();
+    setHidden(endBtn, !mine);
+  }
+  setAttr(endBtn, 'disabled',
     !mine || !counted || snap.turnPhase !== 'play' || endTurnSent ? true : null);
   setAttr($('btn-scoop'), 'disabled', snap.phase !== 'playing' ? true : null);
   setClass($('table'), 'surge-on', !!snap.surgeOps);

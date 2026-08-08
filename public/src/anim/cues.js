@@ -47,6 +47,13 @@ export const CUE = Object.freeze({
   PICKUP: 'card_pickup',
   DENIED: 'denied',
   DETAILS: 'card_details',
+  // The mode machine ACCEPTED a targeting answer (Play armed a step, a pick
+  // consumed one). §P10 FEEL: tapping Play and tapping a marked victim board
+  // changed the mode with ZERO sfx/haptic until the broadcast returned — the
+  // one interaction family whose acknowledgement was silence. Audio maps it to
+  // the existing ui_tick (engine.js SFX_FOR_CUE, rate-limited there); fx/ gives
+  // it the 6ms pickup pattern and nothing else.
+  TARGET_STEP: 'target_step',
 });
 
 /**

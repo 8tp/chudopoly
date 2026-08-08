@@ -111,27 +111,63 @@ function ruleBadge(active) {
 }
 
 /** The set-breaking cards. Shared by every win rule: under 'instant' they are
- *  the only defence there is, under the grace rules they are the counter-play. */
-function breakBullets() {
-  return bullets([
-    // playAction 'chud' (game.js:1173) is the ONLY steal left with no
-    // zoneRequisitionable guard, and nothing goes back the other way. It is NOT
-    // the only card that can be pointed at a complete set — Inspector General
-    // (game.js:1082) REQUIRES one — so the claim is card-vs-set, not touch-at-all.
-    'THE CHUD CARD — takes a property straight out of a complete set and gives nothing '
-    + 'back. It is the only card that can pull ONE card out of a set and break it.',
-    // playAction 'inspector_general' (game.js:1082) refuses anything that is not
-    // already a complete set: "That set is not complete". executeEntry 'steal_set'.
-    'Inspector General — seizes the whole set, Upgrade and FOC included. It can ONLY be '
-    + 'aimed at a set that is already complete; an unfinished colour refuses it.',
-    // processPayment: propCards come out of properties, then syncSets(payer).
-    // Upgrades are payable now, so a big enough charge can also strip those.
-    'Charge them more than their bank covers, so they must pay with a set card.',
-    // playAction 'tdy_orders' (game.js:1123-1126) now runs zoneRequisitionable()
-    // over BOTH sides; playAction 'midnight_requisition' (1101) over the target's.
-    'TDY Orders and Midnight Requisition cannot — both refuse any zone that is already a '
-    + 'complete set. TDY refuses it on YOUR side of the trade too.',
-  ]);
+ *  the only defence there is, under the grace rules they are the counter-play.
+ *
+ *  FILTERED THROUGH THE DECK THIS GAME IS PLAYED WITH, exactly as pageCards()
+ *  is: this list taught "THE CHUD CARD — the only card that can pull ONE card
+ *  out of a set" unconditionally, including under the shipped MD Faithful
+ *  preset (chud: 0) — two tabs away from the Cards page saying "Not in this
+ *  table's deck: THE CHUD CARD". Rent and money are not editable
+ *  (validateDeck), so the charge bullet never filters.
+ *  @returns {Element[]} the list, plus the Cards-page absence note when a
+ *  break card the player may have read about elsewhere is not in this deck. */
+function breakBullets(active) {
+  const totals = totalsFor(active.deck);
+  const have = (action) => (totals.get(`act:${action}`) || 0) > 0;
+  const lines = [];
+  const absent = [];
+  // playAction 'chud' (game.js:1173) is the ONLY steal left with no
+  // zoneRequisitionable guard, and nothing goes back the other way. It is NOT
+  // the only card that can be pointed at a complete set — Inspector General
+  // (game.js:1082) REQUIRES one — so the claim is card-vs-set, not touch-at-all.
+  if (have('chud')) {
+    lines.push('THE CHUD CARD — takes a property straight out of a complete set and gives '
+      + 'nothing back. It is the only card that can pull ONE card out of a set and break it.');
+  } else absent.push(CARD_TITLES.chud);
+  // playAction 'inspector_general' (game.js:1082) refuses anything that is not
+  // already a complete set: "That set is not complete". executeEntry 'steal_set'.
+  if (have('inspector_general')) {
+    lines.push('Inspector General — seizes the whole set, Upgrade and FOC included. It can '
+      + 'ONLY be aimed at a set that is already complete; an unfinished colour refuses it.');
+  } else absent.push(CARD_TITLES.inspector_general);
+  // processPayment: propCards come out of properties, then syncSets(payer).
+  // Upgrades are payable now, so a big enough charge can also strip those.
+  lines.push('Charge them more than their bank covers, so they must pay with a set card.');
+  // playAction 'tdy_orders' (game.js:1123-1126) now runs zoneRequisitionable()
+  // over BOTH sides; playAction 'midnight_requisition' (1101) over the target's.
+  const locked = [
+    have('tdy_orders') ? 'TDY Orders' : null,
+    have('midnight_requisition') ? 'Midnight Requisition' : null,
+  ].filter(Boolean);
+  if (locked.length === 2) {
+    lines.push('TDY Orders and Midnight Requisition cannot — both refuse any zone that is '
+      + 'already a complete set. TDY refuses it on YOUR side of the trade too.');
+  } else if (locked[0] === 'TDY Orders') {
+    lines.push('TDY Orders cannot — it refuses any zone that is already a complete set, '
+      + 'on YOUR side of the trade too.');
+  } else if (locked[0] === 'Midnight Requisition') {
+    lines.push('Midnight Requisition cannot — it refuses any zone that is already a '
+      + 'complete set.');
+  }
+  const out = [bullets(lines)];
+  if (absent.length) {
+    // Named absent, not silently dropped — the same policy pageCards states:
+    // a player who has read about THE CHUD CARD elsewhere deserves to know
+    // this table has none rather than to infer it from an absence.
+    out.push(note(`Not in this table's deck: ${absent.join(', ')}. `
+      + 'The list above follows the deck this game was built with.'));
+  }
+  return out;
 }
 
 /** The armed board, drawn at whatever `setsToWin` this game is played to. */
@@ -230,7 +266,7 @@ function pageGoal() {
           + 'lands, it is over.'],
       ]),
       el('h5', { class: 'brief-sub', text: 'How you break a set before it finishes' }),
-      breakBullets(),
+      ...breakBullets(active),
     ];
   }
 
@@ -295,7 +331,7 @@ function pageGoal() {
       ]] : []),
     ]),
     el('h5', { class: 'brief-sub', text: 'How you break someone on final approach' }),
-    breakBullets(),
+    ...breakBullets(active),
   ];
 }
 
@@ -896,7 +932,7 @@ export function show(pageId) {
       attrs: { role: 'tab', type: 'button' },
       dataset: { action: 'help-page', page: page.id },
     })));
-  host = el('div', { class: 'brief-page', attrs: { role: 'tabpanel', tabindex: '0' } });
+  host = el('div', { class: 'brief-page scroll-edge', attrs: { role: 'tabpanel', tabindex: '0' } });
 
   // Left/Right walk the rail, as a tablist must (§0.9).
   rail.addEventListener('keydown', (e) => {

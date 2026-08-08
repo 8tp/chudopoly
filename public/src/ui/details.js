@@ -93,6 +93,40 @@ function boardOwner(cardId) {
 }
 
 /**
+ * The player whose BANK holds this card, or null. Same resolvability argument
+ * as boardOwner(): getPlayerView ships every seat's bank with real ids.
+ */
+function bankOwner(cardId) {
+  for (const player of store.snapshot?.players || []) {
+    if ((player.bank || []).some(x => x?.id === cardId)) return player;
+  }
+  return null;
+}
+
+/**
+ * A card sitting in a bank IS money, whoever's face it wears (playAsMoney,
+ * receiveProperty's banked_property path, bankUpgradeCard — every route in
+ * strips or ignores the card's active identity). The peek used to dispatch on
+ * TYPE anyway: mid-game fixture card 94 (a rent card in Coyote's bank) peeked
+ * with the VIEWER's rent table ("Bills every other player · your colours…"),
+ * and card 40 (money in Iceman's bank) printed "Your bank" — both describing
+ * the viewer's board under a card that is somebody else's cash. The what-if
+ * rows are DROPPED rather than subjunctivized: the card cannot be played from
+ * a bank, so there is no "if played" that is true, and the rule text above
+ * these rows already says what the card does in a hand.
+ */
+function bankContext(card, owner) {
+  const me = selfPlayer();
+  const mine = !!me && owner.id === me.id;
+  return [
+    row(mine ? 'In your bank' : `In ${owner.name}'s bank`,
+      `counts as ${card.value ?? 0}M — money now, whatever the face says`),
+    row(mine ? 'Your bank total' : `${owner.name}'s bank total`,
+      `${owner.bankValue ?? (owner.bank || []).reduce((t, c) => t + (c?.value || 0), 0)}M`),
+  ];
+}
+
+/**
  * One zone row for one PLAYER — whichever player the label names. Extracted so
  * an opponent's card can print the owner's zone and the viewer's side by side
  * without two copies of the COMPLETE/FULL wording drifting apart.
@@ -257,6 +291,10 @@ export function contextRows(card) { return card ? context(card) : []; }
 
 function context(card) {
   if (!store.snapshot || !selfPlayer()) return [];
+  // BEFORE the per-type dispatch: a banked rent card must never reach
+  // rentContext() and describe rent its owner is not charging (see bankContext).
+  const banked = bankOwner(card.id);
+  if (banked) return bankContext(card, banked);
   if (card.type === 'rent') return rentContext(card);
   if (isPropertyCard(card)) return propertyContext(card);
   if (card.type === 'action') return actionContext(card);

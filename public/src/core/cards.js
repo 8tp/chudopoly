@@ -199,10 +199,13 @@ export const ACTION_RULES = Object.freeze({
   // §3.1 REVERSED 2026-08-06 — playAction case 'tdy_orders' (game.js:1123-1126)
   // now runs zoneRequisitionable() over BOTH sides: "You cannot trade a card out
   // of one of your complete sets" and "TDY Orders cannot touch a complete set".
-  // Both errors reproduced against the engine.
+  // Both errors reproduced against the engine. Worded without naming CHUD: this
+  // string renders on every table, including decks built with chud: 0 (the
+  // shipped MD Faithful preset), where "separates it from CHUD" compared it to
+  // a card that is not in the game.
   tdy_orders: 'Trade one of your properties for one of theirs. Neither card may come out of a '
-    + 'complete set — yours or theirs. You always give a card back, which is what separates it '
-    + 'from CHUD.',
+    + 'complete set — yours or theirs. You always give a card back: it is a trade, never a '
+    + 'one-way take.',
   // playAction case 'chud' (game.js:1173) — the ONLY steal with no
   // zoneRequisitionable guard left, and §3.1 removed the tax. It is not the only
   // card that can be pointed at a complete set (Inspector General must be), it is

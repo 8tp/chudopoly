@@ -17,7 +17,7 @@
 
 import { orderChildren, setText, setAttr, setClass, prefersReducedMotion } from '../core/dom.js';
 import { COLOR_KEYS } from '../core/cards.js';
-import { hash1, clamp } from '../core/math.js';
+import { hash1, clamp, damp } from '../core/math.js';
 import { cardNode, getNode, allNodes, forgetNode, refresh, syncBacks, releaseBack, tilt, setRest } from './cardnode.js';
 import * as layout from './layout.js';
 import * as hand from './hand.js';
@@ -499,6 +499,8 @@ export function dragCard(id, x, y) {
 
   // Re-open whatever the card is inside NOW: a broadcast can reparent a held
   // card, and the chain opened at lift no longer covers where it lives.
+  // (While the pointer moves, the pose above owns rec.vx; dragSettle() below
+  // only decays it once the move stream stops.)
   if (node.parentElement !== rec.parent) {
     rec.parent = node.parentElement;
     openChain(node, 0, rec.chain);
@@ -518,6 +520,39 @@ export function dragCard(id, x, y) {
       if (opened || pulled) relayoutHand();
     }
   }
+}
+
+/* ── the lean relaxes when the pointer parks (§P10 FEEL) ───────────────────
+ * dragCard() computes the velocity pose only on pointermove, so when the move
+ * stream stopped the pose froze at its last value: MEASURED, a fast sweep
+ * followed by a 260ms hold left the held card at −4.2° / scaleX 1.055 for the
+ * whole hold — a card "moving" at full lean while visibly parked. The decay
+ * runs from interact/drag.js's already-running follow() subscriber (one clock,
+ * §0.6), gated on the move stream being idle so it never fights a live move.
+ *
+ * τ = 120ms (λ = 8.3/s): a saturated 6° lean is under 1° ~220ms after the
+ * finger parks and under the pose writer's own 0.1° quantum by ~450ms —
+ * relaxed, not snapped. IDLE_MS 40 is two missed 60Hz pointer frames: a
+ * still-moving pointer delivers moves every frame, so the decay cannot
+ * engage mid-sweep. No allocation; setDragPose's quantised guards make a
+ * settled card cost 0 writes/frame (§0.8). */
+const LEAN_DECAY_LAMBDA = 8.3;    // 1/s → τ ≈ 120ms
+const LEAN_IDLE_MS = 40;
+
+/**
+ * One frame of lean decay for a parked pointer. Called by interact/drag.js
+ * follow() — which only runs while a drag is live and motion is not reduced.
+ * @param {number} id  the held card
+ * @param {number} dt  clock seconds
+ */
+export function dragSettle(id, dt) {
+  const rec = lifts.get(id);
+  if (!rec || rec.vx === 0 || reduceMotion) return;
+  if (rec.tms && performance.now() - rec.tms < LEAN_IDLE_MS) return;
+  rec.vx = damp(rec.vx, 0, LEAN_DECAY_LAMBDA, dt);
+  if (Math.abs(rec.vx) < 0.005) rec.vx = 0;      // done: back to 0 writes/frame
+  const v = clamp(rec.vx / V_REF, -1, 1);
+  flight.setDragPose(rec.node, v * 6, 1 + Math.abs(v) * 0.08);
 }
 
 /**
@@ -789,6 +824,81 @@ function reflowApply() {
     flight.fly(node, { dx, dy, dur: REFLOW_MS, arc: 0, quiet: true, key: i });
   }
   rfNodes.length = 0;
+}
+
+/* ── the pick-open fan opens as MOTION, not in a frame (§P10 FEEL) ─────────
+ *
+ * Entering a theirCard steal step is pure CSS layout: table.css's :has()
+ * rules (~1346-1385) change grid spans, --card-w, negative margins and the
+ * desktop seats track (fit-content 11.4em → 22em) the moment interact/ marks
+ * the victim's cards. MEASURED before this existed (1280×720, dragtest §G's
+ * stealBoard): the victim seat grew ~140 → ~250px, every fanned card moved
+ * and changed width 26 → 44 in ONE frame, and no FLIP ran because nothing
+ * reparents — the one card-layout change on the table with zero motion.
+ *
+ * So interact/ hands its whole mark pass here and it is FLIPped wholesale:
+ * every strip card's rect before, rect after, inverted deltas flown on the
+ * one clock (§0.6) exactly as moveCard does for a reparent. Interruptible
+ * like any flight — a tap mid-open hits the card where it is painted, and a
+ * re-mark retargets because flights land on the rest pose. Reduced motion
+ * never reaches this function (the caller collapses to the instant layout
+ * change — for a layout jump, instant IS the fade).
+ *
+ * Deliberately NOT flown: the self board's ~100px drop under the growing
+ * seats track. Its mats, nameplates and chrome move with it in the same
+ * frame, and flying only the .card nodes would detach every card from its
+ * mat for 200ms — worse than the jump. Cards only, in the strip only.
+ *
+ * Cost: two rect passes over the strip's cards, and only on passes the
+ * caller has already screened as fan-toggling — never per frame (§0.8;
+ * the arrays are preallocated like the reflow's). */
+const FLIP_MIN_PX = 2;
+const FLIP_MS = 220;
+const fpNodes = [];
+let fpX = new Float64Array(48);
+let fpY = new Float64Array(48);
+let fpW = new Float64Array(48);
+
+export function flipStrip(mutate) {
+  const strip = document.getElementById('opponents');
+  if (!strip || reduceMotion) { mutate(); return; }
+  fpNodes.length = 0;
+  // Backs too: the victim's hand-row backs ride the same seat growth. They
+  // carry no id, so they key by index like the reflow's.
+  for (const node of strip.querySelectorAll('[data-card-id], [data-back]')) {
+    if (flight.isFlying(node) || flight.isGrabbed(node)) continue;
+    fpNodes.push(node);
+  }
+  const n = fpNodes.length;
+  if (n > fpX.length) {
+    let size = fpX.length;
+    while (size < n) size *= 2;
+    fpX = new Float64Array(size);
+    fpY = new Float64Array(size);
+    fpW = new Float64Array(size);
+  }
+  for (let i = 0; i < n; i++) {
+    const r = fpNodes[i].getBoundingClientRect();
+    fpX[i] = r.left + r.width / 2;
+    fpY[i] = r.top + r.height / 2;
+    fpW[i] = r.width;
+  }
+  mutate();
+  for (let i = 0; i < n; i++) {
+    const node = fpNodes[i];
+    if (!node.isConnected) continue;
+    const r = node.getBoundingClientRect();
+    if (!r.width || !fpW[i]) continue;
+    const dx = fpX[i] - (r.left + r.width / 2);
+    const dy = fpY[i] - (r.top + r.height / 2);
+    const scale = fpW[i] / r.width;
+    if (Math.abs(dx) < FLIP_MIN_PX && Math.abs(dy) < FLIP_MIN_PX
+      && Math.abs(scale - 1) < 0.02) continue;
+    // quiet: a fan opening is one gesture, not N landings — the acceptance
+    // beat is interact/'s TARGET_STEP cue, fired once.
+    flight.fly(node, { dx, dy, scale, dur: FLIP_MS, arc: 0, quiet: true, key: i });
+  }
+  fpNodes.length = 0;
 }
 
 /* ── the felt belongs to ONE game ──────────────────────────────────────────

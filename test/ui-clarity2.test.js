@@ -276,3 +276,47 @@ test('Escape reaches the comms drawer, at sheet priority, without stealing the i
   assert.match(read('public/src/ui/help.js'), /comms drawer/,
     'no rule may exist that the help does not state');
 });
+
+/* ── 7 (round-3 CLARITY): a banked card's peek describes ITS OWNER'S bank ──
+ *
+ * Fixture evidence: mid-game.json card 94 (a rent card in Coyote's bank) peeked
+ * with the VIEWER's rent table — "Bills every other player · Space Force (0/3)"
+ * — and card 40 (money in Iceman's bank) printed "Your bank: NM". A banked card
+ * is money wherever it sits; the peek must lead with whose bank and what it
+ * counts as, not describe a rent the owner is not charging. */
+test('a card in an opponent\'s bank peeks as THAT bank\'s money, not the viewer\'s board', () => {
+  // Engine half: the snapshot ships every seat's bank with real ids, so the
+  // client CAN resolve a banked card to its owner — the fix has data under it.
+  const { state } = fixture((a, b) => {
+    b.bank = [
+      { id: 94, type: 'rent', name: 'Rent: pink/orange', value: 1, colors: ['pink', 'orange'] },
+      { id: 40, type: 'money', name: '1M', value: 1 },
+    ];
+  });
+  const view = game.getPlayerView(state, 'a');
+  const owner = view.players.find(p => p.id === 'b');
+  assert.deepEqual(owner.bank.map(c => c.id), [94, 40],
+    'the opponent bank is on the viewer\'s snapshot, ids intact');
+  assert.equal(owner.bankValue, 2, 'and its value is the sum the lead row can quote');
+
+  // Renderer half (details.js imports DOM helpers → source gates).
+  const details = read('public/src/ui/details.js');
+  assert.match(details, /function bankOwner\(/,
+    'the context must resolve a card to the BANK that holds it');
+  assert.match(details, /const banked = bankOwner\(card\.id\)/,
+    'and consult it BEFORE the per-type dispatch — a banked rent card must not '
+    + 'reach rentContext() and describe the viewer\'s colours');
+  assert.match(details, /In \$\{owner\.name\}'s bank/,
+    'the lead row names whose bank ("In Coyote\'s bank")');
+  assert.match(details, /counts as \$\{/,
+    'and what the card counts as — money now, whatever the face says');
+});
+
+/* ── 8 (round-3 CLARITY): "1 plays" ──────────────────────────────────────── */
+test('the HUD header declines its play counter', () => {
+  const hud = read('public/src/ui/hud.js');
+  assert.doesNotMatch(hud, /\$\{snap\.playsRemaining\} plays/,
+    'hud.js:558 rendered "1 plays" — the strip\'s "1 play left" is already correct');
+  assert.match(hud, /play\$\{snap\.playsRemaining === 1 \? '' : 's'\}/,
+    'the counter must pluralise from the count');
+});

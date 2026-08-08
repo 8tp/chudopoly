@@ -77,6 +77,12 @@
   overflow-y: auto;
   scrollbar-width: thin;
   padding-right: .2em;
+  /* P10 LOOK: this scroller carries the shared .scroll-edge treatment (ui.css)
+     — help-cards cut its last sentence mid-line at the fold with no cue. The
+     paddings keep RESTING content clear of the .45em feather, so only a line
+     actually crossing the fold fades. */
+  padding-top: .45em;
+  padding-bottom: .45em;
   /* One column of prose at a comfortable measure; the sheet is 30em wide. */
   max-width: 34em;
 }
@@ -1763,10 +1769,14 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
      covered the LEFT third of the row underneath it and the fade greyed the
      rest — a half-sentence with a control parked on top of it, on the most
      celebratory screen in the game. It read as a z-index accident because it
-     was one. The mask goes: a sticky footer that spans the column IS the
-     bottom edge, and its own top rule says content passes under it. */
-  -webkit-mask-image: none;
-  mask-image: none;
+     was one. P10 LOOK: the scroller now carries the shared .scroll-edge
+     treatment (ui.css), with the BOTTOM feather zeroed for exactly the round-5
+     reason — the full-width sticky .jr-more IS the bottom edge and its own
+     ramp carries the cue. The TOP keeps the shared feather + shades: the first
+     recap row used to slice against the pinned ceremony with nothing saying
+     "more above" once scrolled. */
+  --edge-feather-bot: 0em;
+  padding-top: .45em;
 }
 .win-summary::-webkit-scrollbar { width: 5px; }
 .win-summary::-webkit-scrollbar-thumb { background: var(--fg-mute); border-radius: 999px; }
@@ -2087,7 +2097,12 @@ body.kb-open .chat-row { position: sticky; bottom: 0; }
   margin-top: auto;
   padding: .6em 0 .15em;
   background: var(--surface);
-  box-shadow: inset 0 1px 0 var(--shade-2);
+  /* P10 LOOK: the hairline alone left the row above it hard-cut mid-glyph
+     ("Fastest win" sliced on flightlog@desktop). Same ramp the win recap's
+     .jr-more carries — the shared scroll-edge treatment's answer for a sticky
+     footer, where the scroller's own bottom devices sit hidden behind the
+     opaque footer (ui.css .scroll-edge). */
+  box-shadow: inset 0 1px 0 var(--shade-2), 0 -14px 12px -6px var(--shade-2);
 }
 
 /* Rule 1 lives here: the date and the count, never the word "lifetime". */

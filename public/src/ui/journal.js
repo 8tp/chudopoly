@@ -659,13 +659,18 @@ export function mount() {
     // not from the 120-event tail this broadcast happened to carry. Latched and
     // exception-proof inside; a finished game re-broadcasts on every rematch
     // vote and host change.
-    recorder.observe({
+    const banked = recorder.observe({
       snapshot,
       room: store.room,
       selfId: store.self.id,
       beats,
       gaps,
     });
+    // At most once per game (the recorder's latch). The win screen reads this
+    // to show the sortie-point award — it must fire BEFORE overlays' own
+    // STATE_APPLIED handler builds the screen, which registration order
+    // guarantees: overlays.mount() calls journal.mount() first.
+    if (banked) bus.emit(EVENTS.GAME_BANKED, { row: banked });
     renderDrawer();
     installLogButton();
     if (isOpen()) paintSheet();

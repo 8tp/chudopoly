@@ -23,6 +23,10 @@ import * as hints from './hints.js';
 // this file (help, settings, hints). The P8 surfaces join them here.
 import * as discard from './discard.js';
 import * as journal from './journal.js';
+// The rank ladder's pure half. The overlay derives the movement itself from
+// the banked row plus the store's counter — awardFor/bandFor/rankFor are the
+// same functions the tests hold, so the screen cannot drift from the math.
+import { stats, awardFor, bandFor, rankFor } from '../state/stats.js';
 
 /**
  * finishGame() stamps state.endReason with 'sets' | 'last_standing' |
@@ -213,6 +217,76 @@ function boardRow(player, { points, winner }) {
 const CELEBRATION_MS = 850;
 const FALLBACK_MS = 2600;
 
+/* ── the rank movement (owner override on DESIGN.md: meta progression between
+ * rounds) ──────────────────────────────────────────────────────────────────
+ *
+ * One block under #win-reason, on win AND defeat: the sortie points this game
+ * paid, the table's difficulty band NAME (only the name — the band is
+ * deliberately non-invertible so the hidden bot roster cannot be read back out
+ * of the award; see state/stats.js's ladder header), and the distance to the
+ * next tier with a progress bar. It is built inside renderWin, so it rides the
+ * EXISTING armReveal/reveal hold — no timer of its own, per the measured
+ * 387ms-early-overlay bug that hold exists to keep fixed.
+ *
+ * `bankedRank` is derived on GAME_BANKED, which journal.js emits at most once
+ * per game (the recorder's latch), synchronously BEFORE this file's
+ * STATE_APPLIED handler runs for the same broadcast (registration order:
+ * journal.mount() precedes the bus.on below). Rematch re-broadcasts re-render
+ * the overlay without a new bank; the block persists off this cache and is
+ * cleared the moment a live table is on screen again. */
+let bankedRank = null;
+
+function rememberBank(row) {
+  const points = awardFor(row);
+  const after = stats.ensure().totals.sortiePoints;
+  // recordGame added exactly `points` to the counter this frame, so "before"
+  // is arithmetic, not a second source of truth.
+  bankedRank = {
+    points,
+    band: bandFor(row).name,
+    from: rankFor(after - points),
+    to: rankFor(after),
+  };
+}
+
+function rankBlock() {
+  const r = bankedRank;
+  const promoted = !!r.to.tier && r.from.tier?.key !== r.to.tier.key;
+  const goal = promoted ? `${r.to.tier.name} REACHED`
+    : r.to.next ? `${r.to.remaining} TO ${r.to.next.name}`
+      : 'TOP TIER';
+  const pct = Math.round(r.to.progress * 100);
+  const line = el('div', { class: 'win-rank-line' }, [
+    el('span', { class: 'win-rank-points mono', text: `+${r.points} SP` }),
+    el('span', { class: 'win-rank-band', text: r.band }),
+    el('span', { class: 'win-rank-goal mono', text: goal }),
+  ]);
+  const bar = el('div', { class: 'win-rank-bar', attrs: { 'aria-hidden': 'true' } }, [
+    el('i', { class: 'win-rank-fill', style: { width: `${pct}%` } }),
+  ]);
+  const label = `${r.points} sortie points earned, ${r.band.toLowerCase()} table. `
+    + (promoted ? `${r.to.tier.name} reached.`
+      : r.to.next ? `${r.to.remaining} more to ${r.to.next.name}.` : 'Top tier.');
+  return el('div', { class: 'win-rank', attrs: { role: 'img', 'aria-label': label } }, [line, bar]);
+}
+
+/** The block sits between #win-reason and the summary, outside the scroller —
+ *  the movement is the point of the screen, so it may not scroll away. The
+ *  anchor is created once and repainted per render, because renderWin runs on
+ *  every re-broadcast of a finished game. */
+function paintRank() {
+  let host = $('win-rank');
+  if (!host) {
+    const reason = $('win-reason');
+    if (!reason) return;
+    host = el('div', { attrs: { id: 'win-rank' } });
+    reason.after(host);
+  }
+  clear(host);
+  setHidden(host, !bankedRank);
+  if (bankedRank) host.appendChild(rankBlock());
+}
+
 let pending = false;
 let showTimer = 0;
 
@@ -242,11 +316,18 @@ function renderWin(payload) {
   const overlay = $('win-overlay');
   const snap = store.snapshot;
   if (!overlay) return;
-  if (!snap || snap.phase !== 'finished') { clearPending(); setHidden(overlay, true); return; }
+  if (!snap || snap.phase !== 'finished') {
+    // A live table is on screen: whatever was banked belongs to the last game.
+    bankedRank = null;
+    clearPending();
+    setHidden(overlay, true);
+    return;
+  }
 
   const copy = endingCopy(snap);
   setText($('win-title'), copy.title);
   setText($('win-reason'), copy.reason);
+  paintRank();
 
   const summary = $('win-summary');
   clear(summary);
@@ -312,6 +393,9 @@ export function mount() {
       message: 'You left the room',
     }),
   });
+  // Emitted by journal.js at most once per game, before renderWin sees the
+  // same broadcast (see the win-rank note above).
+  bus.on(EVENTS.GAME_BANKED, ({ row }) => { if (row) rememberBank(row); });
   bus.on(EVENTS.STATE_APPLIED, renderWin);
 
   // The choreographer's word, not the store's (§P7.1). `win`/`stalemate` are the

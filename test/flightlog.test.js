@@ -271,3 +271,54 @@ test('the recorded logbook derives without throwing, in every scope', () => {
   assert.equal(all.flights, f.blob.totals.games,
     'band 1 must quote the stored total, not the ring');
 });
+
+/* ── the tier: meta progression between rounds, at scope All only ────────── */
+
+test('the tier band reads at scope All only, and never reads the roster', () => {
+  const rows = [];
+  for (let i = 0; i < 20; i++) rows.push(row({ won: i % 2 === 0, botModes: ['aggressive', 'chud'] }));
+  const data = bank(rows);
+  const all = derive(data, 'all');
+  assert.ok(all.rank, 'derive() must carry the rank at scope All');
+  assert.ok(Number.isFinite(all.rank.sp) && all.rank.sp > 0);
+  // 10 wins × 7 (CONTESTED, 3 seats) + 10 losses × 1 = 80 earned + 2 endowed.
+  assert.equal(all.rank.sp, 82);
+  assert.equal(all.rank.tier.name, 'BRONZE');
+  // SP is a lifetime counter accrued across all compositions. The precedent is
+  // bestStreak: it sidesteps the scope strip rather than printing a
+  // whole-logbook figure under a filter — so under a filter there is no rank.
+  assert.equal(derive(data, 'bots').rank, null);
+  assert.equal(derive(data, 'people').rank, null);
+  // The rank payload carries thresholds and tier names, never a personality.
+  assert.equal(JSON.stringify(all.rank).includes('chud'), false);
+  // And the panel prints the distance to the next tier — the near-miss line
+  // ("118 · 82 TO SILVER") is the retention moment the design exists for.
+  assert.match(code, /TO \$\{d\.rank\.next\.name\}/,
+    'nothing in ui/stats.js prints the distance to the next tier');
+});
+
+test('the other two rank surfaces: the home rail wears the tier, the win overlay never wears the roster', () => {
+  // SURFACE 2 — the home rail. The tier rides the existing flight-log mark
+  // ("Flight log · BRONZE"), no new control; below Bronze the label is the
+  // unchanged word, because the rail does not advertise a rank nobody has.
+  // Source assertion, same reasoning as the two above: a prohibition-shaped
+  // contract on the whole file, not on one walked path.
+  assert.match(code, /Flight log · \$\{rank\.tier\.name\}/,
+    'ui/stats.js no longer prints the tier on the home-rail mark');
+  assert.match(code, /rank\.tier \? .*Flight log/,
+    'the untiered rail label must stay the plain mark');
+
+  // SURFACE 3 — the win/defeat overlay (ui/overlays.js). It may show the
+  // band NAME — a property of the table, deliberately non-invertible — and
+  // never the roster behind it: not the modes, not a per-seat tier, not the
+  // BOT_TIER table. `botModes` may not even be MENTIONED there; bandFor()
+  // reads it inside state/stats.js where the hiding rule is enforced.
+  const overlays = readFileSync(path.join(ROOT, 'public/src/ui/overlays.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.equal(overlays.includes('botModes'), false,
+    'ui/overlays.js touches botModes — the roster must never reach the win screen');
+  assert.equal(overlays.includes('BOT_TIER'), false,
+    'ui/overlays.js imports the per-personality tier table — that is the breakdown');
+  assert.match(overlays, /r\.band/,
+    'the overlay stopped showing the band name — the difficulty context is the award’s only legible half');
+});

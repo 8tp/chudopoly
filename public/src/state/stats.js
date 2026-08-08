@@ -45,10 +45,11 @@
 // SIZE, MEASURED, not estimated (`node tools/statsfuzz.mjs --size`, real rows
 // modelled on the median record in logs/games.jsonl):
 //
-//     10 games   →   4,305 B
-//    100 games   →  38,342 B   (ring full)
-//   1000 games   →  38,361 B   ← flat forever, because the ring is capped and
+//     10 games   →   4,323 B
+//    100 games   →  38,361 B   (ring full)
+//   1000 games   →  38,381 B   ← flat forever, because the ring is capped and
 //                                `totals` is a fixed block
+//   (re-measured 2026-08-07 with `totals.sortiePoints` in the block: +18–20 B)
 //
 // 37.5 KB = 0.73% of a ~5 MB localStorage budget. The design note that preceded
 // this file predicted ~200 B/row and ~20 KB; the real figure is 384 B/row,
@@ -81,8 +82,17 @@ export const WIN_RULES = Object.freeze(['finalApproach', 'instant']);
  *  that bot personalities are hidden from players. Recording them costs 20 bytes
  *  a row and is the only way a later balance question can be asked at all; what
  *  a panel is allowed to show is a panel decision, and the answer is "not this".
- *  server/handlers.js:477 and :792 pick from this exact list. */
-export const BOT_MODES = Object.freeze(['conservative', 'neutral', 'aggressive', 'chud']);
+ *
+ *  'random' IS a host-seatable mode (server/handlers.js add_bot validates
+ *  against ['random','conservative','neutral','aggressive','chud']) and this
+ *  list omitting it was a live bug: the seat silently vanished from the stored
+ *  row, leaving botModes.length < bots — and since random is the WEAKEST
+ *  personality (winrate/fair-share ratio 0.59, BOT-STRATEGY.md), the missing
+ *  entry would otherwise read as stronger opposition than was ever seated.
+ *  Auto-filled bots (game start and disconnect takeover) draw only from
+ *  conservative/neutral/aggressive, so this only ever bit host-chosen rosters
+ *  — which is exactly where a rank farmer would be operating. */
+export const BOT_MODES = Object.freeze(['random', 'conservative', 'neutral', 'aggressive', 'chud']);
 
 // --------------------------------------------------------------------- coercion
 
@@ -218,6 +228,15 @@ export function defaultStats() {
       /** Turns in your fastest win. 0 = none yet. Personal best, same rule. */
       fastestWinTurns: 0,
 
+      /** SORTIE POINTS — the rank ladder's one stored integer. This is a FACT
+       *  accrued at play time from information `totals` does not otherwise
+       *  retain: the award depends on `botModes`, which lives only on the
+       *  100-row ring, so lifetime SP becomes unrecomputable the moment rows
+       *  roll off — the same reason `humanGames`/`humanWins` are stored rather
+       *  than derived. Monotonic for free (`totals` only ever increments), so
+       *  no decay and no demotion have to be enforced anywhere.
+       *  Bounds, repaired: games ≤ sortiePoints ≤ games × SP_GAME_CAP. */
+      sortiePoints: 0,
       /** Current run: +n consecutive wins, -n consecutive losses, 0 = fresh. */
       streak: 0,
       bestWinStreak: 0,
@@ -387,6 +406,7 @@ export function sanitize(raw) {
       T.paidTotal = int(t.paidTotal, 0, 0, BIG);
       T.biggestCharge = int(t.biggestCharge, 0, 0, 1e7);
       T.fastestWinTurns = int(t.fastestWinTurns, 0, 0, 100000);
+      T.sortiePoints = int(t.sortiePoints, 0, 0, BIG);
       T.streak = int(t.streak, 0, -1e6, 1e6);
       T.bestWinStreak = int(t.bestWinStreak, 0, 0, 1e6);
       T.worstLossStreak = int(t.worstLossStreak, 0, 0, 1e6);
@@ -455,6 +475,16 @@ export function repair(d) {
   if (T.worstLossStreak > T.games - T.wins) T.worstLossStreak = T.games - T.wins;
   if (-T.streak > T.worstLossStreak) T.worstLossStreak = -T.streak;
 
+  // Sortie points, reconciled toward the evidence of play. Every banked game
+  // earned at least the finish point (this floor is also what puts a LEGACY
+  // logbook — recorded before the field existed — partway up the ladder on the
+  // day it ships, the §2.8 re-entry moment), and no game can have paid past
+  // the per-game cap. Both rules are trivially fixed-point. The cap product
+  // cannot overflow into a non-integer: it only ever REPLACES the counter when
+  // the counter exceeded it, which bounds games below BIG/SP_GAME_CAP.
+  if (T.sortiePoints < T.games) T.sortiePoints = T.games;
+  if (T.sortiePoints > T.games * SP_GAME_CAP) T.sortiePoints = T.games * SP_GAME_CAP;
+
   // Personal bests must be at least as large as anything a CLEAN row proves.
   for (const r of rows) {
     if (r.gaps > 0) continue;
@@ -465,6 +495,143 @@ export function repair(d) {
     if (r.opsecDepth > T.opsecDepthBest) T.opsecDepthBest = r.opsecDepth;
   }
   return d;
+}
+
+// ------------------------------------------------------------------ the ladder
+//
+// BRONZE / SILVER / GOLD over SORTIE POINTS (owner override, 2026-08-07, on
+// research-ranks/DESIGN.md: "simplify the ranking system … bronze silver gold,
+// give some sort of meta progression between rounds"). The six aircrew codes
+// went; the plumbing that survived simplification stayed:
+//
+//   * +1 SP to finish any game; a WIN pays 3×band + (seats−2) + 3×(other human
+//     seats), capped at 15. The band is the MEAN tier of the seated bots,
+//     quantized to three levels — mean, not sum, because a sum structurally
+//     punishes heads-up tables (replayed over the 105 real games in
+//     logs/games.jsonl: sum scored 99/105 ROUTINE; mean scores 2/99/4 and
+//     rates "beat aggressive 1v1" HOSTILE, which is correct).
+//   * Bot tiers come from measured winrate/fair-share ratios (BOT-STRATEGY.md
+//     rounds 7/8): random .59 → 0, chud .63 → 0, conservative 1.07 → 1,
+//     neutral 1.26 → 2, aggressive 1.46 → 3. A MISSING OR UNKNOWN mode is
+//     tier 0 — unknown opposition earns the least. That defensive default is
+//     the anti-farm: `bandFor` divides by the SEAT count, so a roster whose
+//     modes were dropped (the pre-fix 'random' bug, or a personality added
+//     later) averages DOWN, never up.
+//   * THE BAND IS NON-INVERTIBLE, deliberately. Bot personalities are stored
+//     and never displayed (see BOT_MODES); a per-game award that varied
+//     per-seat would display them by arithmetic. Three lossy levels over the
+//     mean mean a 9-SP win could be any of a dozen rosters. Surfaces show the
+//     band NAME only — never the breakdown, never a "CHUD bots beaten" tally.
+//   * MONOTONIC, no decay, no placement. Decay serves matchmaking accuracy
+//     and there is no matchmaking; unexplained demotion is the one thing a
+//     playmdeal player actually came to Reddit confused about.
+//
+// PACING, at the Quick Play bench (4 seats vs the auto-fill roster
+// conservative/neutral/aggressive → mean 2.0 → CONTESTED; win = 3×2+2+0 = 8)
+// and a realistic 25% win rate → 0.75×1 + 0.25×8 = 2.75 SP/game:
+//
+//   BRONZE  30 total ( 28 earned + 2 endowed) ≈  10 games — a first session
+//   SILVER 200        (198 earned)            ≈  72 games — a committed player
+//   GOLD   700        (698 earned)            ≈ 254 games — the long-term goal
+//
+// (The old six-tier cut put MQ at ~15 games and IP at ~237; Bronze lands a
+// shade earlier than MQ did, Gold where IP was. Calibration caveat inherited
+// from DESIGN.md: the bench winrate comes from 105 developer games — re-derive
+// from logs/games.jsonl when real players exist.)
+//
+// ENDOWED_SP is added ON READ and never stored: the storage layer keeps facts
+// (points actually earned), and the two free points are presentation — which
+// is literally what the endowed-progress effect is (Nunes & Drèze 2006, JCR
+// 32(4): 10-stamp cards with 2 pre-filled were redeemed at 34% vs 19% for
+// 8-stamp cards from scratch).
+
+/** Measured bot strength, quantized. Anything not in this table is 0. */
+export const BOT_TIER = Object.freeze({
+  random: 0, chud: 0, conservative: 1, neutral: 2, aggressive: 3,
+});
+
+/** The three difficulty bands over the mean bot tier. Ordered, ascending. */
+export const BANDS = Object.freeze([
+  Object.freeze({ key: 'routine', name: 'ROUTINE', mult: 1, maxMean: 0.5 }),
+  Object.freeze({ key: 'contested', name: 'CONTESTED', mult: 2, maxMean: 2.0 }),
+  Object.freeze({ key: 'hostile', name: 'HOSTILE', mult: 3, maxMean: Infinity }),
+]);
+
+/** The ladder. `at` is total SP (earned + endowed). Ordered, ascending. */
+export const TIERS = Object.freeze([
+  Object.freeze({ key: 'bronze', name: 'BRONZE', at: 30 }),
+  Object.freeze({ key: 'silver', name: 'SILVER', at: 200 }),
+  Object.freeze({ key: 'gold', name: 'GOLD', at: 700 }),
+]);
+
+/** The most one game can pay. Also the repair bound on the stored counter. */
+export const SP_GAME_CAP = 15;
+
+/** Free points, added on read (see the header). Never stored. */
+export const ENDOWED_SP = 2;
+
+/**
+ * The difficulty band of one game's table. TOTAL — any input goes through
+ * `sanitizeRow` first, so a hostile object costs a default row, never a throw.
+ *
+ * The mean divides by the SEAT count (`bots`), not by `botModes.length`:
+ * a mode that was dropped or never recorded contributes 0 to the numerator
+ * and still counts in the denominator. A humans-only table has no bots to
+ * price and reads ROUTINE — the +3-per-human term carries that weight.
+ *
+ * @param {unknown} row
+ * @returns {(typeof BANDS)[number]}
+ */
+export function bandFor(row) {
+  const r = sanitizeRow(row);
+  if (r.bots <= 0) return BANDS[0];
+  let sum = 0;
+  for (const m of r.botModes) sum += BOT_TIER[m] || 0;
+  const mean = sum / r.bots;
+  for (const band of BANDS) if (mean <= band.maxMean) return band;
+  return BANDS[BANDS.length - 1];
+}
+
+/**
+ * Sortie points for one banked game. TOTAL, PURE, and always in
+ * [1, SP_GAME_CAP] — a garbage row is worth the finish point and nothing else.
+ * @param {unknown} row
+ * @returns {number}
+ */
+export function awardFor(row) {
+  const r = sanitizeRow(row);
+  if (!r.won) return 1;
+  const win = 3 * bandFor(r).mult
+    + Math.max(0, r.seats - 2)
+    + 3 * Math.max(0, r.humans - 1);
+  return Math.max(1, Math.min(SP_GAME_CAP, win));
+}
+
+/**
+ * Where a given EARNED total sits on the ladder. TOTAL: any non-numeric or
+ * negative input reads as 0 earned. `tier` is null below Bronze (the fresh
+ * state); `next` is null at Gold. `progress` is 0..1 through the current rung.
+ * @param {unknown} earned totals.sortiePoints
+ */
+export function rankFor(earned) {
+  // `Number(Symbol())` THROWS — the fuzzer found it on the first run, which is
+  // the whole reason this function is fuzz-gated rather than trusted.
+  let n = 0;
+  try { n = typeof earned === 'number' ? earned : Number(earned); } catch { n = 0; }
+  const e = Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), BIG) : 0;
+  const sp = ENDOWED_SP + e;
+  let tier = null;
+  for (const t of TIERS) { if (sp >= t.at) tier = t; else break; }
+  // indexOf(null) is -1, so the fresh state's `next` is TIERS[0] = Bronze.
+  const next = TIERS[TIERS.indexOf(tier) + 1] || null;
+  const floor = tier ? tier.at : 0;
+  return {
+    sp,
+    tier,
+    next,
+    remaining: next ? Math.max(0, next.at - sp) : 0,
+    progress: next ? Math.min(1, Math.max(0, (sp - floor) / (next.at - floor))) : 1,
+  };
 }
 
 // --------------------------------------------------------------------- storage
@@ -684,8 +851,16 @@ class StatsStore {
    * win — those two facts survive any gap, because the final snapshot carries
    * them regardless of what the tail missed.
    *
+   * THE RANK MOVEMENT rides the return value: `points` is this game's award,
+   * `band` is the difficulty band's NAME (only — the mapping is deliberately
+   * non-invertible, see the ladder header), and `from`/`to` are `rankFor`
+   * before and after, so the end-of-game surface can show the tier-up or the
+   * distance without re-deriving anything.
+   *
    * @param {Partial<StatsRow>} rawRow
-   * @returns {{row: StatsRow, best: {fastestWin:boolean, biggestCharge:boolean}}}
+   * @returns {{row: StatsRow, best: {fastestWin:boolean, biggestCharge:boolean},
+   *   rank: {points:number, band:string,
+   *     from: ReturnType<typeof rankFor>, to: ReturnType<typeof rankFor>}}}
    */
   recordGame(rawRow) {
     this.ensure();
@@ -693,6 +868,7 @@ class StatsStore {
     if (!row.at) row.at = Math.floor(stamp() / 1000);
     const T = this.data.totals;
     const clean = row.gaps === 0;
+    const spBefore = T.sortiePoints;
 
     T.games++;
     if (row.won) T.wins++;
@@ -719,6 +895,8 @@ class StatsStore {
       T.setsCompleted += row.colors[k];
     }
     T.endReasons[row.end] = (T.endReasons[row.end] || 0) + 1;
+    const points = awardFor(row);
+    T.sortiePoints += points;
 
     // Streak: sign carries the kind, magnitude the length.
     T.streak = row.won ? Math.max(0, T.streak) + 1 : Math.min(0, T.streak) - 1;
@@ -739,7 +917,11 @@ class StatsStore {
     if (!this.data.since) this.data.since = today();
 
     this.write();
-    return { row, best };
+    return {
+      row,
+      best,
+      rank: { points, band: bandFor(row).name, from: rankFor(spBefore), to: rankFor(T.sortiePoints) },
+    };
   }
 
   // ----------------------------------------------------------- change signal

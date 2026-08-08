@@ -83,6 +83,11 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    `public/audio/*.opus`, at most **eight** tracks (one lobby bed, **four** match beds, one
    Final Approach bed, and a victory / defeat pair).
 
+   *Status 2026-08-07 evening: FOUR match beds shipped (match-1..4.opus — the fifth texture
+   discussed below was the rejected checklist bed; honor-guard and tape-loops were working
+   names, not shipped files). The cap and the rotation argument below stand; read "five" as
+   the aspiration the cap allows, four as the shipped truth. audiotest asserts the real set.*
+
    *Raised six → eight on 2026-08-07 (e), owner directive, and the load policy is what makes
    it nearly free: **a session pays for ONE match bed no matter how many exist**, because the
    bed is chosen at game start and never rotated inside a match. So the extra tracks cost

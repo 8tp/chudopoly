@@ -300,6 +300,22 @@ try {
     );
     if (signalled && offline.connVisible) r.pass(`connection loss is shown to the player ${dim(offline.connClass || offline.toast)}`);
     else r.fail('[§H] the network went away and the UI says nothing — no visible reconnect affordance');
+    /* The offline window is a SURFACE (`.conn.is-off`, the RECONNECTING label)
+     * and this is the only gate in the harness that can hold it: it needs a
+     * socket that was genuinely wanted and then genuinely lost, which no
+     * fixture-staged page has (hud.js renderConn: `socket.wanted() &&
+     * !store.connected`, exactly so staged pages don't all scream RECONNECTING).
+     * tools/coverage.mjs reported `is-off` visited by nothing — the assertion
+     * above was reading the class off the DOM without ever telling the census.
+     * Census only, not measureSurface: the full audit would add a live surface
+     * to the clipped-controls count for a frame whose geometry §H does not
+     * change, and this stage is about the connection chrome, not tap floors. */
+    captures++;
+    for (const key of await page.evaluate(observeMarkers, CENSUS)) {
+      if (!markerSeen.has(key)) markerSeen.set(key, []);
+      const at = markerSeen.get(key);
+      if (at.length < 4) at.push('game:offline');
+    }
     await h.setOffline(false).catch(() => {});
     await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await page.waitForTimeout(2500);

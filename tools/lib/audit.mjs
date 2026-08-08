@@ -652,6 +652,24 @@ export function auditOccludedText() {
    */
   const VEIL = '.hints, .hint-card, #toast, #emotes, .floaters, .floater, .burst, '
     + '.fx, .fx-layer, .coach, .tip, .tooltip, .announce';
+  /**
+   * A card the player is HOLDING is a veil too, not a layout defect. ART §5
+   * puts the held card above the table (z60) by design — the driver parks it
+   * over the drop-target mat's centre, so the mat's own nameplate under it is
+   * the design working, not a burial ("CMD" 40% under the held card's own
+   * title on drag-mid@desktop, verified against the layout agent's analysis).
+   * The card-over-card rule below already skips a HELD CARD over another card;
+   * this extends the same courtesy to the non-card chrome under it (mat heads,
+   * zone tags), as a WARNED veil rather than a silent skip.
+   *
+   * What this classification can no longer FAIL on: any text run whose
+   * occluder is inside `.card.is-dragging` / `.is-held` — e.g. a card that
+   * wrongly keeps `.is-held` after release and squats over a label, or a drag
+   * layer that parks the card over the HUD. Those now warn instead of gate.
+   * Occluders outside a held card (piles, panels, feed rows) gate exactly as
+   * before.
+   */
+  const HELD = '.card.is-dragging, .card.is-held';
 
   const roots = [];
   for (const s of SCOPES) {
@@ -716,7 +734,7 @@ export function auditOccludedText() {
           byLayer: name(theirs),
           layer: name(mine),
           byChain: chain(c.by),
-          veil: !!(c.by && c.by.closest && c.by.closest(VEIL)),
+          veil: !!(c.by && c.by.closest && (c.by.closest(VEIL) || c.by.closest(HELD))),
           rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
         });
       }

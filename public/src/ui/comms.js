@@ -11,7 +11,6 @@ import * as send from '../net/send.js';
 import { store } from '../state/store.js';
 import * as pointer from '../interact/pointer.js';
 import * as table from '../table/index.js';
-import * as journal from './journal.js';
 
 const MAX_CHAT = 50;
 let scope = 'room';
@@ -139,12 +138,15 @@ export function mount() {
     document.querySelector('[data-action="send-chat"]')?.click();
   });
 
-  // NOT on game_start: the choreographer replays that event AFTER the journal has
-  // already ingested the same broadcast, so resetting here deleted every beat of
-  // the opening — the drawer came up empty for any single-broadcast fixture.
-  // The journal owns its own reset (it detects a seq restart); chat is what this
-  // module is responsible for clearing when a room changes.
-  bus.on(EVENTS.STATE_APPLIED, ({ snap }) => { if (snap) resetLog(); });
+  // NO STATE_APPLIED subscription here, and that is load-bearing: this handler
+  // used to reset the journal on every snap, and snap fires on ANY first sight
+  // whose tail does not begin at seq 1 (store.js applyState) — i.e. every
+  // reload/reconnect into a game past event 120. journal.mount runs first, so
+  // the just-ingested 120-event tail was wiped in the same broadcast; measured
+  // 2026-08-08 off mid-game.json (eventSeq 141, tail seq 22–141):
+  // journal.entries()===0 one STATE_APPLIED after ingest had merged all 120.
+  // The journal owns its record and its own reset (a `fresh` first sight, a seq
+  // restart, a game_start event); chat self-heals from NET_CHAT_HISTORY.
   bus.on(EVENTS.NET_CHAT, (msg) => pushChat(msg.msg));
   bus.on(EVENTS.NET_CHAT_HISTORY, (msg) => {
     const key = msg.scope === 'global' ? 'global' : 'room';
@@ -153,5 +155,3 @@ export function mount() {
   });
   bus.on(EVENTS.NET_EMOTE, (msg) => floatEmote(msg.playerId, msg.name, msg.text));
 }
-
-export function resetLog() { journal.reset(); clear($('log')); }

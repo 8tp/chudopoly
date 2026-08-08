@@ -1320,3 +1320,124 @@ positive fails on `8ea52aa`, and a guard pins that the completing play never eat
 play the charge needed). A transient red reported in `bot-economy` against the full tree
 was another agent's mid-edit churn: the file was green in isolation and the full suite reads
 417/417 at this tree.
+
+---
+
+## Round 10 (2026-08-08) — the charge that collects nothing, and the defensive rearrange that was already happening
+
+Owner report: *"bots play better and smarter — simulate games but sometimes they charge rent
+when all players have nothing, don't play cards in correct order etc and don't move cards
+around as much to protect sets in general."* Three named defects; each got measured before
+it was touched, and they got three different verdicts.
+
+### 1. Wasted charges — a strict blunder, fixed universally
+
+`findBestRent()` and `findRentOnCompleteSet()` ranked rent candidates by the millions they
+COLLECT (`rentYield().value`, already capped by what the victims own) but never GATED on it,
+so a bot holding a 4M complete-set rent fired it into a table holding 0M and collected
+nothing. `playerTotalValue` 0 means the player owns nothing of value, so there is nothing to
+force out either — it is a lost play with no denial. Finance Office (targeted by
+`findRichestPlayer`, which reads BANK only) and Roll Call (played unconditionally) had the
+same hole. This is the owner's *"charge rent when all players have nothing."*
+
+Instrumented over 800 four-player games (every rotation of every 4-subset, same lineups the
+matrix uses), classifying each rent/Finance Office/Roll Call by its collectable value BEFORE
+it was applied:
+
+| wasted charges per bot per game | random | conservative | neutral | aggressive | chud |
+|---|---|---|---|---|---|
+| **before** | 0.139 | 0.070 | 0.050 | 0.228 | 0.247 |
+| **after** | **0.000** | **0.000** | **0.000** | **0.000** | **0.000** |
+
+Table-wide: **470 / 13,692 charges wasted (3.43%) → 0 / 13,631 (0.00%)** on the identical
+seed. A charge that collects nothing helps no personality's style, so the gate is universal:
+`makeRentPlay` refuses a rent whose `rentYield` is 0; `findFinanceTarget` returns null when
+no opponent can pay and prefers draining an actual bank otherwise; Roll Call and Surge-arming
+(`hasChargeFollowUp`) both gate on `anyoneCanPay`. The chaotic seats keep their random colour
+and random victim — `chooseRentTarget`/`randomPayer` just draw that victim from the players
+who can PAY, so a wild rent never lands on a pauper while a solvent seat sits there. Firing at
+someone who has nothing was never chaos, only waste.
+
+**Balance (paired seed, 2000 games/seed, every seat × every 4-subset):**
+
+| | seed `balance` before→after | seed `balance2` before→after |
+|---|---|---|
+| random | 12.3 → 12.2 | 12.8 → 12.4 |
+| conservative | 29.8 → 27.7 | 28.4 → 27.8 |
+| neutral | 32.1 → 31.2 | 31.8 → 29.9 |
+| aggressive | 35.9 → **38.5** | 39.0 → **41.1** |
+| chud | 14.9 → 15.4 | 13.1 → 13.8 |
+| first-player adv. | 21.0 → 24.9 | 23.3 → 26.4 |
+| avg turns | 33.2 → 33.1 | 33.4 → 33.4 |
+
+§3 bounds hold (8–60%) at both seeds, 100% decided, turn length flat (the fix is about which
+plays are wasted, not how many are made). The consistent movement is **aggressive +2.1/+2.6**,
+which is the correct behavioural consequence: aggressive charges most, so sharpening its
+charges rewards it most, and it stays well under the 60% ceiling. Conservative/neutral give
+back ~1–2 points to it. **Distinctness preserved** — the winrate spread stays wide
+(random ~12, chud ~14, conservative ~28, neutral ~30, aggressive ~39–41) and the chaotic seats
+keep every visibly-imperfect trait (see §3 below and the ordering residual: chud fires a rent
+with a set-completer still in hand 4.2% of the time, random 2.4%, against the planners' 0.1–1.1%).
+
+### 2. Play ordering — already fixed in rounds 8–9; residual is at the designed floor
+
+The owner's *"don't play cards in correct order"* was rounds 8–9's territory
+(`findChargeBooster`, `findCompletingPlay`). Re-measured at this HEAD: a rent fired with a
+set-completing property still in hand is **neutral 0.1%, conservative 1.0%, aggressive 1.1%**
+of all rents — the residual is exactly the deliberate last-play guard (round 9: at one play
+left, aggressive fires the charge its plan chose, which is personality, not a gap). Random
+(2.4%) and chud (4.2%) keep their `ORDER_ATTENTION` gap by design. **No change** — round 9
+already measured that forcing completion-first *hurts* aggressive, and the numbers say the
+planners are at the floor.
+
+### 3. Defensive rearranging — measured, and it turns out the offensive rearranger already does it
+
+The owner's *"don't move cards around as much to protect sets"* was the subtle one the task
+flagged as a possible lever. It is a **null result**, and the reason is structural: the only
+rearrange that protects a set is **completing it** — Midnight Requisition and TDY are both
+barred from complete sets (`zoneRequisitionable`), so moving a wild in to finish a set is the
+one move that takes its cards out of steal reach. IG (whole complete set) and CHUD (best single
+card, from anywhere) cannot be dodged by any legal rearrange at all: you cannot move a card out
+of a complete set to save it (that loses the set), and every incomplete zone is equally
+reachable, so a wild that *cannot* complete a set has no safer home to move to.
+
+And the planners are already taking the completing move. Measured over 600 games, sampling
+every non-armed turn start for a free move that would complete a set (= shield it), and
+checking whether it survived to end-of-turn unfixed:
+
+| per game | random | conservative | neutral | aggressive | chud |
+|---|---|---|---|---|---|
+| rearranges made (§3.8) | 0.31 | 1.26 | 1.28 | 1.46 | 0.43 |
+| shield-by-completion left **unfixed** | 0.440 | **0.004** | **0.000** | **0.004** | 0.154 |
+
+The planning modes leave a shieldable set unprotected **0.4% of the time or less** — the
+offensive concentration hill-climb from round 7 *is* the defensive tool. The only unfixed
+shields belong to the chaotic seats (`REARRANGE_BIAS` 0.12/0.3), which is their entire
+character. A dedicated "defensive rearrange" would have nothing left to do but relocate
+un-completable wilds, which protects nothing and would only churn the board and lengthen games.
+**Recommendation: do not add one.** The perception that bots "don't move cards around" is
+answered by the usage number — planners rearrange 1.3–1.5×/game — not by new code. (Because
+nothing was added here, the §3.6 turn-length risk the task warned about never materialised;
+avg turns held at 33.1.)
+
+### Tests and gates
+
+Five new assertions in `test/bot-economy.test.js` (§8 — the four positive ones proven red on
+committed HEAD first, the fifth a guard that a solvent table is still charged so the gate does
+not over-fire): a complete-set rent is not fired into a broke table (all 5 modes), a rent IS
+fired the moment one opponent can pay, a wild rent points at a payer even for the chaotic
+seats, Finance Office and Roll Call are not played against a table that can pay nothing. One
+existing Surge test was given a solvent opponent so *"a rent can actually follow it"* means a
+rent that collects — the new `hasChargeFollowUp` gate correctly refused to arm a multiplier
+over an empty table. **Full suite 496/496**, `node tools/verify.mjs` **exit 0** (all 17 gates
+green including simbalance, playtest, touchtest, screenshot, checkContrast, audiotest).
+
+### What did not work / was rejected
+
+- **A dedicated defensive rearranger** (moving wilds to "protect" sets): rejected on the
+  measurement above — the offensive rearranger already captures the only protection that
+  exists, and there is no safe destination for an un-completable wild.
+- **Gating chaotic wild-rent on the specifically-chosen target instead of the payer pool**
+  would have made chud/random skip a wild rent whenever their random roll hit a broke seat
+  even though a payer existed — erasing charges rather than retargeting them. Drawing the
+  random victim from the payer pool keeps the charge and the chaos both.

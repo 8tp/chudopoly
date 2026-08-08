@@ -893,7 +893,7 @@ function tryRandomAction(state, bot, botId, card, idx, opponents) {
     case 'pcs_orders':
       return { type: 'play_action', cardIndex: idx };
     case 'roll_call':
-      return { type: 'play_action', cardIndex: idx };
+      return anyoneCanPay(opponents) ? { type: 'play_action', cardIndex: idx } : null;
     case 'surge_ops':
       // Only if a rent can actually follow it (§3.1c — Finance Office and Roll Call are
       // never doubled). Random keeps a small chance of arming one for nothing, because
@@ -904,7 +904,7 @@ function tryRandomAction(state, bot, botId, card, idx, opponents) {
       }
       return rnd() < 0.2 ? { type: 'play_action', cardIndex: idx } : null;
     case 'finance_office': {
-      const t = opponents.length > 0 ? opponents[Math.floor(rnd() * opponents.length)] : null;
+      const t = randomPayer(opponents);
       return t ? { type: 'play_action', cardIndex: idx, targetId: t.id } : null;
     }
     case 'midnight_requisition': {
@@ -1010,16 +1010,16 @@ function decideConservative(state, bot, botId) {
     if (offensive) return offensive;
   }
 
-  // 9. Roll Call if multiple opponents
+  // 9. Roll Call if multiple opponents — but only if someone can pay the 2M.
   const rcIdx = hand.findIndex(c => c.action === 'roll_call');
-  if (rcIdx >= 0 && opponents.length >= 2) {
+  if (rcIdx >= 0 && opponents.length >= 2 && anyoneCanPay(opponents)) {
     return { type: 'play_action', cardIndex: rcIdx };
   }
 
-  // 10. Finance Office — target richest (conservative uses it now)
+  // 10. Finance Office — drain a bank that can actually pay (conservative uses it now)
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = findRichestPlayer(opponents);
+      const target = findFinanceTarget(opponents);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
@@ -1173,17 +1173,17 @@ function decideAggressive(state, bot, botId) {
     }
   }
 
-  // 5. Finance Office — target richest bank
+  // 5. Finance Office — drain a bank that can actually pay
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = findRichestPlayer(opponents);
+      const target = findFinanceTarget(opponents);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
 
-  // 6. Roll Call
+  // 6. Roll Call — only if someone can pay the 2M
   const rcIdx = hand.findIndex(c => c.action === 'roll_call');
-  if (rcIdx >= 0) return { type: 'play_action', cardIndex: rcIdx };
+  if (rcIdx >= 0 && anyoneCanPay(opponents)) return { type: 'play_action', cardIndex: rcIdx };
 
   // 7. Midnight Requisition — steal what we need
   for (let i = 0; i < hand.length; i++) {
@@ -1283,17 +1283,17 @@ function decideChud(state, bot, botId) {
     }
   }
 
-  // 4. Finance Office — target random player (not always poorest)
+  // 4. Finance Office — a random victim, but one who can actually pay
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = opponents.length > 0 ? opponents[Math.floor(rnd() * opponents.length)] : null;
+      const target = randomPayer(opponents);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
 
-  // 5. Roll Call
+  // 5. Roll Call — only if someone can pay the 2M
   const rcIdx = hand.findIndex(c => c.action === 'roll_call');
-  if (rcIdx >= 0) return { type: 'play_action', cardIndex: rcIdx };
+  if (rcIdx >= 0 && anyoneCanPay(opponents)) return { type: 'play_action', cardIndex: rcIdx };
 
   // 6. TDY Orders — swap randomly
   for (let i = 0; i < hand.length; i++) {
@@ -1471,17 +1471,17 @@ function tryOffensiveActions(state, bot, botId, hand, opponents) {
     }
   }
 
-  // Finance Office
+  // Finance Office — only against a bank that can pay
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = findRichestPlayer(opponents);
+      const target = findFinanceTarget(opponents);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
 
-  // Roll Call
+  // Roll Call — only if someone can pay the 2M
   const rcIdx = hand.findIndex(c => c.action === 'roll_call');
-  if (rcIdx >= 0) return { type: 'play_action', cardIndex: rcIdx };
+  if (rcIdx >= 0 && anyoneCanPay(opponents)) return { type: 'play_action', cardIndex: rcIdx };
 
   // TDY Orders
   for (let i = 0; i < hand.length; i++) {
@@ -1582,6 +1582,26 @@ function findRichestPlayer(opponents) {
   });
 }
 
+// Finance Office demands 5M. It is worth a play only against someone who can hand something
+// over — draining a bank is best (cash leaves without breaking a board), so prefer the
+// richest BANK among players who can pay at all, falling back to whoever owns the most.
+// Returns null when the whole table is broke (owner report: no charge into an empty table).
+function findFinanceTarget(opponents) {
+  const pool = opponents.filter(canPay);
+  if (pool.length === 0) return null;
+  return pool.reduce((best, p) => {
+    const pb = bankValue(p), bb = bankValue(best);
+    if (pb !== bb) return pb > bb ? p : best;
+    return G.playerTotalValue(p) > G.playerTotalValue(best) ? p : best;
+  });
+}
+
+// A random victim who can actually pay — the chaotic seats' Finance Office / demand target.
+function randomPayer(opponents) {
+  const pool = opponents.filter(canPay);
+  return pool.length > 0 ? pool[Math.floor(rnd() * pool.length)] : null;
+}
+
 function findMostPropertyPlayer(opponents) {
   if (opponents.length === 0) return null;
   return opponents.reduce((best, p) => totalProps(p) > totalProps(best) ? p : best);
@@ -1634,6 +1654,13 @@ function collectableFrom(opp, face) {
   return got + (got > bankValue(opp) ? 1.5 : 0);
 }
 
+// Opponents who can actually hand over something. A charge aimed outside this set collects
+// nothing and, since playerTotalValue 0 means the player owns nothing of value, denies
+// nothing either — it is a lost play, which is the owner's "charge rent when all players
+// have nothing." Used to gate every charge below.
+function canPay(o) { return !o.eliminated && G.playerTotalValue(o) > 0; }
+function anyoneCanPay(opponents) { return opponents.some(canPay); }
+
 function chooseRentTarget(opponents, mode, face = Infinity) {
   const live = opponents.filter(o => !o.eliminated);
   if (live.length === 0) return null;
@@ -1642,7 +1669,13 @@ function chooseRentTarget(opponents, mode, face = Infinity) {
   if (armed.length > 0) {
     return armed.reduce((best, p) => (G.completedSets(p) > G.completedSets(best) ? p : best));
   }
-  if (mode === 'chud' || mode === 'random') return live[Math.floor(rnd() * live.length)];
+  // The chaotic seats still roll for a victim — but among players who can PAY, so a wild rent
+  // never lands on someone with nothing while a solvent opponent sits there. Random target,
+  // not random-including-the-broke-one, is the character; firing at a pauper is just waste.
+  if (mode === 'chud' || mode === 'random') {
+    const pool = live.filter(canPay);
+    return pool.length > 0 ? pool[Math.floor(rnd() * pool.length)] : null;
+  }
   // Hit whoever the charge actually hurts most, with the leader worth two millions a set —
   // so a rent goes to the player in front unless they are too broke to feel it.
   return live.reduce((best, p) =>
@@ -1677,10 +1710,14 @@ function rentYield(state, bot, card, color, opponents, mode) {
 function makeRentPlay(state, bot, hand, cardIndex, color, opponents, mode) {
   const card = hand[cardIndex];
   if (!card || !color) return null;
+  // Never fire a charge that collects nothing (owner report). rentYield caps by what the
+  // victims actually own, so a 0 here means the table — or, for a wild rent, every payable
+  // target — has nothing to give. The chaotic seats hit this gate too: it removes waste
+  // without touching their random colour/victim choice among payers.
+  const { value, target } = rentYield(state, bot, card, color, opponents, mode);
+  if (value <= 0) return null;
   const play = { type: 'play_action', cardIndex, targetColor: color };
   if (isWildRent(card)) {
-    const face = G.calcRent(bot, color) * surgeMultiplier(state);
-    const target = chooseRentTarget(opponents, mode, face);
     if (!target) return null;
     play.targetId = target.id;
   }
@@ -1699,6 +1736,7 @@ function findBestRent(state, bot, hand, minRent, opponents, mode) {
     if (!color) continue;
     if (G.calcRent(bot, color) < minRent) continue;
     const { value } = rentYield(state, bot, c, color, opponents, mode);
+    if (value <= 0) continue;   // a rent that collects nothing is never worth a play
     if (!bestRent || value > bestRent.value) bestRent = { cardIndex: i, color, value };
   }
   if (!bestRent) return null;
@@ -1822,6 +1860,7 @@ function findRentOnCompleteSet(state, bot, hand, opponents, mode) {
     for (const color of validColors) {
       if (!G.isSetComplete(bot, color)) continue;
       const { value } = rentYield(state, bot, c, color, opponents, mode);
+      if (value <= 0) continue;   // a complete-set rent still needs a payer at the table
       if (!best || value > best.value) best = { i, color, value };
     }
   }
@@ -1841,6 +1880,9 @@ function findRentOnCompleteSet(state, bot, hand, opponents, mode) {
 // Surges expired unused, 64% of conservative's, and 77-85% of the chaotic two's.
 function hasChargeFollowUp(bot, hand, opponents) {
   if (opponents.length === 0) return false;
+  // Doubling a charge nobody can pay is still nothing — do not spend a play arming a Surge
+  // over a broke table (part of the same wasted-charge defect as makeRentPlay's gate).
+  if (!anyoneCanPay(opponents)) return false;
   for (const c of hand) {
     if (c.type === 'rent' && chooseBestRentColor(bot, c)) return true;
   }

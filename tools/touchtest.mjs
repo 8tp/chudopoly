@@ -80,6 +80,33 @@
  * --prove: a rail nailed shut with overflow:hidden goes red on leg (i), and a
  * working scroller stripped of every affordance goes red on leg (iii).
  *
+ * P11 (seat-shuffle repair). 964d382 shuffles quick-play seats, and three of
+ * this gate's assumptions broke with it:
+ *
+ *   THE 40s TURN WAIT only covered "this seat moves first" — one game in
+ *      four. Seeded 1337 seats this client LAST, so the wait went red 5/5
+ *      (idle and loaded alike; triage 2026-08-08). The budget is now derived
+ *      from the table — seats × 60s: the 45s answer clock a bot's charge
+ *      against this seat burns while the gate waits, plus ≤10.4s of bot
+ *      think time per turn (measured worst wait 65.9s over 5 seeded runs) —
+ *      and a rotation check fails fast the moment a full cycle of
+ *      turnNumbers passes without this seat ever being current: the genuine
+ *      never-comes, which the mutation run watches going red.
+ *   WILD-PLACE'S FIXTURE could be recorded wild-less — record.mjs's mid-game
+ *      predicate never required a wild — and the driver died 'nowild:… mode
+ *      idle', reading like a client regression. The predicate now requires
+ *      a wild_property in the recording seat's hand, and the driver's
+ *      failure line names the fixture as the thing to re-record.
+ *   THE SWIPE PROBE misread two by-design states as layout defects: fan
+ *      cards (a swipe on the fan IS drag-play, so the scroller can never
+ *      move — 'UNREACHABLE' over-claimed) and anything under an open modal
+ *      sheet (covered by design while the sheet is up). Fan candidates are
+ *      now probed with a real tap — selection is the fan's reachability
+ *      contract (probeFanTap, lib/drivers.mjs) — and sheet-covered
+ *      candidates are skipped with the reason printed per surface, never
+ *      silently. A card no tap can select, and a control inside the sheet
+ *      no swipe can reach, still go red.
+ *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */
 import {
@@ -92,7 +119,7 @@ import {
 import * as audit from './lib/audit.mjs';
 import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
 import { installLogbooks } from './lib/logbook.mjs';
-import { drive } from './lib/drivers.mjs';
+import { drive, probeFanTap } from './lib/drivers.mjs';
 import { census, observeMarkers } from './lib/census.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -200,16 +227,54 @@ try {
       const cur = byId.get(i.id) || { ...i, kinds: [] };
       cur.kinds.push('off'); byId.set(i.id, cur);
     }
-    const res = { clipped: [], off: [], clippedReachable: [], offReachable: [] };
+    const res = { clipped: [], off: [], clippedReachable: [], offReachable: [], covered: [] };
     if (!byId.size) return res;
-    for (const p of await probeReachability(handle, [...byId.values()])) {
+    const entries = [...byId.values()];
+    /* Two candidate classes a SWIPE probe misjudges (both triage-proven on
+     * re-recorded fixtures, 2026-08-08):
+     *
+     *   FAN CARDS — swipe on the fan is drag-play (see probeFanTap), so they
+     *   are probed with a real tap instead.
+     *
+     *   MODAL-COVERED — while #sheet/#side is open, the table behind it is
+     *   covered BY DESIGN: the probe's swipes land on the sheet, the scroller
+     *   behind can never move, and the old flow printed UNREACHABLE for
+     *   elements the player reaches the moment the sheet closes ('#self-board
+     *   cardzone' on all six sheet surfaces). They are skipped here with the
+     *   reason stated in the run (res.covered, printed per surface) — NOT
+     *   gated, NOT passed either. Candidates INSIDE the open sheet still go
+     *   to the swipe probe, so a control no input can reach there fails. */
+    const cls = await handle.page.evaluate((ids) => {
+      const modalOpen = ['sheet', 'side'].some((mid) => {
+        const el = document.getElementById(mid);
+        return el && !el.hidden && el.getBoundingClientRect().height > 0;
+      });
+      const out = { fan: [], covered: [], rest: [] };
+      for (const id of ids) {
+        const el = document.querySelector(`[data-chud-reach="${CSS.escape(id)}"]`);
+        if (!el) { out.rest.push(id); continue; }
+        if (modalOpen && !el.closest('#sheet') && !el.closest('#side')) out.covered.push(id);
+        else if (el.hasAttribute('data-card-id') && el.closest('#zone-hand, [data-zone="hand"]')) out.fan.push(id);
+        else out.rest.push(id);
+      }
+      return out;
+    }, entries.map((e) => e.id));
+    const byStamp = new Map(entries.map((e) => [e.id, e]));
+    const bucket = (p) => {
       for (const k of p.kinds) {
-        const bucket = p.ok
+        const b = p.ok
           ? (k === 'clipped' ? res.clippedReachable : res.offReachable)
           : (k === 'clipped' ? res.clipped : res.off);
-        bucket.push(p.line);
+        b.push(p.line);
       }
+    };
+    for (const id of cls.covered) {
+      res.covered.push(`${byStamp.get(id).label} — behind the open modal sheet/panel by design; `
+        + 'reachable the moment it closes, so not probed and not gated');
     }
+    for (const id of cls.fan) bucket(await probeFanTap(handle, byStamp.get(id)));
+    const rest = cls.rest.map((id) => byStamp.get(id));
+    if (rest.length) for (const p of await probeReachability(handle, rest)) bucket(p);
     return res;
   }
   let stageWasTransient = false;
@@ -262,10 +327,14 @@ try {
       await settleLayout(page);
     }
     const reach = await probeAndSplit(h, t);
+    // Stated-reason skips (modal cover), never silent: §8's summary law applies
+    // to what the probe did NOT measure as much as to what it did.
+    for (const line of reach.covered || []) r.info(`[${label}] not gated: ${line}`);
     const rec = {
       label, live, small: t.fatal, zones: t.zones, advisory: t.advisory,
       off: reach.off, clipped: reach.clipped,
       offReachable: reach.offReachable, clippedReachable: reach.clippedReachable,
+      covered: reach.covered,
       occ, dup, t,
     };
     surfaceIssues.push(rec);
@@ -303,12 +372,62 @@ try {
      * visible, ENABLED draw control under auto-draw is a control that does
      * nothing, and a dead primary button teaches the player that taps do not
      * work.                                                                  */
-    const myTurn = await page.waitForFunction(() => {
-      const B = window.__CHUD;
-      return !!B.snapshot && B.snapshot.currentPlayerId === B.selfId;
-    }, null, { timeout: 40000 }).then(() => true).catch(() => false);
-    if (!myTurn) r.fail('the turn never came round to this seat within 40s');
-    else {
+    /* The wait budget is derived from the GAME, not a magic number. Seats
+     * shuffle (964d382), so this seat moves first one game in four and LAST
+     * another — the old flat 40s only covered "we are first" and went red
+     * 5/5 on the seeded order (seed 1337 seats this client last every time).
+     * The gate now seats roster order (CHUD_NO_SEAT_SHUFFLE=1 at line 139 —
+     * the drag-play sections measure touch, not game flow), so this budget
+     * is headroom, not the load-bearing fix; it stays because a gate that
+     * can only pass when the human sits first is a gate that lies by seed.
+     *
+     * Measured on this gate's own quick-play table (5 runs, seed 1337,
+     * setInstant(false), 2026-08-08, /tmp/chud-evidence/fixtouch/): seated
+     * last, the first turn arrived at 62.1–65.9s. One bot turn is 3.7–8.8s
+     * of server-side think time (bot.js DELAYS bound it at draw ≤2.0s +
+     * ≤3 plays × ≤2.8s ⇒ ≤10.4s), and EVERY measured round also paid one
+     * full 45.0s response window: a bot's first-turn rent charge names this
+     * seat, the gate does not answer charges while it waits, and the server
+     * holds the game for the whole DEFAULT_RESPONSE_TIMEOUT
+     * (server/handlers.js:195; quick play takes the 45s default,
+     * handlers.js:357). A full round of bot turns can therefore legitimately
+     * cost (seats−1) × (45 + 10.4)s ≈ 166s at four seats. PER_SEAT_MS = 60s
+     * is the answer clock plus the worst think time rounded up; the budget
+     * covers that 166s worst round with ~45% headroom, and is 3.6× the worst
+     * measured wait.
+     *
+     * The fail-fast is progression-based, not time-based: in a fair
+     * rotation any `seats` consecutive turns include every seat once, so
+     * `turnNumber` advancing a full cycle without this seat ever being
+     * current is the genuine never-comes, reported as such in seconds
+     * rather than at the budget. */
+    const TURN_PER_SEAT_MS = 60000;
+    const tw0 = await page.evaluate(() => ({
+      seats: window.__CHUD.snapshot?.players?.length || 0,
+      turn: window.__CHUD.snapshot?.turnNumber ?? 0,
+      self: window.__CHUD.selfId,
+      cp: window.__CHUD.snapshot?.currentPlayerId || null,
+    }));
+    const turnBudgetMs = Math.max(tw0.seats, 1) * TURN_PER_SEAT_MS;
+    const turnDeadline = Date.now() + turnBudgetMs;
+    let myTurn = !!tw0.cp && tw0.cp === tw0.self;
+    let lapped = false;
+    while (!myTurn && !lapped && Date.now() < turnDeadline) {
+      await page.waitForTimeout(250);
+      const st = await page.evaluate(() => ({
+        cp: window.__CHUD.snapshot?.currentPlayerId || null,
+        self: window.__CHUD.selfId,
+        turn: window.__CHUD.snapshot?.turnNumber ?? 0,
+      }));
+      if (st.cp && st.cp === st.self) myTurn = true;
+      else if (tw0.seats > 0 && st.turn - tw0.turn >= tw0.seats) lapped = true;
+    }
+    if (!myTurn) {
+      r.fail(lapped
+        ? `a full rotation of ${tw0.seats} turns passed and this seat was never current — the turn genuinely never comes round`
+        : `the turn never came round to this seat within ${Math.round(turnBudgetMs / 1000)}s `
+          + `(${tw0.seats} seats × 60s = 45s answer clock + ≤10.4s bot think; worst measured round 65.9s)`);
+    } else {
       await page.waitForTimeout(600);
       const draw = await page.evaluate(() => {
         const els = [...document.querySelectorAll('[data-action="draw"]')];
@@ -938,7 +1057,7 @@ try {
 
   const offs = surfaceIssues.filter((s) => s.off.length);
   if (offs.length) {
-    r.fail(`interactive elements outside the viewport on ${offs.length} surface(s) — probed with a real swipe and still unreachable`);
+    r.fail(`interactive elements outside the viewport on ${offs.length} surface(s) — probed with real touch (swipe, or tap where a swipe is drag-play) and still unreachable`);
     for (const s of offs) r.info(`${s.label}: ${s.off.slice(0, 5).join(', ')}`);
   } else summary(true, 'every interactive element is on-screen or provably scroll-reachable on every surface');
 
@@ -950,7 +1069,7 @@ try {
   if (clips.length) {
     const total = new Set(surfaceIssues.flatMap((s) => s.clipped || [])).size;
     r.fail(`${total} distinct control(s) clipped by an overflow ancestor across ${clips.length} surface(s) `
-      + '— probed with a real swipe and still unreachable');
+      + '— probed with real touch (swipe, or tap where a swipe is drag-play) and still unreachable');
     for (const s of clips) r.info(`${s.label}: ${[...new Set(s.clipped)].slice(0, 5).join(', ')}`);
   } else summary(true, 'no control is clipped away by an overflow container (real-swipe probed)');
 
@@ -986,7 +1105,16 @@ try {
     const clip = new Set(liveOnly.flatMap((x) => x.clipped || [])).size;
     const line = `${liveOnly.length} live-game surface(s) (${liveOnly.map((x) => x.label).join(', ')}): `
       + `${small} tap target(s) under 44px, ${clip} clipped, ${n('off')} off-viewport`;
-    if (small || clip || n('off')) r.warn(`${line} — measured on a real game, so not gated (timing-dependent)`);
+    if (small || clip || n('off')) {
+      r.warn(`${line} — measured on a real game, so not gated (timing-dependent)`);
+      /* NAME what moved: an aggregate warn with no lines in it cannot be told
+       * apart from a probe regression (a run-2 flake showed '3 clipped' with
+       * the controls nowhere in the log). */
+      for (const x of liveOnly) {
+        const probeLines = [...new Set([...(x.clipped || []), ...(x.off || [])])];
+        for (const l of probeLines.slice(0, 4)) r.info(`${x.label}: ${l}`);
+      }
+    }
     else r.info(`${line} — clean`);
   }
 
@@ -1334,11 +1462,13 @@ try {
         // Same reachability treatment as the dark pass — the light theme must
         // not be able to go red on a claim the dark theme is not held to.
         const reach = await probeAndSplit(lh, t);
+        for (const line of reach.covered || []) r.info(`[${name} (cold, light)] not gated: ${line}`);
         const occ = await lh.page.evaluate(audit.auditOcclusion);
         surfaceIssues.push({
           label: `${name} (cold, light)`, small: t.fatal, zones: t.zones, advisory: t.advisory,
           off: reach.off, clipped: reach.clipped,
           offReachable: reach.offReachable, clippedReachable: reach.clippedReachable,
+          covered: reach.covered,
           occ, dup: [], t,
         });
       }

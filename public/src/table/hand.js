@@ -329,7 +329,9 @@ function defer(nodes, animate) {
  * floor is now the token itself, read off the zone so it can never drift from
  * variables.css, with 26 kept only as the answer for a document that has not
  * defined it. A fan that cannot fit at a thumb's width scrolls instead, which
- * is honest: the over-limit hand is a temporary state you are about to spend. */
+ * is honest — UP TO EIGHT CARDS. Past that the scroll is a lie no thumb can
+ * reach (interact.css's touch-action: none owns every pixel of the zone), and
+ * tighten() fits the fan instead; see its comment for the measurements. */
 const MIN_STRIP_FALLBACK = 26;
 let minStrip = MIN_STRIP_FALLBACK;
 let cssStep = 0;                  // the stylesheet's natural step, learned once
@@ -396,10 +398,25 @@ function innerWidthOf(zone) {
  * not one pixel narrower — an inline margin is only written while the CSS
  * default would overflow, so the stylesheet stays in charge of the normal case.
  *
- * THE FLOOR IS A THUMB, NOT THE ZONE. Below `minStrip + bite` the fan stops
- * squeezing and lets the zone scroll instead. A hand that scrolls costs a swipe;
- * a hand whose cards are 42px wide costs the wrong card, and §0.9 gates the
- * second one for the same reason a player would.
+ * THE FLOOR IS A THUMB, NOT THE ZONE — UP TO THE HAND LIMIT. At n ≤ 8 the fan
+ * stops squeezing at `minStrip + bite` and lets the zone scroll the rest: a
+ * hand that scrolls costs a swipe; a hand whose cards are 42px wide costs the
+ * wrong card, and §0.9 gates the second one for the same reason a player would.
+ *
+ * AT n ≥ 9 THE SCROLL ANSWER IS A LIE. The zone is `overflow-x: auto`, but
+ * interact.css gives `#hand-dock .card` `touch-action: none` and the fan covers
+ * every pixel of the zone, so no thumb can ever scroll it — MEASURED at 390×844
+ * with nine cards: scrollWidth 446 against clientWidth 379, the ninth card's
+ * layout box at x 371–431, entirely past the 379px port; only ~5px of its
+ * rotated corner showed. And the floor cannot be paid anyway: nine cards at
+ * 44px strips need 60 + 8×44 = 412px of a 364px content box. So past eight
+ * cards the step IS the room: every card stays on screen — MEASURED after:
+ * scrollWidth 379 === clientWidth 379, covered strips 36–37px, the outermost
+ * card's whole 60px face on the port (was ~5px of rotated corner). Even 15px
+ * strips were proven to SELECT on real CDP taps (touch-triage fan-probe, 9/9). The over-limit hand
+ * is a temporary state you are about to spend; tappable beats off-screen.
+ * The n ≤ 8 layouts are bit-for-bit what they were — the committed fixtures
+ * stage up to 8 and the screenshot gates hash them.
  *
  * @param {number} bite px of the strip the NEXT card's rotated corner takes.
  */
@@ -409,7 +426,9 @@ function tighten(nodes, n, w, zoneW, bite = 0) {
   const natural = cssStep || w * 0.72;
   const room = (zoneW - w) / (n - 1);
   const fits = room >= natural;
-  const step = fits ? natural : Math.max(minStrip + bite, room);
+  const step = fits ? natural
+    : n > 8 ? room
+    : Math.max(minStrip + bite, room);
   for (let i = 1; i < n; i++) {
     // Two decimals, not Math.round: the tight case is decided to a tenth of a
     // pixel (44.14px of step against a 44px floor) and rounding the margin down

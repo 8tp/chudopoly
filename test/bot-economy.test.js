@@ -286,6 +286,7 @@ test('Surge Ops is armed when a rent can actually follow it', () => {
     const state = build();
     const bot = state.players[0];
     setOf(state, bot, 'brown');
+    state.players[1].bank.push(money(state, 4));   // a rent can only "actually follow" if it collects
     bot.hand.push(action(state, 'surge_ops'), take(state, c => c.type === 'rent' && c.colors.includes('brown')));
     always(0.99);
     const plan = decideBotPlay(state, 'p1', mode);
@@ -457,4 +458,88 @@ test('the completing play never eats the last play the rent needed', () => {
   assert.ok(plan && plan.type === 'play_action');
   assert.equal(bot.hand[plan.cardIndex].type, 'rent',
     'burned the last play on the property instead of the charge the planner chose');
+});
+
+/* ── 8. wasted charges — never charge a table that can pay nothing ─────
+ *
+ * Owner report (this wave): "sometimes they charge rent when all players have nothing."
+ * findBestRent()/findRentOnCompleteSet() ranked candidates by the millions they COLLECT but
+ * never GATED on it, so a bot holding a complete-set rent fired it into a broke table and
+ * collected nothing — a lost play with no denial either (playerTotalValue 0 means there is
+ * literally nothing to force out). Finance Office and Roll Call had the same hole.
+ *
+ * A charge that collects zero is a strict blunder for every personality — it helps nobody's
+ * style — so the gate is universal. The chaotic seats keep their random colour and their
+ * random victim; they just stop firing at a target, or a table, that has nothing at all. */
+
+// Charge collectability is a property of the board, not the roll, so these are checked
+// across every mode and pass without touching the rng.
+function isRentPlay(state, plan) {
+  return !!plan && plan.type === 'play_action'
+    && state.players[0].hand[plan.cardIndex]?.type === 'rent';
+}
+
+test('a complete-set rent is not fired into a table that can pay nothing', () => {
+  for (const mode of MODES) {
+    const state = build(4);
+    const bot = state.players[0];
+    setOf(state, bot, 'brown');   // 2M rent, real props only (no wild to rearrange)
+    // opponents hold nothing at all
+    bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('brown') && c.colors[0] !== 'any'));
+    const plan = decideBotPlay(state, 'p1', mode);
+    assert.ok(!isRentPlay(state, plan), `${mode} charged rent at a table with nothing to take`);
+  }
+});
+
+test('a rent IS fired the moment one opponent can pay something', () => {
+  // Guard against over-gating: the fix must not make bots stop charging solvent tables.
+  for (const mode of ['conservative', 'neutral', 'aggressive']) {
+    const state = build(4);
+    const bot = state.players[0];
+    setOf(state, bot, 'brown');
+    state.players[2].bank.push(money(state, 3));   // exactly one solvent opponent
+    bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('brown') && c.colors[0] !== 'any'));
+    const plan = decideBotPlay(state, 'p1', mode);
+    assert.ok(isRentPlay(state, plan), `${mode} refused a rent a solvent opponent could pay`);
+  }
+});
+
+test('a wild rent points at a payer even for the chaotic seats', () => {
+  for (const mode of MODES) {
+    const state = build(4);
+    const bot = state.players[0];
+    setOf(state, bot, 'brown');
+    state.players[1].bank = [];                     // broke
+    state.players[2].bank.push(money(state, 3));    // the only payer
+    bot.hand.push(take(state, c => c.type === 'rent' && c.colors[0] === 'any'));
+    const plan = decideBotPlay(state, 'p1', mode);
+    // If it charges at all it must name the solvent seat; it may also decline (fine).
+    if (isRentPlay(state, plan)) {
+      assert.equal(plan.targetId, 'p3', `${mode} aimed a wild rent at a player with nothing`);
+    }
+  }
+});
+
+test('Finance Office is not played against a table that can pay nothing', () => {
+  for (const mode of MODES) {
+    const state = build(4);
+    const bot = state.players[0];
+    bot.hand.push(action(state, 'finance_office'));
+    const plan = decideBotPlay(state, 'p1', mode);
+    const fired = plan && plan.type === 'play_action'
+      && bot.hand[plan.cardIndex]?.action === 'finance_office';
+    assert.ok(!fired, `${mode} played Finance Office with no one able to pay`);
+  }
+});
+
+test('Roll Call is not played against a table that can pay nothing', () => {
+  for (const mode of MODES) {
+    const state = build(4);
+    const bot = state.players[0];
+    bot.hand.push(action(state, 'roll_call'));
+    const plan = decideBotPlay(state, 'p1', mode);
+    const fired = plan && plan.type === 'play_action'
+      && bot.hand[plan.cardIndex]?.action === 'roll_call';
+    assert.ok(!fired, `${mode} played Roll Call with no one able to pay`);
+  }
 });

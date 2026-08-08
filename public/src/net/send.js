@@ -28,15 +28,27 @@ export const addBot = (mode) => send({ type: 'add_bot', mode });
 export const removeBot = (targetId) => send({ type: 'remove_bot', targetId });
 
 /**
- * @param {object} [rules] optional ruleset — `preset` and/or individual toggles
- *   (`winRule`, `setsToWin`, `pureSetRequired`, `passGoRestartsTurn`). Every
- *   field is optional and validated server-side; omitting all of them means the
- *   Chudopoly defaults. Only defined keys are sent, so an old lobby that passes
- *   nothing produces the exact payload it always did.
+ * The rule keys `start_game` may carry — the client mirror of server/handlers.js
+ * RULE_FIELDS (which is what pickRuleOpts reads). A second whitelist here was the
+ * 2026-08-08 defect: it listed five keys, so `deck` and `suddenDeath` — both
+ * validated by the server and both produced by ui/ruleset.js rulesPayload() —
+ * were silently dropped client-side and the lobby's steppers launched a stock
+ * game. The two lists are not importable across the client/server boundary, so
+ * test/rules-wire.test.js pins them equal; adding a key on one side only fails
+ * the suite.
+ */
+export const RULE_WIRE_KEYS = Object.freeze(
+  ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath', 'deck']);
+
+/**
+ * @param {object} [rules] optional ruleset — `preset` and/or any of the keys in
+ *   RULE_WIRE_KEYS. Every field is optional and validated server-side; omitting
+ *   all of them means the Chudopoly defaults. Only defined keys are sent, so an
+ *   old lobby that passes nothing produces the exact payload it always did.
  */
 export const startGame = (turnTimeout, responseTimeout, rules = null) => {
   const msg = { type: 'start_game', turnTimeout: turnTimeout | 0, responseTimeout: responseTimeout | 0 };
-  for (const key of ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn']) {
+  for (const key of RULE_WIRE_KEYS) {
     if (rules && rules[key] !== undefined && rules[key] !== null) msg[key] = rules[key];
   }
   return send(msg);

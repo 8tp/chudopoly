@@ -853,7 +853,21 @@ function decideBotPlay(state, botId, mode) {
   // Aggressive: 5% chance (almost always uses all plays)
   // Chud: handled in botTakeTurn
   const played = 3 - state.playsRemaining;
-  if (played >= 1) {
+  // Round 11, angle 2 — the deck-cycle clock. §3.11 adjudicates on points after
+  // DECK_CYCLE_LIMIT reshuffles, and shuffleCount is public (every shuffle is a table
+  // event). In the last quarter of that budget, holding a play back saves it for a
+  // "later" the attrition cap is about to take away. Measured before the fix (500
+  // five-player games): every personality passed ~90 times per 500 games inside this
+  // window WITH playable cards in hand — mostly PCS Orders and rents — and random won
+  // more §3.6 points endings than any planner (12 of 37). Aware planners play out;
+  // chud and random keep their character (and their RNG stream — no roll is consumed
+  // for a mode with zero awareness).
+  let clockRunning = false;
+  if (played >= 1 && state.shuffleCount >= G.DECK_CYCLE_LIMIT - 4) {
+    const aw = CARD_AWARENESS[mode] ?? 0;
+    clockRunning = aw > 0 && rnd() < aw;
+  }
+  if (played >= 1 && !clockRunning) {
     // After 1 play: small chance to stop. After 2 plays: bigger chance.
     const holdChance = played === 1
       ? (mode === 'conservative' ? 0.08 : mode === 'random' ? 0.08 : mode === 'neutral' ? 0.05 : 0)

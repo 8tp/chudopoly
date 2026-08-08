@@ -183,3 +183,46 @@ test('random never counts: a guaranteed IG shot does not change its decision mix
   // detect the free IG shot
   assert.ok(!a || a.type !== 'play_action' || me.hand[a.cardIndex].action !== 'inspector_general');
 });
+
+/* ── angle 2: the deck-cycle clock ───────────────────────────────────── */
+//
+// §3.11 ends the game on points after DECK_CYCLE_LIMIT reshuffles, and shuffleCount is
+// public (every shuffle is a table event). Measured on pre-fix HEAD (500 five-player
+// games, seed aware-base5): in the last quarter of the cycle budget every personality
+// passed ~90 times per 500 games WITH playable cards in hand — the human-like holdback
+// saving plays for a "later" the attrition clock was about to adjudicate away. Points
+// endings were won nearly uniformly across modes (random 12 of 37 — more than any
+// planner): nobody was playing the points game.
+
+test('conservative stops holding back once the attrition clock is running', () => {
+  const state = build(3);
+  const me = state.players[0];
+  state.shuffleCount = G.DECK_CYCLE_LIMIT - 4;   // the endgame window opens
+  state.playsRemaining = 2;                      // played >= 1, holdback territory
+  me.hand.push(money(state, 2));
+  always(0);   // rnd 0 < holdChance 0.08 — on pre-fix code this pass fires
+  const a = decideBotPlay(state, 'p1', 'conservative');
+  assert.ok(a, 'no play may be held back while the game is racing the cycle cap');
+  assert.equal(a.type, 'play_money');
+});
+
+test('guard: with the deck young, the same roll still holds back', () => {
+  const state = build(3);
+  const me = state.players[0];
+  state.shuffleCount = 0;
+  state.playsRemaining = 2;
+  me.hand.push(money(state, 2));
+  always(0);
+  assert.equal(decideBotPlay(state, 'p1', 'conservative'), null,
+    'the holdback is character; only the endgame clock overrides it');
+});
+
+test('guard: random ignores the clock entirely', () => {
+  const state = build(3);
+  const me = state.players[0];
+  state.shuffleCount = G.DECK_CYCLE_LIMIT - 4;
+  state.playsRemaining = 2;
+  me.hand.push(money(state, 2));
+  always(0);
+  assert.equal(decideBotPlay(state, 'p1', 'random'), null);
+});

@@ -77,8 +77,62 @@ function rentContext(card) {
   return out;
 }
 
+/**
+ * The player whose BOARD holds this card, or null for a card in the viewer's
+ * hand or in the discard. getPlayerView ships every seat's properties and
+ * upgrades with real ids, so a table card's owner is always resolvable.
+ */
+function boardOwner(cardId) {
+  for (const player of store.snapshot?.players || []) {
+    for (const c of COLOR_KEYS) {
+      if ((player.properties?.[c] || []).some(x => x.id === cardId)) return player;
+      if ((player.upgrades?.[c] || []).some(x => x.id === cardId)) return player;
+    }
+  }
+  return null;
+}
+
+/**
+ * One zone row for one PLAYER — whichever player the label names. Extracted so
+ * an opponent's card can print the owner's zone and the viewer's side by side
+ * without two copies of the COMPLETE/FULL wording drifting apart.
+ *
+ * COMPLETE is the SET question, and `held >= size` is not it. game.js zoneIsSet()
+ * (351-356) takes at least one real property when `pureSetRequired` is on (the MD
+ * Faithful preset), so a full zone of nothing but wilds is a full zone and NOT a
+ * set. Measured: two "any" wilds in Command printed "Command 2/2 — COMPLETE ·
+ * rent 8M" while the engine's completedSets for that seat was 0.
+ */
+function zoneRow(player, c, label, { inHand, rules }) {
+  const held = player?.properties?.[c]?.length || 0;
+  const size = setSize(c);
+  const done = isComplete(player, c, rules);
+  const full = held >= size;
+  const closed = inHand && full ? ' · full — no room for this card' : '';
+  return row(label,
+    done ? `${held}/${size} — COMPLETE · rent ${rentFor(player, c)}M${closed}`
+      : full
+        // The state that has no name on the board: nothing more fits, and it is
+        // still not a set. Say WHY, because the rule is a lobby toggle and the
+        // player may not know it is on.
+        ? `${held}/${size} — FULL, not a set: needs one real property · rent ${rentFor(player, c)}M${closed}`
+        : `${held}/${size} · rent ${rentFor(player, c) || 0}M`,
+    done ? 'good' : (full ? 'bad' : ''));
+}
+
 function propertyContext(card) {
   const me = selfPlayer();
+  // WHOSE zones are these? This always read selfPlayer(), which described the
+  // VIEWER's board under an OPPONENT's card, unattributed. Measured on the
+  // mid-game fixture: hovering Coyote's wild sitting in Coyote's COMPLETE 2/2
+  // Drone Ops set printed "Drone Ops 0/2 · rent 0M" — the viewer's own empty
+  // zone — at the exact moment that player is sizing up a steal. The rows now
+  // describe the CARD OWNER's board ("Coyote's Drone Ops 2/2 — COMPLETE"), and
+  // an opponent's card also carries the viewer's own zone ("your Drone Ops
+  // 0/2"), because where-would-it-land-for-me is the legitimate second question
+  // a steal or TDY target raises.
+  const owner = boardOwner(card.id) || me;
+  const theirs = owner && me && owner.id !== me.id ? owner : null;
   const color = card.placedColor || card.color
     || (card.colors?.[0] === 'any' ? null : card.colors?.[0]);
   const out = [];
@@ -87,11 +141,6 @@ function propertyContext(card) {
       ? 'any colour' : card.colors.map(colorName).join(' or ')));
   }
   const colors = color ? [color] : (card.colors?.[0] === 'any' ? COLOR_KEYS : card.colors || []);
-  // COMPLETE is the SET question, and `held >= size` is not it. game.js zoneIsSet()
-  // (351-356) takes at least one real property when `pureSetRequired` is on (the MD
-  // Faithful preset), so a full zone of nothing but wilds is a full zone and NOT a
-  // set. Measured: two "any" wilds in Command printed "Command 2/2 — COMPLETE ·
-  // rent 8M" while the engine's completedSets for that seat was 0.
   const rules = sel.activeRuleFlags();
   // A card still IN HAND is asking a placement question, and for it a full zone
   // is not just a fact, it is a refusal: zoneFull() in playProperty means the
@@ -102,21 +151,12 @@ function propertyContext(card) {
   // on the board never gets the note — its own zone is "full" of itself.
   const inHand = !!sel.handCard(card.id);
   for (const c of colors) {
-    const held = me?.properties?.[c]?.length || 0;
-    if (!color && !held) continue;                       // don't list ten empty columns
-    const size = setSize(c);
-    const done = isComplete(me, c, rules);
-    const full = held >= size;
-    const closed = inHand && full ? ' · full — no room for this card' : '';
-    out.push(row(`${colorName(c)}`,
-      done ? `${held}/${size} — COMPLETE · rent ${rentFor(me, c)}M${closed}`
-        : full
-          // The state that has no name on the board: nothing more fits, and it is
-          // still not a set. Say WHY, because the rule is a lobby toggle and the
-          // player may not know it is on.
-          ? `${held}/${size} — FULL, not a set: needs one real property · rent ${rentFor(me, c)}M${closed}`
-          : `${held}/${size} · rent ${rentFor(me, c) || 0}M`,
-      done ? 'good' : (full ? 'bad' : '')));
+    if (!color && !(owner?.properties?.[c]?.length || 0)) continue;   // don't list ten empty columns
+    out.push(zoneRow(owner, c,
+      theirs ? `${theirs.name}'s ${colorName(c)}` : `${colorName(c)}`,
+      { inHand, rules }));
+    // Their card, so the viewer's own zone is the steal/TDY landing question.
+    if (theirs) out.push(zoneRow(me, c, `your ${colorName(c)}`, { inHand: false, rules }));
   }
   return out;
 }

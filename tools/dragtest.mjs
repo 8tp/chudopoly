@@ -159,6 +159,29 @@ function stripBoard() {
   return { state, sixth };
 }
 
+/**
+ * §G's table: a steal victim whose columns are STACKED. Bases 3/4 holds a wild
+ * BURIED under two properties — the exact board the owner reported ("hard to
+ * select exactly what you want if there is a property overlayed on top") —
+ * plus a two-deep Elite and a single Space card, so the gate sees a buried
+ * card, a half-covered card and a whole one in a single step. Midnight
+ * Requisition in my hand arms `player` → `theirCard` over all three mats
+ * (every colour is incomplete, so every card is stealable).
+ */
+function stealBoard() {
+  const state = fresh('dragtest-steal');
+  const [me, p2] = state.players;
+  const buried = putWild(state, p2, 'base', (x) => x.colors.includes('base'));
+  const mid = putProperty(state, p2, 'base');
+  const top = putProperty(state, p2, 'base');
+  putProperty(state, p2, 'green');
+  putProperty(state, p2, 'green');
+  putProperty(state, p2, 'pink');
+  const mr = take(state, (x) => x.type === 'action' && x.action === 'midnight_requisition');
+  me.hand.push(mr);
+  return { state, buried, mid, top, mr };
+}
+
 const stateMessage = (state) => ({
   type: 'state',
   code: 'DRAG',
@@ -805,6 +828,166 @@ try {
     }
   }
 
+  /* ── §G a buried steal target is a real target (§0.9, owner report) ──────
+   *
+   * OWNER, verbatim: "when trying to steal someone's card it can be hard to
+   * select exactly what you want if there is a property overlayed on top. PC
+   * may have a similar issue though."
+   *
+   * MEASURED before the fix (recorded red, 2026-08-07), 390×844 real CDP
+   * touch, Midnight Requisition's theirCard step over stealBoard(): every seat
+   * card was 30×42 — below §0.9's 44 floor even UNCOVERED — and the resting
+   * stack's mini-step left each buried card an 8px sliver (27% of its own
+   * face; the two-deep Elite exposed 18px). A tap at the buried wild's visual
+   * centre dispatched play_action with the targetCardId of the card ON TOP of
+   * the one aimed at, and the steal left the client with no confirming step.
+   * The mouse leg at 1280×720 mis-picked identically — the owner's "PC may
+   * have a similar issue" was right.
+   *
+   * The fix is table.css's pick-open fan — the same mark-keyed un-stack the
+   * bank already performs for a payment ([data-payable]) applied to a mat
+   * whose CARDS are the live pick targets: the mat takes the seat row it
+   * needs, the mini card is floored at --tap, and the derived overlap
+   * guarantees every card an exposed strip ≥ --tap wide by construction.
+   * This section asserts the OUTCOME, on both input worlds:
+   *   touch — every marked card's unoccluded area is ≥44px on both axes, and
+   *           a thumb tap at the buried card's OWN CENTRE picks THAT card;
+   *   mouse — the same walk and the same two assertions at 1280×720.
+   * PROVEN TO FAIL: the recorded pre-fix red, and --prove re-injects the
+   * resting stack's geometry over the fan (26px card, nowrap, mini-step
+   * margins, !important) and the touch leg goes red again.
+   */
+  function measurePickTargets() {
+    const out = [];
+    for (const node of document.querySelectorAll('.card[data-targetable="1"]')) {
+      const r = node.getBoundingClientRect();
+      let vis = 0;
+      let total = 0;
+      let minX = Infinity; let maxX = -Infinity; let minY = Infinity; let maxY = -Infinity;
+      // 1px grid: the exposed-box quantisation error is <1px, so a 44px strip
+      // reads 44, not 42 — the floor being asserted is the floor measured.
+      for (let y = r.top + 0.5; y < r.bottom; y += 1) {
+        for (let x = r.left + 0.5; x < r.right; x += 1) {
+          if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
+          total++;
+          const el = document.elementFromPoint(x, y);
+          if (el && (el === node || node.contains(el))) {
+            vis++;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      const col = node.closest('.propcol');
+      out.push({
+        id: Number(node.dataset.cardId),
+        color: col ? col.dataset.color : '?',
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+        visPct: total ? Math.round((vis / total) * 100) : 0,
+        effW: maxX === -Infinity ? 0 : Math.round(maxX - minX + 1),
+        effH: maxY === -Infinity ? 0 : Math.round(maxY - minY + 1),
+      });
+    }
+    return out;
+  }
+
+  /** The walk both input worlds share: MR → Play → victim seat → theirCard. */
+  async function stealWalk(pg, tapAt, sb) {
+    await pg.evaluate(() => window.__CHUD.joinAs('p1', 'P1'));
+    await pg.evaluate((m) => { window.__CHUD.applyState(m); window.__CHUD.drainEvents(); },
+      stateMessage(sb.state));
+    await pg.waitForTimeout(360);
+    const at = async (sel) => {
+      const c = await centre(pg, sel);
+      if (!c) throw new Error(`dragtest §G: nothing to tap at ${sel}`);
+      await tapAt(c.x, c.y);
+    };
+    await at(CARD(sb.mr.id));
+    await pg.waitForTimeout(220);
+    await at('[data-action="play-card"]');
+    await pg.waitForTimeout(300);
+    let m = await pg.evaluate(() => window.__CHUD.mode);
+    if (m.needs && m.needs[0] === 'player') {
+      await at('.board[data-player="p2"]');
+      await pg.waitForTimeout(340);
+      m = await pg.evaluate(() => window.__CHUD.mode);
+    }
+    return { mode: m, at };
+  }
+
+  function assertPickTargets(leg, picks, floor = 44) {
+    if (picks.length !== 6) {
+      r.fail(`§G ${leg}: expected 6 marked steal targets, found ${picks.length}`);
+      return;
+    }
+    const short = picks.filter((p) => Math.min(p.effW, p.effH) < floor);
+    if (short.length) {
+      const worst = short.reduce((a, b) => (Math.min(a.effW, a.effH) < Math.min(b.effW, b.effH) ? a : b));
+      r.fail(`§G ${leg}: ${short.length}/6 pick targets under the ${floor}px floor — worst `
+        + `card#${worst.id} in ${worst.color}: ${worst.effW}×${worst.effH} exposed of a `
+        + `${worst.w}×${worst.h} card (${worst.visPct}% visible). `
+        + `All: ${picks.map((p) => `${p.color}#${p.id}:${p.effW}×${p.effH}`).join(' ')}`);
+    } else {
+      const min = picks.reduce((a, b) => Math.min(a, b.effW, b.effH), Infinity);
+      r.pass(`§G ${leg}: all 6 pick targets ≥${floor}px effective `
+        + dim(`(smallest exposed axis ${min}px; ${picks.map((p) => `${p.color}#${p.id}:${p.effW}×${p.effH}`).join(' ')})`));
+    }
+  }
+
+  async function assertBuriedPick(leg, pg, at, sb) {
+    const before = await sentCount(pg);
+    await at(CARD(sb.buried.id));                 // the card's own centre — where a thumb aims
+    await pg.waitForTimeout(300);
+    const frames = await sentFrom(pg, before);
+    const steal = frames.find((f) => f.type === 'play_action');
+    if (!steal) {
+      r.fail(`§G ${leg}: tapping the buried card's centre sent nothing — ${JSON.stringify(frames)}`);
+    } else if (steal.targetCardId !== sb.buried.id) {
+      r.fail(`§G ${leg}: aimed at buried card#${sb.buried.id}, the client sent targetCardId `
+        + `${steal.targetCardId} — the WRONG property is stolen with no confirming step`);
+    } else {
+      r.pass(`§G ${leg}: a tap at the buried card's own centre picks that card `
+        + dim(`(targetCardId ${steal.targetCardId})`));
+    }
+  }
+
+  const sbTouch = stealBoard();
+  {
+    const ph = await openTouchPage(browser, `${server.url}/?harness=1`);
+    try {
+      await requireBridge(ph.page, 30000);
+      const { mode: m, at } = await stealWalk(ph.page, (x, y) => ph.tap(x, y), sbTouch);
+      if (m.kind !== 'target' || !m.needs || m.needs[0] !== 'theirCard') {
+        r.fail(`§G touch: never reached the theirCard step (mode ${m.kind}, needs ${JSON.stringify(m.needs)})`);
+      } else {
+        await settleLayout(ph.page);
+        await observe(ph.page, 'theirCard pick, fanned column (touch)');
+        const picks = await ph.page.evaluate(measurePickTargets);
+        ensureDir(SHOT_DIR);
+        await ph.page.screenshot({ path: path.join(SHOT_DIR, 'dragtest-pickfan.png') });
+        assertPickTargets('touch@390×844', picks);
+        await assertBuriedPick('touch@390×844', ph.page, at, sbTouch);
+      }
+    } finally { await ph.close().catch(() => {}); }
+  }
+
+  {
+    const sb = stealBoard();
+    await stage(page, sb.state);
+    const { mode: m, at } = await stealWalk(page,
+      async (x, y) => { await page.mouse.click(x, y); }, sb);
+    if (m.kind !== 'target' || !m.needs || m.needs[0] !== 'theirCard') {
+      r.fail(`§G mouse: never reached the theirCard step (mode ${m.kind}, needs ${JSON.stringify(m.needs)})`);
+    } else {
+      const picks = await page.evaluate(measurePickTargets);
+      assertPickTargets('mouse@1280×720', picks);
+      await assertBuriedPick('mouse@1280×720', page, at, sb);
+    }
+  }
+
   ensureDir(SHOT_DIR);
   fs.writeFileSync(path.join(SHOT_DIR, 'coverage-dragtest.json'), JSON.stringify({
     tool: 'dragtest',
@@ -854,6 +1037,47 @@ try {
     } else {
       r.fail(`--prove: §F did NOT move with the deleted snap restored (${g.st0} → ${g.st1}) — `
         + 'the assertion is not measuring what it claims');
+    }
+
+    /* §G: the resting stack's exact geometry (26px card, nowrap, mini-step
+     * margins — the shipped defect, not an imitation) is forced back over the
+     * pick-open fan, and the effective-target measurement must find the sliver
+     * again. */
+    {
+      const ph = await openTouchPage(browser, `${server.url}/?harness=1`);
+      try {
+        await requireBridge(ph.page, 30000);
+        await ph.page.addStyleTag({
+          content: `
+            .opponents .zone-props:has(> .card[data-targetable="1"]) {
+              --card-w: max(26px, calc(var(--s) * 2.1)) !important;
+              flex-wrap: nowrap !important; gap: 0 !important;
+            }
+            .opponents .zone-props:has(> .card[data-targetable="1"]) > .card:not(:first-child) {
+              margin-left: calc(var(--mini-step) - var(--card-w)) !important;
+            }
+            .opponents .propcol:has(> .zone-props > .card[data-targetable="1"]) {
+              grid-column: auto !important;
+            }`,
+        });
+        const sb = stealBoard();
+        const { mode: m } = await stealWalk(ph.page, (x, y) => ph.tap(x, y), sb);
+        if (m.kind !== 'target' || !m.needs || m.needs[0] !== 'theirCard') {
+          r.fail(`--prove §G: never reached the theirCard step (${m.kind}/${JSON.stringify(m.needs)})`);
+        } else {
+          const picks = await ph.page.evaluate(measurePickTargets);
+          const short = picks.filter((p) => Math.min(p.effW, p.effH) < 44);
+          if (short.length) {
+            const worst = short.reduce((a, b) => (Math.min(a.effW, a.effH) < Math.min(b.effW, b.effH) ? a : b));
+            r.pass(`--prove: with the resting stack restored over the fan, §G goes red — `
+              + `${short.length}/${picks.length} targets under 44px, worst ${worst.effW}×${worst.effH} `
+              + `(card#${worst.id} in ${worst.color})`);
+          } else {
+            r.fail('--prove: §G did NOT go red with the stack restored — '
+              + 'the assertion is not measuring what it claims');
+          }
+        }
+      } finally { await ph.close().catch(() => {}); }
     }
   }
 } finally {

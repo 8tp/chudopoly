@@ -1069,10 +1069,36 @@
   background: var(--shade);
   box-shadow: inset 0 0 0 1px var(--shade-2);
 }
-.gist-meter[data-have="1"] .gm-seg:nth-child(-n+1),
-.gist-meter[data-have="2"] .gm-seg:nth-child(-n+2),
-.gist-meter[data-have="3"] .gm-seg:nth-child(-n+3),
-.gist-meter[data-have="4"] .gm-seg:nth-child(-n+4) {
+/* THE LETTER CODE — the §6-amendment mini tier, built in layout.js (SET_CODE,
+   with the derivation and the 2525 precedent). It is the channel that is NOT
+   hue: a colourblind player reads "F ▮▮▯" where the fill alone said nothing.
+   --band-ink on the RAW band, not the lifted rail mix — ART §2's own table
+   certifies white-on-set at 5.07:1 (Mobility, worst) to 11.04:1, and the lift
+   exists for rails on dark ground, not for type on the set colour. 9px mono at
+   800: above the audit's 8px small-run line, and sized to the 13px segment
+   height beside it. */
+.gm-code {
+  display: inline-flex;
+  align-items: center;
+  height: 13px;
+  padding: 0 2px;
+  border-radius: 1px;
+  background: var(--band, var(--fg-mute));
+  color: var(--band-ink);
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+/* nth-OF-TYPE, not nth-child: the <b> code is the meter's first child now, and
+   an nth-child fill would count it — measured before the switch, data-have="1"
+   filled zero segments. The segs are the only <i>s in the meter. */
+.gist-meter[data-have="1"] .gm-seg:nth-of-type(-n+1),
+.gist-meter[data-have="2"] .gm-seg:nth-of-type(-n+2),
+.gist-meter[data-have="3"] .gm-seg:nth-of-type(-n+3),
+.gist-meter[data-have="4"] .gm-seg:nth-of-type(-n+4) {
   background: var(--band, var(--fg-mute));
   box-shadow: none;
 }
@@ -1268,6 +1294,92 @@
 .opponents[data-seatmode="collapse"] .board[data-collapsed="0"],
 .opponents .board:has(> .board-bank [data-targetable="1"], > .board-bank [data-payable="1"]) {
   grid-template-rows: auto minmax(var(--tap), auto) auto;
+}
+
+/* ══ THE MAT FANS OPEN FOR A PICK (§0.9 on the steal steps) ════════════════
+   OWNER, 2026-08-07: "when trying to steal someone's card it can be hard to
+   select exactly what you want if there is a property overlayed on top. PC
+   may have a similar issue though." Right on both counts.
+
+   MEASURED (dragtest §G's recorded red, 2026-08-07), Midnight Requisition's
+   theirCard step over Bases 3/4 + Elite 2/3 + Space 1/3:
+     phone 390×844     every seat card 30×42; each buried card exposed a 9×42
+                       sliver (27% of its own face), the 2-stack 17×42 — and a
+                       real CDP tap at the buried wild's visual centre STOLE
+                       THE CARD ON TOP OF IT (aimed #34, sent targetCardId 22),
+                       with no confirming step between the tap and the server.
+     desktop 1280×720  26×36 cards, 9×36 slivers, the identical wrong pick.
+   §0.9's floor is about EFFECTIVE targets, and this tap dispatches a steal —
+   the least forgiving surface in the client held the smallest targets on it.
+
+   The mechanism is the one the bank ratified two blocks up: a zone whose cards
+   carry live marks un-stacks, keyed on interact/'s own mark so the machine and
+   the fan cannot disagree, alive for exactly as long as the step is. A mat
+   differs from the bank in two ways, both paid for here:
+     · the CARD is the control (a theirCard/myCard step answers with a
+       data-card-id, where the bank's control is the zone), so the card itself
+       is floored at --tap and the derived overlap guarantees every card an
+       exposed strip ≥ --tap wide BY CONSTRUCTION at any interface scale;
+     · a fanned stack no longer fits the seat grid's 44px cell, so a mat
+       holding two or more marked cards takes the seat's full row for the
+       step, and the row — fixed by round 7's evenness argument, which is an
+       argument about seats at REST — gets minmax while a mark is inside it.
+   theirSet and player steps mark .propcols and .boards, never cards, so
+   nothing here moves during them; a single marked card keeps its cell (a
+   44px card stands whole in a 44px-floored cell and spanning more would
+   spend width on nothing).
+
+   The span is a LADDER, not `1 / -1`, and the cap is 3 — both measured:
+     · full-row spans put every marked mat on its own row, and at 1280×720
+       (§G's mouse leg, first cut of this fix) that made the victim seat
+       ~340px inside the 189px `fit-content(11.4em)` seats track — 5 of 6
+       pick targets scrolled out of the port entirely (0×0 effective) and
+       the buried-centre click hit the felt below the strip. Cells, like the
+       mini-step ladder above, take only the width the count needs;
+     · 3 is the explicit track count of the NARROWEST seat this grid makes
+       (11em = 183px at the 44px floor → 3 auto-fill tracks; the phone's
+       one-seat-per-line strip answers 5+) and a span wider than the explicit
+       grid mints implicit tracks that overflow the seat sideways. A span-3
+       mat always holds 3 floored cards (3×--tap + 2×2px gap ≤ 3 tracks +
+       2×4px gutters), and a fourth card wraps onto the row the minmax below
+       grants. */
+.opponents .propcol:has(> .zone-props > .card[data-targetable="1"]):has(> .zone-props > .card:nth-child(2)) {
+  grid-column: span 2;
+}
+.opponents .propcol:has(> .zone-props > .card[data-targetable="1"]):has(> .zone-props > .card:nth-child(3)) {
+  grid-column: span 3;
+}
+.opponents .board-props:has(> .propcol > .zone-props > .card[data-targetable="1"]) {
+  grid-template-rows: minmax(var(--mat-row), auto);
+  grid-auto-rows: minmax(var(--mat-row), auto);
+}
+.opponents .zone-props:has(> .card[data-targetable="1"]) {
+  --card-w: max(var(--tap), calc(var(--s) * 2.5));
+  flex-wrap: wrap;
+  gap: 2px;
+  overflow: visible;
+}
+.opponents .zone-props:has(> .card[data-targetable="1"]) > .card:not(:first-child) {
+  margin-left: calc(-1 * max(0px, var(--card-w) - var(--tap)));
+}
+/* a whole card shows its whole face: the cut edge is a stack treatment and
+   there is no stack for the length of the step */
+.opponents .zone-props:has(> .card[data-targetable="1"]) > .card:not(:last-child) {
+  box-shadow: 0 0 0 1px var(--card-edge), var(--card-drop);
+}
+/* The desktop seats track opens for the fan it now has to hold. 11.4em was
+   measured against seats at REST (the fit-content note in the desktop table
+   block); a fanned seat is head 24 + fan track 44 + two 88px mat rows ≈ 250px
+   ≈ 15.6em, MEASURED on §G's mouse leg — under the old cap 5 of 6 pick
+   targets sat below the strip's fold at the exact moment they became the only
+   thing on the table worth tapping. 22em holds a fanned five-colour victim;
+   past it the strip still scrolls and interact/'s revealMarks still brings
+   the first mark in. Keyed on the same mark as every rule above, so the
+   track opens when the step arms and closes when it resolves. */
+@media (min-width: 1024px) {
+  .table:has(.opponents .zone-props > .card[data-targetable="1"]) {
+    grid-template-rows: fit-content(22em) minmax(0, 1fr);
+  }
 }
 
 /* THE AFFORDANCE. A row that opens has to say so, and it says so in this app's
@@ -1601,14 +1713,31 @@
 
   .board-self:has(.card[data-payable="1"]) .propcol[data-empty="1"] { display: none; }
 
-  /* While the prompt is up the pane's bottom edge is a decision boundary, not
-     a scroll hint: the fade held the exact cards the prompt names at ~30%
-     alpha. A hard cut is the honest edge — a card visibly cut mid-body reads
-     as "more below"; a dissolved one reads as a rendering fault. */
-  .screen-game:has(.prompt:not([hidden])) .self-board {
+  /* While a DECISION is on the pane the bottom edge is a boundary, not a
+     scroll hint: the fade held the exact cards a payment prompt names at ~30%
+     alpha. But the old gate was `:has(.prompt:not([hidden]))`, and the prompt
+     bar is up in nearly every real state — so the mask was off for the whole
+     game and the ordinary cold frame ended in a HARD slice. ROUND-2 MOBILE #4
+     (mid-game@p360): the 360×740 cold clip cut the third mat row's titles
+     mid-word under the status strip, a title readable enough to look broken
+     and cut enough to be unreadable. Keyed now on the decision's own mark
+     (`[data-payable]` — payment and discard both set it, interact/index.js),
+     the same attribute the seat-expand rules key on, so it cannot drift from
+     the machine: ordinary turns keep the 1.6em fade and a sliced title
+     dissolves into "more below"; a payment still gets its honest hard edge. */
+  .screen-game:has(.card[data-payable="1"]) .self-board {
     -webkit-mask-image: none;
     mask-image: none;
   }
+  /* The other half of the same finding: with no clear padding, the LAST mat
+     row could never be seen unfaded — fully scrolled, it still sat inside the
+     1.6em mask. The same device .opponents uses at desktop (its own comment:
+     "the clear padding comes FIRST and is bigger than the fade"): 1.9em of
+     apron under the board, so at scroll end the fade falls on padding, and
+     mid-scroll it only ever falls on content that genuinely continues.
+     Padding on the SCROLLER, outside every card's container, so no card-art
+     tier can flip (the content-box landmine). */
+  .self-board { padding-bottom: 1.9em; }
 }
 
 /* ══ DESKTOP: OPPONENTS ON TOP, YOUR MAT UNDER THEM ════════════════════════
@@ -2737,6 +2866,13 @@
     grid-area: opp;
     display: flex;
     flex-direction: column;
+    /* MEASURED (railprobe, approach-called@landscape): while the docked
+       approach/announce stripe is up, this rail compressed to ~32px — less
+       than ONE tap target, and touchtest's reachability probe proved a seat
+       could never expose more than 33px across 562px of scrolling. The rail
+       may never yield below a tap target plus the fade lip; the centre region
+       absorbs the stripe instead. */
+    min-height: calc(var(--tap) + .6em);
     /* MEASURED on five-player@landscape before this line: seats 122, 127, 227
        and 236px wide in one 236px rail. The portrait rule sets
        `align-items: start` for a good reason (a stretched seat is shorter than

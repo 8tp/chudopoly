@@ -221,6 +221,40 @@ const SHOTS = [
     name: 'flightlog-gone', route: '/?harness=1&logbook=future', fixture: null,
     drive: 'flight-log', expect: 'flightlog:open', screen: 'desktop',
   },
+  /* ── P10: the surfaces tools/coverage.mjs reported as visited by NO gate ──
+   * Twenty markers were enumerated from the client and seen by nothing; these
+   * shots drive the sixteen of them a capture can hold (the other four:
+   * `is-off` is touchtest's offline window, `is-empty` and `data-facing=down`
+   * are exempt in census.mjs with reasons, `is-urgent`/`is-critical`/
+   * `layer:hud-timer` share `timer-critical` below). Desktop-only: coverage
+   * needs the state seen once, and each surface's phone geometry is the same
+   * sheet/prompt machinery other shots already measure at 390px.
+   *
+   *   timer-critical  the answer clock ≤5s — `timer: 8` rebases the fixture's
+   *                   own served turnTimer (stage.mjs) and the driver WAITS for
+   *                   the client's tick to cross critical. `ticking`, because a
+   *                   live countdown repaints 1×/s by design and can never
+   *                   settle; the byte-identical rules still hold (no two takes
+   *                   of it exist).
+   *   steal-set /     the two targeting steps (`theirSet`, `mySet`) — cut from
+   *   upgrade-set     the committed 3p transcript (record.mjs --only cut).
+   *   approach-pay /  states no recorded seat ever held (the recording seat
+   *   win-points      arms and WINS) — built through engine calls, §0.7
+   *                   (tools/buildfixtures.mjs), validateState-checked.
+   *   help-*          the Mission Brief's inner pages; `help` only ever
+   *                   photographed the default Goal page.                     */
+  { name: 'timer-critical', fixture: 'mid-game', timer: 8, ticking: true, drive: 'timer-critical', expect: 'timer:critical', screen: 'desktop' },
+  { name: 'settings-dark', fixture: 'mid-game', drive: 'settings-dark', expect: 'theme:dark', screen: 'desktop' },
+  { name: 'lobby-custom', fixture: 'lobby', drive: 'lobby-custom', expect: 'stock:custom', screen: 'desktop' },
+  { name: 'steal-set', fixture: 'steal-set', drive: 'steal-set', expect: 'theirSet:', screen: 'desktop' },
+  { name: 'upgrade-set', fixture: 'upgrade-set', drive: 'upgrade-set', expect: 'mySet:', screen: 'desktop' },
+  { name: 'approach-pay', fixture: 'approach-pay', drive: 'approach-warning', expect: 'approach:"', screen: 'desktop' },
+  { name: 'win-points', fixture: 'win-points', drive: 'win-decider', expect: 'decider:', screen: 'desktop' },
+  { name: 'help-cards', fixture: null, drive: 'help-cards', expect: 'brief:cards', screen: 'desktop' },
+  { name: 'help-sets', fixture: null, drive: 'help-sets', expect: 'brief:sets', screen: 'desktop' },
+  { name: 'help-opsec', fixture: null, drive: 'help-opsec', expect: 'brief:opsec', screen: 'desktop' },
+  { name: 'discard-over', fixture: 'discard-limit', drive: 'discard-over', expect: 'over:"', screen: 'desktop' },
+  { name: 'discard-reading', fixture: 'mid-game', drive: 'discard-reading', expect: 'reading:"', screen: 'desktop' },
   // Landscape — the viewport where `.self-board` was 0px tall and no shot looked.
   { name: 'landscape-mid', fixture: 'mid-game', screen: 'landscape' },
   { name: 'landscape-armed', fixture: 'final-approach', screen: 'landscape' },
@@ -267,7 +301,27 @@ function takesFor(shot, tag) {
   return THEME_LIST;
 }
 
-const SHOT_LIST = PROVE_THEME ? SHOTS.filter((s) => s.themes) : SHOTS;
+/**
+ * `--only a,b,c` — the mutation-proof inner loop. Re-taking one shot beats
+ * re-taking 113 while proving a driver can fail. A PARTIAL run must leave no
+ * coverage sidecar and no index: a sidecar describing three shots would tell
+ * tools/coverage.mjs that every other surface went unvisited (or, worse,
+ * survive as a stale-but-fresh-looking census of almost nothing). The same
+ * hole existed for --prove-theme since P8 — its themed-subset run overwrote
+ * the full run's sidecar — so both now skip the artefact writes.
+ */
+const ONLY = args.only ? String(args.only).split(',').map((s) => s.trim()).filter(Boolean) : null;
+const PARTIAL = PROVE_THEME || !!ONLY;
+const SHOT_LIST = PROVE_THEME ? SHOTS.filter((s) => s.themes)
+  : ONLY ? SHOTS.filter((s) => ONLY.includes(s.name)) : SHOTS;
+if (ONLY && SHOT_LIST.length !== ONLY.length) {
+  const known = new Set(SHOTS.map((s) => s.name));
+  const bad = ONLY.filter((n) => !known.has(n));
+  if (bad.length) {
+    console.log(red(`--only names no such shot: ${bad.join(', ')}`));
+    process.exit(EXIT_FAIL);
+  }
+}
 const SCREEN_LIST = PROVE_THEME ? SCREENS.filter((s) => s.tag === THEME_SCREEN) : SCREENS;
 
 const planned = SCREEN_LIST.reduce((n, s) => n + SHOT_LIST
@@ -322,7 +376,8 @@ async function take(h, screen, shot, theme) {
       }
       // Seat first, THEN state (lib/stage.mjs). Without the seat a lobby
       // fixture renders as somebody else's screen and says nothing about it.
-      await stageFixture(h.page, fx, { at: shot.at, from: shot.from, drain: !shot.transient });
+      // `timer` rebases the fixture's own served clock (stage.mjs).
+      await stageFixture(h.page, fx, { at: shot.at, from: shot.from, drain: !shot.transient, timer: shot.timer });
       await h.page.waitForTimeout(120);
       /* A state application can raise a 2600ms `.announce` over the table (any
        * tail carrying final_approach / set_stolen — `final-approach.json` and
@@ -360,7 +415,10 @@ async function take(h, screen, shot, theme) {
     const file = path.join(SHOT_DIR, `${label}.png`);
     // A transient layer is up for 2600ms; the default 3s settle budget would
     // let the shutter fall on its fade-out and make the bytes a coin flip.
-    const frame = await stableScreenshot(h.page, shot.transient ? { gap: 90, budgetMs: 1100 } : {});
+    // A `ticking` shot repaints every second BY DESIGN (a live countdown), so
+    // burning the full budget waiting for it to settle only moves the clock
+    // it is trying to photograph closer to 0.
+    const frame = await stableScreenshot(h.page, (shot.transient || shot.ticking) ? { gap: 90, budgetMs: 1100 } : {});
     fs.writeFileSync(file, frame.buffer);
     if (!frame.settled) unsettled.push(label);
 
@@ -554,7 +612,14 @@ try {
   }
 
   /* ---- contact sheet ------------------------------------------------------ */
-  if (captured.length) {
+  if (PARTIAL) {
+    // See the --only note at the top: a partial run writes no contact sheet,
+    // no index.json and NO coverage sidecar — a census of three shots is not a
+    // census of the review set, and leaving one behind is how coverage.mjs
+    // gets handed a fresh-looking file that unsees a hundred surfaces.
+    console.log(yellow(`  ! partial run (${PROVE_THEME ? '--prove-theme' : '--only'}): `
+      + 'contactsheet / index.json / coverage sidecar left untouched'));
+  } else if (captured.length) {
     const COLS = 4;
     const CELL_W = 320;
     const CELL_H = 200;

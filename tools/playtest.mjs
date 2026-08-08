@@ -287,6 +287,71 @@ try {
       r.pass(`[animated] ${anim.hitstops} hitstop(s) landed over the replay ${dim(`(floor ${HITSTOP_FLOOR})`)}`);
     }
 
+    /* ══ §0.8's "60fps on a mid phone", finally MEASURED (P9 round 2) ═══════
+     *
+     * Nothing in the harness had ever sampled a frame time — §0.8 was a claim
+     * with no instrument. This replays a slice of the same transcript with the
+     * CPU throttled 4× (CDP Emulation.setCPUThrottlingRate — Lighthouse's
+     * mid-device convention) and reads real rAF-to-rAF deltas out of the page.
+     *
+     * The floor is set FROM measurement, not from the wish. Idle machine,
+     * 3 runs, 461–486 frames each: p95 25.3 / 25.0 / 25.0 ms — stable to
+     * 0.3ms — with p50 8.4–8.5 and p99 ranging 49.9–58.3. The assertion is
+     * on p95 (the percentile that did not move) at 2× the measured value:
+     * 50ms. This is deliberately a collapse-detector, not a jank-meter —
+     * what it exists to catch is the frame loop falling apart under a
+     * throttled CPU (a main-thread stall, a layout storm, an unthrottled
+     * per-frame allocation), any of which doubles p95 outright. A 20%
+     * regression will NOT trip it; tighten only with more idle-machine data.
+     * p99 is printed but never gated: it brushes the budget on a clean build,
+     * so gating it would flake by construction.
+     *
+     * It runs AFTER `anim` is read, so the throttle cannot contaminate the
+     * drift/cue/hitstop numbers above; the console-error verdict below stays
+     * downstream of it on purpose (an error under throttle is still an
+     * error). Provably red: `--frame-budget 10` (or any figure under the
+     * machine's vsync interval) fails it on demand.
+     */
+    const FRAME_BUDGET_MS = Number(args['frame-budget'] || 50);
+    const FRAME_SEGMENT = Math.min(40, states.length);
+    const fcdp = await a.context.newCDPSession(a.page);
+    await fcdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    await a.page.evaluate(() => {
+      const S = { deltas: [], last: 0, on: true };
+      window.__CHUD_FRAMES = S;
+      const tick = (t) => {
+        if (S.last) S.deltas.push(t - S.last);
+        S.last = t;
+        if (S.on) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+    for (const s of states.slice(0, FRAME_SEGMENT)) {
+      await a.page.evaluate((st) => window.__CHUD.applyState(st), s);
+      await a.page.waitForTimeout(cadence);
+    }
+    const deltas = await a.page.evaluate(() => {
+      const S = window.__CHUD_FRAMES; S.on = false; return S.deltas;
+    });
+    await fcdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    if (deltas.length < 60) {
+      r.fail(`[animated] frame sample too thin to mean anything (${deltas.length} deltas over `
+        + `${FRAME_SEGMENT} states) — the rAF sampler is not seeing the replay`);
+    } else {
+      const sorted = [...deltas].sort((x, y) => x - y);
+      const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+      const p50 = q(0.5).toFixed(1);
+      const p95 = q(0.95);
+      const p99 = q(0.99).toFixed(1);
+      if (p95 > FRAME_BUDGET_MS) {
+        r.fail(`[animated] p95 frame time ${p95.toFixed(1)}ms under a 4×-throttled CPU (budget ${FRAME_BUDGET_MS}ms) `
+          + `— §0.8's mid-phone frame loop is falling apart ${dim(`(${deltas.length} frames, p50 ${p50}, p99 ${p99})`)}`);
+      } else {
+        r.pass(`[animated] p95 frame time ${p95.toFixed(1)}ms under a 4×-throttled CPU `
+          + `${dim(`(budget ${FRAME_BUDGET_MS}ms; ${deltas.length} frames, p50 ${p50}, p99 ${p99})`)}`);
+      }
+    }
+
     if (anim.sfx === 0) r.fail('[animated] no sfx at all reached the recorder');
     if (anim.fx === 0) r.fail('[animated] no fx cue at all reached the recorder (§5 juice path dead)');
     if (anim.lastError) r.fail(`[animated] __CHUD.lastError: ${anim.lastError}`);

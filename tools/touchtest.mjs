@@ -66,6 +66,20 @@
  *      Chromium live, from an 8s bridge budget. Now 30s, still strict about
  *      real absence.
  *
+ * P9 ROUND 2. The round-2 mobile critic (8/10) verified with real CDP touch
+ * that the two remaining landscape reds were this gate OVER-CLAIMING:
+ * "clipped by a scrolling ancestor — on-screen and still unreachable" was a
+ * geometry walk pretending to be a gesture. The `.opponents` rail scrolls
+ * under a real thumb (scrollTop 0→61, partial-seat sliver, edge fade, 5px
+ * scrollbar) and `.board-props` scrolls sideways with 39px of the next column
+ * showing — both printed as unreachable. Now every clipped/off-viewport
+ * control is PROBED with a real dispatched swipe before it may stay red
+ * (probeReachability, lib/touch.mjs: ancestor actually scrolled + control
+ * became ≥44px reachable + a cold-frame affordance existed — fail any leg and
+ * the red stands with the leg named). Both directions are mutation-proven in
+ * --prove: a rail nailed shut with overflow:hidden goes red on leg (i), and a
+ * working scroller stripped of every affordance goes red on leg (iii).
+ *
  * Exits 2 (PENDING CLIENT) until window.__CHUD exists.
  */
 import {
@@ -73,7 +87,7 @@ import {
   reporter, green, red, dim, bold, EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
 import {
-  openTouchPage, centre, settleLayout, waitForBridge, KEYBOARD_PX,
+  openTouchPage, centre, settleLayout, waitForBridge, KEYBOARD_PX, probeReachability,
 } from './lib/touch.mjs';
 import * as audit from './lib/audit.mjs';
 import { loadFixture, stageFixture, quietTransients } from './lib/stage.mjs';
@@ -143,12 +157,62 @@ try {
    * suppressed and the run is red whenever this list is non-empty.
    */
   const stagesFailed = [];
+  /**
+   * P9 round 2: "clipped by a scrolling ancestor — on-screen and still
+   * unreachable" was OVER-CLAIMING (mobile critic, verified with real CDP
+   * touch: the `.opponents` rail and `.board-props` both scroll fine under a
+   * thumb). Before a clipped or off-viewport control is allowed into the red
+   * lists it is now PROBED with a real dispatched swipe — see
+   * `probeReachability` in lib/touch.mjs for the three legs and for what the
+   * reclassification deliberately can no longer catch. A control behind a
+   * working, affordance-bearing scroller comes back as `*Reachable` (warned,
+   * not gated); a control that fails any leg stays red with the leg named.
+   */
+  async function probeAndSplit(handle, t) {
+    const byId = new Map();
+    for (const i of t.clippedInfo || []) {
+      const cur = byId.get(i.id) || { ...i, kinds: [] };
+      cur.kinds.push('clipped'); byId.set(i.id, cur);
+    }
+    for (const i of t.offscreenInfo || []) {
+      const cur = byId.get(i.id) || { ...i, kinds: [] };
+      cur.kinds.push('off'); byId.set(i.id, cur);
+    }
+    const res = { clipped: [], off: [], clippedReachable: [], offReachable: [] };
+    if (!byId.size) return res;
+    for (const p of await probeReachability(handle, [...byId.values()])) {
+      for (const k of p.kinds) {
+        const bucket = p.ok
+          ? (k === 'clipped' ? res.clippedReachable : res.offReachable)
+          : (k === 'clipped' ? res.clipped : res.off);
+        bucket.push(p.line);
+      }
+    }
+    return res;
+  }
+  let stageWasTransient = false;
   async function measureSurface(label, { live = false } = {}) {
+    /* A transient stage measures a banner with a 2600ms designed lifetime,
+     * and whether the cold reads landed inside it was luck: settleLayout
+     * below consumes an unpredictable slice of the banner's life, so PASS
+     * runs simply never saw the compressed frame (§8: the gate moved). Pin
+     * the phase: the cold reads happen WITH the banner up, or with a warn
+     * that it was already gone. */
+    if (stageWasTransient) {
+      const up = await page.waitForFunction(
+        () => document.querySelector('.announce:not([hidden])'),
+        null, { timeout: 3000 },
+      ).then(() => true).catch(() => false);
+      if (!up) r.warn(`[${label}] the transient banner was already gone before the cold reads — this run under-measures the banner frame`);
+    }
     // Settle by GEOMETRY, never by a sleep: the hand-fan verdict flipped between
     // three-under-44px and none-under depending on when the measurement landed.
     const s = await settleLayout(page);
     if (!s.settled) r.warn(`[${label}] layout never stopped moving in ${s.ms}ms — the numbers below are of a moving target`);
     const t = await page.evaluate(audit.auditTapTargets);
+    // Every COLD read happens before the probe: the probe swipes the frame
+    // around (and on a transient stage the clock is running), so it must be
+    // the last thing to touch what this surface is being measured on.
     const occ = await page.evaluate(audit.auditOcclusion);
     const dup = await page.evaluate(audit.auditDuplicateCTAs);
     captures++;
@@ -157,9 +221,30 @@ try {
       const at = markerSeen.get(key);
       if (at.length < 4) at.push(label);
     }
+    /* P10: reachability is a claim about the SETTLED table — §0.9 concerns
+     * controls a player must use, and during a docked transient (the 2.6s
+     * announce stripe) the rail is deliberately compressed. Probing during
+     * the banner made the verdict a function of banner phase at probe time
+     * (measured: PASS/FAIL/FAIL across three runs of an unchanged build).
+     * The cold reads above still measure the banner frame — occlusion during
+     * the announce is that audit's business; which cards a thumb can reach
+     * is judged on the table the player is left with. One-shot: live
+     * surfaces after a transient stage measure with the clock running. */
+    if (stageWasTransient) {
+      stageWasTransient = false;
+      await page.waitForFunction(
+        () => !document.querySelector('.announce:not([hidden])'),
+        null, { timeout: 6000 },
+      ).catch(() => {});
+      await quietTransients(page);
+      await settleLayout(page);
+    }
+    const reach = await probeAndSplit(h, t);
     const rec = {
       label, live, small: t.fatal, zones: t.zones, advisory: t.advisory,
-      off: t.offscreen, clipped: t.clipped, occ, dup, t,
+      off: reach.off, clipped: reach.clipped,
+      offReachable: reach.offReachable, clippedReachable: reach.clippedReachable,
+      occ, dup, t,
     };
     surfaceIssues.push(rec);
     if (t.scrollW > t.w + 1) {
@@ -300,6 +385,22 @@ try {
     );
     if (signalled && offline.connVisible) r.pass(`connection loss is shown to the player ${dim(offline.connClass || offline.toast)}`);
     else r.fail('[§H] the network went away and the UI says nothing — no visible reconnect affordance');
+    /* The offline window is a SURFACE (`.conn.is-off`, the RECONNECTING label)
+     * and this is the only gate in the harness that can hold it: it needs a
+     * socket that was genuinely wanted and then genuinely lost, which no
+     * fixture-staged page has (hud.js renderConn: `socket.wanted() &&
+     * !store.connected`, exactly so staged pages don't all scream RECONNECTING).
+     * tools/coverage.mjs reported `is-off` visited by nothing — the assertion
+     * above was reading the class off the DOM without ever telling the census.
+     * Census only, not measureSurface: the full audit would add a live surface
+     * to the clipped-controls count for a frame whose geometry §H does not
+     * change, and this stage is about the connection chrome, not tap floors. */
+    captures++;
+    for (const key of await page.evaluate(observeMarkers, CENSUS)) {
+      if (!markerSeen.has(key)) markerSeen.set(key, []);
+      const at = markerSeen.get(key);
+      if (at.length < 4) at.push('game:offline');
+    }
     await h.setOffline(false).catch(() => {});
     await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await page.waitForTimeout(2500);
@@ -494,6 +595,7 @@ try {
      * recorded from; without it `store.self.id` is null, `#lobby-host` never
      * appears and this gate measures a screen nobody is looking at. */
     if (fx) await stageFixture(page, fx, { at: opts.at, from: opts.from, drain: !opts.transient });
+    stageWasTransient = !!opts.transient;
     if (!opts.transient) await quietTransients(page);
     if (opts.drive) {
       const reached = await drive(page, opts.drive);
@@ -774,19 +876,35 @@ try {
 
   const offs = surfaceIssues.filter((s) => s.off.length);
   if (offs.length) {
-    r.fail(`interactive elements outside the viewport on ${offs.length} surface(s)`);
+    r.fail(`interactive elements outside the viewport on ${offs.length} surface(s) — probed with a real swipe and still unreachable`);
     for (const s of offs) r.info(`${s.label}: ${s.off.slice(0, 5).join(', ')}`);
-  } else summary(true, 'every interactive element is on-screen on every surface');
+  } else summary(true, 'every interactive element is on-screen or provably scroll-reachable on every surface');
 
   /* The other half of "on-screen": inside the viewport but scrolled out of its
-   * own overflow container, which the viewport test cannot see. */
+   * own overflow container, which the viewport test cannot see. P9 round 2:
+   * "unreachable" is only claimed after probeReachability has ACTUALLY TRIED
+   * with a real swipe — the failing leg is in each line. */
   const clips = surfaceIssues.filter((s) => (s.clipped || []).length);
   if (clips.length) {
     const total = new Set(surfaceIssues.flatMap((s) => s.clipped || [])).size;
-    r.fail(`${total} distinct control(s) clipped by a scrolling ancestor across ${clips.length} surface(s) `
-      + '— on-screen and still unreachable');
+    r.fail(`${total} distinct control(s) clipped by an overflow ancestor across ${clips.length} surface(s) `
+      + '— probed with a real swipe and still unreachable');
     for (const s of clips) r.info(`${s.label}: ${[...new Set(s.clipped)].slice(0, 5).join(', ')}`);
-  } else summary(true, 'no control is clipped away by an overflow container');
+  } else summary(true, 'no control is clipped away by an overflow container (real-swipe probed)');
+
+  /* The reclassified ones: behind a scroller that a real dispatched swipe
+   * moved, that revealed ≥44px of the control, and that announced itself in
+   * the cold frame. Reported, never gated — and never silently dropped. */
+  const reclassed = surfaceIssues.filter(
+    (s) => (s.clippedReachable || []).length || (s.offReachable || []).length,
+  );
+  if (reclassed.length) {
+    const lines = (s) => [...new Set([...(s.clippedReachable || []), ...(s.offReachable || [])])];
+    const total = new Set(reclassed.flatMap(lines)).size;
+    r.warn(`${total} control(s) behind a WORKING scroller with a visible cold-frame affordance `
+      + '— verified reachable by a real dispatched swipe, so reported, not gated');
+    for (const s of reclassed) for (const line of lines(s).slice(0, 6)) r.info(`${s.label}: ${line}`);
+  }
 
   const occAll = surfaceIssues.filter((s) => s.occ.length);
   if (occAll.length) {
@@ -895,6 +1013,92 @@ try {
       r.fail(`--prove: pristine ${withPristine} hint node(s) vs spent ${withSpent} — the storage fix `
         + 'cannot be shown to change what §D is able to see');
     }
+
+    /* ═══ Half three: reachability-by-real-scroll must fail BOTH ways ═════
+     *
+     * P9 round 2 reclassified "clipped by a scrolling ancestor" from a
+     * geometry claim into a three-leg gesture measurement (probeReachability,
+     * lib/touch.mjs). §8 says a reclassification is a new assertion, and both
+     * of its outs need to be watched going red on the surface that caused it —
+     * the five-player landscape rail:
+     *
+     *   (a) leg (i): nail the rail shut (`overflow: hidden`, via addStyleTag,
+     *       the genuine-clip defect the old string always claimed) — the
+     *       probe's swipes must move nothing and the verdict must go red;
+     *   (b) leg (iii): keep the rail scrolling but strip every cold-frame
+     *       affordance (port cut exactly on a seat boundary so no sliver,
+     *       scrollbar hidden, edge mask off) — reachable by force, and still
+     *       red, because a scroller nothing announces is one nobody scrolls.
+     */
+    await page.setViewportSize(LANDSCAPE);
+    if (await stage('five-player', { cold: false, label: 'prove reachability' })) {
+      await settleLayout(page);
+      const gated = async () => {
+        const t = await page.evaluate(audit.auditTapTargets);
+        const s2 = await probeAndSplit(h, t);
+        return {
+          red: new Set([...s2.clipped, ...s2.off]).size,
+          ok: new Set([...s2.clippedReachable, ...s2.offReachable]).size,
+        };
+      };
+      const clean = await gated();
+      if (clean.red > 0 || clean.ok === 0) {
+        r.fail(`--prove reachability: no clean baseline — the untouched rail probes red ${clean.red} / `
+          + `reachable ${clean.ok}, so the demonstrations below prove nothing`);
+      } else {
+        r.info(`prove reachability baseline: 0 red, ${clean.ok} reclassified reachable`);
+      }
+
+      const tagA = await page.addStyleTag({ content: '#opponents { overflow: hidden !important; }' });
+      await settleLayout(page);
+      const nailed = await gated();
+      await tagA.evaluate((el) => el.remove());
+      if (nailed.red > clean.red) {
+        r.pass(`--prove reachability (a): overflow:hidden on the rail took the red count ${clean.red} → ${nailed.red} `
+          + '— a scroller that will not move under a real swipe stays red');
+      } else {
+        r.fail(`--prove reachability (a): nailing the rail shut left the red count at ${nailed.red} — `
+          + 'the probe cannot tell a working scroller from a genuine clip, so its green is a decoration');
+      }
+
+      await settleLayout(page);
+      const blinded = await page.evaluate(() => {
+        const rail = document.getElementById('opponents');
+        if (!rail) return false;
+        const pr = rail.getBoundingClientRect();
+        // Cut the port EXACTLY on a child boundary: no partially-visible seat,
+        // therefore no sliver, and the styles below take the other two
+        // affordances. The rail still scrolls — only leg (iii) is broken.
+        let bottom = pr.top;
+        for (const ch of rail.children) {
+          const cr = ch.getBoundingClientRect();
+          if (cr.bottom <= pr.bottom + 1) bottom = Math.max(bottom, cr.bottom);
+        }
+        const st = document.createElement('style');
+        st.id = 'chud-prove-affless';
+        st.textContent = `#opponents { height: ${Math.max(48, Math.round(bottom - pr.top))}px !important;`
+          + ' flex: none !important; scrollbar-width: none !important;'
+          + ' -webkit-mask-image: none !important; mask-image: none !important; }'
+          + ' #opponents::-webkit-scrollbar { display: none !important; width: 0 !important; }';
+        document.head.appendChild(st);
+        return true;
+      });
+      if (!blinded) {
+        r.fail('--prove reachability (b): no #opponents rail to strip — the demonstration cannot run');
+      } else {
+        await settleLayout(page);
+        const affless = await gated();
+        await page.evaluate(() => document.getElementById('chud-prove-affless')?.remove());
+        if (affless.red > clean.red) {
+          r.pass(`--prove reachability (b): stripping every cold-frame affordance took the red count `
+            + `${clean.red} → ${affless.red} — a scroller that works but never announces itself stays red`);
+        } else {
+          r.fail(`--prove reachability (b): an affordance-free scroller left the red count at ${affless.red} — `
+            + 'leg (iii) cannot fail, so "reachable" would green a scroller no player would ever discover');
+        }
+      }
+    }
+    await page.setViewportSize(PHONE);
   }
 
   /* ═══ --prove-surfaces: every P9 surface, watched going red ════════════
@@ -1065,10 +1269,15 @@ try {
         await quietTransients(lh.page);
         await settleLayout(lh.page);
         const t = await lh.page.evaluate(audit.auditTapTargets);
+        // Same reachability treatment as the dark pass — the light theme must
+        // not be able to go red on a claim the dark theme is not held to.
+        const reach = await probeAndSplit(lh, t);
         const occ = await lh.page.evaluate(audit.auditOcclusion);
         surfaceIssues.push({
           label: `${name} (cold, light)`, small: t.fatal, zones: t.zones, advisory: t.advisory,
-          off: t.offscreen, clipped: t.clipped, occ, dup: [], t,
+          off: reach.off, clipped: reach.clipped,
+          offReachable: reach.offReachable, clippedReachable: reach.clippedReachable,
+          occ, dup: [], t,
         });
       }
       const dk = (n) => surfaceIssues.find((s) => s.label === `${n} (cold)`);

@@ -605,6 +605,19 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  /* ROUND-2 LOOK #6: the fold cut the deck editor mid-row ("TDY Orders" sliced
+     at the frame edge) with no cue that the column continues — the harness
+     hides scrollbars, so a cut row was the END of the screen as far as the
+     picture could say. The travelling shades are .opponents' own device
+     (table.css records why it beat a static fade): each `local` layer rides
+     the content, so a shade can only appear at an end that has rows behind
+     it, and a row sliced by the fold now sits under a shadow that says
+     "scroll" instead of under nothing. */
+  background:
+    linear-gradient(180deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 0 / 100% 1.2em no-repeat local,
+    linear-gradient(0deg, var(--ground) 46%, rgba(0, 0, 0, 0)) 0 100% / 100% 1.2em no-repeat local,
+    linear-gradient(180deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 0 / 100% .9em no-repeat,
+    linear-gradient(0deg, var(--shade-2), rgba(0, 0, 0, 0)) 0 100% / 100% .9em no-repeat;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   /* `safe center`, and the `safe` is the whole point — lobby.css records the
@@ -1132,7 +1145,25 @@
 .timer-text { position: relative; font-size: .7em; font-weight: 700; color: var(--fg); letter-spacing: -.02em; }
 .timer.is-urgent { --ring-col: var(--fg); }
 .timer.is-urgent::before { inset: 24%; }
-.timer.is-critical { --ring-col: var(--danger); }
+/* ── CRITICAL (≤5s) IS HAZARD MATERIAL, NOT A COLOURED CHIP ────────────────
+   ROUND-2 LOOK #5 (timer-critical@desktop): the ≤5s ring was a plain vermillion
+   wedge — §1's named ban, in the one state a colourblind player most needs to
+   read, while every other danger in the app wears 45° stripes
+   (final-approach@desktop shows the correct form). The remaining-time wedge is
+   now a WINDOW onto the hazard material: the striped layer sits under the whole
+   ring and the elapsed portion is painted over in --shade, so the sweep
+   geometry is untouched and what drains away is caution stripe. The ring
+   thickens to 28% at the same moment (the base rule above), which is what keeps
+   a 5px/10px stripe legible on a 2.35em ring — measured ~10px of annulus at
+   the HUD size, ~12px on .prompt-timer's 2.9em, both of which this rule also
+   reaches. Text stays --danger-ink on the ::before's --surface disc: 4.69:1
+   light / 4.62:1 dark (variables.css's own figures). */
+.timer.is-critical {
+  --ring-col: var(--danger);
+  background:
+    conic-gradient(rgba(0, 0, 0, 0) calc(var(--frac, 1) * 360deg), var(--shade) 0),
+    var(--hazard-fine);
+}
 .timer.is-critical::before { inset: 28%; }
 .timer.is-critical .timer-text { color: var(--danger-ink); }
 

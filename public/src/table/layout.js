@@ -325,6 +325,22 @@ export function syncSeats(snapshot, mySeatId) {
  * (§0.8 guarded writes): the gist re-renders on every broadcast and must not
  * churn nodes to do it.
  */
+/* ── THE MINI-TIER LETTER CODE (ART §6 amendment) ──────────────────────────
+ * ROUND-2 LOOK #2: a collapsed seat's meters were bare coloured squares —
+ * hue-only signalling, which §1 bans, dropped exactly where the cards are
+ * smallest (mid-game@phone). The §6 amendment gives the smallest tier to a
+ * LETTER/short code per set — the MIL-STD-2525 split (air platform type as a
+ * Sector-1 letter) — so the code, not the hue, is the colourblind channel here.
+ * Derived from the set names, disambiguated the way 2525 does it: one letter
+ * where one is unique, two where it is not (Training owns T, so Test & Eval is
+ * TE; Space Force's S would collide with nothing today but SF is its own
+ * service's mark). Painted --band-ink on the raw set colour: ART §2 certifies
+ * white-on-set at 5.07:1 (Mobility, the worst) to 11.04:1. */
+const SET_CODE = Object.freeze({
+  brown: 'D', lightblue: 'T', pink: 'SF', orange: 'TE', red: 'F',
+  yellow: 'M', green: 'E', darkblue: 'C', base: 'OB', intel: 'I',
+});
+
 function buildGist() {
   const gist = el('div', { class: 'seat-gist' });
   gist.appendChild(el('span', { class: 'gist-armed', text: 'ARMED', attrs: { hidden: true } }));
@@ -333,6 +349,9 @@ function buildGist() {
       class: 'gist-meter',
       attrs: { 'data-color': color, 'data-size': COLORS[color].size, 'data-have': '0', hidden: true },
     });
+    // The code leads the segments — "F ▮▮▯" reads as a 2525 designator with a
+    // fill state, and the letter is on screen exactly when the mats are not.
+    meter.appendChild(el('b', { class: 'gm-code', text: SET_CODE[color] || '?' }));
     for (let i = 0; i < COLORS[color].size; i++) meter.appendChild(el('i', { class: 'gm-seg' }));
     gist.appendChild(meter);
   }

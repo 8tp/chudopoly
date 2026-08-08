@@ -83,6 +83,16 @@ export const EXEMPT = {
   'class:is-changed': 'a 1-frame flash on a number that just moved',
   'class:is-hit': 'the damage flash on a seat that just paid',
   'class:is-in': 'the fade-IN half of an announce/toast; the settled state is the class without it',
+  'class:is-empty': 'the hud-strip with its paint turned OFF — content.css makes it '
+    + '`visibility: hidden` (display: none under 1023px) precisely so the reserved band '
+    + 'cannot move the felt. Its entire visible effect is that nothing is painted, and '
+    + 'observeMarkers counts only PAINTED nodes by design, so the marker is structurally '
+    + 'unobservable: there is no frame in which it is both on and visible',
+  'attr:data-facing=down': 'the face-down half of a card flight. table/index.js spawnCard '
+    + 'sets it only with `faceDown: animate` (anim in progress) and anim/flight.js flips it '
+    + 'up at the arc\'s half-turn — no settled zone in this client rests a card face-down, '
+    + 'so the only frames carrying it are the mid-flight ones stableScreenshot refuses '
+    + '(same transient family as is-flying/is-landing above)',
 };
 
 /** Read `public/style/*.css` and return every state class + value selector. */

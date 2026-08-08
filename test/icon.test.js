@@ -8,7 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { readFileSync, existsSync } = require('node:fs');
 const icon = require('../server/icon');
 
 const html = readFileSync('public/index.html', 'utf8');
@@ -35,13 +35,16 @@ test('theme-color is declared for both colour schemes', () => {
   assert.ok(metas.some(m => /prefers-color-scheme: light/.test(m)));
 });
 
-test('every manifest icon resolves to a route the server can actually serve', () => {
+test('every manifest icon resolves to something the server can actually serve', () => {
+  // Two legal sources since §0.3 amendment (f): the /icon.svg route, and the
+  // committed /icons/*.png set that tools/genicons.mjs renders from this same
+  // geometry (test/pwa.test.js holds the byte-for-byte provenance).
   for (const entry of manifest.icons) {
     const path = entry.src.split('?')[0];
     if (path === '/icon.svg') { assert.ok(icon.tabSVG().length > 0); continue; }
-    const key = /^\/icon-(.+)\.png$/.exec(path);
-    assert.ok(key, `manifest points at ${path}, which is not an icon route`);
-    assert.ok(icon.pngFor(key[1]), `no icon generated for /icon-${key[1]}.png`);
+    const file = /^\/icons\/(icon-[\w-]+\.png)$/.exec(path);
+    assert.ok(file, `manifest points at ${path}, which is neither the SVG route nor a committed /icons/ file`);
+    assert.ok(existsSync(`public/icons/${file[1]}`), `manifest points at ${path} but the file is not committed — run node tools/genicons.mjs`);
   }
   // An Android install prompt is refused without a maskable icon >=192px.
   assert.ok(manifest.icons.some(i => i.purpose === 'maskable'));

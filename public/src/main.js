@@ -141,8 +141,50 @@ function wireNet() {
   // just be eaten by fx's 300ms floor.
 }
 
+/* ── installed-app detection ───────────────────────────────────────────────
+ *
+ * The manifest asks for `display: standalone`, and an install that got it has
+ * no URL bar, no tab strip, and (on iOS) no pull-to-refresh escape — a
+ * different chrome geometry than the browser the CSS was measured in. The
+ * class lets CSS and code branch on which one is really hosting the page:
+ *
+ *   html.is-pwa        set when the display-mode media query matches
+ *                      (standalone or fullscreen — both mean "no browser
+ *                      chrome"), or when iOS's pre-manifest signal
+ *                      `navigator.standalone` is true. Browser-tab visits,
+ *                      including minimal-ui, stay unclassed.
+ *
+ * MEASURED in a real standalone window (Chromium `--app=`, the same window
+ * chrome an installed PWA gets — CDP cannot emulate `display-mode`, it is not
+ * in setEmulatedMedia's feature set): the query matches and the class is on
+ * <html> at load with no staging; a browser tab at the same 390×844 stays
+ * unclassed. Layout needed no branch: home-rail bottom 844 and primary CTA
+ * top 656 in BOTH modes, because .screen's env(safe-area-inset-*) padding
+ * (the single owner — checkClient) is the only thing standalone geometry
+ * moves, and env() reports it directly. The `change` listener covers a tab
+ * popped into an installed window mid-session; no tool can stage that
+ * transition, which is what __CHUD.setPWA is for.
+ *
+ * `pwaForced` is that §9 staging hook: setPWA(true|false) pins the class,
+ * setPWA(null) returns to detection. Additive — the §9 contract is unchanged.
+ */
+let pwaForced = null;
+let pwaMQ = null;
+
+function applyPWA() {
+  const detected = (pwaMQ ? pwaMQ.matches : false) || navigator.standalone === true;
+  document.documentElement.classList.toggle('is-pwa', pwaForced ?? detected);
+}
+
+function wirePWA() {
+  try { pwaMQ = matchMedia('(display-mode: standalone), (display-mode: fullscreen)'); } catch { pwaMQ = null; }
+  applyPWA();
+  pwaMQ?.addEventListener?.('change', applyPWA);
+}
+
 function boot() {
   wireConnectionFlag();
+  wirePWA();
   table.mount(store.store.self.id);
 
   screens.mount();
@@ -159,7 +201,14 @@ function boot() {
   wireNet();
 
   if (isHarness()) {
-    installHarness(ready, (msg, opts) => applyState(msg, opts));
+    const bridge = installHarness(ready, (msg, opts) => applyState(msg, opts));
+    // Stage "this is the installed app" without an install: pins html.is-pwa
+    // past any emulated-media flap; setPWA(null) hands back to detection.
+    bridge.setPWA = (on) => {
+      pwaForced = on == null ? null : !!on;
+      applyPWA();
+      return document.documentElement.classList.contains('is-pwa');
+    };
   } else {
     // §7: no AudioContext before a gesture.
     //

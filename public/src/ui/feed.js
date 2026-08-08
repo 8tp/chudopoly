@@ -182,14 +182,24 @@ function line(ev) {
       return { mark: '☠', weight: 'big', text: `${who(ev.actor)} SCOOPED OUT` };
 
     /* the race */
+    // "— 1 sets" shipped on every FIRST completed set, which is most of them.
+    // Same defect family as s3()/whom() above: a count in a template needs its
+    // noun declined.
     case 'set_completed':
       return { mark: '★', weight: 'big', color: ev.color,
-        text: `${who(ev.actor)} completed ${colorName(ev.color)} — ${ev.total} sets` };
-    case 'final_approach':
+        text: `${who(ev.actor)} completed ${colorName(ev.color)} — ${ev.total} set${ev.total === 1 ? '' : 's'}` };
+    // WHOSE turns. `opponentTurnsRemaining` counts turns by OTHER players before
+    // the converting turn (game.js opponentTurnsRemaining / checkpointForecast)
+    // — "hold 3 sets for 2 more turns" read as two of YOUR turns, which under
+    // the full-cycle rule is exactly the misreading the engine's
+    // final_approach_pending narration exists to correct.
+    case 'final_approach': {
+      const n = ev.opponentTurnsRemaining;
       return { mark: '⚑', weight: 'big',
         text: isMe(ev.actor)
-          ? `FINAL APPROACH — hold ${ev.sets} sets for ${ev.opponentTurnsRemaining ?? '?'} more turns`
-          : `${who(ev.actor)} on FINAL APPROACH — ${ev.opponentTurnsRemaining ?? '?'} turns to break them` };
+          ? `FINAL APPROACH — hold ${ev.sets} set${ev.sets === 1 ? '' : 's'} for ${n ?? '?'} more enemy turn${n === 1 ? '' : 's'}`
+          : `${who(ev.actor)} on FINAL APPROACH — ${n ?? '?'} turn${n === 1 ? '' : 's'} to break them` };
+    }
     case 'final_approach_broken':
       return { mark: '✖', weight: isMe(ev.actor) ? 'hit' : 'big',
         text: `${whose(ev.actor)} final approach BROKEN${ev.by ? ` by ${whom(ev.by)}` : ''}` };

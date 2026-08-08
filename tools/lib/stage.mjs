@@ -75,9 +75,19 @@ export function stateAt(states, at) {
  * announcement is not in any snapshot, it is what the client does when an
  * event arrives, so the harness has to make the event arrive.
  *
+ * `timer` (seconds) REBASES the fixture's served clocks. A recorded broadcast
+ * carries the server's own `turnTimer`/`responseTimer` `{timeout, startedAt}`
+ * — a wall-clock envelope, not game state — and replaying it hours later makes
+ * every countdown read 0s left, which is why no staged shot had ever shown
+ * `#hud-timer` at all. Rebasing `startedAt` to `Date.now() - (timeout - N)*1000`
+ * reproduces exactly what a live client observes N seconds before that same
+ * timer expires; the game state is untouched, only the clock origin moves —
+ * the same alignment every replay of a wall-clock field requires. It never
+ * INVENTS a timer: a fixture whose broadcast carried none stays clockless.
+ *
  * @param {import('playwright').Page} page
  * @param {{states:object[], selfId:string|null}} fx
- * @param {{at?:number, from?:number, drain?:boolean}} opts
+ * @param {{at?:number, from?:number, drain?:boolean, timer?:number}} opts
  * @returns {Promise<{selfId:string|null, adopted:boolean}>}
  */
 export async function stageFixture(page, fx, opts = {}) {
@@ -97,10 +107,17 @@ export async function stageFixture(page, fx, opts = {}) {
   }
 
   const state = stateAt(fx.states, opts.at);
-  await page.evaluate(([s, drain]) => {
+  await page.evaluate(([s, drain, timerLeft]) => {
+    if (timerLeft != null) {
+      for (const k of ['turnTimer', 'responseTimer']) {
+        if (s[k] && s[k].timeout > 0) {
+          s = { ...s, [k]: { ...s[k], startedAt: Date.now() - (s[k].timeout - timerLeft) * 1000 } };
+        }
+      }
+    }
     window.__CHUD.applyState(s);
     if (drain) window.__CHUD.drainEvents?.();
-  }, [state, opts.drain !== false]);
+  }, [state, opts.drain !== false, opts.timer ?? null]);
   return { selfId: fx.selfId, adopted };
 }
 

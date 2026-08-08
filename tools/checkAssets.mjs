@@ -67,6 +67,12 @@ const BANNED_EXT = new RegExp(
 const ALLOW = [
   { dir: ['public', 'fonts'], ext: '.woff2', cap: null, why: '§0.3 amendment (b): self-hosted webfonts' },
   { dir: ['public', 'audio'], ext: '.opus', cap: 8, why: '§0.3 amendment (e): recorded music, at most eight tracks — lobby, four match beds, final approach, victory, defeat' },
+  // The cap is the SET: 32 tab fallback, 180 apple-touch, 192/512 any-purpose,
+  // 192/512 maskable. Every byte is rendered by tools/genicons.mjs from
+  // server/icon.js's hand-authored geometry, and test/pwa.test.js fails if the
+  // committed files differ from a fresh render — this gate holds the count and
+  // the location, that one holds the provenance.
+  { dir: ['public', 'icons'], ext: '.png', cap: 6, why: '§0.3 amendment (f): PWA install icons, rendered by tools/genicons.mjs' },
 ];
 
 function allowedFor(rel) {

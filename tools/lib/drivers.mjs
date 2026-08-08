@@ -533,6 +533,280 @@ export const DRIVERS = {
     const kind = [...el.classList].find((c) => c.startsWith('is-') && c !== 'is-in') || '?';
     return `announce:${kind} "${flag}" ${Math.round(r.width)}×${Math.round(r.height)} at y${Math.round(r.top)}`;
   },
+
+  /* ── P10 surfaces: the 20 markers tools/coverage.mjs reported unvisited ── */
+
+  /**
+   * THE ANSWER CLOCK NEAR EXPIRY — `#hud-timer` shown, `.is-urgent` (≤10s) and
+   * `.is-critical` (≤5s) both on. No shot had ever seen ANY of the three,
+   * because every recorded `turnTimer.startedAt` is hours stale by capture
+   * time and ui/hud.js correctly hides a clock at 0 left. The stage rebases
+   * the clock (stage.mjs `timer`); this driver does not touch it — it WAITS
+   * for the client's own tick to cross into critical and reports what the ring
+   * says, so the shot cannot fire before the state it is about exists.
+   */
+  'timer-critical': async () => {
+    for (let i = 0; i < 50; i++) {
+      const box = document.getElementById('hud-timer');
+      if (box && !box.hidden && box.getBoundingClientRect().height > 0
+        && box.classList.contains('is-critical')) {
+        const text = (box.textContent || '').trim();
+        return `timer:critical "${text}" urgent=${box.classList.contains('is-urgent')}`;
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    const box = document.getElementById('hud-timer');
+    if (!box || box.hidden || !box.getBoundingClientRect().height) {
+      return 'stuck:timer-hidden (no served clock reached the ring — was the fixture staged with a rebased timer?)';
+    }
+    return `stuck:never-critical "${(box.textContent || '').trim()}" class="${box.className}"`;
+  },
+
+  /**
+   * `[data-theme="dark"]` — the settings sheet's explicit theme override, the
+   * one selection path (variables.css:292) neither the review set nor
+   * checkContrast ever drove: the harness writes `light` as its override probe
+   * and the media query supplies dark, so the dark ATTRIBUTE was written by
+   * nobody. Reached the way a player reaches it: the radio in settings.
+   */
+  'settings-dark': async () => {
+    document.querySelector('#hud [data-action="settings"]')?.click();
+    await new Promise((r) => setTimeout(r, 320));
+    if (document.getElementById('sheet')?.hidden !== false) return 'theme:sheet-closed';
+    const radio = document.querySelector('input[name="chud-theme"][value="dark"]');
+    if (!radio) return 'theme:no-dark-radio';
+    radio.click();
+    await new Promise((r) => setTimeout(r, 160));
+    const attr = document.documentElement.getAttribute('data-theme');
+    return attr === 'dark' ? 'theme:dark (attribute set by the settings radio)' : `theme:attr="${attr || ''}"`;
+  },
+
+  /**
+   * `[data-stock="custom"]` — the host lobby's deck-total chip once the deck
+   * editor has moved off the stock 106. Reached by a real host action: open
+   * the advanced ruleset and take one enabled stepper up a step. Local-only
+   * (lobby.js onDeckStep updates `pending` and repaints; nothing needs a live
+   * socket, and socket.js queues silently before first open).
+   */
+  'lobby-custom': async () => {
+    const adv = document.querySelector('details.ruleset-adv');
+    if (!adv) return 'stock:no-advanced-ruleset (guest lobby?)';
+    if (!adv.open) {
+      adv.querySelector('summary')?.click();
+      await new Promise((r) => setTimeout(r, 240));
+    }
+    const inc = [...document.querySelectorAll('.deck-step[data-delta="1"]')].find((b) => !b.disabled);
+    if (!inc) return 'stock:no-enabled-stepper';
+    inc.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const total = document.getElementById('deck-total');
+    if (!total || !total.getBoundingClientRect().height) return 'stock:total-chip-hidden';
+    // Into the frame, not merely into the DOM: the editor sits below the fold
+    // of the rules column, and a census sample of an off-screen chip would be
+    // the "in the DOM is not on the screen" claim coverage exists to refuse.
+    total.scrollIntoView({ block: 'center' });
+    await new Promise((r) => setTimeout(r, 220));
+    const r = total.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > innerHeight) return 'stock:total-chip-offscreen';
+    return `stock:${total.getAttribute('data-stock')} "${(total.textContent || '').trim()}"`;
+  },
+
+  /**
+   * THE SET STEAL — Inspector General's `theirSet` step, which no gate had
+   * ever entered (the `targeting` fixture's foes hold zero complete sets, so
+   * IG there is the REFUSAL, not the steal). Fixture `steal-set` guarantees a
+   * victim; this walks the player's own two taps: victim seat, then the set.
+   * The shot is taken ON the theirSet step with the victim's sets marked.
+   */
+  'steal-set': async () => {
+    const B = window.__CHUD;
+    const me = B.snapshot?.players?.find((p) => p.id === B.selfId);
+    const ig = (me?.hand || []).find((c) => c.action === 'inspector_general');
+    if (!ig) return 'stuck:no-inspector-general-in-hand';
+    document.querySelector(`#zone-hand [data-card-id="${ig.id}"], [data-zone="hand"] [data-card-id="${ig.id}"]`)?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    document.querySelector('[data-action="play-card"]:not([disabled])')?.click();
+    await new Promise((r) => setTimeout(r, 220));
+    if (B.mode?.kind !== 'target') return `stuck:mode-${B.mode?.kind || 'none'}`;
+    if (B.mode.needs?.[0] === 'player') {
+      const seat = document.querySelector('[data-targetable="1"]');
+      if (!seat) return 'stuck:player-step-with-no-targetable-seat';
+      seat.click();
+      await new Promise((r) => setTimeout(r, 220));
+    }
+    if (B.mode?.needs?.[0] !== 'theirSet') {
+      return `stuck:step-${B.mode?.needs?.[0] || 'none'} (mode ${B.mode?.kind})`;
+    }
+    const sets = document.querySelectorAll('.propcol[data-targetable="1"]').length;
+    if (!sets) return 'stuck:theirSet-step-reached-but-no-set-marked';
+    return `theirSet:${sets} set(s) targetable — "${B.mode.hint || ''}"`;
+  },
+
+  /**
+   * THE UPGRADE PLACEMENT — `mySet`, the other targeting step nothing had
+   * entered. Fixture `upgrade-set` holds an Upgrade over a complete,
+   * un-upgraded set; the step marks the player's own qualifying columns.
+   */
+  'upgrade-set': async () => {
+    const B = window.__CHUD;
+    const me = B.snapshot?.players?.find((p) => p.id === B.selfId);
+    const up = (me?.hand || []).find((c) => c.action === 'upgrade' || c.action === 'foc');
+    if (!up) return 'stuck:no-upgrade-in-hand';
+    document.querySelector(`#zone-hand [data-card-id="${up.id}"], [data-zone="hand"] [data-card-id="${up.id}"]`)?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    document.querySelector('[data-action="play-card"]:not([disabled]):not(.is-refusing)')?.click();
+    await new Promise((r) => setTimeout(r, 220));
+    if (B.mode?.kind !== 'target' || B.mode.needs?.[0] !== 'mySet') {
+      return `stuck:mode-${B.mode?.kind || 'none'} step-${B.mode?.needs?.[0] || 'none'}`;
+    }
+    const sets = document.querySelectorAll('.propcol[data-targetable="1"]').length;
+    if (!sets) return 'stuck:mySet-step-reached-but-no-set-marked';
+    return `mySet:${sets} set(s) targetable — "${B.mode.hint || ''}"`;
+  },
+
+  /**
+   * `.prompt-why.is-approach` — the FINAL APPROACH payment warning
+   * (prompt.js approachWarning: "paying with a card out of a complete set ends
+   * it"), which only exists when the ARMED seat is the one being charged. No
+   * recorded transcript ever held that state (the recording seat arms and
+   * wins); fixture `approach-pay` is built through engine calls. Nothing to
+   * drive — the respond prompt paints it on its own — so this only VERIFIES,
+   * because a shot that silently degraded to an ordinary payment prompt would
+   * be the round-1 targeting lie again.
+   */
+  'approach-warning': async () => {
+    for (let i = 0; i < 10; i++) {
+      const el = document.querySelector('.prompt-why.is-approach');
+      if (el && el.getBoundingClientRect().height > 0) {
+        return `approach:"${(el.textContent || '').trim().slice(0, 56)}"`;
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    const me = window.__CHUD.snapshot?.players?.find((p) => p.id === window.__CHUD.selfId);
+    return `approach:absent (finalApproach=${!!me?.finalApproach}, pending=${window.__CHUD.snapshot?.pendingAction?.type || 'none'})`;
+  },
+
+  /**
+   * `.is-decider` — the win screen's "decided on points" emphasis
+   * (overlays.js boardRow, only under endReason 'stalemate'). Every recorded
+   * game ends on sets, so the attrition ending had no shot; fixture
+   * `win-points` reaches it through the engine's own endgame path.
+   */
+  'win-decider': async () => {
+    for (let i = 0; i < 30; i++) {
+      const overlay = document.getElementById('win-overlay');
+      if (overlay && !overlay.hidden) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    const overlay = document.getElementById('win-overlay');
+    if (!overlay || overlay.hidden) return 'stuck:no-win-overlay';
+    const marks = overlay.querySelectorAll('.win-sets.is-decider, .win-worth.is-decider').length;
+    const tag = (overlay.querySelector('.win-tag')?.textContent || '').trim();
+    if (!marks) return `stuck:no-decider-mark (tag "${tag}")`;
+    return `decider:${marks} mark(s), tag "${tag}"`;
+  },
+
+  /**
+   * The Mission Brief's inner pages. The `help` shot photographs the DEFAULT
+   * page (Goal) and nothing had ever turned to the others, so `.brief-card`
+   * kinds (is-chud/is-rent), the OPSEC flags (is-block), the rent ladder's
+   * `.rung.is-full` and the chain beats (is-defend/is-result) were all styled,
+   * reachable and unvisited. One driver, page by name, verifying the tab took.
+   */
+  /* Serialised one at a time by page.evaluate (no module scope survives), so
+   * each page driver carries the same ~12 lines rather than sharing a helper —
+   * the price this file already pays everywhere, stated once here. */
+  'help-cards': async () => {
+    document.querySelector('#hud [data-action="help"], [data-action="help"]')?.click();
+    await new Promise((r) => setTimeout(r, 360));
+    if (document.getElementById('sheet')?.hidden !== false) return 'brief:sheet-closed';
+    const tab = document.querySelector('[data-action="help-page"][data-page="cards"]');
+    if (!tab) return 'brief:no-cards-tab';
+    tab.click();
+    await new Promise((r) => setTimeout(r, 260));
+    const on = document.querySelector('.brief-tab.is-on')?.dataset.page;
+    if (on !== 'cards') return `brief:tab-still-${on}`;
+    const vis = (sel) => [...document.querySelectorAll(sel)]
+      .filter((e) => e.getBoundingClientRect().height > 0).length;
+    const kinds = vis('.brief-card.is-chud, .brief-card.is-rent');
+    const flags = vis('.brief-card-flag.is-block');
+    if (!kinds || !flags) return `stuck:cards open but kinds=${kinds} block-flags=${flags}`;
+    return `brief:cards ${kinds} kind-marked card(s), ${flags} OPSEC block flag(s)`;
+  },
+  'help-sets': async () => {
+    document.querySelector('#hud [data-action="help"], [data-action="help"]')?.click();
+    await new Promise((r) => setTimeout(r, 360));
+    if (document.getElementById('sheet')?.hidden !== false) return 'brief:sheet-closed';
+    const tab = document.querySelector('[data-action="help-page"][data-page="sets"]');
+    if (!tab) return 'brief:no-sets-tab';
+    tab.click();
+    await new Promise((r) => setTimeout(r, 260));
+    const on = document.querySelector('.brief-tab.is-on')?.dataset.page;
+    if (on !== 'sets') return `brief:tab-still-${on}`;
+    const n = [...document.querySelectorAll('.rung.is-full')]
+      .filter((e) => e.getBoundingClientRect().height > 0).length;
+    if (!n) return 'stuck:sets open but 0 full rungs visible';
+    return `brief:sets ${n} full rung(s)`;
+  },
+  'help-opsec': async () => {
+    document.querySelector('#hud [data-action="help"], [data-action="help"]')?.click();
+    await new Promise((r) => setTimeout(r, 360));
+    if (document.getElementById('sheet')?.hidden !== false) return 'brief:sheet-closed';
+    const tab = document.querySelector('[data-action="help-page"][data-page="opsec"]');
+    if (!tab) return 'brief:no-opsec-tab';
+    tab.click();
+    await new Promise((r) => setTimeout(r, 260));
+    const on = document.querySelector('.brief-tab.is-on')?.dataset.page;
+    if (on !== 'opsec') return `brief:tab-still-${on}`;
+    const vis = (sel) => [...document.querySelectorAll(sel)]
+      .filter((e) => e.getBoundingClientRect().height > 0).length;
+    const defend = vis('.op-beat.is-defend');
+    const result = vis('.op-beat.is-result');
+    if (!defend || !result) return `stuck:opsec open but defend=${defend} result=${result}`;
+    return `brief:opsec ${defend} defend beat(s), ${result} result beat(s)`;
+  },
+
+  /**
+   * `.chip.total.is-over` — the discard picker refusing an OVER-pick. The
+   * `discard-ready` shot shows n/n; nothing showed n+1/n, which is the state
+   * whose whole job is to be visually unmistakable (content.css hazard fill).
+   * Reached by one more tap than ready needs.
+   */
+  'discard-over': async () => {
+    const et = document.getElementById('btn-end-turn');
+    if (et) { et.click(); await new Promise((r) => setTimeout(r, 240)); }
+    if (window.__CHUD.mode?.kind !== 'discard') return `over:mode-${window.__CHUD.mode?.kind || 'none'}`;
+    const isOver = () => !!document.querySelector('.chip.total.is-over');
+    for (let guard = 0; guard < 14 && !isOver(); guard++) {
+      const next = [...document.querySelectorAll('#zone-hand [data-card-id]')]
+        .find((c) => !c.classList.contains('is-discarding'));
+      if (!next) break;
+      next.click();
+      await new Promise((r) => setTimeout(r, 90));
+    }
+    if (!isOver()) return `over:never (struck ${document.querySelectorAll('.card.is-discarding').length})`;
+    const chip = document.querySelector('.chip.total.is-over');
+    return `over:"${(chip.textContent || '').trim()}" refusing=${!!document.querySelector('[data-action="confirm-discard"].is-refusing')}`;
+  },
+
+  /**
+   * `.dv-card.is-reading` — the discard browser's inline reader, the tap that
+   * turns a pile row into a readable card. The `discard-browser` shot shows
+   * the grid; nobody had ever tapped a row.
+   */
+  'discard-reading': async () => {
+    document.querySelector('[data-action="open-discard"]')?.click();
+    await new Promise((r) => setTimeout(r, 340));
+    if (document.getElementById('sheet')?.hidden !== false) return 'reading:sheet-closed';
+    const row = document.querySelector('[data-action="discard-read"]');
+    if (!row) return 'reading:no-readable-row (empty pile?)';
+    row.click();
+    await new Promise((r) => setTimeout(r, 260));
+    const open = document.querySelector('.dv-card.is-reading');
+    if (!open || !open.getBoundingClientRect().height) return 'reading:tapped-but-nothing-marked';
+    const name = (open.querySelector('.dv-name')?.textContent || '').trim();
+    return `reading:"${name || '?'}"`;
+  },
 };
 
 /* ────────────────────────── host-side (real input) ─────────────────────── */

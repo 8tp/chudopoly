@@ -62,6 +62,23 @@ ARCHITECTURE.md §11a and its fx/audio comments if you need calibration on "juic
    stays hand-authored geometry. A wordmark typed in someone else's typeface is that
    typeface's identity, not ours, and it is the one mark that has to be ours.
 
+   **AMENDED 2026-08-07 (f) — PWA install icons may ship as generated PNGs, owner directive.**
+   Scope: `public/icons/*.png` plus `public/manifest.webmanifest`. The platform, not taste,
+   forces the format: iOS `apple-touch-icon` and Android maskable install icons require
+   raster files — an installed app with no icon renders a screenshot thumbnail, which is
+   worse brand damage than the rule was written to prevent. Conditions: every PNG is
+   **rendered by a checked-in generator** (`tools/genicons.mjs` — implemented over the
+   project's own pure-JS `server/raster.js`, not node-canvas, which would have added a
+   native binary dependency; the generator imports `server/icon.js`'s existing drawn mark
+   so the committed files cannot drift from what the server serves) from the game's own
+   hand-authored geometry — the source of truth stays code, the PNGs are a build artifact
+   that happens to be committed; regeneration must be reproducible (`node tools/genicons.mjs`
+   rewrites the set byte-for-byte or the gate fails); `checkAssets.mjs` is narrowed to permit
+   exactly that directory and extension with a count cap, and must still fail on any binary
+   anywhere else under `public/`. The in-game client may never `<img>` these — they exist
+   for the installer surface only. §507.9 still applies: no roundel or insignia imitation
+   in the mark.
+
    **AMENDED 2026-08-07 — recorded music, and only music, may ship as files.** Scope:
    `public/audio/*.opus`, at most **eight** tracks (one lobby bed, **four** match beds, one
    Final Approach bed, and a victory / defeat pair).

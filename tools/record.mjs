@@ -17,12 +17,15 @@
  *   tools/fixtures/<moment>.json    one selected state + why it was selected
  *
  * Usage: node tools/record.mjs [--seed N] [--maxMs 300000] [--bots chud,chud]
- *                              [--verbose] [--only 3p|5p|passive|guest]
+ *                              [--verbose] [--only 3p|5p|passive|guest|cut]
+ *   --only cut  re-cuts moments that have NO fixture file yet from the
+ *               committed session-3p.json transcript, without replaying (see
+ *               the pass's own comment).
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  FIXTURE_DIR, SEED, ensureDir, parseArgs, green, red, yellow, dim, bold,
+  FIXTURE_DIR, SEED, ensureDir, parseArgs, readJSON, green, red, yellow, dim, bold,
   EXIT_PASS, EXIT_FAIL,
 } from './lib/harness.mjs';
 import { startServer } from './serve.mjs';
@@ -177,6 +180,54 @@ const MOMENTS = [
       const pool = states.filter((s) => score(s) > 0 && !used.has(s));
       if (!pool.length) return states.find((s) => score(s) > 0) || null;
       return pool.reduce((best, s) => (score(s) > score(best) ? s : best));
+    },
+  },
+  {
+    name: 'steal-set',
+    driven: true,   // screenshot.mjs drives the theirSet targeting step before capture
+    description: 'This seat is on turn holding Inspector General while an OPPONENT owns a complete '
+      + 'set — the state screenshot.mjs drives into the `theirSet` targeting step. The `targeting` '
+      + 'fixture cannot: its foes hold zero complete sets, so IG there is the REFUSAL, and the set '
+      + 'steal — the interaction machine\'s only theirSet consumer — had never been entered by any gate.',
+    pick: (states, selfId, picked) => {
+      const ok = (s) => {
+        const g = s.game;
+        if (!g || g.pendingAction || g.currentPlayerId !== selfId) return false;
+        if (g.turnPhase !== 'play' || !(g.playsRemaining > 0)) return false;
+        const me = g.players.find((p) => p.id === selfId);
+        if (!(me?.hand || []).some((c) => c.action === 'inspector_general')) return false;
+        return g.players.some((p) => p.id !== selfId && (p.completedSets || 0) > 0);
+      };
+      const used = new Set(Object.values(picked || {}));
+      const pool = states.filter((s) => ok(s) && !used.has(s));
+      const hits = pool.length ? pool : states.filter(ok);
+      if (!hits.length) return null;
+      return hits.reduce((best, s) => (boardCount(s.game) > boardCount(best.game) ? s : best));
+    },
+  },
+  {
+    name: 'upgrade-set',
+    driven: true,   // screenshot.mjs drives the mySet targeting step before capture
+    description: 'This seat is on turn holding an Upgrade over a complete, un-upgraded set of its '
+      + 'own — the state screenshot.mjs drives into the `mySet` targeting step (Upgrade/FOC '
+      + 'placement, the other targeting step no gate had ever entered).',
+    pick: (states, selfId, picked) => {
+      const ok = (s) => {
+        const g = s.game;
+        if (!g || g.pendingAction || g.currentPlayerId !== selfId) return false;
+        if (g.turnPhase !== 'play' || !(g.playsRemaining > 0)) return false;
+        const me = g.players.find((p) => p.id === selfId);
+        if (!(me?.hand || []).some((c) => c.action === 'upgrade')) return false;
+        if (!((me?.completedSets || 0) > 0)) return false;
+        // The Upgrade needs a complete set WITHOUT a house on it; a seat with a
+        // complete set and no upgrades anywhere satisfies that by construction.
+        return Object.values(me.upgrades || {}).every((v) => !(v || []).length);
+      };
+      const used = new Set(Object.values(picked || {}));
+      const pool = states.filter((s) => ok(s) && !used.has(s));
+      const hits = pool.length ? pool : states.filter(ok);
+      if (!hits.length) return null;
+      return hits.reduce((best, s) => (boardCount(s.game) > boardCount(best.game) ? s : best));
     },
   },
   {
@@ -506,6 +557,69 @@ try {
         states: [hit],
       });
       console.log(`  ${green('✓')} ${m.name.padEnd(16)} ${dim(`turn ${hit.game?.stats?.turns ?? '?'}, ${boardCount(hit.game)} cards on boards`)}`);
+    }
+  }
+
+  /* ---- cut: NEW moments from the COMMITTED transcript --------------------
+   * `--only cut` re-runs the selectors over tools/fixtures/session-3p.json —
+   * the same recorder output the committed fixtures were cut from — without
+   * replaying the game. It exists because re-recording rewrites EVERY fixture
+   * (bots act on a wall clock a seed cannot fully fix), and "add one moment"
+   * must not move the states forty existing shots are calibrated against.
+   * Only moments with no committed fixture file are cut; the transcript IS
+   * recorder output, so §9's "recorded from real seeded games" holds bit for
+   * bit. Explicit-only: a plain `node tools/record.mjs` records fresh and cuts
+   * everything in MOMENTS the normal way. */
+  if (only === 'cut') {
+    const file = path.join(FIXTURE_DIR, 'session-3p.json');
+    if (!fs.existsSync(file)) {
+      console.log(red('  ✗ --only cut: no tools/fixtures/session-3p.json — record first'));
+      code = EXIT_FAIL;
+    } else {
+      const t = readJSON(file);
+      // States a committed fixture from this same recording already owns: a
+      // new name resolving to one of them is the two-names-one-picture failure
+      // record.mjs has refused since P7 round 1.
+      const owned = new Map();
+      for (const f of fs.readdirSync(FIXTURE_DIR)) {
+        if (!f.endsWith('.json') || f === 'session-3p.json') continue;
+        let j;
+        try { j = readJSON(path.join(FIXTURE_DIR, f)); } catch { continue; }
+        if (j.room === t.room && Number.isInteger(j.stateIndex)) owned.set(j.stateIndex, j.name || f);
+      }
+      const fresh = MOMENTS.filter((m) => !fs.existsSync(path.join(FIXTURE_DIR, `${m.name}.json`)));
+      if (!fresh.length) console.log(dim('  cut: every moment already has a fixture — nothing to do'));
+      const picked = {};
+      for (const m of fresh) {
+        const hit = m.pick(t.states, t.selfId, picked);
+        if (!hit) {
+          console.log(`  ${red('✗')} ${m.name.padEnd(16)} ${red('not reachable in the committed transcript — record a new game for it')}`);
+          code = EXIT_FAIL;
+          continue;
+        }
+        const idx = t.states.indexOf(hit);
+        const clash = owned.get(idx);
+        // Two DRIVEN moments may share a snapshot (each is photographed in a
+        // different client-side mode); an un-driven collision is refused.
+        if (clash && !m.driven) {
+          console.log(`  ${red('✗')} ${m.name.padEnd(16)} ${red(`selects state ${idx}, already owned by '${clash}'`)}`);
+          code = EXIT_FAIL;
+          continue;
+        }
+        picked[m.name] = hit;
+        write(m.name, {
+          $schema: 'chud-fixture/1',
+          name: m.name,
+          description: m.description,
+          seed: t.seed, selfId: t.selfId, room: t.room,
+          recordedAt: t.recordedAt,
+          cutAt: new Date().toISOString(),
+          stateIndex: idx,
+          states: [hit],
+        });
+        console.log(`  ${green('✓')} ${m.name.padEnd(16)} ${dim(`state ${idx} of ${t.states.length}, `
+          + `${boardCount(hit.game)} cards on boards${clash ? ` (shares ${clash}'s snapshot; both driven)` : ''}`)}`);
+      }
     }
   }
 

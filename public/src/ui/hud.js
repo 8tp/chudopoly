@@ -20,7 +20,7 @@ import * as interact from '../interact/index.js';
 import * as pointer from '../interact/pointer.js';
 import * as audio from '../audio/engine.js';
 import { haptic, HAPTICS } from '../fx/index.js';
-import { toast, openSheet, closeSheet } from './screens.js';
+import { toast, openSheet, closeSheet, sheetOpen } from './screens.js';
 import { el, clear } from '../core/dom.js';
 import { SUDDEN_DEATH_COPY } from './ruleset.js';
 
@@ -660,6 +660,36 @@ export function mount() {
       openSheet('Emote', list);
     },
     'send-emote': (elx) => { send.emote(elx.dataset.text); closeSheet(); },
+  });
+
+  // §0.9 — Escape closes the comms drawer. `toggle-side` above only ever
+  // flipped `hidden` from its two buttons, so #side was the one closable layer
+  // with no Escape path at all (sheets: ui/screens.js:171; drag and the
+  // interaction modes: interact/pointer.js:197 → abortDrag()/escape(); the
+  // expanded seat: table/layout.js:209). Same priority discipline as those
+  // handlers, so one press never answers two questions — every keydown listener
+  // here runs on the same event, and each guard below names the layer that owns
+  // the key instead:
+  //   • an open sheet stacks over the drawer and screens.js closes it;
+  //   • a live drag keeps the key for pointer.js's abortDrag();
+  //   • an active interaction mode (strip/target/payment/discard) keeps it for
+  //     escape() → interact.cancel(), and the targeting/payment glow guard is
+  //     the same one table/layout.js uses for the expanded seat.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const side = $('side');
+    if (!side || side.hidden) return;
+    // BOTH sheet guards, because listener order decides which one fires:
+    // screens.js's handler preventDefaults when it closes a sheet, and if it
+    // ran first on this same event then sheetOpen() is already false here —
+    // measured: one Escape closed the sheet AND the drawer under it. If this
+    // handler runs first instead, sheetOpen() is still true and stands us down.
+    if (e.defaultPrevented) return;
+    if (sheetOpen()) return;
+    if (document.querySelector('.card.is-dragging')) return;
+    if (interact.mode.kind !== 'idle') return;
+    if (document.querySelector('[data-targetable="1"], [data-payable="1"]')) return;
+    setHidden(side, true);
   });
 
   bus.on(EVENTS.STATE_APPLIED, render);

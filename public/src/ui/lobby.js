@@ -556,8 +556,19 @@ function buildAdv() {
               + 'can never be contested.',
           }),
         ]),
-        el('fieldset', { class: 'adv-group adv-group-deck' }, [
-          el('legend', { class: 'adv-legend' }, [
+        el('fieldset', { class: 'adv-group adv-group-deck', attrs: { 'aria-label': 'The deck' } }, [
+          /* A DIV, not a <legend>, and the difference is the whole feature:
+           * the deck total is the one number with a GLOBAL bound (game.js
+           * DECK_MIN/DECK_MAX — a per-card step can be individually legal and
+           * still push the deck out of range), and at 1280×720 it sat above
+           * thirteen steppers, below the fold the moment the host scrolled to
+           * the row they were editing. lobby.css pins this row sticky inside
+           * .lobby-body — which a <legend> cannot be: a legend is laid out in
+           * the fieldset's border area by special-case rules and Chromium does
+           * not stick it (verified: `position: sticky` on the legend computed
+           * but the box never pinned). The group keeps its accessible name via
+           * aria-label on the fieldset. */
+          el('div', { class: 'adv-legend adv-legend-deck' }, [
             el('span', { text: 'The deck' }),
             el('span', { class: 'deck-total', attrs: { id: 'deck-total', 'aria-live': 'polite' } }),
           ]),

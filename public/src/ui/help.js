@@ -276,15 +276,21 @@ function pageGoal() {
       // SUDDEN_DEATH_COPY — the same one the lobby picker shows, so the two
       // surfaces cannot drift. Under 'escalate', getPlayerView's contestBar
       // (game.js:2419-2422) is setsToWin + 1 while the contest is live, and the
-      // HUD reads that field — the number here says why it moved.
+      // HUD reads that field — the number here says why it moved. The raised
+      // bar LAPSES: contestBar() (809-814) drops back to setsToWin once
+      // contestLaps >= CONTEST_LAP_CAP (2), and contestBlocks() (824-831) then
+      // lets turn order resolve the still-open contest — the old sentence here
+      // ("while the contest is live, converting takes N+1") claimed the raise
+      // for the whole contest and stated no fallback at all.
       ...(active.suddenDeath && active.suddenDeath !== 'off' ? [[
         `Contested approach — ${SUDDEN_DEATH_COPY[active.suddenDeath]?.label
           || active.suddenDeath}`,
         `On this table, two players armed at once suspend the win. ${
           SUDDEN_DEATH_COPY[active.suddenDeath]?.line || ''}${
           active.suddenDeath === 'escalate'
-            ? ` While the contest is live, converting takes ${n + 1} complete sets here, `
-            + `not ${n} — the HUD's win count follows it.`
+            ? ` For those two rounds, converting takes ${n + 1} complete sets here, `
+            + `not ${n} — the HUD's win count follows it, and drops back to ${n} when `
+            + 'the cap lapses.'
             : ''}`,
       ]] : []),
     ]),
@@ -391,6 +397,7 @@ function setsTable() {
 }
 
 function pageSets() {
+  const active = activeRules();
   return [
     // calcRent(): rent = info.rent[min(count, len) - 1] — count, not completeness.
     p('Rent is charged on a colour, not on a finished set. One card of a colour already '
@@ -436,8 +443,26 @@ function pageSets() {
         'That rule has a second half: nothing REFUSES a payment made with the Upgrade under '
         + 'an FOC. The Upgrade goes to whoever charged you and the FOC drops into your own '
         + 'bank behind it, so the set keeps standing at 7M less rent.'],
+      // executeEntry 'steal_set' (game.js:1743) routes a seized set's upgrades
+      // through mergeUpgrades() (1142-1153): a set carries at most one Upgrade
+      // and one FOC, and a duplicate kind arriving with the seizure is BANKED to
+      // the thief via bankUpgradeCard() — not discarded, not stacked. The rule
+      // existed nowhere on this screen (§3.9).
+      ['A seized set brings its Upgrades — duplicates become money',
+        'Inspector General hands you the set\'s Upgrade and FOC with it. If that would give '
+        + 'you two of a kind on one colour, the duplicate is banked to you at face value — '
+        + 'a set never carries more than one of each.'],
       ['Wilds', 'A two-colour wild counts as either of its colours. The "any" wild counts as '
         + 'every colour but is worth 0M — that is what you pay for it.'],
+      // zoneRequisitionable() (game.js:968-971) is COMPLETENESS-based, not
+      // fullness-based, on purpose: under pureSetRequired a full zone of nothing
+      // but wilds is not a SET, so the two set-guarded steals may still take from
+      // it. Stated only when the toggle is on — on other tables a full zone of
+      // wilds IS a complete set and the claim would be false.
+      ...(active.pureSetRequired ? [['A full zone of wilds is not safe here',
+        'On this table a set needs one real property, so a colour filled with nothing but '
+        + 'wilds is NOT a complete set — Midnight Requisition and TDY Orders can still '
+        + 'take from it.']] : []),
       // receiveProperty(): `ordered` puts preferredColor first — every caller
       // passes card.placedColor, the colour it was on before — then the
       // remaining legal colours sorted by DESCENDING zoneCount, and takes the
@@ -757,7 +782,10 @@ function pageControls() {
         'Eligible boards, columns and cards glow. Tap the one you want.'],
       ['Paying', 'Your bank, your properties and the Upgrades on your sets all become '
         + 'selectable. The bar totals what you have picked; confirm when it is enough.'],
-      ['Escape', 'Cancels a drag, then a selection, and closes any open sheet.'],
+      // ui/hud.js routes Escape to #side when no sheet, drag or mode owns the
+      // key — §3.9: the drawer close may not exist unstated here.
+      ['Escape', 'Cancels a drag, then a selection, and closes any open sheet — or the '
+        + 'comms drawer, when nothing else is open over it.'],
       ['Keyboard', 'Tab moves between controls, Enter or Space activates, Escape backs out.'],
     ]),
     note('Reduced-motion is honoured: cards fade instead of flying, and the sound stays.'),

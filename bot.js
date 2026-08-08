@@ -374,6 +374,69 @@ function tryDefendFinalApproach(bot, hand, mode, othersArmed) {
   return bestIdx >= 0 ? { type:'play_money', cardIndex:bestIdx } : null;
 }
 
+/* ── Card counting (round 11, angle 1) ──────────────────────────────────
+ *
+ * The honest-information rule: a bot may count what is PUBLIC — the discard pile, every
+ * card on every table (banks, properties, upgrades, actions played), plus its own hand.
+ * The deck and opponents' hands are one undifferentiated unseen pool; nothing here reads
+ * either. Recomputed from visible state on every call, so a reshuffle (which returns the
+ * discard to the unseen pool) is handled by construction — the count RISES again after a
+ * shuffle, which is what makes "all OPSEC accounted for" a closing window, not a latch.
+ *
+ * Only the three kinds angle 1 trades on are counted; scanning upgrades is skipped
+ * because an upgrade zone can only ever hold upgrade/foc cards.
+ */
+function unseenCounts(state, observer) {
+  const deck = (state.rules && state.rules.deck) || G.DECK_BASE;
+  let opsec = deck.opsec, ig = deck.inspector_general, chud = deck.chud;
+  const bump = (card) => {
+    if (!card || card.type !== 'action') return;
+    if (card.action === 'opsec') opsec--;
+    else if (card.action === 'inspector_general') ig--;
+    else if (card.action === 'chud') chud--;
+  };
+  state.discardPile.forEach(bump);
+  for (const p of state.players) {
+    p.bank.forEach(bump);
+    for (const cards of Object.values(p.properties)) cards.forEach(bump);
+  }
+  observer.hand.forEach(bump);
+  return {
+    opsec: Math.max(0, opsec),
+    breakers: Math.max(0, ig) + Math.max(0, chud),
+  };
+}
+
+// How reliably each personality counts, per decision. Card awareness is a PLANNER skill:
+// the three planning modes get it in graded amounts, chud mostly does not notice (reckless
+// by identity) and random never does — five modes that all count cards are one mode.
+const CARD_AWARENESS = { conservative: 1, neutral: 0.9, aggressive: 0.75, chud: 0.15, random: 0 };
+
+// A hard breaker fired while every OPSEC in the deck is visible CANNOT be answered — and
+// the window closes at the next reshuffle, when the discarded OPSEC re-enter the unseen
+// pool. So a guaranteed shot does not wait for the personality plan's usual triggers.
+// Measured before (400 four-player games): conservative sat on an unblockable Inspector
+// General at 75 decision points, neutral 36 — while firing it was a free set.
+// CHUD still needs a steal WORTH the card: one that completes a set of ours, or takes out
+// of a complete set — a free shot at a 1M orphan is a wasted CHUD, guaranteed or not.
+function tryGuaranteedBreaker(state, bot, botId) {
+  const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
+  const igIdx = bot.hand.findIndex(c => c.action === 'inspector_general');
+  if (igIdx >= 0) {
+    const target = findBestIGTarget(opponents);
+    if (target) return { type: 'play_action', cardIndex: igIdx, targetId: target.id, targetColor: target.color };
+  }
+  const chudIdx = bot.hand.findIndex(c => c.action === 'chud');
+  if (chudIdx >= 0) {
+    const completing = findChudCompletionTarget(bot, opponents);
+    if (completing) return { type: 'play_action', cardIndex: chudIdx, targetId: completing.playerId, targetCardId: completing.cardId };
+    const threat = biggestThreat(opponents);
+    const fromSet = threat ? completeSetCards(threat)[0] : null;
+    if (fromSet) return { type: 'play_action', cardIndex: chudIdx, targetId: threat.id, targetCardId: fromSet.card.id };
+  }
+  return null;
+}
+
 /* ── §3.8 free rearranging ──────────────────────────────────────────────
  *
  * Moving a wild between your own sets is FREE and does not cost a play (Hasbro FAQ 937,
@@ -668,6 +731,18 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
     }
   }
 
+  // Round 11, angle 1 — the OPSEC economy below prices every block against "the big one
+  // that might come later", but what can still come is COUNTABLE. Once every Inspector
+  // General and CHUD is accounted for (discard + tables + this hand), a big charge is the
+  // top of what remains, so an aware personality blocks it instead of saving the shield
+  // for a card that no longer exists. 4M is the same bar the modes already use for "big
+  // rent". Measured before: aggressive declined 43 such blocks per 400 four-player games,
+  // conservative 11 — each one 4M+ handed over with a dead shield in hand.
+  if (bot && pa.type === 'payment' && (pa.amount || 0) >= 4) {
+    const aw = CARD_AWARENESS[mode] ?? 0;
+    if (aw > 0 && rnd() < aw && unseenCounts(state, bot).breakers === 0) return true;
+  }
+
   switch (mode) {
     case 'random':
       // Even random mode should have some survival instinct
@@ -758,6 +833,19 @@ function decideBotPlay(state, botId, mode) {
     if (shield) return shield;
   }
 
+  // Round 11, angle 1 — a hard breaker nobody can answer does not wait. When every OPSEC
+  // is visible the shot is a certainty, and the window closes at the next reshuffle, so it
+  // outranks the personality plan AND the holdback below. Gated per personality by
+  // CARD_AWARENESS: the planners count, chud rarely notices, random never (aw 0 also
+  // means random's RNG stream is untouched — the roll is short-circuited).
+  {
+    const aw = CARD_AWARENESS[mode] ?? 0;
+    if (aw > 0 && rnd() < aw && unseenCounts(state, bot).opsec === 0) {
+      const shot = tryGuaranteedBreaker(state, bot, botId);
+      if (shot) return shot;
+    }
+  }
+
   // Human-like holdback: sometimes don't use all 3 plays
   // Conservative: 20% chance to stop after 2 plays (save cards for defense)
   // Neutral: 10% chance to stop after 2 plays
@@ -765,7 +853,21 @@ function decideBotPlay(state, botId, mode) {
   // Aggressive: 5% chance (almost always uses all plays)
   // Chud: handled in botTakeTurn
   const played = 3 - state.playsRemaining;
-  if (played >= 1) {
+  // Round 11, angle 2 — the deck-cycle clock. §3.11 adjudicates on points after
+  // DECK_CYCLE_LIMIT reshuffles, and shuffleCount is public (every shuffle is a table
+  // event). In the last quarter of that budget, holding a play back saves it for a
+  // "later" the attrition cap is about to take away. Measured before the fix (500
+  // five-player games): every personality passed ~90 times per 500 games inside this
+  // window WITH playable cards in hand — mostly PCS Orders and rents — and random won
+  // more §3.6 points endings than any planner (12 of 37). Aware planners play out;
+  // chud and random keep their character (and their RNG stream — no roll is consumed
+  // for a mode with zero awareness).
+  let clockRunning = false;
+  if (played >= 1 && state.shuffleCount >= G.DECK_CYCLE_LIMIT - 4) {
+    const aw = CARD_AWARENESS[mode] ?? 0;
+    clockRunning = aw > 0 && rnd() < aw;
+  }
+  if (played >= 1 && !clockRunning) {
     // After 1 play: small chance to stop. After 2 plays: bigger chance.
     const holdChance = played === 1
       ? (mode === 'conservative' ? 0.08 : mode === 'random' ? 0.08 : mode === 'neutral' ? 0.05 : 0)
@@ -1391,6 +1493,12 @@ function findBestPropertyPlay(bot, hand) {
 function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
   if (threats.length === 0) return tryOffensiveActions(state, bot, botId, hand, opponents);
 
+  // Round 11, angle 4 — findThreats() returns SEAT order, so with two 2-set threats every
+  // loop below hit whoever sat first. Rank by who is actually in front: sets, then total
+  // payable value (the same tiebreak the leader metric uses).
+  threats = threats.slice().sort((a, b) =>
+    G.completedSets(b) - G.completedSets(a) || G.playerTotalValue(b) - G.playerTotalValue(a));
+
   // Inspector General — seize a set from the biggest threat
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'inspector_general') {
@@ -1419,14 +1527,16 @@ function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
     }
   }
 
-  // Midnight Requisition — steal from threat's incomplete sets
+  // Midnight Requisition — steal from threat's incomplete sets (best card, not cards[0])
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'midnight_requisition') {
       for (const threat of threats) {
+        let best = null;
         for (const [col, cards] of Object.entries(threat.properties)) {
           if (G.isSetComplete(threat, col)) continue;
-          if (cards.length > 0) return { type: 'play_action', cardIndex: i, targetId: threat.id, targetCardId: cards[0].id };
+          for (const c of cards) if (!best || c.value > best.value) best = c;
         }
+        if (best) return { type: 'play_action', cardIndex: i, targetId: threat.id, targetCardId: best.id };
       }
     }
   }
@@ -1929,19 +2039,58 @@ function findCheapestIGTarget(opponents) {
 
 /* ── CHUD / steal targets ───────────────────────────────────────────── */
 
-function findSmartChudTarget(bot, opponents) {
-  // First: property that completes one of our sets
+// A steal that would COMPLETE one of our sets outright (we sit at size-1 and an opponent
+// holds a card of that colour, wilds included). The one CHUD target that is always worth
+// the card — used by the guaranteed-shot branch, which must not burn a CHUD on an orphan
+// just because nobody can block it.
+function findChudCompletionTarget(bot, opponents) {
   for (const [color, info] of Object.entries(G.COLORS)) {
     const have = (bot.properties[color] || []).length;
-    if (have > 0 && have < info.size) {
-      for (const opp of opponents) {
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) {
-          return { playerId: opp.id, cardId: c.id };
-        }
+    if (have !== info.size - 1) continue;
+    for (const opp of opponents) {
+      for (const c of (opp.properties[color] || [])) {
+        return { playerId: opp.id, cardId: c.id };
       }
     }
   }
+  return null;
+}
+
+// Round 11, angle 4 — when several opponents offer the SAME steal, take it from the
+// player in front, and take the best card in the zone, not cards[0]. The colour choice
+// (what advances our board) is unchanged; only the victim and the copy sharpen. Measured
+// before: 22/29/46 steals per 400 games (conservative/neutral/aggressive) took the colour
+// from a non-leader while the leader offered it legally — the steal-order was seat order.
+function pickStealCandidate(candidates) {
+  return candidates.reduce((a, b) => {
+    if (b.sets !== a.sets) return b.sets > a.sets ? b : a;
+    return b.value > a.value ? b : a;
+  });
+}
+
+// The "advance one of our colours" steal, shared by the smart/aggressive CHUD finders.
+// `skipCompleteZones` is the Midnight Requisition rule (§3.1 bars it from complete sets);
+// CHUD reaches anywhere.
+function findBuildingSteal(bot, opponents, skipCompleteZones) {
+  for (const [color, info] of Object.entries(G.COLORS)) {
+    const have = (bot.properties[color] || []).length;
+    if (have === 0 || have >= info.size) continue;
+    const candidates = [];
+    for (const opp of opponents) {
+      if (skipCompleteZones && G.isSetComplete(opp, color)) continue;
+      for (const c of (opp.properties[color] || [])) {
+        candidates.push({ playerId: opp.id, cardId: c.id, value: c.value, sets: G.completedSets(opp) });
+      }
+    }
+    if (candidates.length > 0) return pickStealCandidate(candidates);
+  }
+  return null;
+}
+
+function findSmartChudTarget(bot, opponents) {
+  // First: property that advances one of our colours — from the leader when tied
+  const building = findBuildingSteal(bot, opponents, false);
+  if (building) return building;
   // Fallback: highest value property from leader
   const leader = findLeader(opponents);
   if (!leader) return null;
@@ -1956,15 +2105,8 @@ function findSmartChudTarget(bot, opponents) {
 
 function findAggressiveChudTarget(state, bot, botId, opponents) {
   // Target what helps us most, then target leader's best
-  for (const [color, info] of Object.entries(G.COLORS)) {
-    const have = (bot.properties[color] || []).length;
-    if (have > 0 && have < info.size) {
-      for (const opp of opponents) {
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) return { playerId: opp.id, cardId: c.id };
-      }
-    }
-  }
+  const building = findBuildingSteal(bot, opponents, false);
+  if (building) return building;
   const leader = findLeader(opponents);
   if (!leader) return null;
   let best = null;
@@ -2000,19 +2142,9 @@ function findRandomChudTarget(opponents) {
 /* ── Steal targets (Midnight Requisition) ───────────────────────────── */
 
 function findSmartStealTarget(bot, opponents) {
-  // Prefer cards that complete our sets
-  for (const [color, info] of Object.entries(G.COLORS)) {
-    const have = (bot.properties[color] || []).length;
-    if (have > 0 && have < info.size) {
-      for (const opp of opponents) {
-        if (G.isSetComplete(opp, color)) continue;
-        const oppCards = opp.properties[color] || [];
-        for (const c of oppCards) {
-          return { playerId: opp.id, cardId: c.id };
-        }
-      }
-    }
-  }
+  // Prefer cards that advance our sets — from the player in front when several offer one
+  const building = findBuildingSteal(bot, opponents, true);
+  if (building) return building;
   // Fallback: most valuable stealable property
   let best = null;
   for (const opp of opponents) {
@@ -2389,6 +2521,7 @@ module.exports = {
   _internal: {
     decideBotPlay, shouldPlayOpsecDecision, selectPaymentCards, setRng, rnd,
     planRearrange, boardScore, minimalCover, applyBotAction,
+    unseenCounts, CARD_AWARENESS, tryGuaranteedBreaker, findChudCompletionTarget,
     REARRANGE_BIAS, REARRANGE_CONSOLIDATES, payWeight, ORDER_ATTENTION, findChargeBooster, findCompletingPlay,
     BREAK_URGENCY, BREAK_OVERPAY, disposableValue, tryBreakFinalApproach,
     getAllPayableCardIds, chooseDiscards, findResponder: function(state) {

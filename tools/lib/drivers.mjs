@@ -403,7 +403,16 @@ export const DRIVERS = {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await new Promise((r) => setTimeout(r, 70));
     }
-    return `nowild:${hand().length} card(s) tried, mode ${window.__CHUD.mode?.kind || 'none'}`;
+    /* Distinct fixture-diagnosis wording, not the bare 'mode idle' that read
+     * like a client regression: reaching this line means no card in the
+     * staged hand produced a myColor step, which is the FIXTURE lacking a
+     * playable wild (record.mjs refused exactly that pick after the
+     * seat-shuffle re-record shipped one) — or, rarer, every wild in it
+     * having a single legal landing (playSelected's one-answer short
+     * circuit). Either way the thing to fix is the fixture, not the mats. */
+    return `nowild:${hand().length} card(s) tried and none reached a myColor step `
+      + `(mode ${window.__CHUD.mode?.kind || 'none'}) — the staged fixture's hand holds no playable wild_property; `
+      + 're-record mid-game';
   },
 
   /**
@@ -979,6 +988,101 @@ export const HOST = {
     });
   },
 };
+
+/**
+ * The hand fan's reachability probe — a REAL TAP on the exposed strip.
+ *
+ * Lives here (not inside touchtest.mjs) so a mutation script can exercise the
+ * exact code the gate runs: §8 demands the assertion be watchable going red,
+ * and a copy in a throwaway script proves nothing about the original.
+ *
+ * Why not the swipe probe: a horizontal swipe that starts on a hand card IS
+ * the drag-play gesture by design (touchtest §A), so the fan's scroller never
+ * receives it and swipe-probing the fan can only misreport it (triage
+ * 2026-08-08: a 9-card hand printed 'UNREACHABLE … never moved under 8 real
+ * swipe(s)' while a real tap selected 9/9 strips, including a 15px one). The
+ * fan's reachability contract is §5's tap-the-strip, and SELECTION is the
+ * observable half (mode.cardId, mirrored by .is-lifted/.is-picked). A card
+ * whose strip no tap can select still comes back red — that is the genuine
+ * no-input-reaches-it case, mutation-proven with an overlay over the strip.
+ *
+ * Not a HOST driver: it takes the openTouchPage() handle, not a bare page,
+ * and returns a structured verdict ({ ok, line }) for touchtest's
+ * probeAndSplit, not a reached-string.
+ *
+ * @param handle  an openTouchPage() handle ({ page, tap })
+ * @param e       an audit candidate ({ id = data-chud-reach stamp, label, kinds })
+ */
+export async function probeFanTap(handle, e) {
+  const page = handle.page;
+  const strip = await page.evaluate((id) => {
+    const el = document.querySelector(`[data-chud-reach="${CSS.escape(id)}"]`);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    let right = r.right;
+    const sib = el.nextElementSibling;
+    if (sib?.hasAttribute('data-card-id')) {
+      const sr = sib.getBoundingClientRect();
+      if (sr.left > r.left && sr.left < r.right) right = sr.left;
+    }
+    const l = Math.max(r.left, 0);
+    const rt = Math.min(right, innerWidth);
+    const tp = Math.max(r.top, 0);
+    const b = Math.min(r.bottom, innerHeight);
+    return { cardId: el.dataset.cardId, w: rt - l, h: b - tp, x: (l + rt) / 2, y: (tp + b) / 2 };
+  }, e.id);
+  if (!strip) return { ...e, ok: false, line: `${e.label} — vanished before the fan tap probe could touch it` };
+  if (strip.w < 2 || strip.h < 2) {
+    return { ...e, ok: false, line: `${e.label} — UNREACHABLE: ${Math.max(0, Math.round(strip.w))}px of exposed strip on screen, `
+      + 'and no other gesture reaches a fan card (a swipe here is drag-play by design)' };
+  }
+  // A tap TOGGLES selection, so probing an already-selected card would
+  // deselect it and read as unreachable. Clear first; clear after, so the
+  // frame is left as the probe found it.
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  await page.waitForTimeout(120);
+  /* Where on the strip a real thumb lands matters. MEASURED on a 9-card fan
+   * (2026-08-08, /tmp/chud-evidence/fixtouch/strip-tap-matrix.mjs): the fan
+   * leans each card over the previous one's strip, and Chromium's touch
+   * targeting resolves a 12px-radius tap on the strip's UPPER half to the
+   * overlapping neighbour — the 15px end strip selected the wrong card at
+   * y≈0.5 of its rect and the right one at y≥0.6. A thumb re-aims; so does
+   * the probe: walk down the exposed strip and take the first point that
+   * selects the card. Only a card NO point on its strip can select is red. */
+  const sel = async () => page.evaluate((id) => {
+    const el = document.querySelector(`[data-chud-reach="${CSS.escape(id)}"]`);
+    if (!el) return { found: false };
+    const m = window.__CHUD.mode || {};
+    const picked = m.selected ? [...m.selected].map(String) : [];
+    return {
+      found: true,
+      selected: String(m.cardId) === String(el.dataset.cardId)
+        || picked.includes(String(el.dataset.cardId))
+        || el.classList.contains('is-lifted') || el.classList.contains('is-picked'),
+      mode: m.kind || 'idle',
+    };
+  }, e.id);
+  let last = null;
+  for (const yf of [0.55, 0.7, 0.85]) {
+    const y = strip.y - strip.h / 2 + strip.h * yf;
+    if (y < 1 || y > (strip.y - strip.h / 2) + strip.h - 1) continue;
+    await handle.tap(strip.x, y);
+    await page.waitForTimeout(220);
+    last = await sel();
+    if (!last.found || last.selected) break;
+    // The tap selected a SIBLING (or nothing): clear it and re-aim lower.
+    await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await page.waitForTimeout(120);
+  }
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  await page.waitForTimeout(120);
+  if (last?.found && last.selected) {
+    return { ...e, ok: true, line: `${e.label} — reachable by a real tap on the ${Math.round(strip.w)}px exposed strip `
+      + '(§5: the fan answers reachability by tap; a swipe here is drag-play by design)' };
+  }
+  return { ...e, ok: false, line: `${e.label} — UNREACHABLE: a real tap on the ${Math.round(strip.w)}px exposed strip `
+    + `did not select the card at any point along it (${last?.found ? `last try left mode ${last.mode}` : 'the card vanished mid-probe'}) — no input reaches it` };
+}
 
 /** Run whichever kind of driver `name` is. Returns the reached string. */
 export async function drive(page, name) {

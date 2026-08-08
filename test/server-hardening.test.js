@@ -633,7 +633,28 @@ test('a reconnecting player never draws twice and never sees a draw phase', asyn
   const ws = await openClient();
   send(ws, { type: 'quick_play', name: 'Rejoin' });
   const joined = await waitFor(ws, m => m.type === 'joined');
-  const first = await waitFor(ws, m => m.type === 'state' && m.phase === 'playing');
+  // Seat order is SHUFFLED (964d382) — the human is first only 1-in-4, so wait
+  // for the state where the turn is actually theirs before asserting the
+  // auto-draw. Same pattern as server.integration.test.js's myTurn(). But the
+  // bots acting first can CHARGE this raw client, and an unanswered charge
+  // holds the table for the full 45s response clock (timers.js auto-resolve) —
+  // measured 3-in-10 blowing a 20s wait. So answer each charge once: a seat
+  // that has never had a turn owns nothing payable, so a bare accept resolves
+  // it insolvent and the turn train keeps moving.
+  const answered = new Set();
+  ws.on('message', (raw) => {
+    try {
+      const m = JSON.parse(raw);
+      if (m.type !== 'state' || !m.game?.pendingAction) return;
+      if (!(m.game.responders || []).includes(joined.playerId)) return;
+      const key = JSON.stringify(m.game.pendingAction);
+      if (answered.has(key)) return;
+      answered.add(key);
+      send(ws, { type: 'respond', response: 'accept', paymentCards: [] });
+    } catch { /* not JSON — not ours */ }
+  });
+  const first = await waitFor(ws, m => m.type === 'state' && m.phase === 'playing'
+    && m.game?.currentPlayerId === joined.playerId, 30000);
   const me = first.game.players.find(p => p.id === joined.playerId);
   assert.equal(first.game.turnPhase, 'play');
   assert.equal(me.hand.length, 7, 'auto-drawn without any client command');

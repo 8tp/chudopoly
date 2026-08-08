@@ -104,7 +104,12 @@ const seed = args.seed ? Number(args.seed) : SEED;
 const BRIDGE_MS = 30000;
 
 const r = reporter(`touchtest  ${dim(`${PHONE.width}×${PHONE.height} DPR${PHONE_DPR} + ${LANDSCAPE.width}×${LANDSCAPE.height}, real touch only`)}`);
-const server = await startServer({ seed });
+// The drag-play section (§A) drives a live quick-play game and needs the local
+// seat on turn to play a card at all. Seats shuffle in real rooms (owner
+// directive), which would seat this client late 3 games in 4 and blow the
+// turn-wait budget behind intervening bot response windows — flaking a gate
+// that is about touch-action, not seating. The test hook seats roster-order.
+const server = await startServer({ seed, env: { CHUD_NO_SEAT_SHUFFLE: '1' } });
 
 /* A PUBLIC room on the ephemeral server, opened BEFORE any page loads, so the
  * home surface renders OPEN TABLES (owner directive 2026-08-07) and its rows

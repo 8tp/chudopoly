@@ -1461,7 +1461,10 @@ every 4-subset) and 500 five-player games (seed `aware-base5`). Two shipped, one
 small, one measured and REJECTED. The new personality axis is `CARD_AWARENESS`
 (conservative 1, neutral .9, aggressive .75, chud .15, random 0): awareness is a planner
 skill, the gremlin rarely notices, random never does — and a zero-awareness mode consumes no
-RNG roll, so the chaotic seats' streams are untouched.
+RNG roll, so RANDOM's stream is untouched. (Chud, at 0.15, does consume its awareness rolls —
+the QA pass caught this section originally claiming both chaotic seats' streams were
+untouched, which was true only of random. Chud's balance is unmoved; the record is what
+needed correcting.)
 
 ### Angle 1 — counting the counter-cards (shipped)
 

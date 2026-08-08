@@ -345,9 +345,11 @@ test('holding rent and Upgrade for the same set, the Upgrade is played first', (
     state.players[1].bank.push(money(state, 5));
     bot.hand.push(take(state, c => c.type === 'rent' && c.colors.includes('brown') && c.colors[0] !== 'any'));
     bot.hand.push(action(state, 'upgrade'));
-    always(0.99);   // pass every attention roll, defeat every holdback
+    always(0.99);   // pass every attention roll, defeat every holdback — for BOTH
+    // decisions: resetting the rng between them left the follow-through rent on
+    // Math.random, and the holdback roll failed ~1 run in 30 (flaked 2026-08-07;
+    // afterEach resets the rng, no mid-test reset needed)
     const plan = decideBotPlay(state, 'p1', mode);
-    setRng(null);
     assert.ok(plan && plan.type === 'play_action', `${mode} made no action play`);
     assert.equal(bot.hand[plan.cardIndex].action, 'upgrade', `${mode} charged before upgrading`);
     assert.equal(plan.targetColor, 'brown');

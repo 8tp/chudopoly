@@ -163,7 +163,13 @@ export const SUDDEN_DEATH_RULES = Object.freeze(['off', 'oneLap', 'escalate', 'p
 export const SUDDEN_DEATH_COPY = Object.freeze({
   off: { label: 'Turn order decides', line: 'If two players are armed at once, whoever\u2019s turn comes first wins. The default.' },
   oneLap: { label: 'One extra lap', line: 'A contested approach suspends the win for one full round, then turn order decides.' },
-  escalate: { label: 'The bar rises', line: 'While two players are armed, winning takes one MORE set \u2014 pull ahead or nobody converts.' },
+  // 'escalate' follows the engine's LAP-CAP FALLBACK, which the old copy
+  // ("pull ahead or nobody converts") denied: game.js contestBar() (809-814)
+  // drops the bar back to setsToWin once contestLaps >= CONTEST_LAP_CAP (= 2,
+  // game.js:72), and contestBlocks() (824-831) then returns null with the
+  // contest still open \u2014 so turn order resolves it after all. "Two full rounds"
+  // is that constant in words; test/ui-clarity2.test.js pins the two together.
+  escalate: { label: 'The bar rises', line: 'While two players are armed, winning takes one MORE set \u2014 for two full rounds. After that the bar drops back and turn order decides.' },
   points: { label: 'Nobody converts', line: 'A contested approach never converts. After two rounds the game is decided on points.' },
 });
 

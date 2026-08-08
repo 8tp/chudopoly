@@ -405,7 +405,11 @@ function buildDeck(deck) {
     ['pcs_orders','PCS Orders',1,'Draw 2 extra cards from the deck'],
     ['upgrade','Upgrade (House)',3,'Add to a complete set: +3M rent'],
     ['foc','Full Operational Capability (Hotel)',4,'Add to a complete set with Upgrade: +4M rent'],
-    ['surge_ops','Surge Operations',1,'Double the next charge you make this turn — rent or any demand'],
+    // §3.1c — chargeAmount() passes surgeable:true from the RENT branch only, and
+    // playAction 'surge_ops' increments a counter, so it stacks. The old wire text
+    // ("rent or any demand") described the pre-reversal rule; core/cards.js
+    // ACTION_RULES carries the long form and this one-liner must not contradict it.
+    ['surge_ops','Surge Operations',1,'Double your next RENT this turn — rent only, never a demand. Stacks.'],
   ];
   actions.forEach(([action,name,value,desc]) => {
     for(let i=0;i<n[action];i++) c({ type:'action', action, name, value, description:desc });
@@ -1138,7 +1142,8 @@ function upgradeKinds(player, color) {
 // A set carries at most one Upgrade and one FOC. Seizing an upgraded set used to concatenate
 // blindly, producing ["house","house","hotel"] in 0.5% of 6,000 games — calcRent counts each
 // kind once, so the surplus was dead value AND a second "house" permanently blocked FOC.
-// Surplus goes to the discard pile (card conservation is preserved).
+// Surplus is BANKED to the seizing player via bankUpgradeCard() below (§3.1b — an upgrade
+// that leaves a set goes to a bank, never the discard); card conservation is preserved.
 function mergeUpgrades(state, player, color, incoming) {
   const list = player.upgrades[color] || (player.upgrades[color] = []);
   for (const upgrade of incoming || []) {

@@ -41,7 +41,15 @@ test('buildDeck() with no argument is byte-identical to the deck before it took 
   new Function('module', 'exports', 'require', previous)(module0, module0.exports, require);
   const before = module0.exports.buildDeck();
   if (before.length !== 106) return;   // HEAD~1 predates the 106-card deck entirely
-  assert.deepEqual(G.buildDeck(), before,
+  // Compared WITHOUT the `description` prose: replay identity is ids, types,
+  // values and emission order — the seed reproduces the shuffle over those, and
+  // the client renders core/cards.js ACTION_RULES over the wire text anyway.
+  // Pinning the prose byte-for-byte froze every stale sentence in place: the
+  // round-2 clarity pass corrected surge_ops's "rent or any demand" (game.js:408
+  // still carried the pre-§3.1c rule) and this comparison was the only thing
+  // holding the old sentence. test/ui-clarity2.test.js pins the corrected text.
+  const bare = (cards) => cards.map(({ description, ...rest }) => rest);
+  assert.deepEqual(bare(G.buildDeck()), bare(before),
     'the stock deck changed shape — every gamelog record that replays by seed is now wrong');
 });
 

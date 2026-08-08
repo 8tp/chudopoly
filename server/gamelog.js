@@ -78,6 +78,9 @@ let fsDisabled = false;      // set ONLY by filesystem failures
 let warned = false;
 let written = 0;
 let skipped = 0;
+// Serializes the rotate-and-append so a rename never runs mid-append (see the
+// Phase 2 note in recordFinished). Every write chains behind the previous one.
+let writeChain = Promise.resolve();
 
 function warnOnce(error) {
   if (warned) return;
@@ -316,14 +319,27 @@ function recordFinished(room, G) {
   // Phase 2 — write. A failure here is the filesystem, which retrying cannot fix.
   try {
     ensureReady();
-    if (MAX_BYTES > 0 && bytes >= MAX_BYTES) rotate();
-    bytes += Buffer.byteLength(line);
-    fs.appendFile(FILE, line, err => { if (err) { fsDisabled = true; warnOnce(err); } });
   } catch (error) {
     fsDisabled = true;
     warnOnce(error);
     return false;
   }
+  // Appends stay async (the event loop is never blocked), but the rotate() inside
+  // must never renameSync the live file while an append to it is still in flight.
+  // fs.appendFile is fire-and-forget and renameSync runs on the main thread, so
+  // under fast rotation (a tiny byte cap, or a 32MB flood) the two raced: Node's
+  // threadpool lost the records whose write handle the rename moved out from under
+  // (measured Node 20: 1–3 of 60 lost with no pacing — test/engine-hardening.js
+  // 'back-to-back rotations'; Node 24's threadpool timing hid it). Chaining each
+  // write behind the previous one means rotate() only runs BETWEEN two settled
+  // appends — nothing is ever in flight across a rename, and the byte counter is
+  // read and advanced only inside the chain, so it can't drift either.
+  const bump = Buffer.byteLength(line);
+  writeChain = writeChain.then(async () => {
+    if (MAX_BYTES > 0 && bytes >= MAX_BYTES) rotate();
+    bytes += bump;
+    await fs.promises.appendFile(FILE, line);
+  }).catch((err) => { fsDisabled = true; warnOnce(err); });
 
   written++;
   console.log(`[GAME] ${room.code} recorded (${room.state.endReason}, ${room.state.turnCounter} turns)`);

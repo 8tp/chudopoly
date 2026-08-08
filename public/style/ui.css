@@ -708,6 +708,20 @@
   gap: 1em;
   padding: clamp(.6em, 2vh, 1.1em) var(--lobby-pad);
 }
+/* THE SHADES ARE FOR A BODY THAT SCROLLS, and this one often does not.
+   MEASURED at 1920×1080 (host + 4 bots): scrollHeight 881 === clientHeight
+   881 — nothing to scroll to — yet the .scroll-edge cover layers painted two
+   solid var(--ground) bands across the body's top and bottom, one under the
+   head rule and one over the rail, in BOTH themes. On the sheets the same
+   covers are invisible because the sheet paints its own --surface behind them;
+   the lobby body paints nothing of its own, so the covers floated over the
+   apron's grid and vignette as two stray bars. A cue at an end that has
+   nothing behind it is a rendering fault (the strip's ROUND-6 ruling), so the
+   background layers come off this host: what remains of the shared device is
+   the feather mask, which is the half that cannot lie — it only fades content
+   that actually crosses the fold, and a body whose content fits keeps nothing
+   near the fold to fade. */
+.lobby-body.scroll-edge { background: none; }
 .lobby-col { display: flex; flex-direction: column; gap: .5em; min-width: 0; }
 /* A column head is a legend with a rule under it, not a panel title: it names
    the half without adding a second chassis around it (§3.2), and the rule is

@@ -118,13 +118,25 @@ const MOMENTS = [
     name: 'mid-game',
     description: 'Every seat holds properties and banked money — the dense table the layout must survive.',
     pick: (states, selfId) => {
-      // Must be OUR play phase with plays left — touchtest drag-plays a card from this state.
+      /* Must be OUR play phase with plays left — touchtest drag-plays a card
+       * from this state — AND the hand must hold a wild_property: touchtest
+       * also stages this fixture for the 'wild-place' driver, whose whole
+       * subject is the myColor step that only playing a wild (two-colour or
+       * rainbow) reaches. Seat shuffle (964d382) deals the recording seat a
+       * wild-free hand often enough that a re-record certified exactly that
+       * (triage 2026-08-08: re-recorded mid-game, 9 cards, no wild) and the
+       * driver then died 'nowild:… mode idle' on a fixture THIS tool had
+       * written. Requiring the content the consumer needs turns that silent
+       * break into a loud "not reached in this game". */
+      const hasWild = (g) => (g.players.find((p) => p.id === selfId)?.hand || [])
+        .some((c) => c.type === 'wild_property');
       const ok = states.filter((s) => s.game
         && s.game.players.every((p) => propCount(p) >= 1 && bankCount(p) >= 1)
         && s.game.currentPlayerId === selfId
         && s.game.turnPhase === 'play'
         && s.game.playsRemaining > 0
-        && !s.game.pendingAction);
+        && !s.game.pendingAction
+        && hasWild(s.game));
       if (!ok.length) return null;
       // Prefer the busiest board rather than the first qualifying one.
       return ok.reduce((best, s) => (boardCount(s.game) > boardCount(best.game) ? s : best));

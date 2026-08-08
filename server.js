@@ -219,16 +219,42 @@ const MAX_SOCKETS_PER_IP = Math.max(1, Number(process.env.CHUD_MAX_SOCKETS_PER_I
 const MAX_SOCKETS_TOTAL = Math.max(1, Number(process.env.CHUD_MAX_SOCKETS) || 2000);
 const socketsByIp = new Map();
 
+/* X-Forwarded-For trust. The old clientIp() took the LEFTMOST XFF entry — client-controlled,
+   because Railway's edge APPENDS the real client IP to whatever XFF the client sent. Measured
+   bypass: 8/8 sockets with distinct spoofed leftmost XFF from one IP admitted past a 4-socket
+   cap. The fix counts trusted hops from the RIGHT of the chain. Default 1: the production
+   deploy is Railway single-hop, so the rightmost entry is the edge-appended real client IP.
+   0 ignores XFF entirely (direct exposure, no proxy). Invalid values warn and fall back to 1
+   rather than killing boot — every other env knob here coerces to a safe default
+   (CHUD_PING_MS, CHUD_MAX_SOCKETS_PER_IP), and 1 is the production value. */
+function trustProxyHops() {
+  const raw = process.env.CHUD_TRUST_PROXY_HOPS;
+  if (raw === undefined || raw.trim() === '') return 1;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    console.warn(`[CONFIG] CHUD_TRUST_PROXY_HOPS=${JSON.stringify(raw)} is not a non-negative integer — falling back to 1`);
+    return 1;
+  }
+  return n;
+}
+const TRUST_PROXY_HOPS = trustProxyHops();
+
 // Behind Railway/any reverse proxy every socket shares the proxy's remoteAddress, which
-// would make a per-IP cap either useless or a global outage. The forwarded chain is
-// trusted only for its first hop, exactly as the platform sets it.
+// would make a per-IP cap either useless or a global outage. The chain is read N trusted
+// hops from the RIGHT: only the rightmost TRUST_PROXY_HOPS entries are infrastructure-
+// written; everything left of them is attacker input. A chain shorter than the trust count
+// means fewer proxies touched the request than we trust — fall back to the socket address.
+// Both per-IP caps (the WS handshake below and /api/public-rooms above) key on this one
+// helper, so the two paths cannot drift apart.
 function clientIp(req) {
+  const remote = req?.socket?.remoteAddress || 'unknown';
+  if (TRUST_PROXY_HOPS === 0) return remote;
   const forwarded = req?.headers?.['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.length) {
-    const first = forwarded.split(',')[0].trim();
-    if (first) return first;
+    const chain = forwarded.split(',').map(x => x.trim()).filter(Boolean);
+    if (chain.length >= TRUST_PROXY_HOPS) return chain[chain.length - TRUST_PROXY_HOPS];
   }
-  return req?.socket?.remoteAddress || 'unknown';
+  return remote;
 }
 
 wss.on('connection', (ws, req) => {

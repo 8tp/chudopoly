@@ -440,7 +440,8 @@ function paintSheet() {
     const lines = store.snapshot?.log || [];
     panel.appendChild(el('p', { class: 'brief-note',
       text: 'The server\'s own wording, most recent 40 lines. The other tabs are built from '
-        + 'the structured event stream and cover the whole game.' }));
+        + 'the structured event stream: everything since you connected, and the most recent '
+        + '120 events after a reload.' }));
     const list = el('div', { class: 'jr-list' });
     for (const line of lines) list.appendChild(el('div', { class: 'jr-prose', text: line }));
     panel.appendChild(list);
@@ -653,7 +654,22 @@ export function mount() {
   // session would then be reading defaults over a full record. Never throws.
   stats.ensure();
 
-  bus.on(EVENTS.STATE_APPLIED, ({ snapshot }) => {
+  bus.on(EVENTS.STATE_APPLIED, ({ snapshot, fresh }) => {
+    // Reset on `fresh` — the store's first-sight latch (store.js applyState
+    // zeroes lastSeq on a leave, a kick, a room-code change and a rematch, and
+    // on nothing else) — and NOT on `snap`. A same-game reconnect past event
+    // 120 arrives snapped but not fresh, and the tail it carries overlaps this
+    // accumulator by seq, so keeping it costs nothing and wiping it was the S2
+    // defect: measured 2026-08-08, mid-game.json (eventSeq 141, tail seq
+    // 22–141) staged on a fresh page left entries()===0 while comms.js reset
+    // on every snap; under this latch the same staging keeps all 120 beats and
+    // a reconnect duplicates none (ingest skips ev.seq <= maxSeq).
+    if (fresh) {
+      reset();
+      drawnSeq = 0;                       // the drawer's watermark dies with the record
+      const box = $('log');
+      if (box) clear(box);
+    }
     ingest(snapshot);
     // AFTER ingest, so the row is folded from the whole accumulated stream and
     // not from the 120-event tail this broadcast happened to carry. Latched and
@@ -693,6 +709,6 @@ function installLogButton() {
     dataset: { action: 'open-log' },
   });
   head.insertBefore(btn, head.lastElementChild);
-  setAttr(head.firstElementChild, 'title', 'Live feed — "Full log" opens the whole game');
+  setAttr(head.firstElementChild, 'title', 'Live feed — "Full log" opens the whole record');
   setText(head.firstElementChild, 'MISSION LOG');
 }

@@ -225,9 +225,14 @@ const SET_RULES_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_SET_RULES_MS) 
 
 /* ── Lobby ruleset ───────────────────────────────────────────────────── */
 
-// The six fields `set_rules` and `start_game` share. Kept as a list so "did the host say
+// The seven fields `set_rules` and `start_game` share. Kept as a list so "did the host say
 // anything about the rules?" is one question with one answer in both places.
-const RULE_FIELDS = ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'deck'];
+// `suddenDeath` was the seventh only on paper until 2026-08-08: protocol.js validated it
+// and game.js resolved it, but this list omitted it, so pickRuleOpts dropped it on the
+// floor and neither command could ever turn it on (probe-rules-wire: requested 'oneLap',
+// launched 'off'). Exported alongside pickRuleOpts so test/rules-wire.test.js can pin the
+// client's send-side key list to this one — a drift in either fails the suite.
+const RULE_FIELDS = ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath', 'deck'];
 
 function pickRuleOpts(msg) {
   const opts = {};
@@ -239,6 +244,7 @@ function sameRules(a, b) {
   if (!a || !b) return false;
   return a.preset === b.preset && a.winRule === b.winRule && a.setsToWin === b.setsToWin
     && a.pureSetRequired === b.pureSetRequired && a.passGoRestartsTurn === b.passGoRestartsTurn
+    && a.suddenDeath === b.suddenDeath
     // Reference equality is wrong for the deck and would make every set_rules look like a
     // change, defeating the coalescer above and fanning a full room state per keystroke.
     && G.sameDeck(a.deck, b.deck);
@@ -850,4 +856,6 @@ function handleClose(state, ws) {
   broadcast.broadcastAndScheduleBot(room);
 }
 
-module.exports = { init, handleMessage, handleClose, seedFromEnv };
+// RULE_FIELDS/pickRuleOpts are exported for test/rules-wire.test.js, which pins the
+// client's send-side key list (public/src/net/send.js RULE_WIRE_KEYS) to this one.
+module.exports = { init, handleMessage, handleClose, seedFromEnv, RULE_FIELDS, pickRuleOpts };

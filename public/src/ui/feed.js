@@ -196,6 +196,21 @@ function line(ev) {
     case 'final_approach_pending':
       return { mark: '⧗', weight: 'big',
         text: `${whose(ev.actor)} approach did not convert this turn` };
+    // §3.10b contested approach (game.js syncContest / resolveFinalApproach).
+    // The held win is the line that happened TO its owner; open/close are race
+    // state the whole table needs, same register as final_approach.
+    case 'contest_open':
+      return { mark: '⚔', weight: 'big',
+        text: `CONTESTED — ${(ev.actors || []).map(who).join(' and ')} armed at once` };
+    case 'contest_held':
+      return { mark: '⚔', weight: isMe(ev.actor) ? 'hit' : 'big',
+        text: `${whose(ev.actor)} win held — ` + (ev.reason === 'escalate'
+          ? `bar now ${ev.bar ?? '?'} sets` : 'approach contested') };
+    case 'contest_closed': {
+      const left = Array.isArray(ev.actors) && ev.actors.length === 1 ? ev.actors[0] : null;
+      return { mark: '⚔', weight: 'big',
+        text: left ? `Contest over — ${who(left)} still armed` : 'Contest over — nobody armed' };
+    }
 
     /* ordinary table texture */
     case 'play_money':

@@ -21,6 +21,8 @@ import path from 'node:path';
 
 import { stats, defaultRow, STATS_KEY } from '../public/src/state/stats.js';
 import { derive, foldRows, TEXTURE_MIN, FORM_MAX } from '../public/src/ui/stats.js';
+import * as journal from '../public/src/ui/journal.js';
+import * as recorder from '../public/src/state/recorder.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PANEL = path.join(ROOT, 'public/src/ui/stats.js');
@@ -170,6 +172,78 @@ test('when totals outrun the ring the panel is told, so it can name both windows
   assert.equal(d.flights, 140);
   // And a personal best set on a row that has rolled off must still be there.
   assert.ok(d.fastestWinTurns > 0);
+});
+
+/* ── the ring cliff: a long, completed game is still a complete game ─────── */
+
+test('a game longer than the beat ring still banks with gaps: 0', () => {
+  // ui/journal.js caps the beat ring (MAX_BEATS = 900) and `game_start` is beat
+  // #1, so any game past the cap splices it off the front. The recorder must
+  // carry "this client saw the start" as sticky state, not re-derive it from
+  // the spliced ring — that scored every long COMPLETED game as incomplete and
+  // silently excluded it from every personal best.
+  const TOTAL = 1100;                       // > MAX_BEATS
+  const TAIL = 120;                         // game.js EVENT_TAIL
+  const room = { code: 'ABCD', players: [
+    { id: 'me', name: 'You', isBot: false, botMode: null },
+    { id: 'b1', name: 'Raptor', isBot: true, botMode: 'neutral' },
+  ] };
+
+  const events = [{ seq: 1, t: 'game_start', order: ['me', 'b1'] }];
+  for (let seq = 2; seq < TOTAL; seq++) {
+    events.push(seq % 10 === 0
+      ? { seq, t: 'turn_start', actor: seq % 20 === 0 ? 'me' : 'b1', plays: 3 }
+      : { seq, t: 'draw', to: 'me', count: 1 });
+  }
+  events.push({ seq: TOTAL, t: 'win', actor: 'me', sets: 3 });
+
+  stats.load({ storage: new MemoryStorage() });
+  journal.reset();                          // also resets the recorder's latch
+  let banked = null;
+  // One broadcast per event with a 120-event tail, exactly the wire shape.
+  for (let upTo = 1; upTo <= TOTAL; upTo++) {
+    const finished = upTo === TOTAL;
+    const view = {
+      eventSeq: upTo,
+      events: events.slice(Math.max(0, upTo - TAIL), upTo),
+      phase: finished ? 'finished' : 'playing',
+      winner: finished ? 'me' : null,
+      turnNumber: 110, setsToWin: 3, winRule: 'finalApproach',
+      players: [{ id: 'me', completedSets: 3 }, { id: 'b1', completedSets: 1 }],
+    };
+    journal.ingest(view);
+    banked = recorder.observe({
+      snapshot: view, room, selfId: 'me',
+      beats: journal.entries(), gaps: journal.gapCount(), sink: stats,
+    }) || banked;
+  }
+
+  // The premise, proven inside the test: the ring really did lose the start.
+  assert.ok(journal.entries().length < TOTAL, 'the ring must stay bounded');
+  assert.notEqual(journal.entries()[0].ev.t, 'game_start',
+    'game_start must have rolled off the ring, or this test is not testing the cliff');
+  assert.equal(journal.gapCount(), 0, 'a fully observed game has no broadcast gaps');
+
+  assert.ok(banked, 'the game was banked');
+  assert.equal(banked.won, true);
+  assert.equal(banked.gaps, 0,
+    'a completed game the client watched from the first beat is not "incomplete" '
+    + 'just because the bounded ring spliced game_start off the front');
+
+  // And the flip side stays true: a client that genuinely arrived mid-game is
+  // still marked gapped — the fix must not launder a real hole in the record.
+  journal.reset();
+  const late = recorder.observe({
+    snapshot: { eventSeq: 40, events: [{ seq: 40, t: 'win', actor: 'me', sets: 3 }],
+      phase: 'finished', winner: 'me', turnNumber: 30, players: [] },
+    room, selfId: 'me',
+    beats: [{ seq: 40, ev: { t: 'win', actor: 'me', sets: 3 } }],
+    gaps: 0, sink: stats,
+  });
+  assert.ok(late, 'the late-join game was banked');
+  assert.ok(late.gaps > 0, 'a record that starts mid-game must stay marked incomplete');
+
+  stats.load({ storage: null });
 });
 
 /* ── the real recording, when there is one ───────────────────────────────── */

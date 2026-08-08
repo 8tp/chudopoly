@@ -96,6 +96,7 @@ export function gapCount() { return gaps; }
 // owner could not find. Everything else is texture.
 const TURNING = new Set([
   'final_approach', 'final_approach_broken', 'final_approach_pending',
+  'contest_open', 'contest_held', 'contest_closed',
   'set_completed', 'set_stolen',
   'steal', 'swap', 'scoop', 'win', 'stalemate', 'insolvent', 'action_blocked',
 ]);
@@ -288,6 +289,36 @@ function describe(ev) {
     }
     case 'turn_restart':
       return { text: `${Poss(ev.actor)} turn restarted — ${ev.plays} plays.`, cards: [], mark: '↻' };
+    // §3.10b contested approach. game.js syncContest() opens/closes the contest
+    // and resolveFinalApproach() holds a reached checkpoint; the vocabulary is
+    // SUDDEN_DEATH_COPY's (ui/ruleset.js) — the card the table was picked with.
+    case 'contest_open': {
+      const names = (ev.actors || []).map(nameOf).join(' and ') || 'Two players';
+      const RIDER = {
+        oneLap: 'the win is suspended for one full lap, then turn order decides',
+        escalate: `winning now takes ${ev.bar ?? '?'} sets — pull ahead or nobody converts`,
+        points: `after ${ev.lapCap ?? '?'} laps the game is decided on points`,
+      };
+      return { text: `CONTESTED FINAL APPROACH — ${names} are armed at once; `
+        + `${RIDER[ev.mode] || 'nobody converts while the approach is contested'}.`,
+      cards: [], mark: '⚔' };
+    }
+    case 'contest_held': {
+      const REASON = {
+        escalate: `the bar is ${ev.bar ?? '?'} sets while it stays contested`,
+        oneLap: 'the win waits one full lap before turn order decides',
+        points: 'nobody converts until an approach is broken',
+      };
+      return { text: `${nameOf(ev.actor)} reached the checkpoint with ${ev.sets ?? '?'} sets, `
+        + `but the approach is CONTESTED — ${REASON[ev.reason] || 'the win is held'}.`,
+      cards: [], mark: '⚔' };
+    }
+    case 'contest_closed': {
+      const left = Array.isArray(ev.actors) && ev.actors.length === 1 ? ev.actors[0] : null;
+      return { text: 'The final approach is no longer contested'
+        + (left ? ` — ${nameOf(left)} ${be(left)} the only player still armed` : '') + '.',
+      cards: [], mark: '⚔' };
+    }
     default:
       return null;
   }
@@ -300,6 +331,8 @@ function touchesMe(ev) {
   for (const k of ['actor', 'from', 'to', 'target', 'by', 'source', 'winner']) {
     if (ev[k] === me) return true;
   }
+  // `contest_open`/`contest_closed` name their armed seats in `actors`.
+  if (Array.isArray(ev.actors) && ev.actors.includes(me)) return true;
   return Array.isArray(ev.targets) && ev.targets.includes(me);
 }
 

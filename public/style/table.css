@@ -2780,6 +2780,13 @@
     grid-area: opp;
     display: flex;
     flex-direction: column;
+    /* MEASURED (railprobe, approach-called@landscape): while the docked
+       approach/announce stripe is up, this rail compressed to ~32px — less
+       than ONE tap target, and touchtest's reachability probe proved a seat
+       could never expose more than 33px across 562px of scrolling. The rail
+       may never yield below a tap target plus the fade lip; the centre region
+       absorbs the stripe instead. */
+    min-height: calc(var(--tap) + .6em);
     /* MEASURED on five-player@landscape before this line: seats 122, 127, 227
        and 236px wide in one 236px rail. The portrait rule sets
        `align-items: start` for a good reason (a stretched seat is shorter than

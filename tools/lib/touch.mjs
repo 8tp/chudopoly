@@ -23,6 +23,7 @@
 import {
   PHONE, PHONE_DPR, PHONE_UA, LANDSCAPE,
 } from './harness.mjs';
+import { inspectReachability } from './audit.mjs';
 
 /** iPhone 14/15 portrait software keyboard height, in CSS px. */
 export const KEYBOARD_PX = 336;
@@ -196,6 +197,228 @@ export async function waitForBridge(page, budgetMs = 30000) {
   if (!found) return { ok: false, ms: Date.now() - started };
   await page.evaluate(() => window.__CHUD.ready).catch(() => {});
   return { ok: true, ms: Date.now() - started };
+}
+
+/**
+ * REACHABILITY BY REAL SCROLL (P9 round 2).
+ *
+ * The clip audit's "on-screen and still unreachable" was a claim about a
+ * GESTURE made from a geometry walk, and the round-2 mobile critic caught it
+ * over-claiming with real CDP touch: the `.opponents` seat rail scrolls under
+ * a thumb (scrollTop 0→61, partial-seat sliver, edge fade, 5px scrollbar) and
+ * `.board-props` scrolls sideways with 39px of the next column showing —
+ * both printed as unreachable. So before a clipped/off-viewport control is
+ * allowed to stay red, this probes it the way a thumb would, and greens it
+ * ONLY when all three legs hold:
+ *
+ *   (i)   the clipping ancestor ACTUALLY SCROLLED under a real dispatched
+ *         swipe (scrollTop/scrollLeft moved — a page-side scrollTop write is
+ *         exactly the fake this file exists to ban),
+ *   (ii)  the control became ≥min(44px, its own size) reachable within
+ *         `maxSwipes` swipes, by the same clipRect walk the audit gates on,
+ *   (iii) the COLD frame carried a visible affordance on every cut axis —
+ *         a partially-cut child ≥12px (the "next column showing" class), a
+ *         classic scrollbar gutter ≥4px (overlay bars spend no layout and
+ *         prove nothing), or an edge-fade mask on the scroller. Measured
+ *         before the first probe swipe, because an affordance discovered by
+ *         scrolling is not one the player had.
+ *
+ * A control failing ANY leg stays red with the failing leg named. What this
+ * reclassification can no longer catch, on purpose and worth knowing:
+ *   • a scroller whose affordance is technically present (a 12px sliver, a
+ *     5px thumb) but that a player would never THINK to scroll —
+ *     discoverability is measured here as geometry, not as behaviour;
+ *   • a scroller that works from the port's CENTRE (where this probe puts
+ *     the finger) but is dead from the edge a real thumb favours, e.g. when
+ *     most of the port is covered by a draggable card that claims the
+ *     gesture — one start point per swipe is all this measures;
+ *   • a control needing up to `maxSwipes` (8) swipes: reachable-but-tedious
+ *     now passes, where the old audit called everything past one port red.
+ *
+ * Scroll positions are restored and the probe stamps removed afterwards, so a
+ * later audit on the same document measures the frame it was given, not the
+ * one this probe left behind (the restore is a JS write — bookkeeping after
+ * the measurement, not part of it).
+ *
+ * `entries`: [{ id, label, ... }] from auditTapTargets' clippedInfo /
+ * offscreenInfo. Returns the same objects with { ok, line } added.
+ */
+export async function probeReachability(h, entries, opts = {}) {
+  const {
+    maxSwipes = 8, settleMs = 240, sliverMin = 12, gutterMin = 4,
+  } = opts;
+  const page = h.page;
+  const results = [];
+
+  /* Cold pass FIRST, for every entry, before anything is scrolled: leg (iii)
+   * is a claim about the frame the player saw. */
+  const cold = [];
+  for (const e of entries) cold.push([e, await page.evaluate(inspectReachability, e.id)]);
+  const orig = [];
+  const seenScroller = new Set();
+  for (const [, c] of cold) {
+    const s = c.scroller;
+    if (s && !seenScroller.has(s.stampId)) {
+      seenScroller.add(s.stampId);
+      orig.push([s.stampId, s.scrollLeft, s.scrollTop]);
+    }
+  }
+
+  /** Leg (iii): every axis the scroller cuts on must announce itself. */
+  const affFor = (s) => {
+    const a = s.aff;
+    const per = (axis) => {
+      const parts = [];
+      const sliver = axis === 'x' ? a.sliverX : a.sliverY;
+      const gutter = axis === 'x' ? a.gutterX : a.gutterY;
+      if (sliver >= sliverMin) parts.push(`${sliver}px partial ${axis === 'x' ? 'column' : 'row'}`);
+      if (gutter >= gutterMin) parts.push(`${gutter}px scrollbar gutter`);
+      if (a.mask) parts.push('edge-fade mask');
+      return parts;
+    };
+    const axes = [];
+    if (s.cutX) axes.push(['x', per('x')]);
+    if (s.cutY) axes.push(['y', per('y')]);
+    const ok = axes.length > 0 && axes.every(([, p]) => p.length > 0);
+    const desc = axes.map(([ax, p]) => `${ax}: ${p.length ? p.join(' + ') : 'NONE'}`).join('; ');
+    return { ok, desc };
+  };
+
+  for (const [e, c0] of cold) {
+    const base = { ...e };
+    results.push(base);
+    const fail = (line) => { base.ok = false; base.line = line; };
+    const pass = (line) => { base.ok = true; base.line = line; };
+    if (!c0.found) { fail(`${e.label} — vanished before the reachability probe could touch it`); continue; }
+    const s0 = c0.scroller;
+    if (!s0 && !c0.reachable) { fail(`${e.label} — UNREACHABLE: no scrolling ancestor can reveal it`); continue; }
+    const aff = s0 ? affFor(s0) : { ok: false, desc: 'no scroller' };
+
+    /* Where the scroller stands NOW vs the cold frame. Read off the stamped
+     * scroller itself: once a control has been revealed it is no longer cut,
+     * so a fresh inspect returns `scroller: null` and cannot answer this. */
+    const scrollNow = () => (s0 ? page.evaluate((stamp) => {
+      const p = document.querySelector(`[data-chud-scroller="${CSS.escape(stamp)}"]`);
+      return p ? { l: Math.round(p.scrollLeft), t: Math.round(p.scrollTop) } : null;
+    }, s0.stampId) : null);
+
+    /* Fresh read before swiping: a sibling entry's probe on the same scroller
+     * may already have revealed this one, and the layout may have settled
+     * since the audit measured. */
+    let cur = await page.evaluate(inspectReachability, e.id);
+    if (!cur.found) { fail(`${e.label} — vanished before the reachability probe could touch it`); continue; }
+    if (cur.reachable) {
+      const now = await scrollNow();
+      const scrolledAlready = !!now && (now.l !== s0.scrollLeft || now.t !== s0.scrollTop);
+      if (scrolledAlready && !aff.ok) {
+        fail(`${e.label} — reachable by scroll, but the COLD frame showed no affordance on ${s0.label} `
+          + `(${aff.desc}) — a scroller nothing announces is one nobody scrolls`);
+      } else if (scrolledAlready) {
+        pass(`${e.label} — reachable: revealed by this probe's swipes on the same scroller (${s0.label}, `
+          + `scroll ${s0.scrollLeft},${s0.scrollTop}→${now.l},${now.t}; cold affordance ${aff.desc})`);
+      } else {
+        pass(`${e.label} — reachable without any scroll: the audit raced a settling layout`);
+      }
+      continue;
+    }
+
+    /* Legs (i)+(ii): swipe toward it, bounded, and re-measure each time. Two
+     * swipes are enough to prove an ancestor immobile when its overflow says
+     * it cannot scroll at all.
+     *
+     * Two thumb-realisms, both MEASURED in (dead swipes on a green scroller,
+     * 2 of ~40 probes on unchanged code, which is exactly a moving gate §8
+     * bans):
+     *   • the finger does not insist on one spot — the start point walks
+     *     across the port between attempts, so a child that claims the
+     *     gesture at the centre (touch-action) cannot immobilise the probe;
+     *   • a dead-looking swipe gets ONE grace re-read ~300ms later before it
+     *     is believed: anim/flight.js opens `overflow` on every clipping
+     *     ancestor of a card in flight, so for that window the rail is
+     *     genuinely not a scroller — a player mid-announce hits the same
+     *     dead 300ms and simply swipes again.
+     * Deltas are read off the STAMPED scroller, not the re-inspect: once the
+     * control is revealed it stops being cut and the inspect returns no
+     * scroller to read. */
+    const budget = (s0.canX || s0.canY) ? maxSwipes : 2;
+    const CROSS = [0.5, 0.35, 0.65, 0.28, 0.72, 0.45, 0.6, 0.5];
+    let swipes = 0;
+    let moved = 0;
+    let lastPos = { l: s0.scrollLeft, t: s0.scrollTop };
+    while (swipes < budget && cur.found && !cur.reachable) {
+      const s = cur.scroller || s0;
+      const port = s.port;
+      const portW = port.r - port.l;
+      const portH = port.b - port.t;
+      const rect = cur.rect;
+      const defY = Math.max(rect.b - port.b, port.t - rect.t);
+      const defX = Math.max(rect.r - port.r, port.l - rect.l);
+      if (defY <= 1 && defX <= 1) break;      // cut by something scrolling cannot fix
+      const axis = defY >= defX ? 'y' : 'x';
+      const frac = CROSS[swipes % CROSS.length];
+      if (axis === 'y') {
+        const cx = Math.min(Math.max(port.l + portW * frac, port.l + 8), port.r - 8);
+        const cy = (port.t + port.b) / 2;
+        const span = Math.min(Math.max(portH - 14, 24), 300);
+        const dir = (rect.b - port.b) >= (port.t - rect.t) ? -1 : 1;  // content below → finger up
+        await h.swipe(cx, cy - (dir * span) / 2, cx, cy + (dir * span) / 2, 14);
+      } else {
+        const cx = (port.l + port.r) / 2;
+        const cy = Math.min(Math.max(port.t + portH * frac, port.t + 8), port.b - 8);
+        const span = Math.min(Math.max(portW - 14, 24), 300);
+        const dir = (rect.r - port.r) >= (port.l - rect.l) ? -1 : 1;  // content right → finger left
+        await h.swipe(cx - (dir * span) / 2, cy, cx + (dir * span) / 2, cy, 14);
+      }
+      swipes++;
+      await page.waitForTimeout(settleMs);
+      let next = await page.evaluate(inspectReachability, e.id);
+      let now = await scrollNow();
+      if (now && now.l === lastPos.l && now.t === lastPos.t && next.found && !next.reachable) {
+        await page.waitForTimeout(300);              // the grace beat — see above
+        next = await page.evaluate(inspectReachability, e.id);
+        now = await scrollNow();
+      }
+      if (now) {
+        moved += Math.abs(now.l - lastPos.l) + Math.abs(now.t - lastPos.t);
+        lastPos = now;
+      }
+      cur = next;
+    }
+
+    if (!cur.found) { fail(`${e.label} — vanished mid-probe after ${swipes} swipe(s)`); continue; }
+    if (!cur.reachable) {
+      if (moved < 2) {
+        fail(`${e.label} — UNREACHABLE: ${s0.label} (overflow ${s0.overflowX}/${s0.overflowY}) `
+          + `never moved under ${swipes} real swipe(s)`);
+      } else {
+        fail(`${e.label} — UNREACHABLE: still only ${Math.round(cur.reach.w)}×${Math.round(cur.reach.h)} `
+          + `exposed after ${swipes} swipe(s) (${s0.label} scrolled ${Math.round(moved)}px)`);
+      }
+      continue;
+    }
+    if (!aff.ok) {
+      const at = await scrollNow();
+      const net = at ? Math.abs(at.l - s0.scrollLeft) + Math.abs(at.t - s0.scrollTop) : Math.round(moved);
+      fail(`${e.label} — reachable by force (${s0.label} scrolled ${net}px in ${swipes} swipe(s)) `
+        + `but the COLD frame showed no affordance (${aff.desc}) — a scroller nothing announces is one nobody scrolls`);
+      continue;
+    }
+    const end = await scrollNow();
+    pass(`${e.label} — reachable: ${swipes} real swipe(s) on ${s0.label} took scroll `
+      + `${s0.scrollLeft},${s0.scrollTop}→${end ? `${end.l},${end.t}` : '?'} `
+      + `(cold affordance ${aff.desc})`);
+  }
+
+  /* Put the frame back and take the stamps off. */
+  await page.evaluate((positions) => {
+    for (const [stampId, left, top] of positions) {
+      const p = document.querySelector(`[data-chud-scroller="${CSS.escape(stampId)}"]`);
+      if (p) { p.scrollLeft = left; p.scrollTop = top; }
+    }
+    for (const el of document.querySelectorAll('[data-chud-scroller]')) el.removeAttribute('data-chud-scroller');
+    for (const el of document.querySelectorAll('[data-chud-reach]')) el.removeAttribute('data-chud-reach');
+  }, orig);
+  return results;
 }
 
 /** Centre + geometry of the nth match, or null if absent/zero-sized. */

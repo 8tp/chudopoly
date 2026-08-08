@@ -133,6 +133,28 @@ export function auditTapTargets() {
   const advisory = [];
   const offscreen = [];
   const clipped = [];
+  /**
+   * P9 round 2 (mobile critic, verified with real CDP touch): "clipped by a
+   * scrolling ancestor — on-screen and still unreachable" was OVER-CLAIMING.
+   * The `.opponents` seat rail scrolls under a real thumb drag (scrollTop
+   * 0→61, with a partial-seat sliver, an edge fade and a 5px scrollbar), and
+   * `.board-props` scrolls sideways with 39px of the next column showing —
+   * both were reported unreachable. "Unreachable" is a claim about a GESTURE,
+   * and a geometry walk cannot make it alone. So each clipped/off-viewport
+   * element is also returned as a structured entry carrying a stamped id
+   * (`data-chud-reach`) so the Node side can find it again and PROBE it with a
+   * real dispatched swipe (tools/lib/touch.mjs `probeReachability`). The
+   * string lists keep their exact shape — the prove-surface mutations and the
+   * light-theme diff read them — and the reclassification happens in
+   * touchtest, where the swipe driver lives.
+   */
+  const clippedInfo = [];
+  const offscreenInfo = [];
+  let seq = window.__chudReachSeq || 0;
+  const stamp = (el) => {
+    if (!el.dataset.chudReach) el.dataset.chudReach = String(++seq);
+    return el.dataset.chudReach;
+  };
   const seen = new Set();
 
   const consider = (el, kind) => {
@@ -141,6 +163,7 @@ export function auditTapTargets() {
     const r = el.getBoundingClientRect();
     if (r.right > innerWidth + 2 || r.left < -2 || r.bottom > innerHeight + 2 || r.top < -2) {
       offscreen.push(`${label(el)} ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}×${Math.round(r.height)}`);
+      offscreenInfo.push({ id: stamp(el), label: label(el) });
     }
     // Clipped by a scroller rather than by the viewport. Only interesting when
     // the element itself is big enough — a 20px control is already fatal above,
@@ -150,6 +173,7 @@ export function auditTapTargets() {
       if ((r.width >= MIN - 0.5 && c.w < MIN - 0.5) || (r.height >= MIN - 0.5 && c.h < MIN - 0.5)) {
         clipped.push(`${label(el)} is ${Math.round(r.width)}×${Math.round(r.height)} but only `
           + `${Math.round(c.w)}×${Math.round(c.h)} of it is reachable (clipped by a scrolling ancestor)`);
+        clippedInfo.push({ id: stamp(el), label: label(el) });
       }
     }
     let w = r.width;
@@ -176,11 +200,157 @@ export function auditTapTargets() {
   // Board/mini cards: zoom affordances (§5), advisory only.
   document.querySelectorAll('[data-card-id]').forEach((el) => consider(el, 'advisory'));
 
+  window.__chudReachSeq = seq;
   return {
-    fatal, zones, advisory, offscreen, clipped,
+    fatal, zones, advisory, offscreen, clipped, clippedInfo, offscreenInfo,
     scrollW: document.documentElement.scrollWidth,
     scrollH: document.documentElement.scrollHeight,
     w: innerWidth, h: innerHeight,
+  };
+}
+
+/**
+ * The geometry HALF of "is this control reachable" — everything a probe swipe
+ * needs to know about one stamped element, read fresh each time it is called.
+ *
+ * The other half is the swipe itself, which cannot live in the page: a real
+ * thumb enters at the browser process (see tools/lib/touch.mjs, header) and a
+ * page-side scrollTop write would be the exact fake this gate was rebuilt to
+ * ban. So this returns, for `[data-chud-reach="<id>"]`:
+ *
+ *   • `reachable` — would the clipped/off-viewport flags still fire? True only
+ *     when ≥min(44, own size) of the control survives every clipping ancestor
+ *     AND the viewport, i.e. the same clipRect walk `auditTapTargets` gates on.
+ *   • `scroller` — the nearest ancestor that (a) has a clipping overflow and
+ *     (b) actually cuts this element today, with its scroll extents, its
+ *     viewport-clamped port (where a finger can land), and its own stable
+ *     stamp (`data-chud-scroller`) so the Node side can read deltas and
+ *     restore it. Falls back to the document scroller for an off-viewport
+ *     element no inner scroller owns.
+ *   • `aff` — the COLD-FRAME affordances, measured not assumed:
+ *       sliverX/Y  the largest partially-cut child at the port edge, in
+ *                  visible px (the "39px of the next column" class),
+ *       gutterX/Y  layout space taken by a classic scrollbar
+ *                  (offsetWidth−clientWidth; overlay scrollbars give 0 and
+ *                  earn nothing),
+ *       mask       an edge-fade mask-image on the scroller (the `.self-board`
+ *                  gradient treatment).
+ *     Callers must read `aff` from the FIRST call, before any probe swipe has
+ *     moved the scroller — an affordance discovered by scrolling is not one
+ *     the player had.
+ */
+export function inspectReachability(id) {
+  const MIN = 44;
+  const el = document.querySelector(`[data-chud-reach="${CSS.escape(id)}"]`);
+  if (!el) return { found: false };
+  const r = el.getBoundingClientRect();
+  const clips = (v) => v === 'hidden' || v === 'clip' || v === 'auto' || v === 'scroll';
+  const scrolls = (v) => v === 'auto' || v === 'scroll';
+
+  /* Same walk as auditTapTargets.clipRect — the probe must agree with the
+   * audit about what "reachable" means or the reclassification is a fudge. */
+  let l = r.left; let t = r.top; let rt = r.right; let b = r.bottom;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const st = getComputedStyle(p);
+    if (!clips(st.overflowX) && !clips(st.overflowY)) continue;
+    const pr = p.getBoundingClientRect();
+    if (clips(st.overflowX)) { l = Math.max(l, pr.left); rt = Math.min(rt, pr.right); }
+    if (clips(st.overflowY)) { t = Math.max(t, pr.top); b = Math.min(b, pr.bottom); }
+  }
+  l = Math.max(l, 0); t = Math.max(t, 0);
+  rt = Math.min(rt, innerWidth); b = Math.min(b, innerHeight);
+  const reach = { w: Math.max(0, rt - l), h: Math.max(0, b - t) };
+  const needW = Math.min(MIN, r.width) - 0.5;
+  const needH = Math.min(MIN, r.height) - 0.5;
+  const reachable = reach.w >= needW && reach.h >= needH;
+
+  /* The nearest ancestor that is actually CUTTING the element today (or the
+   * viewport-clipping document scroller for a plain off-viewport element). */
+  let sc = null;
+  for (let p = el.parentElement; p && !sc; p = p.parentElement) {
+    const st = getComputedStyle(p);
+    if (!clips(st.overflowX) && !clips(st.overflowY)) continue;
+    const pr = p.getBoundingClientRect();
+    const cutX = clips(st.overflowX) && (r.left < pr.left - 1 || r.right > pr.right + 1);
+    const cutY = clips(st.overflowY) && (r.top < pr.top - 1 || r.bottom > pr.bottom + 1);
+    if (cutX || cutY) sc = { p, st, cutX, cutY };
+  }
+  let doc = false;
+  if (!sc && (r.right > innerWidth + 2 || r.left < -2 || r.bottom > innerHeight + 2 || r.top < -2)) {
+    const de = document.scrollingElement;
+    if (de && (de.scrollHeight > de.clientHeight + 1 || de.scrollWidth > de.clientWidth + 1)) {
+      doc = true;
+      sc = {
+        p: de,
+        st: getComputedStyle(document.documentElement),
+        cutX: r.right > innerWidth + 2 || r.left < -2,
+        cutY: r.bottom > innerHeight + 2 || r.top < -2,
+      };
+    }
+  }
+  if (!sc) {
+    return { found: true, reachable, reach, rect: { l: r.left, t: r.top, r: r.right, b: r.bottom }, scroller: null };
+  }
+
+  const p = sc.p;
+  const pr = doc
+    ? { left: 0, top: 0, right: innerWidth, bottom: innerHeight }
+    : p.getBoundingClientRect();
+  // Where a finger can actually land: the port clamped to the viewport.
+  const port = {
+    l: Math.max(pr.left, 0),
+    t: Math.max(pr.top, 0),
+    r: Math.min(pr.right, innerWidth),
+    b: Math.min(pr.bottom, innerHeight),
+  };
+  if (!p.dataset.chudScroller) p.dataset.chudScroller = `s${id}`;
+
+  const kids = doc ? document.body.children : p.children;
+  let sliverX = 0; let sliverY = 0;
+  for (const ch of kids) {
+    const cr = ch.getBoundingClientRect();
+    if (!cr.width || !cr.height) continue;
+    const vx = Math.min(cr.right, port.r) - Math.max(cr.left, port.l);
+    const vy = Math.min(cr.bottom, port.b) - Math.max(cr.top, port.t);
+    // Partially cut on an axis (≥5px hidden — below that is rounding), fully
+    // inside the port on the other: a visible fragment that promises more.
+    if (vx > 1 && cr.width - vx > 5 && vy > 1) sliverX = Math.max(sliverX, vx);
+    if (vy > 1 && cr.height - vy > 5 && vx > 1) sliverY = Math.max(sliverY, vy);
+  }
+  const mask = /gradient/.test(sc.st.maskImage || '')
+    || /gradient/.test(sc.st.webkitMaskImage || '');
+  const cls = String(p.className || '').trim().split(/\s+/).filter(Boolean)[0] || '';
+  return {
+    found: true,
+    reachable,
+    reach,
+    rect: { l: r.left, t: r.top, r: r.right, b: r.bottom },
+    scroller: {
+      label: doc ? 'document' : `${p.tagName.toLowerCase()}${p.id ? '#' + p.id : ''}${cls ? '.' + cls : ''}`,
+      stampId: p.dataset.chudScroller,
+      doc,
+      cutX: sc.cutX,
+      cutY: sc.cutY,
+      port,
+      overflowX: sc.st.overflowX,
+      overflowY: sc.st.overflowY,
+      canX: scrolls(sc.st.overflowX) && p.scrollWidth > p.clientWidth + 1,
+      canY: (doc || scrolls(sc.st.overflowY)) && p.scrollHeight > p.clientHeight + 1,
+      scrollLeft: Math.round(p.scrollLeft),
+      scrollTop: Math.round(p.scrollTop),
+      maxX: Math.max(0, p.scrollWidth - p.clientWidth),
+      maxY: Math.max(0, p.scrollHeight - p.clientHeight),
+      aff: {
+        sliverX: Math.round(sliverX),
+        sliverY: Math.round(sliverY),
+        // A vertical scrollbar spends WIDTH, so it is the Y-scroll affordance;
+        // a horizontal one spends height and vouches for X. Overlay scrollbars
+        // spend nothing and therefore prove nothing.
+        gutterY: doc ? innerWidth - document.documentElement.clientWidth : p.offsetWidth - p.clientWidth,
+        gutterX: doc ? innerHeight - document.documentElement.clientHeight : p.offsetHeight - p.clientHeight,
+        mask,
+      },
+    },
   };
 }
 

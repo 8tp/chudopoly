@@ -80,7 +80,9 @@ test('host rematch preserves the room roster and creates a fresh game', () => {
   assert.notEqual(room.state, oldState);
   assert.equal(room.state.phase, 'playing');
   assert.equal(room.state.winner, null);
-  assert.deepEqual(room.state.players.map(player => player.id), ['host', 'bot']);
+  // Seat ORDER is shuffled at every game start (createGame shuffleSeats,
+  // owner directive 2026-08-07); the roster's membership is the contract.
+  assert.deepEqual(room.state.players.map(player => player.id).sort(), ['bot', 'host']);
   assert.equal(broadcasts, 1);
   assert.equal(room.state.events[0].t, 'game_start');
 });

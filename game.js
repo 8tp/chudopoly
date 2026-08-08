@@ -537,6 +537,13 @@ function createGame(players, opts = {}) {
   // Rules FIRST: the deck is one of them now, so it cannot be built before they resolve.
   const rules = resolveRules(opts);
   const deck = shuffle(buildDeck(rules.deck), rand);
+  // OWNER 2026-08-07: "randomize the starting player / lobby positions so turn
+  // order isn't always the same." Opt-in, not default: simulate.js seats
+  // personalities deliberately (simbalance's first-player-advantage number IS
+  // a measurement of seat order), and tests pin explicit orders. The server
+  // passes shuffleSeats for real rooms; drawing from the game's own rng keeps
+  // the order reproducible from the logged seed.
+  if (opts.shuffleSeats && players.length > 1) players = shuffle(players.slice(), rand);
   const state = {
     phase: 'playing',
     turnPhase: 'draw',

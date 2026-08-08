@@ -83,6 +83,39 @@ function reclaimFromBot(room, seat, code, how) {
   console.log(`[BOT] ${code} ${seat.name} reclaimed from bot (${how})`);
 }
 
+/* ── Bot watchdog ────────────────────────────────────────────────────── */
+
+// Defence in depth for the owner's 2026-08-07 freeze, SEV-1 round 2. A Quick Play room runs
+// turnTimeout 0, so the ONE thing that ever advances a bot's turn is `room._botTimeout` —
+// if it is ever unarmed while a bot holds the turn (or owes the only outstanding answer),
+// NOTHING recovers: no clock, no later message, no reload. reclaimFromBot's cancel was one
+// proven way to reach that state; this sweep exists so the NEXT cancel-without-re-arm bug —
+// whatever shape it takes — costs one sweep interval instead of the table.
+//
+// The sweep is deliberately dumb and unconditionally safe: scheduleBotAction is idempotent
+// (returns if a move is already scheduled) and self-selecting (schedules only when a bot has
+// something to do), so the only real condition is "playing and nothing armed". It never
+// broadcasts. 0 disables it — that is how its own regression test proves the wedge is real.
+const BOT_WATCHDOG_MS = Math.max(0, Number(process.env.CHUD_BOT_WATCHDOG_MS ?? 5000));
+
+function armBotWatchdog(room) {
+  if (!BOT_WATCHDOG_MS || room._botWatchdog) return;
+  room._botWatchdog = setInterval(() => {
+    if (rooms.get(room.code) !== room) { clearBotWatchdog(room); return; }
+    if (!room.state || room.state.phase !== 'playing') return;
+    if (room._botTimeout) return;
+    broadcast.ensureBotScheduled(room);
+    // Visibility, not control flow: if this line ever prints outside a test, some path
+    // cleared the bot timeout without re-arming and should be hunted down.
+    if (room._botTimeout) console.log(`[BOT] ${room.code} watchdog re-armed a stalled bot move`);
+  }, BOT_WATCHDOG_MS);
+  room._botWatchdog.unref?.();
+}
+
+function clearBotWatchdog(room) {
+  if (room._botWatchdog) { clearInterval(room._botWatchdog); room._botWatchdog = null; }
+}
+
 /* ── Room reaping ────────────────────────────────────────────────────── */
 
 // How long an abandoned room is kept alive so a dropped player can come back.
@@ -106,6 +139,7 @@ function scheduleRoomReap(roomCode) {
     r._reapTimerId = null;
     if (r.players.every(x => x.isBot || !x.ws || x.ws.readyState !== 1)) {
       timers.clearTurnTimer(r);          // otherwise the deleted room keeps playing forever
+      clearBotWatchdog(r);
       rooms.delete(roomCode);
       console.log(`[ROOM] ${roomCode} deleted (empty)`);
     } else {
@@ -118,6 +152,7 @@ function scheduleRoomReap(roomCode) {
 function deleteRoom(roomCode, room) {
   if (room._reapTimerId) { clearTimeout(room._reapTimerId); room._reapTimerId = null; }
   if (room._rulesBroadcastTimer) { clearTimeout(room._rulesBroadcastTimer); room._rulesBroadcastTimer = null; }
+  clearBotWatchdog(room);
   timers.clearTurnTimer(room);
   rooms.delete(roomCode);
   console.log(`[ROOM] ${roomCode} deleted (empty)`);
@@ -264,6 +299,7 @@ function startRoomGame(room, turnTimeout, responseTimeout, ruleOpts) {
   if (seedBase !== null) options.seed = `${seedBase}#${room.gameCount}`;
   room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })), options);
   if (room.turnTimeout > 0) timers.startTurnTimer(room);
+  armBotWatchdog(room);
   broadcast.broadcastAndScheduleBot(room);
 }
 

@@ -25,6 +25,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// SEV-1 round 2: the watchdog sweep interval, read by server/handlers.js at load. 40ms so
+// the recovery test below runs in milliseconds rather than the production 5s. `??=` so an
+// explicit CHUD_BOT_WATCHDOG_MS=0 from the command line still disables it — that run is the
+// proof this test fails without the fix (§8: a gate must be proven able to fail).
+process.env.CHUD_BOT_WATCHDOG_MS ??= '40';
+
 const G = require('../game');
 const Bot = require('../bot');
 const broadcast = require('../server/broadcast');
@@ -88,8 +94,11 @@ function turnHolder(room) {
 function cleanup(room) {
   Bot.cancelBotTimeout(room);
   timers.clearTurnTimer(room);
+  if (room._botWatchdog) { clearInterval(room._botWatchdog); room._botWatchdog = null; }
   rooms.delete(room.code);
 }
+
+function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
 
 test.before(initModules);
 
@@ -146,5 +155,41 @@ test('a rejoin (join_room with the resume token) leaves the table playable too',
     }
   } finally {
     cleanup(room);
+  }
+});
+
+// SEV-1 round 2: the two tests above pin the ONE cancel-without-re-arm path we know about
+// (reclaimFromBot). This one pins the CLASS. A Quick Play room runs turnTimeout 0, so a
+// bot's `room._botTimeout` is the only thing that can ever move the table — the staged
+// condition below (phase playing, a bot holds the turn, no pendingAction, no bot move
+// scheduled) is exactly the terminal wedge, however a future bug reaches it. The watchdog
+// armed by startRoomGame must re-arm the bot's move within one sweep.
+//
+// Proof the gate can fail (§8): CHUD_BOT_WATCHDOG_MS=0 node --test test/reconnect-wedge.test.js
+// disables the watchdog and this test alone goes red.
+test('a room whose bot move was cancelled without a re-arm recovers by watchdog', async () => {
+  const ws = fakeSocket();
+  const state = { playerId: null, roomCode: null };
+  // The REAL Quick Play path, so the watchdog is armed the way production arms it.
+  handlers.handleMessage(ws, { type: 'quick_play', name: 'OWNER' }, state);
+  const room = rooms.get('TEST');
+  try {
+    assert.ok(room?.state, 'quick play produced a live game');
+    assert.equal(room.turnTimeout, 0, 'quick play runs with no turn clock — the premise of the wedge');
+    handTurnToABot(room);
+
+    // The wedge, staged: whatever future bug cancels the room's one bot timeout without
+    // re-arming it leaves exactly this state — and with turnTimeout 0 nothing else can act.
+    Bot.cancelBotTimeout(room);
+    assert.equal(room._botTimeout, undefined, 'staged: a bot holds the turn, nothing is scheduled');
+
+    // Several sweep intervals, far below any bot think-delay (>=500ms), so what this waits
+    // on is the watchdog and only the watchdog.
+    await sleep(250);
+    assert.ok(room._botTimeout,
+      'the watchdog did not re-arm the bot move — the room is wedged for good: no turn '
+      + 'clock, no pending answer, and no message can ever legally reach a scheduler');
+  } finally {
+    cleanup(room || { code: 'TEST', players: [] });
   }
 });

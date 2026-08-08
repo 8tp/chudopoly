@@ -194,9 +194,17 @@ try {
       await h.page.evaluate((s) => window.__CHUD.applyState(s), states[i]);
       await sleep(120);
     }
-    const before = await h.page.evaluate(PROBE);
-
-    await h.page.evaluate(() => window.__tab.hide());
+    // The frame baseline is read INSIDE the same evaluate that hides the tab.
+    // It used to be a separate PROBE round-trip ~5-15ms earlier, and the clock
+    // is still running at 60fps in that gap — so the "frames while hidden"
+    // subtraction sometimes charged the gate for a frame that landed while the
+    // tab was still visible (measured: 60 → 62, an intermittent red against a
+    // ≤1 bound). Atomic baseline, same bound: only the ONE in-flight rAF that
+    // was already scheduled when hide() ran is allowed to land afterwards.
+    const hiddenAtFrames = await h.page.evaluate(() => {
+      window.__tab.hide();
+      return window.__CHUD.clock.frames;
+    });
     let peakQueue = 0;
     for (let i = 4; i < states.length; i++) {
       await h.page.evaluate((s) => window.__CHUD.applyState(s), states[i]);
@@ -211,11 +219,11 @@ try {
     // One frame, not zero: the rAF that was already outstanding when hide() ran
     // still lands, exactly as the in-flight frame does in a real browser. Two
     // would mean the gate is not holding anything.
-    const ticked = away.frames - before.frames;
+    const ticked = away.frames - hiddenAtFrames;
     if (ticked <= 1) {
       r.pass(`the clock really stopped while hidden ${dim(`(${ticked} frame in ${states.length - 4} broadcasts)`)}`);
     } else {
-      r.fail(`the clock kept ticking while hidden (${before.frames} → ${away.frames}) — the gate is not backgrounding the page`);
+      r.fail(`the clock kept ticking while hidden (${hiddenAtFrames} → ${away.frames}) — the gate is not backgrounding the page`);
     }
     // The whole "is it a permanent stall or a slow drain" question. Neither:
     // enqueue() collapses at 4 jobs, so the depth is bounded by the SHAPE of the
@@ -318,13 +326,16 @@ try {
     // through) is allowed to stand still.
     const first = await h.page.evaluate(PROBE);
     let later = first;
-    let acted = false;
+    let acted = 0;
     const deadline = Date.now() + 12000;
     while (Date.now() < deadline) {
       later = await h.page.evaluate(PROBE);
       if (later.seq > first.seq && !later.myTurn) break;
       if (later.phase === 'finished' || later.iAnswer) break;
-      if (later.myTurn && !acted) { acted = true; await endMyTurn(h.page); }
+      // Up to three attempts, not one: the first End Turn after a resume may
+      // land while the catch-up narration is still settling, and a helper that
+      // gives up after one try reports a live table as a wedge.
+      if (later.myTurn && acted < 3) { acted++; await endMyTurn(h.page); }
       await sleep(500);
     }
     if (later.seq > first.seq || later.phase === 'finished') {
@@ -333,7 +344,14 @@ try {
       r.pass(`the table is waiting on an answer from us ${dim(`(seq ${later.seq}) — a live table, not a wedged one`)}`);
     } else {
       r.fail(`the room is WEDGED: seq stuck at ${later.seq} for 12s, phase ${later.phase}, `
-        + 'not our turn and no answer owed — nobody can move this table again');
+        + `${later.myTurn ? `OUR turn and ${acted} attempt(s) to play it went nowhere` : 'not our turn'}`
+        + ' and no answer owed — nobody can move this table again');
+      // The diagnosis a wedge needs, in the failure itself: what the client saw
+      // and what the server was doing. The round-2 hunt had to re-instrument
+      // both halves to learn the "wedge" was a live table and a tap that never
+      // produced a click — never make a red run that mute again.
+      console.log(dim(`      probe: ${JSON.stringify(later)}`));
+      for (const line of server.logs().split('\n').slice(-25)) console.log(dim(`      ${line}`));
     }
 
     if (later.err) r.fail(`__CHUD.lastError: ${later.err}`);
@@ -380,29 +398,39 @@ async function waitFor(page, ok, ms) {
  * an absence.
  */
 async function endMyTurn(page) {
-  await page.click('#btn-end-turn').catch(() => {});
+  // Explicit timeouts on EVERY click: Playwright's default is 30s, and this
+  // helper runs inside a 12s wedge deadline — one unactionable control used to
+  // eat the whole observation window and turn a live table into a "wedge".
+  await page.click('#btn-end-turn', { timeout: 3000 }).catch(() => {});
   await sleep(400);
-  // A discard was demanded: tap hand cards until the confirm is live.
-  for (let i = 0; i < 6; i++) {
+  // A discard was demanded (a reclaimed seat auto-draws over the limit, so this
+  // is the NORMAL first act after a resume, not an edge case). Two lessons are
+  // baked in, both learned from a red run that blamed the server:
+  //   • a tap must go through the REAL input pipeline (page.mouse) — the tap
+  //     path is delivered by the browser's compatibility CLICK after the
+  //     pointer pair (interact/pointer.js onUp), and a synthetic
+  //     pointerdown/pointerup never produces one, so nothing ever selected;
+  //   • a chosen card is marked `is-discarding` (interact/index.js), not
+  //     `is-selected` — the old selector re-tapped the same card forever.
+  for (let i = 0; i < 8; i++) {
     const kind = await page.evaluate(() => window.__CHUD.mode.kind);
     if (kind !== 'discard') break;
-    const tapped = await page.evaluate(() => {
-      const card = document.querySelector('#zone-hand .card:not(.is-selected)');
-      if (!card) return false;
-      const b = card.getBoundingClientRect();
-      card.dispatchEvent(new PointerEvent('pointerdown', {
-        bubbles: true, clientX: b.left + b.width / 2, clientY: b.top + b.height * 0.3,
-        pointerId: 1, isPrimary: true,
-      }));
-      window.dispatchEvent(new PointerEvent('pointerup', {
-        bubbles: true, clientX: b.left + b.width / 2, clientY: b.top + b.height * 0.3,
-        pointerId: 1, isPrimary: true,
-      }));
-      return true;
-    });
-    if (!tapped) break;
-    await sleep(200);
-    await page.click('[data-action="confirm-discard"]').catch(() => {});
+    // The client's own one-tap default fills the selection exactly.
+    const auto = await page.$('[data-action="discard-cheapest"]');
+    if (auto) {
+      await auto.click({ timeout: 1500 }).catch(() => {});
+    } else {
+      const box = await page.evaluate(() => {
+        const card = document.querySelector('#zone-hand .card:not(.is-discarding)');
+        if (!card) return null;
+        const b = card.getBoundingClientRect();
+        return { x: b.left + b.width / 2, y: b.top + b.height * 0.3 };
+      });
+      if (!box) break;
+      await page.mouse.click(box.x, box.y);
+    }
+    await sleep(250);
+    await page.click('[data-action="confirm-discard"]', { timeout: 1500 }).catch(() => {});
     await sleep(300);
   }
 }

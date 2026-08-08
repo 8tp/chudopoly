@@ -92,6 +92,22 @@ function broadcastRoom(room) {
   });
 }
 
+// Schedule-only: the bot arming half of broadcastAndScheduleBot, without the
+// fan-out. Exists for the wedge watchdog (server/handlers.js), which must be
+// able to re-arm a stalled bot move on a room whose state has NOT changed —
+// broadcasting an unchanged state to every seat once per sweep would be noise.
+// scheduleBotAction is idempotent (it returns if a move is already scheduled)
+// and self-selecting (it schedules only when a bot actually holds the turn or
+// owes an answer), so calling this is always safe.
+function ensureBotScheduled(room) {
+  const timers = require('./timers');
+  Bot.scheduleBotAction(room, {
+    broadcast: (r) => { timers.syncTimers(r); broadcastRoom(r); },
+    startTimer: timers.startTurnTimer,
+    clearTimer: timers.clearTurnTimer,
+  });
+}
+
 function broadcastAndScheduleBot(room) {
   const timers = require('./timers');
   // Bots create pending actions without going through a message handler, so timer state is
@@ -107,11 +123,7 @@ function broadcastAndScheduleBot(room) {
   // exactly why this survived every test we had.
   timers.syncTimers(room);
   broadcastRoom(room);
-  Bot.scheduleBotAction(room, {
-    broadcast: (r) => { timers.syncTimers(r); broadcastRoom(r); },
-    startTimer: timers.startTurnTimer,
-    clearTimer: timers.clearTurnTimer,
-  });
+  ensureBotScheduled(room);
 }
 
 function send(ws, msg) {
@@ -132,4 +144,6 @@ function isConnected(room, pid) {
   return p?.ws?.readyState === 1;
 }
 
-module.exports = { init, broadcastRoom, broadcastAndScheduleBot, send, transferHost, isConnected };
+module.exports = {
+  init, broadcastRoom, broadcastAndScheduleBot, ensureBotScheduled, send, transferHost, isConnected,
+};

@@ -80,7 +80,10 @@ function makeRoom(humanWs) {
 /** Put the turn on a bot and give that bot a scheduled move, the way every
  *  broadcast does. */
 function handTurnToABot(room) {
-  room.state.currentPlayerIndex = room.players.findIndex(p => p.isBot);
+  // Seats are SHUFFLED at game start (createGame shuffleSeats, owner directive
+  // 2026-08-07), so a roster index is not a state index — resolve by id.
+  const botIds = new Set(room.players.filter(p => p.isBot).map(p => p.id));
+  room.state.currentPlayerIndex = room.state.players.findIndex(p => botIds.has(p.id));
   room.state.turnPhase = 'play';
   broadcast.broadcastAndScheduleBot(room);
   assert.ok(room._botTimeout, 'setup: a bot holds the turn and its move is scheduled');

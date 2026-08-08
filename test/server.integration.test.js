@@ -127,11 +127,13 @@ test('quick play creates a live four-player game', async () => {
   assert.equal(state.game.phase, 'playing');
 
   const me = state.game.players.find(player => player.id === joined.playerId);
-  // 5 dealt + the automatic turn draw of 2. The seat that opens the game is never asked
-  // for a `draw` command, and the very first broadcast already shows the play phase.
-  assert.equal(me.hand.length, 7);
+  // 5 dealt + the automatic turn draw of 2 for whichever seat OPENS the game —
+  // seats are shuffled at start (owner directive 2026-08-07), so the opener is
+  // found from the broadcast rather than assumed to be the human.
+  const openerId = state.game.currentPlayerId;
+  assert.equal(me.hand.length, openerId === joined.playerId ? 7 : 5);
   assert.equal(state.game.turnPhase, 'play');
-  assert.ok(state.game.events.some(event => event.t === 'draw' && event.to === joined.playerId));
+  assert.ok(state.game.events.some(event => event.t === 'draw' && event.to === openerId));
   assert.equal(state.game.players.filter(player => player.hand !== undefined).length, 1);
   assert.ok(state.game.events.some(event => event.t === 'game_start'));
   const foreignDeal = state.game.events.find(event => event.t === 'deal' && event.to !== joined.playerId);
@@ -172,7 +174,13 @@ test('swap_property is refused by shape and by rule, and never rebroadcasts', as
   const ws = await openClient();
   send(ws, { type:'quick_play', name:'Swapper' });
   const joined = await waitMessage(ws, msg => msg.type === 'joined');
-  const state = await waitMessage(ws, msg => msg.type === 'state' && msg.phase === 'playing');
+  let state = await waitMessage(ws, msg => msg.type === 'state' && msg.phase === 'playing');
+  // Seats are shuffled at start (owner directive 2026-08-07) and this test's
+  // whole design needs the HUMAN on turn (its no-fan-out bound depends on no
+  // bot broadcasting underneath the measurement) — so wait for the turn to
+  // come around; quick-play bots act on their own timers within seconds.
+  const myTurn = (m) => m.game?.currentPlayerId === joined.playerId;
+  if (!myTurn(state)) state = await waitMessage(ws, (m) => m.type === 'state' && myTurn(m), 20000);
   const seq = state.game.eventSeq;
 
   // 1. SHAPE — server/protocol.js, before the engine is ever called.

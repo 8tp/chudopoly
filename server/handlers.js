@@ -297,6 +297,10 @@ function startRoomGame(room, turnTimeout, responseTimeout, ruleOpts) {
   const seedBase = seedFromEnv();
   const options = { ...room.rules };
   if (seedBase !== null) options.seed = `${seedBase}#${room.gameCount}`;
+  // Every real table shuffles seats (owner directive) — quick play included,
+  // where the host otherwise always sat first and always carried the measured
+  // ~24.5% first-player advantage into their own stats and the game log.
+  options.shuffleSeats = true;
   room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })), options);
   if (room.turnTimeout > 0) timers.startTurnTimer(room);
   armBotWatchdog(room);

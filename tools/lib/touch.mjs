@@ -356,17 +356,32 @@ export async function probeReachability(h, entries, opts = {}) {
       if (defY <= 1 && defX <= 1) break;      // cut by something scrolling cannot fix
       const axis = defY >= defX ? 'y' : 'x';
       const frac = CROSS[swipes % CROSS.length];
+      /* Swipe the distance the deficit ASKS FOR (+12px of margin), never the
+       * whole port. MEASURED on the announce rail (port 88px, seat 51px,
+       * maxY 77): the seat is reachable at ANY scrollTop in [19, 70] — a
+       * 51px-wide green window — but a full-port (74px) swipe parked at
+       * 69–75 from one end and 0–6 from the other, i.e. a bang-bang
+       * oscillator that crossed the window twice per cycle and landed inside
+       * it only by fling luck (8 misses in a row ≈ 1 gate run in 4 red on
+       * unchanged code). A deficit-sized swipe converges: overshoot makes the
+       * NEXT deficit small, which makes the next swipe small. It is also
+       * what a thumb does — nobody flings a rail by its full height to
+       * reveal the 26px they are missing. */
       if (axis === 'y') {
+        const below = (rect.b - port.b) >= (port.t - rect.t);
+        const need = below ? rect.b - port.b : port.t - rect.t;
         const cx = Math.min(Math.max(port.l + portW * frac, port.l + 8), port.r - 8);
         const cy = (port.t + port.b) / 2;
-        const span = Math.min(Math.max(portH - 14, 24), 300);
-        const dir = (rect.b - port.b) >= (port.t - rect.t) ? -1 : 1;  // content below → finger up
+        const span = Math.min(Math.max(need + 12, 24), Math.max(portH - 14, 24), 300);
+        const dir = below ? -1 : 1;                  // content below → finger up
         await h.swipe(cx, cy - (dir * span) / 2, cx, cy + (dir * span) / 2, 14);
       } else {
+        const right = (rect.r - port.r) >= (port.l - rect.l);
+        const need = right ? rect.r - port.r : port.l - rect.l;
         const cx = (port.l + port.r) / 2;
         const cy = Math.min(Math.max(port.t + portH * frac, port.t + 8), port.b - 8);
-        const span = Math.min(Math.max(portW - 14, 24), 300);
-        const dir = (rect.r - port.r) >= (port.l - rect.l) ? -1 : 1;  // content right → finger left
+        const span = Math.min(Math.max(need + 12, 24), Math.max(portW - 14, 24), 300);
+        const dir = right ? -1 : 1;                  // content right → finger left
         await h.swipe(cx - (dir * span) / 2, cy, cx + (dir * span) / 2, cy, 14);
       }
       swipes++;

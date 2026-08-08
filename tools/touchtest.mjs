@@ -190,7 +190,21 @@ try {
     }
     return res;
   }
+  let stageWasTransient = false;
   async function measureSurface(label, { live = false } = {}) {
+    /* A transient stage measures a banner with a 2600ms designed lifetime,
+     * and whether the cold reads landed inside it was luck: settleLayout
+     * below consumes an unpredictable slice of the banner's life, so PASS
+     * runs simply never saw the compressed frame (§8: the gate moved). Pin
+     * the phase: the cold reads happen WITH the banner up, or with a warn
+     * that it was already gone. */
+    if (stageWasTransient) {
+      const up = await page.waitForFunction(
+        () => document.querySelector('.announce:not([hidden])'),
+        null, { timeout: 3000 },
+      ).then(() => true).catch(() => false);
+      if (!up) r.warn(`[${label}] the transient banner was already gone before the cold reads — this run under-measures the banner frame`);
+    }
     // Settle by GEOMETRY, never by a sleep: the hand-fan verdict flipped between
     // three-under-44px and none-under depending on when the measurement landed.
     const s = await settleLayout(page);
@@ -206,6 +220,24 @@ try {
       if (!markerSeen.has(key)) markerSeen.set(key, []);
       const at = markerSeen.get(key);
       if (at.length < 4) at.push(label);
+    }
+    /* P10: reachability is a claim about the SETTLED table — §0.9 concerns
+     * controls a player must use, and during a docked transient (the 2.6s
+     * announce stripe) the rail is deliberately compressed. Probing during
+     * the banner made the verdict a function of banner phase at probe time
+     * (measured: PASS/FAIL/FAIL across three runs of an unchanged build).
+     * The cold reads above still measure the banner frame — occlusion during
+     * the announce is that audit's business; which cards a thumb can reach
+     * is judged on the table the player is left with. One-shot: live
+     * surfaces after a transient stage measure with the clock running. */
+    if (stageWasTransient) {
+      stageWasTransient = false;
+      await page.waitForFunction(
+        () => !document.querySelector('.announce:not([hidden])'),
+        null, { timeout: 6000 },
+      ).catch(() => {});
+      await quietTransients(page);
+      await settleLayout(page);
     }
     const reach = await probeAndSplit(h, t);
     const rec = {
@@ -563,6 +595,7 @@ try {
      * recorded from; without it `store.self.id` is null, `#lobby-host` never
      * appears and this gate measures a screen nobody is looking at. */
     if (fx) await stageFixture(page, fx, { at: opts.at, from: opts.from, drain: !opts.transient });
+    stageWasTransient = !!opts.transient;
     if (!opts.transient) await quietTransients(page);
     if (opts.drive) {
       const reached = await drive(page, opts.drive);

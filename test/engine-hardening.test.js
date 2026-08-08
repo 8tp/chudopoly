@@ -917,14 +917,24 @@ test('one unserializable game skips itself and logging keeps working', async () 
 });
 
 test('a filesystem failure — and only that — hard-disables logging', async () => {
+  // A CONFIGURED dir that fails at boot no longer reaches this path: the boot
+  // write-probe (DESIGN.md §3.4) catches it, warns, and falls back to ./logs
+  // with logging still on — that contract is pinned by test/gamelog.test.js.
+  // What is genuinely fatal is the filesystem going bad UNDER a module that
+  // already probed clean, which retrying cannot fix. So: a dir that passes
+  // the boot probe and then stops being a directory before the first write.
   const blocker = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'chudblock-'));
-  const filePath = nodePath.join(blocker, 'not-a-dir');
-  fs.writeFileSync(filePath, 'x');
+  const vol = nodePath.join(blocker, 'vol');
   const saved = { ...process.env };
   process.env.CHUD_GAME_LOG = '1';
-  process.env.CHUD_GAME_LOG_DIR = nodePath.join(filePath, 'sub');   // mkdir under a FILE
+  process.env.CHUD_GAME_LOG_DIR = vol;
   delete require.cache[require.resolve('../server/gamelog')];
   const gamelog = require('../server/gamelog');
+  assert.equal(gamelog.DIR, vol, 'the probed dir was accepted at boot');
+  // …and then the volume goes away: the path becomes a FILE, so the lazy
+  // mkdirSync inside ensureReady() throws at the first write.
+  fs.rmSync(vol, { recursive: true, force: true });
+  fs.writeFileSync(vol, 'x');
   const captured = captureConsole();
   try {
     assert.equal(gamelog.recordFinished(finishedRoom(), G), false);

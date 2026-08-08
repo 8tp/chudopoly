@@ -90,6 +90,27 @@ try {
   if (drive.finished && !winner) r.fail("phase is 'finished' but no winner is set");
   else if (winner) r.pass(`winner recorded ${dim(String(winner))}`);
 
+  // ---- the rank movement on the win screen ---------------------------------
+  // Through the REAL path, not staging: the recorder banks the finished game
+  // (once, latched), journal emits GAME_BANKED, overlays paints the cached
+  // movement inside renderWin — win AND defeat both show it. The block must
+  // carry the award and the band NAME, and may never carry a personality:
+  // the roster is hidden by standing owner constraint (state/stats.js), and
+  // the band is deliberately non-invertible so the award cannot reveal it.
+  if (drive.finished) {
+    const rank = await h.page.evaluate(() => {
+      const host = document.getElementById('win-rank');
+      return { present: !!host && !host.hidden, text: host ? host.textContent : '' };
+    });
+    if (!rank.present) r.fail('no rank movement on the win screen (#win-rank absent or hidden)');
+    else if (!/\+\d+ SP/.test(rank.text)) r.fail(`#win-rank carries no award: "${rank.text}"`);
+    else if (!/ROUTINE|CONTESTED|HOSTILE/.test(rank.text)) r.fail(`#win-rank names no band: "${rank.text}"`);
+    else r.pass(`rank movement on the win screen ${dim(rank.text.slice(0, 44))}`);
+    if (/chud|aggressive|conservative|neutral|random/i.test(rank.text)) {
+      r.fail(`the win screen leaked a bot personality: "${rank.text.slice(0, 60)}"`);
+    } else r.pass('no personality on the win screen — band name only');
+  }
+
   // ---- bridge assertions ---------------------------------------------------
   await h.page.evaluate(() => window.__CHUD.drainEvents?.()).catch(() => {});
   const bridge = await h.page.evaluate(() => ({

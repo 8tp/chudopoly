@@ -306,7 +306,11 @@ function startRoomGame(room, turnTimeout, responseTimeout, ruleOpts) {
   // Every real table shuffles seats (owner directive) — quick play included,
   // where the host otherwise always sat first and always carried the measured
   // ~24.5% first-player advantage into their own stats and the game log.
-  options.shuffleSeats = true;
+  // CHUD_NO_SEAT_SHUFFLE=1 is a TEST hook only: touchtest's drag-play section
+  // measures gesture mechanics (does real touch reach the client past
+  // touch-action) and needs the local seat on turn deterministically, which a
+  // 1-in-4 shuffle denies within its wait budget. Never set in production.
+  options.shuffleSeats = process.env.CHUD_NO_SEAT_SHUFFLE !== '1';
   room.state = G.createGame(room.players.map(p => ({ id: p.id, name: p.name })), options);
   if (room.turnTimeout > 0) timers.startTurnTimer(room);
   armBotWatchdog(room);

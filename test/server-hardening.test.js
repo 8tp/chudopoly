@@ -633,25 +633,28 @@ test('a reconnecting player never draws twice and never sees a draw phase', asyn
   const ws = await openClient();
   send(ws, { type: 'quick_play', name: 'Rejoin' });
   const joined = await waitFor(ws, m => m.type === 'joined');
-  // startRoomGame shuffles seats, so the human holds the first turn only ~1/4 of the
-  // time (measured 5/6 red here when the wait stopped at ANY 'playing' state). The
-  // hand is 7 only from this seat's OWN turn start — beginTurn() draws 2 onto the
-  // 5-card deal synchronously, before any broadcast — so the state that proves the
-  // auto-draw happened is currentPlayerId === me with turnPhase 'play'. Until then a
-  // bot can charge the human (turn-1 rent is legal), and an unanswered charge parks
-  // the table on the 45s response clock, so answer like a real client while waiting.
-  // With zero bank and zero properties an accept always resolves ('insolvent').
-  const answer = raw => {
-    let m; try { m = JSON.parse(raw); } catch { return; }
-    if (m.type === 'state' && m.game?.responders?.includes(joined.playerId)) {
-      send(ws, { type: 'respond', response: 'accept' });
-    }
-  };
-  ws.on('message', answer);
-  // Up to three bot turns run first at 0.3-2.8s per scheduled action (bot.js DELAYS).
+  // Seat order is SHUFFLED (964d382) — the human is first only 1-in-4, so wait
+  // for the state where the turn is actually theirs before asserting the
+  // auto-draw. Same pattern as server.integration.test.js's myTurn(). But the
+  // bots acting first can CHARGE this raw client, and an unanswered charge
+  // holds the table for the full 45s response clock (timers.js auto-resolve) —
+  // measured 3-in-10 blowing a 20s wait. So answer each charge once: a seat
+  // that has never had a turn owns nothing payable, so a bare accept resolves
+  // it insolvent and the turn train keeps moving.
+  const answered = new Set();
+  ws.on('message', (raw) => {
+    try {
+      const m = JSON.parse(raw);
+      if (m.type !== 'state' || !m.game?.pendingAction) return;
+      if (!(m.game.responders || []).includes(joined.playerId)) return;
+      const key = JSON.stringify(m.game.pendingAction);
+      if (answered.has(key)) return;
+      answered.add(key);
+      send(ws, { type: 'respond', response: 'accept', paymentCards: [] });
+    } catch { /* not JSON — not ours */ }
+  });
   const first = await waitFor(ws, m => m.type === 'state' && m.phase === 'playing'
-    && m.game?.currentPlayerId === joined.playerId && m.game.turnPhase === 'play', 60000);
-  ws.off('message', answer);
+    && m.game?.currentPlayerId === joined.playerId, 30000);
   const me = first.game.players.find(p => p.id === joined.playerId);
   assert.equal(first.game.turnPhase, 'play');
   assert.equal(me.hand.length, 7, 'auto-drawn without any client command');

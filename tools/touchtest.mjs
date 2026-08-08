@@ -131,7 +131,12 @@ const seed = args.seed ? Number(args.seed) : SEED;
 const BRIDGE_MS = 30000;
 
 const r = reporter(`touchtest  ${dim(`${PHONE.width}×${PHONE.height} DPR${PHONE_DPR} + ${LANDSCAPE.width}×${LANDSCAPE.height}, real touch only`)}`);
-const server = await startServer({ seed });
+// The drag-play section (§A) drives a live quick-play game and needs the local
+// seat on turn to play a card at all. Seats shuffle in real rooms (owner
+// directive), which would seat this client late 3 games in 4 and blow the
+// turn-wait budget behind intervening bot response windows — flaking a gate
+// that is about touch-action, not seating. The test hook seats roster-order.
+const server = await startServer({ seed, env: { CHUD_NO_SEAT_SHUFFLE: '1' } });
 
 /* A PUBLIC room on the ephemeral server, opened BEFORE any page loads, so the
  * home surface renders OPEN TABLES (owner directive 2026-08-07) and its rows
@@ -371,6 +376,10 @@ try {
      * shuffle (964d382), so this seat moves first one game in four and LAST
      * another — the old flat 40s only covered "we are first" and went red
      * 5/5 on the seeded order (seed 1337 seats this client last every time).
+     * The gate now seats roster order (CHUD_NO_SEAT_SHUFFLE=1 at line 139 —
+     * the drag-play sections measure touch, not game flow), so this budget
+     * is headroom, not the load-bearing fix; it stays because a gate that
+     * can only pass when the human sits first is a gate that lies by seed.
      *
      * Measured on this gate's own quick-play table (5 runs, seed 1337,
      * setInstant(false), 2026-08-08, /tmp/chud-evidence/fixtouch/): seated

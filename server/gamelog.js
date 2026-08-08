@@ -22,7 +22,41 @@ const path = require('path');
 const zlib = require('zlib');
 const { pipeline } = require('stream');
 
-const DIR = process.env.CHUD_GAME_LOG_DIR || path.join(__dirname, '..', 'logs');
+// ── the directory, probed at boot ──────────────────────────────────────────
+// Railway mounts volumes at RUNTIME only — never at build or pre-deploy — so
+// module load (server start) is exactly the moment a configured dir is
+// guaranteed mounted if it is ever going to be. Two failure shapes, both
+// PROBED before this existed (2026-08-07, child node with the env set):
+//   * the dir cannot be created (volume absent, no permission at /): the lazy
+//     mkdirSync inside ensureReady() threw on first write, the module
+//     HARD-DISABLED after one warning, and every game thereafter was silently
+//     unrecorded. Total loss, not fallback.
+//   * the dir is creatable but wrong: records flowed into ephemeral storage,
+//     silently, indistinguishable from working.
+// The first case is what this probe converts into the second — PLUS a banner,
+// because "silently identical to working" is the actual defect in both. The
+// probe is a real write, not an access() guess (a mounted-read-only volume
+// passes mkdir and fails write). On failure the module falls back to the
+// repo's ./logs so records keep flowing while the banner is acted on.
+function resolveDir() {
+  const configured = process.env.CHUD_GAME_LOG_DIR;
+  const fallback = path.join(__dirname, '..', 'logs');
+  if (!configured) return fallback;
+  try {
+    fs.mkdirSync(configured, { recursive: true });
+    const probe = path.join(configured, '.chud-write-probe');
+    fs.writeFileSync(probe, '');
+    fs.rmSync(probe, { force: true });
+    return configured;
+  } catch (error) {
+    console.warn(`[GAMELOG] CHUD_GAME_LOG_DIR=${configured} is not writable `
+      + `(${error?.code || error?.message || error}) — falling back to ${fallback}`);
+    console.warn('[GAMELOG] THAT DIRECTORY IS EPHEMERAL ON RAILWAY. '
+      + 'Records will be lost on the next deploy. Check the volume mount.');
+    return fallback;
+  }
+}
+const DIR = resolveDir();
 // The LIVE file is deliberately plain text. The whole point of JSONL is that a human can
 // grep/jq it mid-investigation, so it is never compressed in place and never per-line.
 const FILE = path.join(DIR, 'games.jsonl');
@@ -161,6 +195,20 @@ function pruneArchives() {
   }
 }
 
+// SCHEMA — still 1, and the §3.2 card-id encoding is DEFERRED, on purpose (2026-08-08).
+// The measured case for it is real: 47% of event bytes are repeated full card objects on
+// deal/draw, and bare ids would take a real record from ~61.5KB to ~33KB (DESIGN.md §3.2).
+// It is not taken now for three reasons, in order:
+//   1. The retention problem it halves was just solved 40× over by CHUD_GAME_LOG_ARCHIVES
+//      (documented in .env.example: 200 archives ≈ 100k games vs the default's ~3.2k) —
+//      a 1.9× encoding win on top is not worth touching the forensic path for today.
+//   2. DESIGN.md's own implementation order says to land `schema: 2` "when there is
+//      nothing else in flight", and the rank ladder is in flight in this very change.
+//   3. An event-shape transform inside buildRecord is the one edit here that could
+//      corrupt records silently; every existing analysis script and the §2.11 "recompute
+//      SP from the log" story parse schema-1 lines. When it lands it must come with a
+//      `schema: 2` field and a replay test, together.
+//
 // buildRecord must be TOTAL: a game whose state is structurally odd is exactly the game
 // worth recording, so every collection is coerced rather than trusted. (Audited 2026-08-06:
 // no engine or server path assigns null to any of these — every assignment is {} or a

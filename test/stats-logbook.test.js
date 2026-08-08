@@ -530,3 +530,151 @@ test('stats.js and recorder.js import nothing that needs a DOM', () => {
       `${f} touches the DOM`);
   }
 });
+
+/* ── 9. the rank ladder: bronze/silver/gold over sortie points ────────────
+ *
+ * Owner override on the researched design (research-ranks/DESIGN.md): three
+ * legible tiers instead of six aircrew codes, same plumbing underneath —
+ * Sortie Points accrued per banked game, the ROUTINE/CONTESTED/HOSTILE
+ * mean-tier band as the anti-farm, monotonic, no decay, no placement. The
+ * numbers below are the contract; if a threshold moves, this section is the
+ * place that says so out loud. */
+
+test("BOT_MODES carries every mode the server can seat — including 'random'", async () => {
+  const { BOT_MODES, sanitizeRow } = await loadStats();
+  // The server really can seat it (host-chosen roster, handlers.js add_bot).
+  assert.ok(read('server/handlers.js')
+    .includes("['random', 'conservative', 'neutral', 'aggressive', 'chud']"),
+  'handlers.js no longer lists random as host-seatable — re-derive this section');
+  assert.ok(BOT_MODES.includes('random'),
+    "stats.js BOT_MODES omits 'random': the seat silently vanishes from the stored row, "
+    + 'leaving botModes.length < bots — and random is the WEAKEST personality, so the '
+    + 'missing entry would otherwise be priced as something stronger');
+  const row = sanitizeRow({ bots: 2, humans: 1, botModes: ['random', 'aggressive'] });
+  assert.deepEqual(row.botModes, ['aggressive', 'random'],
+    'the random seat must survive sanitize');
+});
+
+test('a missing or unknown bot mode prices at tier 0 — unknown opposition earns the least', async () => {
+  const { bandFor, awardFor } = await loadStats();
+  // The farming hole DESIGN.md §2.4 names: modes that were dropped (or never
+  // recorded) must average as 0, never be skipped from the denominator.
+  assert.equal(bandFor({ bots: 3, humans: 1, botModes: [] }).name, 'ROUTINE');
+  // One aggressive plus one unknown is mean 1.5, not mean 3.
+  assert.equal(bandFor({ bots: 2, humans: 1, botModes: ['aggressive'] }).name, 'CONTESTED');
+  // Priced ROUTINE: 3×1 + (4 seats − 2) + 0 humans = 5, not the CONTESTED 8.
+  assert.equal(awardFor({ won: true, bots: 3, humans: 1, botModes: [] }), 5);
+  // And the weakest real roster prices the same as no roster at all.
+  assert.equal(bandFor({ bots: 2, humans: 1, botModes: ['random', 'random'] }).name, 'ROUTINE');
+});
+
+test('the award: +1 to finish; a win pays 3×band + (seats−2) + 3×(other humans), capped at 15', async () => {
+  const { awardFor } = await loadStats();
+  // A loss or draw is the finish point, whoever was at the table.
+  assert.equal(awardFor({ won: false, bots: 2, humans: 1, botModes: ['aggressive', 'aggressive'] }), 1);
+  // The Quick Play bench: 4 seats vs conservative/neutral/aggressive — mean
+  // tier 2.0 → CONTESTED ×2 → 3×2 + 2 + 0 = 8. The pacing math below rests
+  // on this exact number.
+  assert.equal(awardFor({
+    won: true, bots: 3, humans: 1, botModes: ['conservative', 'neutral', 'aggressive'],
+  }), 8);
+  // Heads-up vs aggressive is HOSTILE (mean 3.0), the calibration catch the
+  // sum-band design got wrong: 3×3 + 0 + 0 = 9.
+  assert.equal(awardFor({ won: true, bots: 1, humans: 1, botModes: ['aggressive'] }), 9);
+  // Humans carry their own weight: +3 per other human seat.
+  assert.equal(awardFor({ won: true, bots: 0, humans: 2, botModes: [] }), 6);
+  // The cap: 3 aggressive + 2 other humans at 6 seats would price 9+4+6=19.
+  assert.equal(awardFor({
+    won: true, bots: 3, humans: 3, botModes: ['aggressive', 'aggressive', 'aggressive'],
+  }), 15);
+});
+
+test('the band is non-invertible: different rosters, one price (the personality-hiding rule)', async () => {
+  const { awardFor, bandFor } = await loadStats();
+  // Four different 2-bot rosters, means 2.0 / 2.0 / 1.5 / 1.0 — all CONTESTED,
+  // all worth exactly the same, so no award can be read back into a roster.
+  const tables = [
+    ['neutral', 'neutral'],
+    ['aggressive', 'conservative'],
+    ['aggressive', 'chud'],
+    ['conservative', 'conservative'],
+  ];
+  const awards = tables.map((botModes) => awardFor({ won: true, bots: 2, humans: 1, botModes }));
+  assert.equal(new Set(awards).size, 1, `one band must be one price, got ${awards}`);
+  for (const botModes of tables) {
+    assert.equal(bandFor({ bots: 2, humans: 1, botModes }).name, 'CONTESTED');
+  }
+});
+
+test('three tiers — Bronze 30, Silver 200, Gold 700 — and the endowed floor', async () => {
+  const { rankFor, TIERS, ENDOWED_SP } = await loadStats();
+  assert.deepEqual(TIERS.map((t) => [t.name, t.at]),
+    [['BRONZE', 30], ['SILVER', 200], ['GOLD', 700]],
+    'the tier table moved — restate the pacing math where it is derived');
+  // Endowed progress (Nunes & Drèze 2006, DESIGN.md §2.8): the ladder starts
+  // two points in, on read, never stored.
+  assert.equal(ENDOWED_SP, 2);
+  const fresh = rankFor(0);
+  assert.equal(fresh.sp, 2);
+  assert.equal(fresh.tier, null, 'below Bronze is the fresh state, not a tier');
+  assert.equal(fresh.next.name, 'BRONZE');
+  assert.equal(fresh.remaining, 28);
+  // The boundaries, exactly.
+  assert.equal(rankFor(27).tier, null);
+  assert.equal(rankFor(28).tier.name, 'BRONZE');
+  assert.equal(rankFor(197).tier.name, 'BRONZE');
+  assert.equal(rankFor(198).tier.name, 'SILVER');
+  assert.equal(rankFor(697).tier.name, 'SILVER');
+  assert.equal(rankFor(698).tier.name, 'GOLD');
+  assert.equal(rankFor(698).next, null, 'Gold is the top');
+  assert.equal(rankFor(698).remaining, 0);
+  // Total over garbage: the ladder can never NaN.
+  for (const junk of [NaN, -5, Infinity, -Infinity, 'x', null, undefined, {}, 1.7]) {
+    const r = rankFor(junk);
+    assert.ok(Number.isFinite(r.sp) && r.sp >= 2, `rankFor(${String(junk)}) sp=${r.sp}`);
+    assert.ok(r.progress >= 0 && r.progress <= 1, `progress=${r.progress}`);
+    assert.ok(Number.isInteger(r.remaining) && r.remaining >= 0);
+  }
+});
+
+test('sortie points are monotonic: no losing streak ever demotes', async () => {
+  const { stats } = await freshStats();
+  stats.load({ storage: shim() });
+  let last = 0;
+  for (let i = 0; i < 60; i++) {
+    const { rank } = stats.recordGame({
+      won: false, humans: 1, bots: 2, botModes: ['aggressive', 'chud'], turns: 20,
+    });
+    assert.ok(rank, 'recordGame must report the rank movement');
+    assert.equal(rank.points, 1, 'a loss is still a finished game: exactly +1');
+    assert.ok(stats.data.totals.sortiePoints > last, 'SP went down — demotion is forbidden');
+    last = stats.data.totals.sortiePoints;
+  }
+  assert.equal(stats.data.totals.sortiePoints, 60);
+  // A win reports the band NAME only — never the roster behind it.
+  const { rank } = stats.recordGame({
+    won: true, humans: 1, bots: 2, botModes: ['aggressive', 'chud'],
+  });
+  assert.equal(rank.points, 7, '3×2 (CONTESTED) + 1 seat over 2 + 0 humans');
+  assert.equal(rank.band, 'CONTESTED');
+  assert.equal(JSON.stringify(rank).includes('chud'), false,
+    'the rank payload leaked a personality — band name only, never the breakdown');
+  assert.ok(rank.to.sp > rank.from.sp);
+});
+
+test('repair reconciles sortie points toward the evidence of play', async () => {
+  const { sanitize } = await loadStats();
+  // A clipped counter: every banked game earned at least the finish point.
+  const low = sanitize({ version: 1, totals: { games: 10, sortiePoints: 3 }, recent: [] });
+  assert.equal(low.totals.sortiePoints, 10);
+  // An absurd counter: nothing pays past the 15-point per-game cap.
+  const high = sanitize({ version: 1, totals: { games: 2, sortiePoints: 9999 }, recent: [] });
+  assert.equal(high.totals.sortiePoints, 30);
+  // A legacy blob with no counter floors to games — DESIGN.md §2.8's second
+  // application: a returning player is already partway up the day this ships.
+  const legacy = sanitize({ version: 1, totals: { games: 40, wins: 10 }, recent: [] });
+  assert.equal(legacy.totals.sortiePoints, 40);
+  // And a wiped logbook holds no points.
+  const empty2 = sanitize({ version: 1, totals: { games: 0, sortiePoints: 500 }, recent: [] });
+  assert.equal(empty2.totals.sortiePoints, 0);
+});

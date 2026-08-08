@@ -63,10 +63,10 @@
 // nothing reflows at 300 flights anyway, which is the only thing the animation
 // would have been hiding.
 
-import { $, el, clear, setHidden } from '../core/dom.js';
+import { $, el, clear, setHidden, setText } from '../core/dom.js';
 import * as pointer from '../interact/pointer.js';
 import { openSheet, closeSheet } from './screens.js';
-import { stats, RECENT_MAX } from '../state/stats.js';
+import { stats, RECENT_MAX, rankFor, TIERS } from '../state/stats.js';
 import { COLORS } from '../core/cards.js';
 
 /**
@@ -233,6 +233,13 @@ export function derive(data, scope) {
   return {
     scope,
     since: data.since,
+    /* THE LADDER READS AT `all` ONLY. Sortie points are one counter accrued
+     * across every composition, so a rank printed under a filter would be a
+     * whole-logbook figure wearing a segment's clothes — the exact thing
+     * bestStreak already refuses. Under a filter there simply is no rank.
+     * `rankFor` returns tier names and thresholds and nothing else, so the
+     * hidden-roster rule (see the header) holds by construction. */
+    rank: all ? rankFor(T.sortiePoints) : null,
     flights,
     wins,
     losses: Math.max(0, flights - wins),
@@ -280,7 +287,14 @@ export function entryVisible() {
 }
 
 function paintEntry() {
-  setHidden($('btn-flight-log'), !entryVisible());
+  const mark = $('btn-flight-log');
+  if (!mark) return;
+  setHidden(mark, !entryVisible());
+  // The tier rides the mark ("Flight log · BRONZE") — the home-screen surface
+  // of the ladder, on the existing control, no new chrome. Below Bronze the
+  // label is unchanged: the rail does not advertise a rank nobody has.
+  const rank = rankFor(stats.ensure().totals.sortiePoints);
+  setText(mark, rank.tier ? `Flight log · ${rank.tier.name}` : 'Flight log');
 }
 
 /* ══ building the panel ═══════════════════════════════════════════════════ */
@@ -307,6 +321,40 @@ function row(label, value, title) {
       ? el('span', { class: 'fl-row-value mono', text: value })
       : value,
   ]);
+}
+
+/**
+ * BAND 0 — the tier, and the road to the next one.
+ *
+ * Bronze / Silver / Gold as a stencilled name and three pips, in the apron's
+ * own vocabulary: square marks, two ink weights, no colour, no badge, no
+ * ribbon, no foil (ART §1 keeps foil for the victory modal; 32 C.F.R. §507.9
+ * keeps drawn insignia out of the whole project — a plain word and three
+ * squares imitate nobody's device). The progress bar is the meta progression
+ * the ladder exists for: the line under it always names the distance, which
+ * is the near-miss framing ("82 TO SILVER") DESIGN.md §2.8 recommends.
+ */
+function bandTier(d) {
+  const filled = d.rank.tier ? TIERS.indexOf(d.rank.tier) + 1 : 0;
+  const band = el('section', { class: 'fl-band fl-band-tier' });
+  band.appendChild(el('div', { class: 'fl-tier' }, [
+    el('span', {
+      class: `fl-tier-name${d.rank.tier ? '' : ' is-untiered'}`,
+      text: d.rank.tier ? d.rank.tier.name : 'NO TIER YET',
+    }),
+    el('span', { class: 'fl-pips', attrs: { 'aria-hidden': 'true' } },
+      TIERS.map((_, i) => el('i', { class: `fl-pip${i < filled ? ' is-filled' : ''}` }))),
+  ]));
+  band.appendChild(el('div', { class: 'fl-tierbar', attrs: { 'aria-hidden': 'true' } }, [
+    el('i', { class: 'fl-tierbar-fill', style: { width: `${Math.round(d.rank.progress * 100)}%` } }),
+  ]));
+  band.appendChild(el('p', {
+    class: 'fl-tier-line',
+    text: d.rank.next
+      ? `${plural(d.rank.sp, 'sortie point', 'sortie points')} · ${d.rank.remaining} TO ${d.rank.next.name}`
+      : `${plural(d.rank.sp, 'sortie point', 'sortie points')} · TOP TIER`,
+  }));
+  return band;
 }
 
 /**
@@ -602,6 +650,7 @@ export function show() {
           : 'No flights against bots only. Quick play deals one.',
       }));
     } else {
+      if (d.rank) body.appendChild(bandTier(d));
       body.appendChild(bandRate(d));
       body.appendChild(bandStrip(d));
       if (d.flights >= TEXTURE_MIN) body.appendChild(bandTexture(d));

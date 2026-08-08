@@ -75,12 +75,16 @@
      largest slice that still leaves your own board its two mat rows and the
      bank at 1280×720 — measured, self content 291px in a 291px pane. */
   max-height: 56%;
-  /* MOBILE REVIEW round 5: "the seat header is the first thing to leave the
-     window, so a scrolled rail shows unattributed property columns". With a
-     one-row property line every seat is the same height, so the scroll can be
-     made to land ON seat boundaries — a flick reveals a WHOLE seat, nameplate
-     and bank total included, rather than the bottom two thirds of one. */
-  scroll-snap-type: y proximity;
+  /* MOBILE REVIEW round 5 wanted flicks to land on seat boundaries and added
+     `scroll-snap-type: y proximity` here. RETIRED 2026-08-07, owner directive
+     ("it should never auto scroll like this — just let players scroll if they
+     want to"): a snap container re-snaps to its remembered target whenever the
+     layout changes, so an opponent's mat row WRAPPING (their 6th colour at
+     this width) moved a strip the player had scrolled — measured 18px → 92px,
+     dragtest §F, with anchoring off and zero JS writes; no guard window can
+     cover a persistent layout change. Attribution of a scrolled seat is
+     carried by the sticky .board-head below, which was the round-5 complaint's
+     actual subject. */
   /* ROUND-7: stretch, and the note it replaces was right at the time. `start`
      was chosen because a stretched seat whose rows were CONTENT-sized got its
      rows squeezed when the strip was capped (measured .board-props
@@ -93,6 +97,15 @@
   align-items: stretch;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* OWNER, 2026-08-07: "when another player gets to their 5th set … it auto
+     scrolls and you have to scroll back up just to see their hand. it should
+     never auto scroll like this." NOT the snap this time — the real flight
+     path restores scrollTop (the unclip registry). Scroll ANCHORING did it:
+     with `auto`, a seat's mat row wrapping (sixth colour at this width) grows
+     the strip sh 323 → 397 and the browser holds a LOWER seat still by
+     writing scrollTop 18 → 92 — the seat being read loses its nameplate and
+     fan off the top. dragtest §F pins this; measured in anchorprobe. */
+  overflow-anchor: none;
   min-width: 0;
   scrollbar-width: thin;
   scrollbar-color: var(--fg-mute) transparent;
@@ -162,10 +175,17 @@
    display:none subtree contributes no overflow — measured with the same probe,
    five-player@phone and @landscape hold scrollHeight at 195 and 190 through
    the flight that takes desktop 165 → 249. An EXPANDED seat is an ordinary
-   scroller again, so this is not media-gated. */
-.opponents:has(.card.is-flying, .card.is-dragging, .card.is-held) {
-  scroll-snap-type: none;
-}
+   scroller again, so this is not media-gated.
+
+   EPILOGUE 2026-08-07: the guard rule that lived here
+   (`.opponents:has(.is-flying/.is-dragging/.is-held) { scroll-snap-type:
+   none }`) is gone because the strip no longer snaps at all — see the
+   retirement note on .opponents above. The guard could suspend the snap
+   across a TRANSIENT overflow lie; it could do nothing about a PERSISTENT
+   one, because restoring the snap-type is itself what re-snaps (measured:
+   the same 18 → 92 write fired at guard release, dragtest §F). The history
+   above stays because it is the measurement record of why the strip must
+   never snap-scroll on its own. */
 /* MOBILE REVIEW round 5: "the seat header is the first thing to leave the
    window, so a scrolled rail shows unattributed property columns." It rides the
    top of its own seat inside the strip, so whatever row of mats you have
@@ -830,7 +850,6 @@
 .opponents .zone-props .card:not(:first-child) { margin-left: calc(var(--mini-step) - var(--card-w)); }
 /* a buried card in a stack shows its cut EDGE, exactly as the bank's does */
 .opponents .zone-props .card:not(:last-child) { box-shadow: 1px 0 0 var(--card-edge), inset -2px 0 3px -1px var(--shade-2); }
-.opponents .board { scroll-snap-align: start; }
 /* The seat's own constants — two left of the five this block used to carry.
      --seat-col-min  the mat grid's column FLOOR; auto-fill answers the count
      --mat-row       the fixed row height: a card zone + the nameplate
@@ -2734,14 +2753,14 @@
     scrollbar-width: thin;
     scrollbar-color: var(--fg-mute) transparent;
     /* P10, MOBILE critic finding 4: with five players this rail is a ~103px
-       window over ~190px of seats and the fade was its only cue. The portrait
-       strip's own affordances arrive: seat-boundary snap (suspended while a
-       card flies — the base `:has(.is-flying)` rule matches here too) and the
-       two travelling `local` shades, which can only appear at an end that has
-       a seat behind it. The fade shortens to a feather for the reason the
-       portrait strip's round-6 note gives: 1.4em of alpha over a nameplate is
-       a contrast failure, not a cue. */
-    scroll-snap-type: y proximity;
+       window over ~190px of seats and the fade was its only cue. The two
+       travelling `local` shades arrive from the portrait strip — they can
+       only appear at an end that has a seat behind it. The fade shortens to
+       a feather for the reason the portrait strip's round-6 note gives:
+       1.4em of alpha over a nameplate is a contrast failure, not a cue.
+       (Seat-boundary snap briefly lived here too and is retired with the
+       portrait strip's — same 2026-08-07 owner directive, same re-snap
+       mechanism, see the .opponents retirement note.) */
     padding-bottom: .3em;
     -webkit-mask-image: linear-gradient(#000 calc(100% - .3em), transparent);
     mask-image: linear-gradient(#000 calc(100% - .3em), transparent);

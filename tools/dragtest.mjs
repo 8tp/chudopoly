@@ -52,6 +52,7 @@ import {
 } from './lib/harness.mjs';
 import { installPageHelpers } from './lib/audit.mjs';
 import { census, observeMarkers } from './lib/census.mjs';
+import { openTouchPage, settleLayout } from './lib/touch.mjs';
 import { startServer } from './serve.mjs';
 
 const require = createRequire(path.join(ROOT, 'package.json'));
@@ -126,6 +127,36 @@ function deadlockBoard() {
   const handCard = take(state, (x) => x.type === 'property' && x.color === 'orange');
   me.hand.push(handCard);
   return { state, wild, partner, full: 'darkblue', room: 'orange', handCard };
+}
+
+/**
+ * §F's table: five seats, because the strip only becomes a scroller when it
+ * holds more seat than viewport — measured on five-player@phone, the strip is
+ * sh 195 = ch 195 with every seat collapsed and only overflows once one is
+ * EXPANDED. Opponent p2 holds five colours down and the sixth in hand, with p2
+ * to act: at 390px a seat wraps its mat row at six columns (measured: five
+ * cols propsH 70 / one row, six cols 144 / two, strip sh 323 -> 397), so one
+ * engine play crosses the wrap the owner reported.
+ */
+function stripBoard() {
+  const state = G.createGame([
+    { id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' }, { id: 'p3', name: 'P3' },
+    { id: 'p4', name: 'P4' }, { id: 'p5', name: 'P5' },
+  ], { seed: 'dragtest-strip' });
+  state.deck = G.buildDeck();
+  state.discardPile = [];
+  state.pendingAction = null;
+  state.players.forEach((p) => { p.hand = []; p.bank = []; p.properties = {}; p.upgrades = {}; });
+  state.turnPhase = 'play';
+  state.currentPlayerIndex = 1;
+  state.playsRemaining = 3;
+  state.cardTotal = null;
+  state._handSnapshot = 0;
+  const p2 = state.players[1];
+  for (const color of ['brown', 'lightblue', 'pink', 'orange', 'green']) putProperty(state, p2, color);
+  const sixth = take(state, (x) => x.type === 'property' && x.color === 'yellow');
+  p2.hand.push(sixth);
+  return { state, sixth };
 }
 
 const stateMessage = (state) => ({
@@ -676,6 +707,104 @@ try {
     } finally { await ph.close().catch(() => {}); }
   }
 
+  /* ── §F the strip never scrolls itself ──────────────────────────────────
+   *
+   * OWNER, 2026-08-07, verbatim: "when another player gets to their 5th set of
+   * properties (not complete just goes to the next row) it auto scrolls and
+   * you have to scroll back up just to see their hand … it should never auto
+   * scroll like this just let players scroll if they want to."
+   *
+   * The obvious suspect was WRONG, and it is worth recording which one: the
+   * strip's `scroll-snap-type` has a documented history of re-snapping on
+   * overflow lies (table.css, the .is-flying guard), and a synthetic
+   * class-toggle probe even moved 13 → 0. But the REAL flight path survives —
+   * the unclip registry saves and restores scrollTop around every landing.
+   * What reproduces the owner's report is SCROLL ANCHORING: with
+   * `overflow-anchor: auto` the browser picks an anchor node, and when the
+   * wrap grows a seat ABOVE that anchor, it moves scrollTop to hold the
+   * anchor still. MEASURED (scratchpad anchorprobe, phone 390×844, seat
+   * expanded, strip at its 18px bottom): the sixth colour lands, the mat row
+   * wraps (strip sh 323 → 397), and scrollTop is written 18 → 92 — the
+   * nameplate and fan of the seat the player was reading leave the port.
+   * At scrollTop 0 nothing moves, which is why no gate had ever seen it.
+   *
+   * The gesture and the growth are both real: a CDP-touch expand and swipe,
+   * then the sixth colour played through G.playProperty and animated by the
+   * choreographer. Preconditions are asserted (the strip really overflows,
+   * the user position is really nonzero, the wrap really happened) so a
+   * layout change cannot quietly turn this into a gate that measures nothing.
+   */
+  async function stripGrowth(injectAnchor) {
+    const sb = stripBoard();
+    const ph = await openTouchPage(browser, `${server.url}/?harness=1`);
+    try {
+      await requireBridge(ph.page, 30000);
+      if (injectAnchor) {
+        // The exact rule the fix deleted, put back — §8's "reproduction, not
+        // imitation". With it, the remembered snap target re-aligns across
+        // the wrap and drags scrollTop, anchoring off or not.
+        await ph.page.addStyleTag({ content: '#opponents{scroll-snap-type:y proximity}' });
+      }
+      await stage(ph.page, sb.state);
+      await settleLayout(ph.page);
+      // Expand p2's seat with a real thumb.
+      const tog = await ph.page.evaluate(() => {
+        const b = document.querySelector('.board[data-player="p2"] [data-seat-toggle]');
+        if (!b) return null;
+        const r2 = b.getBoundingClientRect();
+        return { x: r2.left + r2.width / 2, y: r2.top + r2.height / 2 };
+      });
+      if (!tog) return { err: 'no seat toggle for p2' };
+      await ph.tap(tog.x, tog.y);
+      await settleLayout(ph.page);
+      const strip = () => ph.page.evaluate(() => {
+        const e = document.getElementById('opponents');
+        const rr = e.getBoundingClientRect();
+        return { st: e.scrollTop, sh: e.scrollHeight, ch: e.clientHeight,
+          x: rr.left + rr.width / 2, top: rr.top, bottom: rr.bottom };
+      });
+      let s = await strip();
+      if (s.sh <= s.ch + 8) return { err: `strip does not overflow after expand (sh ${s.sh}, ch ${s.ch}) — measured nothing` };
+      // A real swipe up inside the strip scrolls it down a few px.
+      const midX = s.x, y0 = s.bottom - 12, y1 = s.top + 12;
+      await ph.swipe(midX, y0, midX, y1, 14);
+      await settleLayout(ph.page);
+      s = await strip();
+      if (s.st <= 0) return { err: 'the swipe left scrollTop at 0 — measured nothing' };
+      const st0 = s.st;
+      const sh0 = s.sh;
+      // The sixth colour, played by the engine and animated by the choreographer.
+      const res = G.playProperty(sb.state, 'p2', 0, sb.sixth.color);
+      if (res && res.error) return { err: `engine refused the sixth colour: ${res.error}` };
+      await ph.page.evaluate((m) => window.__CHUD.applyState(m), stateMessage(sb.state));
+      await ph.page.waitForFunction(() => !document.querySelector('.card.is-flying'),
+        null, { timeout: 6000 }).catch(() => {});
+      // Outlast the reclip sweep and any late re-snap before measuring.
+      await ph.page.waitForTimeout(500);
+      s = await strip();
+      const cols = await ph.page.evaluate(() =>
+        document.querySelectorAll('.board[data-player="p2"] .propcol:not([data-empty="1"])').length);
+      return { st0, st1: s.st, sh0, sh1: s.sh, cols, errors: ph.errors };
+    } finally { await ph.close().catch(() => {}); }
+  }
+  {
+    const g = await stripGrowth(false);
+    if (g.err) {
+      r.fail(`§F ${g.err}`);
+    } else if (g.cols !== 6) {
+      r.fail(`§F p2 shows ${g.cols} columns after the play — the sixth colour never landed`);
+    } else if (g.sh1 <= g.sh0) {
+      r.fail(`§F the strip never grew (sh ${g.sh0} → ${g.sh1}) — the wrap this section exists for `
+        + 'did not happen, so this run measured nothing');
+    } else if (Math.abs(g.st1 - g.st0) > 1) {
+      r.fail(`§F the strip scrolled itself: ${g.st0}px → ${g.st1}px across an opponent's row-wrapping `
+        + 'landing, with no input — the owner\'s "auto scroll" reproduced');
+    } else {
+      r.pass(`§F an opponent's row-wrapping colour lands and the strip holds the player's scroll `
+        + dim(`(${g.st0}px → ${g.st1}px while sh ${g.sh0} → ${g.sh1})`));
+    }
+  }
+
   ensureDir(SHOT_DIR);
   fs.writeFileSync(path.join(SHOT_DIR, 'coverage-dragtest.json'), JSON.stringify({
     tool: 'dragtest',
@@ -714,6 +843,16 @@ try {
       r.info(`context that did it: ${held.contexts.join(' | ')}`);
     } else {
       r.fail(`--prove: §B did NOT go red with the defect restored (${JSON.stringify(held)}) — `
+        + 'the assertion is not measuring what it claims');
+    }
+    const g = await stripGrowth(true);
+    if (g.err) {
+      r.fail(`--prove §F: ${g.err}`);
+    } else if (Math.abs(g.st1 - g.st0) > 1) {
+      r.pass(`--prove: with the strip's snap-type restored, §F goes red — `
+        + `${g.st0}px → ${g.st1}px across the wrap`);
+    } else {
+      r.fail(`--prove: §F did NOT move with the deleted snap restored (${g.st0} → ${g.st1}) — `
         + 'the assertion is not measuring what it claims');
     }
   }

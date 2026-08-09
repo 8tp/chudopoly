@@ -12,7 +12,8 @@
 //
 // ── FIELD ORDER, and why it is defensive ──────────────────────────────────
 // A concurrent engine round is adding the full resolved ruleset as one object
-// (`rules: {preset, winRule, setsToWin, pureSetRequired, passGoRestartsTurn}`).
+// (`rules: {preset, winRule, setsToWin, pureSetRequired, counterCostsPlay,
+//   passGoRestartsTurn}`).
 // getPlayerView today ships only the two flat aliases. So: read `rules` first
 // (it will be authoritative the moment it lands and needs no client change),
 // then the flat aliases that ship today, then the core/cards.js constants —
@@ -26,7 +27,8 @@ const DEFAULT_WIN_RULE = 'finalApproach';         // game.js DEFAULT_WIN_RULE
 
 /**
  * @returns {{winRule:string, setsToWin:number, preset:string|null,
- *            pureSetRequired:boolean|null, passGoRestartsTurn:boolean|null,
+ *            pureSetRequired:boolean|null, counterCostsPlay:boolean|null,
+ *            passGoRestartsTurn:boolean|null,
  *            live:boolean}}
  *   `live` is false when there is no game on screen — the copy then describes
  *   the DEFAULT ruleset and says so, rather than asserting a rule for a game
@@ -42,6 +44,7 @@ export function activeRules() {
     setsToWin: Number.isInteger(setsToWin) && setsToWin > 0 ? setsToWin : SETS_TO_WIN,
     preset: r?.preset ?? null,
     pureSetRequired: r ? !!r.pureSetRequired : null,
+    counterCostsPlay: r ? !!r.counterCostsPlay : null,
     passGoRestartsTurn: r ? !!r.passGoRestartsTurn : null,
     suddenDeath: r?.suddenDeath ?? 'off',
     // The deck this game is ACTUALLY played with. Null with no game on screen —
@@ -96,7 +99,8 @@ export const WIN_RULE_NAMES = Object.freeze({
  */
 
 export const RULE_KEYS = Object.freeze(
-  ['winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath']);
+  ['winRule', 'setsToWin', 'pureSetRequired', 'counterCostsPlay', 'passGoRestartsTurn',
+   'suddenDeath']);
 
 /* ── the deck (§3 deck knob) ──────────────────────────────────────────────
  * game.js DECK_BASE / DECK_KIND_MAX / DECK_MIN / DECK_MAX, mirrored for the
@@ -174,13 +178,13 @@ export const SUDDEN_DEATH_COPY = Object.freeze({
 });
 
 export const PRESETS = Object.freeze({
-  chudopoly:  Object.freeze({ winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: DECK_BASE }),
+  chudopoly:  Object.freeze({ winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: DECK_BASE }),
   // MD Faithful's deck IS the official Monopoly Deal deck: no CHUD (it has no MD
   // equivalent) and the two wilds we were short restored. Still 106 — the two
   // changes cancel. game.js RULE_PRESETS carries the full derivation.
-  mdFaithful: Object.freeze({ winRule: 'mdFaithful',    setsToWin: 3, pureSetRequired: true,  passGoRestartsTurn: false, suddenDeath: 'off', deck: Object.freeze({ ...DECK_BASE, chud: 0, wildPairs: 9 }) }),
-  blitz:      Object.freeze({ winRule: 'instant',       setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true,  suddenDeath: 'off', deck: DECK_BASE }),
-  longGame:   Object.freeze({ winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: DECK_BASE }),
+  mdFaithful: Object.freeze({ winRule: 'mdFaithful',    setsToWin: 3, pureSetRequired: true,  counterCostsPlay: true,  passGoRestartsTurn: false, suddenDeath: 'off', deck: Object.freeze({ ...DECK_BASE, chud: 0, wildPairs: 9 }) }),
+  blitz:      Object.freeze({ winRule: 'instant',       setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: true,  suddenDeath: 'off', deck: DECK_BASE }),
+  longGame:   Object.freeze({ winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: DECK_BASE }),
 });
 /** Presentation order. Default first — it is the one most tables want. */
 export const PRESET_ORDER = Object.freeze(['chudopoly', 'mdFaithful', 'blitz', 'longGame']);
@@ -188,11 +192,15 @@ export const SETS_TO_WIN_CHOICES = Object.freeze([3, 4, 5]);   // server/protoco
 
 /**
  * `length` is MEASURED, not guessed: mean turns per game over the balance sim
- * (simulate.js, 4-player mixed bots). Chudopoly 34.5 · MD Faithful 35.1 ·
- * Blitz 25.1 · Long Game 66.8. Blitz is 27% shorter than the default; Long
- * Game is 1.94× it and 6.8% of those games run the deck out and are decided on
- * points instead of a win (§3.6 stalemate end), which is a real thing to know
- * before you pick it, so it is on the card rather than in the help screen.
+ * (simulate.js, 4-player mixed bots). Chudopoly 34.5 · MD Faithful 23.7 ·
+ * Blitz 25.1 · Long Game 66.8. MD Faithful was 35.1 until 2026-08-08, when its
+ * win rule stopped deferring own-turn completions by a full lap (ARCHITECTURE
+ * §3.10); re-measured over 360 games at 3/4/5 seats, it now lands on Blitz's
+ * pace rather than the default's, and the card says so. Blitz is 27% shorter
+ * than the default; Long Game is 1.94× it and 6.8% of those games run the deck
+ * out and are decided on points instead of a win (§3.6 stalemate end), which is
+ * a real thing to know before you pick it, so it is on the card rather than in
+ * the help screen.
  */
 export const PRESET_COPY = Object.freeze({
   chudopoly: Object.freeze({
@@ -204,9 +212,9 @@ export const PRESET_COPY = Object.freeze({
   mdFaithful: Object.freeze({
     name: 'MD Faithful',
     tag: 'By the book',
-    turns: '≈35 turns',
-    line: 'Monopoly Deal as written: you declare on your own next turn, and a set needs at '
-      + 'least one real property in it.',
+    turns: '≈24 turns',
+    line: 'Monopoly Deal as written: your own turn wins on the spot, and rainbow wilds '
+      + 'cannot finish a set alone.',
   }),
   blitz: Object.freeze({
     name: 'Blitz',
@@ -237,27 +245,40 @@ export function presetLabel(name) {
  *
  * Monopoly Deal's two rulebook editions disagree with each other. The classic
  * sheet carries "if you realize you've won during someone else's turn, you
- * must wait until it's your turn to say it"; the modern E3113 foldout drops
- * that sentence entirely. So `instant` is how the CURRENT rulebook reads,
- * `mdFaithful` is how the ORIGINAL reads, and neither of them is our
- * invention. Final Approach is (ARCHITECTURE §3.10) — it is strictly the most
- * generous of the three to the defenders.
+ * must wait until it's your turn to say it"; the modern E3113 foldout, and the
+ * 2025 FIFA and Harry Potter cuts, drop that sentence entirely and print "the
+ * game ends when one player collects 3 complete Property sets in different
+ * colors". So `instant` is how the CURRENT rulebook reads, `mdFaithful` is how
+ * the ORIGINAL reads — and note what the original sentence actually says: the
+ * wait is CONDITIONAL on realising off-turn. Completing on your own turn wins
+ * on the spot under both editions, which is why mdFaithful no longer defers it
+ * (corrected 2026-08-08; it used to, and that was Final Approach in disguise).
+ * Final Approach is ours (ARCHITECTURE §3.10) — strictly the most generous of
+ * the three to the defenders.
  */
 export const WIN_RULE_LINE = Object.freeze({
   instant: 'You win the moment your last set lands, on anybody\'s turn — how the current '
     + 'Hasbro rulebook reads.',
-  mdFaithful: 'You wait for your own next turn to declare — the sentence the original '
-    + 'rulebook has and the current one drops.',
+  mdFaithful: 'Your own turn wins on the spot; only a set handed to you off-turn waits '
+    + 'for your next own turn.',
   finalApproach: 'Every other player gets one full turn to break you first — ours, and the '
     + 'only one of the three that guarantees a reply.',
 });
 
-/** The two independent toggles, in the words a host chooses them by. */
+/** The three independent toggles, in the words a host chooses them by. */
 export const TOGGLE_COPY = Object.freeze({
   pureSetRequired: Object.freeze({
-    label: 'Wilds alone cannot finish a set',
-    // game.js zoneIsSet(): a full zone with no card of type 'property' is not a set.
-    line: 'A full colour only counts if at least one real property card is in it.',
+    label: 'Rainbow wilds alone cannot finish a set',
+    // game.js zoneIsSet(): a full zone of nothing but rainbow ("any") wilds is not a set.
+    // Two-colour wilds are untouched — Hasbro's 2025 card faces say a set may be made of
+    // those alone, and name the every-colour wild as the one that may not.
+    line: 'A full colour only counts if one card in it is not a rainbow wild.',
+  }),
+  counterCostsPlay: Object.freeze({
+    label: 'OPSEC costs a play on your own turn',
+    // game.js respondToAction(): counterSpendsPlay() → one of the current seat's three.
+    line: 'Countering on your own turn spends one of your three plays — and with none left '
+      + 'you cannot counter at all.',
   }),
   passGoRestartsTurn: Object.freeze({
     label: 'PCS Orders restarts your turn',
@@ -347,10 +368,12 @@ export function winRuleSummary(rules = activeRules()) {
     case 'instant':
       return `Completing your ${ordinalWord(n)} set wins the game on the spot, `
         + 'on anyone\'s turn. There is no grace window and nothing is ever armed.';
-    // checkpointThreshold(): 'mdFaithful' → 1, i.e. any LATER own turn start.
+    // game.js syncSets(): 'mdFaithful' finishes inline on an own-turn completion and arms
+    // only off-turn; checkpointThreshold() → 1, i.e. your very next own turn start.
     case 'mdFaithful':
-      return `Holding ${countWord(n)} complete sets arms you. You win at the start of your `
-        + 'very next own turn if you still hold them — the literal Monopoly Deal rule.';
+      return `Completing your ${ordinalWord(n)} set on YOUR turn wins on the spot. A set `
+        + 'handed to you during someone else\'s turn instead arms you, and you declare at '
+        + 'your next own turn start — the literal Monopoly Deal sentence.';
     // checkpointThreshold(): activeCount(state) — a whole cycle of turns.
     default:
       return `Holding ${countWord(n)} complete sets arms your FINAL APPROACH. Every other `

@@ -193,27 +193,35 @@ test('off-turn arming: mdFaithful converts at the next own turn, finalApproach a
   assert.ok(faRow.checkpointTurn > mdRow.checkpointTurn, 'finalApproach is the more generous rule');
 });
 
-test('own-turn arming: mdFaithful and finalApproach are identical', () => {
-  const results = {};
-  for (const rule of ['finalApproach', 'mdFaithful']) {
-    const state = build(rule);
-    const [a] = state.players;
-    twoSetsPlusOne(state, a);
-    a.hand.push(take(state, c => c.type === 'property' && c.color === 'intel'));
-    assert.ok(G.playProperty(state, 'p1', a.hand.length - 1).ok);
-    assert.equal(a.finalApproach, true);
-    const row = rowFor(state, 'p1');
-    results[rule] = {
-      opponents: row.opponentTurnsRemaining,
-      checkpoint: row.checkpointTurn - state.turnCounter,
-      turns: playOut(state),
-      winner: state.winner,
-    };
-  }
-  assert.deepEqual(results.finalApproach, results.mdFaithful,
-    'the two grace modes only differ for off-turn arming');
-  assert.equal(results.mdFaithful.opponents, 3, '4 seats → the other 3 each get one turn');
-  assert.equal(results.mdFaithful.winner, 'p1');
+// CORRECTED 2026-08-08. This test used to assert the opposite — that the two modes are
+// identical for an own-turn completion — which made mdFaithful Final Approach under another
+// name and matched no edition of the source. The rulebook sentence is CONDITIONAL: "if you
+// realize you've won during someone else's turn, you must wait until it's your turn to say
+// it" (2008 sheet). Completing on your own turn is not that case, and the E3113 foldout and
+// the 2025 FIFA/Harry Potter cuts drop even the exception: "the game ends when one player
+// collects 3 complete Property sets in different colors."
+test('own-turn completion: mdFaithful wins where it lands, finalApproach arms', () => {
+  const md = build('mdFaithful');
+  const [a] = md.players;
+  twoSetsPlusOne(md, a);
+  a.hand.push(take(md, c => c.type === 'property' && c.color === 'intel'));
+  assert.ok(G.playProperty(md, 'p1', a.hand.length - 1).ok);
+  assert.equal(md.phase, 'finished', 'the third set on your own turn ends the game');
+  assert.equal(md.winner, 'p1');
+  assert.equal(a.finalApproach, false, 'nothing is armed by an own-turn completion');
+  assert.ok(!md.events.some(e => e.t === 'final_approach'),
+    'no arming event, so no HUD countdown for a win that already happened');
+
+  const fa = build('finalApproach');
+  const [c] = fa.players;
+  twoSetsPlusOne(fa, c);
+  c.hand.push(take(fa, x => x.type === 'property' && x.color === 'intel'));
+  assert.ok(G.playProperty(fa, 'p1', c.hand.length - 1).ok);
+  assert.equal(fa.phase, 'playing', 'ours still gives the table a full cycle to answer');
+  assert.equal(c.finalApproach, true);
+  assert.equal(rowFor(fa, 'p1').opponentTurnsRemaining, 3, '4 seats → the other 3 each reply');
+  assert.equal(playOut(fa), 4, 'one full cycle of four seats, then it converts');
+  assert.equal(fa.winner, 'p1');
 });
 
 test('mdFaithful still emits final_approach with an honest countdown', () => {
@@ -234,18 +242,24 @@ test('mdFaithful still emits final_approach with an honest countdown', () => {
   assert.equal(state.winner, 'p1');
 });
 
+// Both modes still arm and still disarm — but only mdFaithful's OFF-TURN completion arms
+// at all now, so each mode is armed the way it can be armed.
 test('both grace modes still disarm when the third set is broken', () => {
   for (const rule of ['finalApproach', 'mdFaithful']) {
     const state = build(rule, 2);
     const [a, b] = state.players;
-    twoSetsPlusOne(state, a);
-    a.hand.push(take(state, c => c.type === 'property' && c.color === 'intel'));
-    G.playProperty(state, 'p1', a.hand.length - 1);
+    if (rule === 'mdFaithful') {
+      offTurnComplete(state);                // P2 hands P1 the third set on P2's own turn
+    } else {
+      twoSetsPlusOne(state, a);
+      a.hand.push(take(state, c => c.type === 'property' && c.color === 'intel'));
+      G.playProperty(state, 'p1', a.hand.length - 1);
+      G.endTurn(state, 'p1');
+      state.turnPhase = 'play';
+      state.playsRemaining = 3;
+    }
     assert.equal(a.finalApproach, true, rule);
 
-    G.endTurn(state, 'p1');
-    state.turnPhase = 'play';
-    state.playsRemaining = 3;
     b.hand.push(take(state, c => c.action === 'chud'));
     const victim = a.properties.intel[0];
     assert.ok(G.playAction(state, 'p2', b.hand.length - 1, { targetId: 'p1', targetCardId: victim.id }).ok);
@@ -272,9 +286,14 @@ test('bots finish games under every win rule and never chase a phantom approach'
     assert.ok(decided >= 10, `${rule}: expected most games decided, got ${decided}/12`);
     if (rule === 'instant') {
       assert.equal(armEvents, 0, 'instant must never arm, so break/defend logic cannot fire');
-    } else {
-      assert.ok(armEvents > 0, `${rule}: the grace modes should actually arm`);
+    } else if (rule === 'finalApproach') {
+      assert.ok(armEvents > 0, 'finalApproach arms on every completion, own-turn or not');
     }
+    // mdFaithful is deliberately NOT asserted here. Since 2026-08-08 it arms only on an
+    // OFF-turn completion — measured at ~5% of completions — so twelve games legitimately
+    // see none, and asserting otherwise buys a flaky test rather than coverage. The arming
+    // path is pinned deterministically by 'mdFaithful still emits final_approach with an
+    // honest countdown' and by the off-turn case in the disarm test above.
   }
 });
 

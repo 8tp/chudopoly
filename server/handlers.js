@@ -232,7 +232,7 @@ const SET_RULES_COOLDOWN_MS = Math.max(0, Number(process.env.CHUD_SET_RULES_MS) 
 // floor and neither command could ever turn it on (probe-rules-wire: requested 'oneLap',
 // launched 'off'). Exported alongside pickRuleOpts so test/rules-wire.test.js can pin the
 // client's send-side key list to this one — a drift in either fails the suite.
-const RULE_FIELDS = ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath', 'deck'];
+const RULE_FIELDS = ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'counterCostsPlay', 'passGoRestartsTurn', 'suddenDeath', 'deck'];
 
 function pickRuleOpts(msg) {
   const opts = {};
@@ -243,7 +243,8 @@ function pickRuleOpts(msg) {
 function sameRules(a, b) {
   if (!a || !b) return false;
   return a.preset === b.preset && a.winRule === b.winRule && a.setsToWin === b.setsToWin
-    && a.pureSetRequired === b.pureSetRequired && a.passGoRestartsTurn === b.passGoRestartsTurn
+    && a.pureSetRequired === b.pureSetRequired && a.counterCostsPlay === b.counterCostsPlay
+    && a.passGoRestartsTurn === b.passGoRestartsTurn
     && a.suddenDeath === b.suddenDeath
     // Reference equality is wrong for the deck and would make every set_rules look like a
     // change, defeating the coalescer above and fanning a full room state per keystroke.

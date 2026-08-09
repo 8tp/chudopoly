@@ -232,10 +232,12 @@ test('a duplicate Upgrade arriving with a seized set is banked to the THIEF', ()
     'the Sets page must state where a seized duplicate Upgrade goes (§3.9)');
 });
 
-test('under pureSetRequired a full all-wild zone IS requisitionable — and the help says so there', () => {
+test('under pureSetRequired a full all-RAINBOW zone IS requisitionable — and the help says so', () => {
   const { state, b } = fixture((pa, pb) => {
     pa.hand = [{ id: 70, type: 'action', action: 'midnight_requisition', name: 'MR', value: 3 }];
-    pb.properties.darkblue = [wild(30, 'darkblue'), wild(31, 'darkblue')];   // full, wilds only
+    // RAINBOW wilds specifically (`colors: ['any']`). Narrowed 2026-08-08: a zone of
+    // two-colour wilds IS a set even under pureSetRequired, so it would be protected.
+    pb.properties.darkblue = [wild(30, 'darkblue'), wild(31, 'darkblue')];   // full, rainbows only
   }, { who: 'a', preset: 'mdFaithful' });
   assert.equal(game.zoneFull(b, 'darkblue'), true, 'the zone is FULL');
   assert.equal(game.isSetComplete(b, 'darkblue'), false,
@@ -246,8 +248,10 @@ test('under pureSetRequired a full all-wild zone IS requisitionable — and the 
     'Midnight Requisition takes from it — the engine agrees with its own predicate');
 
   const help = read('public/src/ui/help.js');
-  assert.match(help, /wilds is NOT a complete set — Midnight Requisition and TDY Orders/,
+  assert.match(help, /wilds is NOT a complete set/,
     'the Sets page must state the exposure (§3.9)');
+  assert.match(help, /Midnight Requisition and TDY Orders can still take from it/,
+    'and must name the two cards that can still take from it');
   assert.match(help, /active\.pureSetRequired \?/,
     'stated only when the toggle is on — on other tables the claim would be false');
 });

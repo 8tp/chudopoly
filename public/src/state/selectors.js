@@ -46,6 +46,24 @@ export function hasOpsec() {
 }
 
 /**
+ * Whether an OPSEC can actually be PLAYED right now, which is not the same
+ * question as whether one is in hand.
+ *
+ * Mirrors game.js canCounter(). Under `counterCostsPlay` (ON in MD Faithful) a
+ * counter played on your OWN turn spends one of your three plays and is refused
+ * outright with none left — so the button has to disappear, or the bar offers a
+ * move the server will bounce. A defender answering on somebody else's turn has
+ * no play budget and never pays.
+ */
+export function canOpsec() {
+  if (!hasOpsec()) return false;
+  const snap = store.snapshot;
+  if (!snap?.rules?.counterCostsPlay) return true;
+  if (snap.currentPlayerId !== store.self?.id) return true;
+  return (Number(snap.playsRemaining) || 0) > 0;
+}
+
+/**
  * Everything the engine will accept as payment: bank, properties AND upgrades.
  *
  * MUST equal game.js payableCards() (game.js:710-717) card for card. It drives

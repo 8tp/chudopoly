@@ -58,6 +58,7 @@ function validateRuleFields(message) {
   if (message.winRule !== undefined && !WIN_RULES.has(message.winRule)) return fail('Invalid win rule');
   if (message.setsToWin !== undefined && !SETS_TO_WIN.has(message.setsToWin)) return fail('Invalid sets to win (3, 4 or 5)');
   if (!validOptionalBool(message.pureSetRequired)) return fail('Invalid pure-set setting');
+  if (!validOptionalBool(message.counterCostsPlay)) return fail('Invalid OPSEC-cost setting');
   if (!validOptionalBool(message.passGoRestartsTurn)) return fail('Invalid PCS Orders setting');
   if (message.suddenDeath !== undefined && !SUDDEN_DEATH.has(message.suddenDeath)) {
     return fail('Invalid sudden death setting');

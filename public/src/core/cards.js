@@ -78,18 +78,24 @@ export function setSize(color) { return COLORS[color]?.size || 0; }
  * design, so the caller supplies them (state/selectors.js activeRuleFlags()
  * reads them off the snapshot's `rules`). Under `pureSetRequired` — ON in the
  * MD Faithful preset — a FULL zone is only a SET if at least one card in it is
- * a real property. Our 2-card zones make an all-wild set otherwise trivial.
- * Note it takes ONE real property, not "no wilds": 2 wilds + 1 property is a
- * legal set under every ruleset.
+ * NOT a rainbow ("any") wild. Our 2-card zones make an all-rainbow set
+ * otherwise trivial. Note what it does NOT ban: two-colour wilds may fill a
+ * zone on their own, because Hasbro's 2025 printings say so on the card face
+ * ("You may make a complete player set using only these cards"), and the
+ * every-colour wild is the only one that carries "You may not".
  *
  * Without this, a client counting only `length >= size` disagreed with the
  * `completedSets` number the engine prints right beside its own swatches.
  */
+export function isRainbowWild(card) {
+  return !!card && card.type === 'wild_property' && !!card.colors && card.colors[0] === 'any';
+}
+
 export function isComplete(player, color, rules) {
   const size = setSize(color);
   const cards = player?.properties?.[color] || [];
   if (size === 0 || cards.length < size) return false;
-  if (rules?.pureSetRequired && !cards.some(c => c?.type === 'property')) return false;
+  if (rules?.pureSetRequired && !cards.some(c => !isRainbowWild(c))) return false;
   return true;
 }
 

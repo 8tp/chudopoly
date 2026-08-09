@@ -449,10 +449,10 @@ test('the win rule is sticky across a rematch', async () => {
 
 test('a preset is resolved server-side and shipped as the whole ruleset', async () => {
   const expected = {
-    chudopoly:  { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false },
-    mdFaithful: { winRule: 'mdFaithful',    setsToWin: 3, pureSetRequired: true,  passGoRestartsTurn: false },
-    blitz:      { winRule: 'instant',       setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true },
-    longGame:   { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false },
+    chudopoly:  { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false },
+    mdFaithful: { winRule: 'mdFaithful',    setsToWin: 3, pureSetRequired: true,  counterCostsPlay: true,  passGoRestartsTurn: false },
+    blitz:      { winRule: 'instant',       setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: true },
+    longGame:   { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false },
   };
   for (const [preset, rules] of Object.entries(expected)) {
     const { host, guest, state } = await startTwoHumanRoom('RP', { preset });

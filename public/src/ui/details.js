@@ -132,10 +132,11 @@ function bankContext(card, owner) {
  * without two copies of the COMPLETE/FULL wording drifting apart.
  *
  * COMPLETE is the SET question, and `held >= size` is not it. game.js zoneIsSet()
- * (351-356) takes at least one real property when `pureSetRequired` is on (the MD
- * Faithful preset), so a full zone of nothing but wilds is a full zone and NOT a
- * set. Measured: two "any" wilds in Command printed "Command 2/2 — COMPLETE ·
- * rent 8M" while the engine's completedSets for that seat was 0.
+ * takes at least one card that is not a RAINBOW wild when `pureSetRequired` is on
+ * (the MD Faithful preset), so a full zone of nothing but "any" wilds is a full
+ * zone and NOT a set. Measured: two "any" wilds in Command printed "Command 2/2 —
+ * COMPLETE · rent 8M" while the engine's completedSets for that seat was 0. A zone
+ * of two-colour wilds is a set under every ruleset — only the rainbows are barred.
  */
 function zoneRow(player, c, label, { inHand, rules }) {
   const held = player?.properties?.[c]?.length || 0;

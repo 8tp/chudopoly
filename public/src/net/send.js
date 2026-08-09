@@ -38,7 +38,8 @@ export const removeBot = (targetId) => send({ type: 'remove_bot', targetId });
  * the suite.
  */
 export const RULE_WIRE_KEYS = Object.freeze(
-  ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath', 'deck']);
+  ['preset', 'winRule', 'setsToWin', 'pureSetRequired', 'counterCostsPlay', 'passGoRestartsTurn',
+   'suddenDeath', 'deck']);
 
 /**
  * @param {object} [rules] optional ruleset — `preset` and/or any of the keys in

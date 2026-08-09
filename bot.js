@@ -671,7 +671,11 @@ function botRespond(room, botId, callbacks) {
   const bot = G.getPlayer(state, botId);
   if (!bot) return;
   const mode = getBotMode(room, botId);
-  const hasOpsec = bot.hand.some(c => c.action === 'opsec');
+  // canCounter(): under `counterCostsPlay` (MD Faithful) an OPSEC played on your OWN turn
+  // spends a play and is REFUSED with none left, so a bot that only checked its hand would
+  // burn a response on an error and fall through to accept anyway. Asked before the
+  // decision so the shape matches "no OPSEC in hand" exactly.
+  const hasOpsec = bot.hand.some(c => c.action === 'opsec') && G.canCounter(state, botId);
 
   const shouldOpsec = hasOpsec && shouldPlayOpsecDecision(state, pa, mode, botId);
 
@@ -2532,7 +2536,7 @@ module.exports = {
       if (!pa) return;
       const bot = G.getPlayer(state, botId);
       if (!bot) return;
-      const hasOpsec = bot.hand.some(c => c.action === 'opsec');
+      const hasOpsec = bot.hand.some(c => c.action === 'opsec') && G.canCounter(state, botId);
       if (hasOpsec && shouldPlayOpsecDecision(state, pa, mode, botId)) {
         const result = G.respondToAction(state, botId, 'opsec');
         if (!result.error) return;

@@ -325,6 +325,7 @@ function onPick(e) {
     case 'chud-winrule': pending = { ...pending, winRule: t.value }; break;
     case 'chud-sets': pending = { ...pending, setsToWin: Number(t.value) }; break;
     case 'chud-pure': pending = { ...pending, pureSetRequired: t.checked }; break;
+    case 'chud-opsec': pending = { ...pending, counterCostsPlay: t.checked }; break;
     case 'chud-pcs': pending = { ...pending, passGoRestartsTurn: t.checked }; break;
     case 'chud-sudden': pending = { ...pending, suddenDeath: t.value }; break;
     default: return;
@@ -370,6 +371,7 @@ function syncPicker() {
   for (const input of inputs.winRule) input.checked = input.value === pending.winRule;
   for (const input of inputs.setsToWin) input.checked = Number(input.value) === pending.setsToWin;
   inputs.flags.pureSetRequired.checked = pending.pureSetRequired;
+  inputs.flags.counterCostsPlay.checked = pending.counterCostsPlay;
   inputs.flags.passGoRestartsTurn.checked = pending.passGoRestartsTurn;
   for (const input of inputs.suddenDeath) input.checked = input.value === pending.suddenDeath;
   // §3.10b is meaningless under 'instant' — nothing is ever armed, so there is no
@@ -399,7 +401,8 @@ function syncPicker() {
   // one the table will read (game.js resolveRules), so flipping a toggle off a
   // preset says "Custom" here exactly when the broadcast will say 'custom'.
   const bits = [`${WIN_RULE_NAMES[pending.winRule]}`, `${pending.setsToWin} sets`];
-  if (pending.pureSetRequired) bits.push('no all-wild sets');
+  if (pending.pureSetRequired) bits.push('no all-rainbow sets');
+  if (pending.counterCostsPlay) bits.push('OPSEC costs a play');
   if (pending.passGoRestartsTurn) bits.push('PCS Orders restarts');
   if (pending.suddenDeath !== 'off') bits.push(SUDDEN_DEATH_COPY[pending.suddenDeath].label.toLowerCase());
   // Only ever says "custom deck" when it IS one — a deck that happens to equal the
@@ -545,6 +548,10 @@ function buildAdv() {
         el('fieldset', { class: 'adv-group' }, [
           el('legend', { class: 'adv-legend', text: 'House rules' }),
           flagRow('pureSetRequired', 'chud-pure'),
+          /* §3.1d. Its copy is DELIBERATELY one short line: this fieldset sits directly
+             above the Sets strip, and a row that wraps to a third line pushes the strip
+             out of the frame checkContrast measures — measured, lobby-host · light. */
+          flagRow('counterCostsPlay', 'chud-opsec'),
           flagRow('passGoRestartsTurn', 'chud-pcs'),
         ]),
         el('fieldset', { class: 'adv-group' }, [

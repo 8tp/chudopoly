@@ -80,13 +80,25 @@ function armOwnThenOffTurn(winRule) {
   return { state, p1, p3, p1Forecast, p3Forecast: G.checkpointForecast(state, p3) };
 }
 
-test('mdFaithful: arming off-turn just before your turn legitimately overtakes an earlier arm', () => {
-  const { p1, p3, p1Forecast, p3Forecast } = armOwnThenOffTurn('mdFaithful');
-  // P1 armed first but on their own turn, so they must wait a full lap.
-  // P3 armed later, off-turn, one turn before their own — they convert first.
-  assert.ok(p3Forecast.turn < p1Forecast.turn,
-    `later arm should convert first: P1 T${p1Forecast.turn} vs P3 T${p3Forecast.turn}`);
-  assert.ok(p3.armedAtTurn > p1.armedAtTurn);
+// REPLACED 2026-08-08. This used to assert that under mdFaithful the LATER, off-turn arm
+// overtakes P1's earlier own-turn arm. That whole race was an artefact of making an
+// own-turn completion wait a lap, which no edition of Monopoly Deal does: the 2008 sheet
+// only defers a win you noticed on someone else's turn, and every printing since 2017 says
+// the game simply ends. So under mdFaithful the scenario cannot start — P1 has already won
+// before P3 can be handed anything. The overtake itself still exists and is still pinned,
+// under finalApproach, by the test below.
+test('mdFaithful: an own-turn completion ends the game, so the race never starts', () => {
+  const state = build('mdFaithful', 3);
+  const [p1] = state.players;
+  setOf(state, p1, 'brown');
+  setOf(state, p1, 'darkblue');
+  prop(state, p1, 'intel');
+  p1.hand.push(take(state, c => c.type === 'property' && c.color === 'intel'));
+  assert.ok(G.playProperty(state, 'p1', p1.hand.length - 1).ok);
+  assert.equal(state.phase, 'finished', 'the third set on your own turn IS the win');
+  assert.equal(state.winner, 'p1');
+  assert.equal(p1.finalApproach, false, 'and nothing was ever armed for anyone to overtake');
+  assert.equal(G.checkpointForecast(state, p1), null);
 });
 
 test('finalApproach: the strict full cycle inverts it — the off-turn arm is the one penalised', () => {
@@ -159,8 +171,19 @@ function auditBatch({ winRule, games, seats }) {
             `${state.winner} forecast T${state._lastForecast.turn} but won on T${state.turnCounter}`);
         }
       }
-      // Remember the winner-to-be's most recent forecast.
+      // Remember the winner-to-be's most recent forecast — and FORGET it the moment that
+      // seat stops being armed. Added 2026-08-08 with the mdFaithful correction: a broken
+      // approach can now be followed by an INLINE own-turn win, which has no forecast at
+      // all, and the stale figure from the earlier arming was being compared against it
+      // ("p1 forecast T22 but won on T34"). The engine was right both times; the harness
+      // was remembering a prediction that had been withdrawn. Note runGame() does not seed
+      // bot.js's RNG (only runMatches() does), so this batch is not reproducible run to
+      // run — a harness bug like this one surfaces intermittently rather than never.
       if (state && state.phase === 'playing') {
+        if (state._lastForecast) {
+          const prev = state.players.find(p => p.id === state._lastForecast.id);
+          if (!prev || !prev.finalApproach || prev.eliminated) state._lastForecast = null;
+        }
         for (const p of state.players) {
           if (p.finalApproach && !p.eliminated) {
             const f = G.checkpointForecast(state, p);

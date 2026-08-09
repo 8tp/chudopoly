@@ -83,10 +83,12 @@ function rearrangeBudget() {
  */
 function ruleBadge(active) {
   const bits = [WIN_RULE_NAMES[active.winRule], `${active.setsToWin} sets to win`];
-  // game.js zoneIsSet() (351-356): `cards.some(c => c.type === 'property')` —
-  // ONE real property, not "no wilds". Verified: under mdFaithful two "any"
-  // wilds in a 2-card zone is NOT a set, but one wild + one property IS.
-  if (active.pureSetRequired) bits.push('every set needs at least one real property');
+  // game.js zoneIsSet(): `cards.some(c => !isRainbowWild(c))` — one card that is not an
+  // "any" wild, NOT "one real property". Under mdFaithful two "any" wilds in a 2-card zone
+  // is NOT a set; two two-colour wilds IS one, which is what the 2025 card faces say.
+  if (active.pureSetRequired) bits.push('rainbow wilds cannot finish a set on their own');
+  // game.js respondToAction(): counterSpendsPlay() — the current seat only.
+  if (active.counterCostsPlay) bits.push('OPSEC costs a play on your own turn');
   if (active.passGoRestartsTurn) bits.push('PCS Orders restarts your plays');
   // §3.10b rides the badge as well as the Goal row: a guest at a host-enabled
   // table meets the rule here first. game.js normalizeSuddenDeath forces 'off'
@@ -207,11 +209,16 @@ function approachDiagram(rules) {
   return el('div', { class: 'fa-diagram' }, [
     armedBoard(n),
     el('ol', { class: 'fa-steps' }, [
-      faStep('arm', 'ARMED', `Your ${ordinalWord(n)} set completes. You do NOT win yet.`),
+      md
+        ? faStep('arm', 'ARMED OFF-TURN', `Your ${ordinalWord(n)} set is handed to you during `
+          + 'somebody else\'s turn — by a payment, a steal or a swap. That is the ONLY way to '
+          + 'be armed here: complete it on your own turn and you have already won.')
+        : faStep('arm', 'ARMED', `Your ${ordinalWord(n)} set completes. You do NOT win yet.`),
       // checkpointReached(): turnCounter − armedAtTurn >= checkpointThreshold().
       md
-        ? faStep('wait', 'ONE TURN', 'The table gets the rest of the round. You may not '
-          + 'declare on someone else\'s turn — that is the actual Monopoly Deal rule.')
+        ? faStep('wait', 'ONE TURN', 'You may not declare on someone else\'s turn — that is '
+          + 'the actual Monopoly Deal sentence. The seats between you and your own next turn '
+          + 'get to answer.')
         : faStep('wait', 'CYCLE', 'Every other player gets at least one full turn to break '
           + 'you — up to two each if you armed on someone else\'s turn.'),
       faStep('break', 'OR BREAK', 'Lose any set in that window and you are disarmed. '
@@ -275,10 +282,17 @@ function pageGoal() {
     ...head,
     approachDiagram(active),
     rules([
+      // syncSets(): under mdFaithful an own-turn completion finishes the game INLINE; the
+      // arming branch below it is reached only when it is not your turn.
+      ...(md ? [['Your own turn wins on the spot',
+        `Complete your ${ordinalWord(n)} set on your own turn and the game ends right there `
+        + '— no banner, no window, nothing to break. Only a set that lands during somebody '
+        + 'else\'s turn has to wait.']] : []),
       // syncSets(): sets >= setsToWin && !finalApproach → arm + emit final_approach.
       ['Arming is public',
-        `The moment you hold ${n} complete sets the whole table is told, and a banner `
-        + 'names you until it resolves.'],
+        (md ? `The moment a set completes off-turn and leaves you on ${n}, the whole table `
+            : `The moment you hold ${n} complete sets the whole table `)
+        + 'is told, and a banner names you until it resolves.'],
       // checkpointThreshold(): activeCount, or 1 under mdFaithful.
       md
         ? ['The grace is one turn',
@@ -495,10 +509,10 @@ function pageSets() {
       // but wilds is not a SET, so the two set-guarded steals may still take from
       // it. Stated only when the toggle is on — on other tables a full zone of
       // wilds IS a complete set and the claim would be false.
-      ...(active.pureSetRequired ? [['A full zone of wilds is not safe here',
-        'On this table a set needs one real property, so a colour filled with nothing but '
-        + 'wilds is NOT a complete set — Midnight Requisition and TDY Orders can still '
-        + 'take from it.']] : []),
+      ...(active.pureSetRequired ? [['A full zone of RAINBOW wilds is not safe here',
+        'On this table a colour filled with nothing but "any" wilds is NOT a complete set, '
+        + 'so Midnight Requisition and TDY Orders can still take from it. Two-colour wilds '
+        + 'are fine on their own — it is only the rainbows that cannot finish a set.']] : []),
       // receiveProperty(): `ordered` puts preferredColor first — every caller
       // passes card.placedColor, the colour it was on before — then the
       // remaining legal colours sorted by DESCENDING zoneCount, and takes the
@@ -738,9 +752,14 @@ function pageEndings() {
         ? ['Someone completes their last set',
           `A player reaches ${n} complete sets and the game ends on the spot, on whoever's `
           + 'turn it happened to be. The usual ending.']
-        : ['Final approach converted',
-          `An armed player reaches their own turn start still holding ${n} complete `
-          + 'sets. The usual ending.'],
+        : active.winRule === 'mdFaithful'
+          ? ['Someone completes their last set on their own turn',
+            `A player reaches ${n} complete sets on their own turn and the game ends there. `
+            + 'The usual ending; a set that landed off-turn instead converts at that '
+            + 'player\'s next own turn start.']
+          : ['Final approach converted',
+            `An armed player reaches their own turn start still holding ${n} complete `
+            + 'sets. The usual ending.'],
       // scoop() → activePlayers.length === 1 → finishGame(…, 'last_standing').
       ['Last one standing',
         'Scooping discards everything you own and takes you out for good. If everyone else '

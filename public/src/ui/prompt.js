@@ -562,16 +562,16 @@ function render() {
         items.push(text('why', `${seatName(entry.id)} played OPSEC on your `
           + `${ACTION_TITLE[pa.action] || pa.action}. Letting it stand cancels your card.`));
         items.push(button('accept', 'Let it stand', 'respond-accept', 'btn btn-primary'));
-        if (sel.hasOpsec()) items.push(button('opsec', 'Counter OPSEC', 'respond-opsec'));
+        if (sel.canOpsec()) items.push(button('opsec', 'Counter OPSEC', 'respond-opsec'));
       } else if (pa.type === 'payment') {
         items.push(text('why', describePending(pa)));
         items.push(button('pay', 'Pay', 'begin-payment', 'btn btn-primary'));
-        if (sel.hasOpsec()) items.push(button('opsec', 'OPSEC', 'respond-opsec'));
+        if (sel.canOpsec()) items.push(button('opsec', 'OPSEC', 'respond-opsec'));
         items.push(approachWarning());
       } else {
         items.push(text('why', describePending(pa)));
         items.push(button('accept', 'Accept', 'respond-accept', 'btn btn-primary'));
-        if (sel.hasOpsec()) items.push(button('opsec', 'OPSEC', 'respond-opsec'));
+        if (sel.canOpsec()) items.push(button('opsec', 'OPSEC', 'respond-opsec'));
       }
     }
   } else if (mode.kind === 'payment') {
@@ -600,7 +600,7 @@ function render() {
     if (interact.payableTotal() < mode.amount) {
       items.push(button('payall', 'Surrender everything', 'pay-all', 'btn btn-danger'));
     }
-    if (sel.hasOpsec()) items.push(button('opsec', 'OPSEC instead', 'respond-opsec'));
+    if (sel.canOpsec()) items.push(button('opsec', 'OPSEC instead', 'respond-opsec'));
     items.push(approachWarning());
     items.push(focWarning());
   } else if (mode.kind === 'discard') {

@@ -307,3 +307,94 @@ the orchestrator may want (ARCHITECTURE.md is orchestrator-owned; reported, not 
 3. §3.5 cites "Hasbro FAQ a_id/924" for the second-set rule; live a_id/924 is the >3-sets answer.
    The second-set rule is real but lives in the 2011 archived FAQ and monopolydealrules property
    #8. Claim correct, citation imprecise.
+
+---
+
+# Addendum — Round 2, 2026-08-08: the win condition, read from the shipped rulebooks
+
+Round 1 above worked from the 2008 sheet, Hasbro's custhelp FAQ and the field. This round went to
+the **printed rulebooks Hasbro ships today**, extracted from the PDFs themselves (`pdftotext`),
+because the question was the one thing the FAQ pages never restate precisely: *how you normally
+win.*
+
+## Sources added this round (all extracted, not summarised)
+
+- **E3113** — the base-game foldout Hasbro's own instruction portal serves today
+  (<https://instructions.hasbro.com/en-us/instruction/monopoly-deal-card-game-instructions>,
+  `/api/download/E3113_en-us_monopoly-deal-card-game-instructions.pdf`, print © 2017).
+- **B0965** — the older leaflet on the main Deal page
+  (<https://instructions.hasbro.com/en-us/instruction/monopoly-deal-card-game>, © 2014).
+- **G3239 — Monopoly Deal FIFA World Cup 26** (© 2026 Hasbro, print June 2025):
+  <https://instructions.hasbro.com/en-us/instruction/monopoly-deal-fifa>
+- **G0717 — Monopoly Deal: Harry Potter** (© 2025 Hasbro):
+  <https://instructions.hasbro.com/en-us/instruction/monopoly-deal-harry-potter-card-game>
+- The 2024 "refresh" edition's two rule changes, secondary only:
+  <https://tvtropes.org/pmwiki/pmwiki.php/TabletopGame/MonopolyDeal>
+
+## 11. How you win, and when — CORRECTION to §3.10's faithfulness claim
+
+**Official MD.** 2008 sheet: *"TO WIN, BE THE FIRST PLAYER TO COLLECT 3 FULL PROPERTY SETS OF
+DIFFERENT COLORS"*, plus the sentence §3.10 was built on: *"You can only reorganize your property
+collection on your turn. If you realize you've won **during someone else's turn**, you must wait
+until it's your turn to say it!"* — the wait is **conditional on an off-turn completion**. §3.10
+read it as unconditional.
+
+E3113 (2017/18) drops the sentence entirely and prints *"The game ends when one player collects 3
+complete Property sets in different colors. That player wins!"* — twice, under OBJECT OF THE GAME
+and THE END OF THE GAME. FIFA (2025): *"The game ends when one person has three complete player
+sets, each in a different color."* Harry Potter (2025): same, plus the different-colour rule spelled
+out — *"you can't win with two red sets and one blue set"* (E3113 says the same of 2 red + 1 blue).
+
+**VERDICT: CORRECTION.** Our `mdFaithful` win rule deferred *every* completion to the armed
+player's next own turn, which matches no edition: it is Final Approach with a shorter clock. Fixed
+2026-08-08 — own-turn completion wins inline, off-turn completion arms and converts at the next own
+turn start. `finalApproach` is recorded as ours, which it always was.
+
+## 12. Wild-only sets — CORRECTION to `pureSetRequired`
+
+**Official MD.** Neither the 2008 sheet nor E3113 addresses it; Hasbro's Twitter (2020-06-22, via
+monopolyland) says *"as long as there is at least 1 standard property card."* The 2025 rulebooks
+settle it on the card faces, and they do **not** agree with that tweet — they split the two wilds:
+
+- two-colour wild: *"You may make a complete player set using only these cards."*
+- every-colour wild: *"You may not make a complete player set using only these cards."*
+
+**VERDICT: CORRECTION.** `pureSetRequired` demanded a real property, outlawing an all-two-colour-wild
+set the book explicitly permits. Narrowed to "at least one card that is not a rainbow wild."
+
+## 13. Just Say No costs a play on your own turn — NEW, adopted for MD Faithful
+
+FIFA's RED CARD: *"You may play this card at any time, even if it isn't your turn… If you add this
+card to your Bank as points **or play it as an action card**, it counts as one of the three cards
+you may play on your turn."* Harry Potter's Protego carries the banking half of the same line. The
+2024 base refresh is reported to have introduced it. Adopted as `counterCostsPlay`, ON in
+`mdFaithful` only (ARCHITECTURE §3.1d).
+
+## 14. Overstacking — CORRECTION to item 7 above
+
+Item 7 concluded "MD has no overstacking rule at all." The 2025 rulebooks do have one, for wilds:
+*"You can't place them in your Bank or use them to exceed the number of magical items in a set of
+that color, but you can use them to start a new set"* (G0717; G3239 the same). So §3.5's zone cap is
+closer to the source than recorded — it is only the *"extras start a second set"* half that we lack.
+No engine change; the record is corrected.
+
+## 15. Zero-value wilds (§3.4) — the divergence is sharper than recorded
+
+E3113: *"All cards—except the 2 Wild Property cards—have cash value and may be used to pay debts."*
+FIFA prints it on the card itself: *"You may not use these cards to pay an opponent."* Combined with
+*"If you have no money or Property in front of you, nothing happens"*, official MD is unambiguous
+that a rainbow wild is never surrendered. §3.4 remains the owner-ratified minority position; it is
+now contradicted by card text, not merely by FAQ.
+
+## 16. Expansions — there are none; Hasbro re-cuts the whole game
+
+No expansion pack for Deal exists. What exists is a **2024 "refresh"** of the base game (green box,
+new art; reportedly the wild-set and Just Say No changes above), the **licensed re-cuts** — Harry
+Potter, FIFA World Cup 26, Fourth Wing, KPop Demon Hunters — and the sibling card games **Monopoly
+Bid** (2020) and **Monopoly Millionaire Deal** (2011, same engine, win condition swapped to *first
+to $1,000,000*: a real precedent for an alternate win rule).
+
+The mechanic worth stealing is in the licensed cuts: **character cards**. Harry Potter and Fourth
+Wing both deal each player one at setup, carrying a permanent asymmetric ability, and Harry Potter
+adds a card (Petrificus Totalus) that **disables another player's ability** until they discard 10
+points' worth. Nothing in our engine has an equivalent.

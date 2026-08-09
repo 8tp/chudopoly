@@ -20,10 +20,16 @@ const SETS_TO_WIN = 3;
 //                   resolves at the armed player's first own-turn start that is a FULL
 //                   turn cycle after arming, so every opponent is guaranteed a response
 //                   turn no matter when the third set landed.
-//   mdFaithful    — the literal Monopoly Deal rule: you win at your NEXT own turn start
-//                   while still holding 3+ sets. Identical to finalApproach when you
-//                   complete on your own turn (94.8% of armings); strictly shorter when
-//                   the third set arrives during someone else's turn.
+//   mdFaithful    — the rulebook read literally, which means read CONDITIONALLY. The 2008
+//                   sheet says "if you realize you've won during someone else's turn, you
+//                   must wait until it's your turn to say it" — the wait is the EXCEPTION.
+//                   So completing your third set on your OWN turn wins on the spot, and
+//                   only a set that lands off-turn waits, converting at your very next own
+//                   turn start while you still hold 3+. (Corrected 2026-08-08: this used to
+//                   make every arming wait a full lap, which is Final Approach with a
+//                   different name and matched no edition of the rulebook. Every Hasbro
+//                   printing since 2017 — E3113, and the 2025 FIFA and Harry Potter cuts —
+//                   drops even the exception and says the game simply ends.)
 //   instant       — classic quick game. The third completed set wins the moment it
 //                   completes, wherever and whenever — including on an opponent's turn
 //                   through a payment, steal or swap. Nothing is ever armed.
@@ -262,17 +268,17 @@ function sameDeck(a, b) {
 // for card category — and it stays 106, because the two changes cancel. Pinned by
 // test/deckconfig.test.js against the published counts.
 const RULE_PRESETS = {
-  chudopoly: { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE } },
-  mdFaithful: { winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE, chud: 0, wildPairs: 9 } },
-  blitz: { winRule: 'instant', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true, suddenDeath: 'off', deck: { ...DECK_BASE } },
-  longGame: { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE } },
+  chudopoly: { winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE } },
+  mdFaithful: { winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, counterCostsPlay: true, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE, chud: 0, wildPairs: 9 } },
+  blitz: { winRule: 'instant', setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: true, suddenDeath: 'off', deck: { ...DECK_BASE } },
+  longGame: { winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false, suddenDeath: 'off', deck: { ...DECK_BASE } },
 };
 const PRESET_NAMES = Object.keys(RULE_PRESETS);
 const DEFAULT_PRESET = 'chudopoly';
 // The SCALAR rule keys. `deck` is deliberately not in here: every consumer of this list
 // compares with ===, which is exactly wrong for an object, so the deck is compared through
 // sameDeck() next to every use instead of silently comparing references.
-const RULE_KEYS = ['winRule', 'setsToWin', 'pureSetRequired', 'passGoRestartsTurn', 'suddenDeath'];
+const RULE_KEYS = ['winRule', 'setsToWin', 'pureSetRequired', 'counterCostsPlay', 'passGoRestartsTurn', 'suddenDeath'];
 
 // opts → the resolved ruleset. A named preset supplies the base; any individual toggle the
 // lobby also sent overrides it. `preset` in the result is the preset the resolved values
@@ -287,6 +293,7 @@ function resolveRules(opts = {}) {
   if (opts && opts.winRule !== undefined) rules.winRule = normalizeWinRule(opts.winRule);
   if (opts && opts.setsToWin !== undefined) rules.setsToWin = normalizeSetsToWin(opts.setsToWin);
   if (opts && opts.pureSetRequired !== undefined) rules.pureSetRequired = !!opts.pureSetRequired;
+  if (opts && opts.counterCostsPlay !== undefined) rules.counterCostsPlay = !!opts.counterCostsPlay;
   if (opts && opts.passGoRestartsTurn !== undefined) rules.passGoRestartsTurn = !!opts.passGoRestartsTurn;
   if (opts && opts.suddenDeath !== undefined) rules.suddenDeath = opts.suddenDeath;
   if (opts && opts.deck !== undefined) rules.deck = normalizeDeck(opts.deck, rules.deck);
@@ -617,13 +624,26 @@ function getPlayer(state, id) {
   return state.players.find(p => p.id === id);
 }
 
+// The RAINBOW wild — the zero-value "any" wild. It is the one card Hasbro's current
+// printings single out by name, so it gets a name here rather than an inline colours test.
+function isRainbowWild(card) {
+  return !!card && card.type === 'wild_property' && !!card.colors && card.colors[0] === 'any';
+}
+
 // `pureSetRequired` (lobby toggle, ON in the MD Faithful preset): a full zone only counts as
-// a SET if at least one card in it is a real property. Our 2-card zones make all-wild sets
-// otherwise trivial. It is only ever a completeness question — the zone cap is unchanged.
+// a SET if at least one card in it is NOT a rainbow wild. Our 2-card zones make an all-rainbow
+// set otherwise trivial. It is only ever a completeness question — the zone cap is unchanged.
+//
+// NARROWED 2026-08-08 by research. It used to demand a real `type:'property'` card, which
+// also outlawed a zone filled with two-colour wilds — stricter than any edition of the
+// source. Hasbro's 2025 printings split the two cards by name: two-colour wild — "You may
+// make a complete player set using only these cards"; every-colour wild — "You may not make
+// a complete player set using only these cards" (Monopoly Deal FIFA G3239; the Harry Potter
+// cut G0717 prints the same pair). The book bans exactly one shape, and now so do we.
 function zoneIsSet(player, color, cards) {
   const info = COLORS[color];
   if (!info || !cards || cards.length < info.size) return false;
-  if (rulesOf(player).pureSetRequired && !cards.some(c => c.type === 'property')) return false;
+  if (rulesOf(player).pureSetRequired && !cards.some(c => !isRainbowWild(c))) return false;
   return true;
 }
 
@@ -666,6 +686,17 @@ function syncSets(state, player, before, byId = null) {
       finishGame(state, player.id, 'sets',
         player.name + ' wins with ' + sets + ' complete sets!');
     }
+    return;
+  }
+
+  // §3.10 'mdFaithful' — win where you stand when the set completes on your OWN turn.
+  // Same call sites as 'instant' above; the only difference is the seat test, which is
+  // exactly the rulebook's condition. A set handed to you off-turn (a payment, a swap,
+  // an opponent's steal breaking their own zone) still falls through and arms below.
+  if (state.winRule === 'mdFaithful' && sets >= setsToWinOf(state) && !player.eliminated
+      && currentPlayer(state).id === player.id) {
+    finishGame(state, player.id, 'sets',
+      player.name + ' wins with ' + sets + ' complete sets!');
     return;
   }
 
@@ -712,7 +743,9 @@ function turnsSinceArming(state, player) {
 
 // How many turn ticks must pass after arming before the win can be claimed at the armed
 // player's own turn start. finalApproach demands a whole cycle; mdFaithful demands only
-// that this is a LATER own turn than the one the arming happened on.
+// that this is a LATER own turn than the one the arming happened on — and under mdFaithful
+// only OFF-TURN armings ever get here at all, because syncSets() finishes an own-turn
+// completion where it stands.
 function checkpointThreshold(state) {
   return state.winRule === 'mdFaithful' ? 1 : activeCount(state);
 }
@@ -1686,6 +1719,22 @@ function finishEntry(state, pa, entry) {
   return { ok: true, morePending: true };
 }
 
+// `counterCostsPlay` (lobby toggle, ON in the MD Faithful preset). Monopoly Deal's modern
+// printings charge the counter: FIFA Deal's RED CARD (G3239, the Just Say No of that cut)
+// prints "If you add this card to your Bank as points OR PLAY IT AS AN ACTION CARD, it
+// counts as one of the three cards you may play on your turn." Only the seat whose turn it
+// is has a play budget at all, so only that seat ever pays — a defender answering on
+// somebody else's turn counters for free, exactly as the card says. The bite is on the
+// attacker's counter-counter, which is where OPSEC chains actually spiral.
+function counterSpendsPlay(state, playerId) {
+  return !!rulesFor(state).counterCostsPlay && currentPlayer(state).id === playerId;
+}
+function canCounter(state, playerId) {
+  if (!state || !playerId) return false;
+  if (!counterSpendsPlay(state, playerId)) return true;
+  return (state.playsRemaining || 0) > 0;
+}
+
 function respondToAction(state, playerId, response, paymentCards) {
   const phaseError = ensurePlaying(state);
   if (phaseError) return phaseError;
@@ -1699,15 +1748,26 @@ function respondToAction(state, playerId, response, paymentCards) {
   if (response === 'opsec') {
     const idx = responder.hand.findIndex(c => c.action === 'opsec');
     if (idx < 0) return { error: 'No OPSEC card in hand' };
+    // REFUSED, not silently discounted: under `counterCostsPlay` a counter you cannot pay
+    // for is not a legal answer, and the whole point of the rule is that spending your
+    // third card on an attack leaves you nothing to defend the attack with.
+    if (!canCounter(state, playerId)) {
+      return { error: 'No plays left this turn to counter with OPSEC' };
+    }
+    const spendsPlay = counterSpendsPlay(state, playerId);
     const opsecCard = responder.hand.splice(idx, 1)[0];
     state.discardPile.push(opsecCard);
+    if (spendsPlay) state.playsRemaining = Math.max(0, (state.playsRemaining || 0) - 1);
     entry.depth++;
     const against = playerId === pa.sourceId ? entry.id : pa.sourceId;
     entry.responderId = against;
-    logLine(state, responder.name + ' plays OPSEC! ' + (getPlayer(state, against)?.name || '?') + ' can counter...');
+    logLine(state, responder.name + ' plays OPSEC!'
+      + (spendsPlay ? ' (one of their three plays)' : '')
+      + ' ' + (getPlayer(state, against)?.name || '?') + ' can counter...');
     emit(state, 'opsec', {
       actor: playerId, against, depth: entry.depth,
       target: entry.id, action: pa.action, card: publicCard(opsecCard),
+      spentPlay: spendsPlay, playsRemaining: state.playsRemaining,
     });
     return { ok: true, opsec: true, morePending: true };
   }
@@ -2468,11 +2528,11 @@ function getPlayerView(state, playerId) {
 module.exports = {
   COLORS, HAND_LIMIT, SETS_TO_WIN, EVENT_TAIL, DECK_CYCLE_LIMIT, REARRANGE_BUDGET, SWAP_COST,
   buildDeck, shuffle, makeRng, createGame, currentPlayer, getPlayer,
-  completedSets, checkWin, isSetComplete, calcRent, playerTotalValue, playerNetWorth,
+  completedSets, checkWin, isSetComplete, isRainbowWild, calcRent, playerTotalValue, playerNetWorth,
   playerUpgradeValue, payableCards, zoneFull, zoneCount, zoneRequisitionable, legalColorsFor,
   drawCards, playAsMoney, playProperty, playAction, respondToAction,
   moveProperty, swapProperties, scoop, endTurn, getPlayerView, validateState, upgradeKinds,
-  pendingResponders, pendingEntryFor, publicCard, armedPlayers,
+  pendingResponders, pendingEntryFor, publicCard, armedPlayers, canCounter,
   turnsUntilCheckpoint, checkpointReached,
   WIN_RULES, DEFAULT_WIN_RULE, normalizeWinRule, checkpointThreshold,
   RULE_PRESETS, PRESET_NAMES, DEFAULT_PRESET, DEFAULT_RULES, RULE_KEYS,

@@ -44,6 +44,19 @@ function wild(s, p, color) {
   (p.properties[color] = p.properties[color] || []).push({ ...c, placedColor: color });
   return c;
 }
+// The two wilds pureSetRequired now tells apart, taken by NAME rather than by whatever the
+// generic helper happens to find first — the whole rule is which of the two it is.
+function rainbowWild(s, p, color) {
+  const c = take(s, x => x.type === 'wild_property' && x.colors[0] === 'any');
+  (p.properties[color] = p.properties[color] || []).push({ ...c, placedColor: color });
+  return c;
+}
+function pairWild(s, p, color) {
+  const c = take(s, x => x.type === 'wild_property'
+    && x.colors[0] !== 'any' && x.colors.includes(color));
+  (p.properties[color] = p.properties[color] || []).push({ ...c, placedColor: color });
+  return c;
+}
 function healthy(s) { assert.deepEqual(G.validateState(s), { ok: true }); }
 function completeSet(s, p, color) {
   for (let i = (p.properties[color] || []).length; i < G.COLORS[color].size; i++) property(s, p, color);
@@ -291,13 +304,13 @@ test('every preset resolves server-side to its documented ruleset', () => {
   // this stays a test of the SCALAR ruleset rather than a second copy of the deck table.
   const scalars = (p) => { const { deck, ...rest } = G.resolveRules({ preset: p }); return rest; };
   assert.deepEqual(scalars('chudopoly'),
-    { preset: 'chudopoly', winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off' });
+    { preset: 'chudopoly', winRule: 'finalApproach', setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false, suddenDeath: 'off' });
   assert.deepEqual(scalars('mdFaithful'),
-    { preset: 'mdFaithful', winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, passGoRestartsTurn: false, suddenDeath: 'off' });
+    { preset: 'mdFaithful', winRule: 'mdFaithful', setsToWin: 3, pureSetRequired: true, counterCostsPlay: true, passGoRestartsTurn: false, suddenDeath: 'off' });
   assert.deepEqual(scalars('blitz'),
-    { preset: 'blitz', winRule: 'instant', setsToWin: 3, pureSetRequired: false, passGoRestartsTurn: true, suddenDeath: 'off' });
+    { preset: 'blitz', winRule: 'instant', setsToWin: 3, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: true, suddenDeath: 'off' });
   assert.deepEqual(scalars('longGame'),
-    { preset: 'longGame', winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off' });
+    { preset: 'longGame', winRule: 'finalApproach', setsToWin: 5, pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false, suddenDeath: 'off' });
   // absent / unknown ⇒ Chudopoly defaults
   for (const bad of [undefined, null, 'nope', 42]) {
     assert.equal(G.resolveRules({ preset: bad }).preset, 'chudopoly');
@@ -338,7 +351,7 @@ test('getPlayerView ships the whole resolved ruleset', () => {
   const { deck, ...scalars } = view.rules;
   assert.deepEqual(scalars, {
     preset: 'longGame', winRule: 'finalApproach', setsToWin: 5,
-    pureSetRequired: false, passGoRestartsTurn: false, suddenDeath: 'off',
+    pureSetRequired: false, counterCostsPlay: false, passGoRestartsTurn: false, suddenDeath: 'off',
   });
   // §3 deck knob: the whole composition is on the wire, so the client never has to guess
   // what is in the deck and a recorded game carries the deck it was played with.
@@ -380,10 +393,10 @@ test('setsToWin is reflected in the log copy and the view instead of a hard-code
 
 /* ── pureSetRequired ─────────────────────────────────────────────────── */
 
-test('pureSetRequired: an all-wild zone is full but is not a set', () => {
+test('pureSetRequired: an all-RAINBOW zone is full but is not a set', () => {
   const state = game(2, { pureSetRequired: true });
   const [a] = state.players;
-  wild(state, a, 'darkblue'); wild(state, a, 'darkblue');
+  rainbowWild(state, a, 'darkblue'); rainbowWild(state, a, 'darkblue');
   assert.equal(G.zoneFull(a, 'darkblue'), true, 'the zone is still capped');
   assert.equal(G.isSetComplete(a, 'darkblue'), false, 'but it is not a SET');
   assert.equal(G.completedSets(a), 0);
@@ -391,8 +404,31 @@ test('pureSetRequired: an all-wild zone is full but is not a set', () => {
   assert.equal(G.zoneRequisitionable(a, 'darkblue'), true);
 
   const off = game(2, {});
-  wild(off, off.players[0], 'darkblue'); wild(off, off.players[0], 'darkblue');
+  rainbowWild(off, off.players[0], 'darkblue'); rainbowWild(off, off.players[0], 'darkblue');
   assert.equal(G.isSetComplete(off.players[0], 'darkblue'), true, 'default rules still count it');
+});
+
+// NARROWED 2026-08-08. The toggle used to demand a real `type:'property'` card, which also
+// outlawed a zone of two-colour wilds — stricter than the source it is named after. Hasbro
+// prints the distinction on the two card faces (Monopoly Deal FIFA G3239, Harry Potter
+// G0717): two-colour wild "You may make a complete player set using only these cards";
+// every-colour wild "You may not make a complete player set using only these cards."
+test('pureSetRequired: two-colour wilds alone DO finish a set — only rainbows cannot', () => {
+  const state = game(2, { pureSetRequired: true });
+  const [a] = state.players;
+  // brown is a 2-card colour and the stock deck carries two brown/lightblue wilds, so a
+  // brown zone can legally be filled with nothing but two-colour wilds.
+  pairWild(state, a, 'brown'); pairWild(state, a, 'brown');
+  assert.equal(a.properties.brown.every(c => c.type === 'wild_property'), true, 'no real property');
+  assert.equal(G.isSetComplete(a, 'brown'), true, 'a set of two-colour wilds is a SET');
+  assert.equal(G.completedSets(a), 1);
+  assert.equal(G.zoneRequisitionable(a, 'brown'), false, 'and it is protected like any set');
+
+  // One rainbow among them is still fine — the ban is on a zone of NOTHING but rainbows.
+  const mixed = game(2, { pureSetRequired: true });
+  const [m] = mixed.players;
+  rainbowWild(mixed, m, 'darkblue'); pairWild(mixed, m, 'darkblue');
+  assert.equal(G.isSetComplete(m, 'darkblue'), true);
 });
 
 test('pureSetRequired: losing the only real property un-arms a final approach', () => {
@@ -418,6 +454,69 @@ test('pureSetRequired: losing the only real property un-arms a final approach', 
   assert.ok(state.events.some(e => e.t === 'final_approach_broken' && e.by === 'p2'),
     'and the HUD is told who broke it');
   healthy(state);
+});
+
+/* ── counterCostsPlay (§3.1d) ────────────────────────────────────────── */
+
+// Hasbro's modern printings charge the counter. FIFA Deal's RED CARD (G3239) — the Just Say
+// No of that cut — prints: "If you add this card to your Bank as points or play it as an
+// action card, it counts as one of the three cards you may play on your turn." Only the seat
+// whose turn it is has a play budget, so only that seat ever pays.
+function opsecChain(opts) {
+  const state = game(2, opts);
+  const [a, b] = state.players;
+  give(state, a, c => c.action === 'finance_office');
+  give(state, b, c => c.action === 'opsec');
+  give(state, a, c => c.action === 'opsec');
+  assert.ok(G.playAction(state, 'p1', 0, { targetId: 'p2' }).ok);
+  assert.equal(state.playsRemaining, 2, 'the attack itself spent one');
+  return { state, a, b };
+}
+
+test('counterCostsPlay: the defender counters free, the attacker pays a play', () => {
+  const { state, a } = opsecChain({ counterCostsPlay: true });
+
+  assert.ok(G.respondToAction(state, 'p2', 'opsec').ok);
+  assert.equal(state.playsRemaining, 2,
+    'P2 is answering on somebody else\'s turn and has no play budget to spend');
+
+  assert.equal(G.canCounter(state, 'p1'), true);
+  assert.ok(G.respondToAction(state, 'p1', 'opsec').ok);
+  assert.equal(state.playsRemaining, 1, 'the attacker\'s counter is one of their three');
+  const ev = state.events.filter(e => e.t === 'opsec');
+  assert.equal(ev[0].spentPlay, false, 'defender');
+  assert.equal(ev[1].spentPlay, true, 'attacker on their own turn');
+  assert.ok(state.log.some(l => /one of their three plays/.test(l)));
+  assert.equal(a.hand.filter(c => c.action === 'opsec').length, 0);
+  healthy(state);
+});
+
+test('counterCostsPlay: with no plays left the counter is refused, not discounted', () => {
+  const { state, a } = opsecChain({ counterCostsPlay: true });
+  assert.ok(G.respondToAction(state, 'p2', 'opsec').ok);
+  state.playsRemaining = 0;                       // the attacker spent their last two
+
+  assert.equal(G.canCounter(state, 'p1'), false);
+  const res = G.respondToAction(state, 'p1', 'opsec');
+  assert.match(res.error, /no plays left/i);
+  assert.equal(a.hand.filter(c => c.action === 'opsec').length, 1, 'the card is not consumed');
+  assert.equal(state.playsRemaining, 0);
+  // and accepting still resolves the pending action, so the refusal is never a softlock
+  assert.ok(G.respondToAction(state, 'p1', 'accept').ok);
+  assert.equal(state.pendingAction, null);
+  healthy(state);
+});
+
+test('counterCostsPlay: OFF by default — OPSEC chains stay free in every shipped preset', () => {
+  const { state } = opsecChain({});
+  assert.ok(G.respondToAction(state, 'p2', 'opsec').ok);
+  assert.ok(G.respondToAction(state, 'p1', 'opsec').ok);
+  assert.equal(state.playsRemaining, 2, 'neither counter cost anything');
+  assert.equal(state.events.filter(e => e.t === 'opsec').every(e => e.spentPlay === false), true);
+  for (const preset of ['chudopoly', 'blitz', 'longGame']) {
+    assert.equal(G.RULE_PRESETS[preset].counterCostsPlay, false, preset);
+  }
+  assert.equal(G.RULE_PRESETS.mdFaithful.counterCostsPlay, true, 'only MD Faithful charges');
 });
 
 /* ── passGoRestartsTurn ──────────────────────────────────────────────── */

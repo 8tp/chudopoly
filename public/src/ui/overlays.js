@@ -127,19 +127,24 @@ function endingCopy(snap) {
         + 'the moment it happens — there was no window to break it.',
     };
   }
-  // MD Faithful is NOT Final Approach with a different name: game.js
-  // checkpointThreshold() (441-443) returns 1 for 'mdFaithful' and activeCount(state)
-  // for 'finalApproach'. The grace window is ONE turn — your own next one — not a
-  // full lap of the table, so "held it through the whole grace window" described a
-  // wait that never happened. Verified: under mdFaithful an armed seat converts at
-  // the start of its very next own turn.
+  // MD Faithful is NOT Final Approach with a different name. Since 2026-08-08 it wins
+  // INLINE on an own-turn completion (game.js syncSets) and only arms off-turn, where
+  // checkpointThreshold() returns 1 — your very next own turn, not a full lap. So the two
+  // endings read differently and the banner has to tell them apart: `armed` is the
+  // engine's own flag for the seat, and it is only ever set by the off-turn path.
   if (active.winRule === 'mdFaithful') {
+    // finishGame() does not clear the flag, so a seat that converted FROM an armed state is
+    // still in armedIds on the final snapshot; a seat that won inline never entered it.
+    const armed = (snap.armedIds || []).includes(winner);
     return {
       title: mine ? 'MISSION ACCOMPLISHED' : `${seatName(winner)} WINS`,
-      tag: 'DECLARED ON THEIR OWN TURN',
-      reason: `Completed ${active.setsToWin} sets and declared at the start of their own next `
-        + 'turn, the way Monopoly Deal is written. The table had that one turn to break the '
-        + 'sets, and did not.',
+      tag: armed ? 'DECLARED ON THEIR OWN TURN' : 'SETS COMPLETE',
+      reason: armed
+        ? `Was handed the ${active.setsToWin}th set on somebody else's turn, waited for `
+          + 'their own — the one thing Monopoly Deal makes you wait for — and the table '
+          + 'did not break it.'
+        : `Completed ${active.setsToWin} sets on their own turn. Monopoly Deal ends there `
+          + 'and then: the wait only applies to a set that lands off-turn.',
     };
   }
   return {
@@ -155,9 +160,9 @@ function endingCopy(snap) {
  *
  * These swatches are printed on the same row as the engine's own
  * `completedSets` count, so they have to be counted the engine's way.
- * `length >= size` is only zoneIsSet() (game.js:351-356) with pureSetRequired
- * OFF: under MD Faithful a full zone of nothing but wilds is NOT a set, and the
- * row would have shown three swatches beside the number 2.
+ * `length >= size` is only zoneIsSet() with pureSetRequired OFF: under MD
+ * Faithful a full zone of nothing but RAINBOW wilds is NOT a set, and the row
+ * would have shown three swatches beside the number 2.
  */
 function completeColorsOf(player) {
   const rules = sel.activeRuleFlags();

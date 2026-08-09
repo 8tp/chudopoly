@@ -224,7 +224,7 @@ test('a deck override merges over the PRESET\'s deck, and the label follows', ()
   assert.equal(md3.preset, 'custom', 'a changed deck is never labelled as the preset');
   // ...and a deck that lands back on a preset's exact composition re-labels as it.
   assert.equal(G.resolveRules({ winRule: 'mdFaithful', pureSetRequired: true,
-    deck: { chud: 0, wildPairs: 9 } }).preset, 'mdFaithful');
+    counterCostsPlay: true, deck: { chud: 0, wildPairs: 9 } }).preset, 'mdFaithful');
   // resolveRules is idempotent on its own output — server/handlers.js replays pendingRules
   // through it and the picker must not drift from the launch.
   const once = G.resolveRules({ deck: { chud: 3 } });

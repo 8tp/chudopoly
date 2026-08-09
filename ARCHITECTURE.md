@@ -262,6 +262,17 @@ first-player advantage measured and reported).
 1c. **Surge Ops follows Double The Rent.** It **stacks** (two copies = ×4, spending two of your
    three plays — MD explicitly allows this) and applies to **rent only**, never Finance Office
    or Roll Call. Today's engine has both backwards.
+1d. **OPSEC follows Just Say No's modern cost (2026-08-08 research), in the MD Faithful
+   preset only.** `counterCostsPlay` — OFF by default, ON in `mdFaithful` — makes an OPSEC
+   played in response *while it is your own turn* spend one of your three plays, and refuses
+   it outright with none left. Hasbro's current printings charge it: Monopoly Deal FIFA
+   (G3239) prints on the RED CARD *"If you add this card to your Bank as points or play it
+   as an action card, it counts as one of the three cards you may play on your turn."* Only
+   the seat whose turn it is has a play budget, so a defender answering on somebody else's
+   turn still counters for free — the cost lands on the attacker's counter-counter, which is
+   the half of an OPSEC chain that actually spirals. The default table is untouched: OPSEC
+   there is free at every depth, as it has always been.
+
 2. **Wild rent ("any")** targets **one chosen player**, like the color rents. (The old
    hit-everyone behavior was an undocumented buff.)
 3. ~~**Surge Ops** doubles the **next charge you make this turn** — rent, Finance Office,
@@ -328,17 +339,42 @@ first-player advantage measured and reported).
    **shown** in net worth display so the UI never lies.
 8. **Free wild rearranging** stays (it's good), but becomes a first-class visible interaction.
 10. **FINAL APPROACH (win grace cycle — owner directive 2026-08-06).** Reaching 3 complete
-    sets does NOT win immediately. **This is FAITHFUL to Monopoly Deal, not a departure** —
-    corrected 2026-08-06 after research: the official rule is *"if you realize you've won
-    during someone else's turn, you must wait until it's your turn to say it"*, and the winner
-    is the first to have three sets **and have them down on the table** on their own turn. So
-    a real grace window exists in MD and opponents can break a set inside it. Two consequences:
+    sets does NOT win immediately.
+
+    > **CORRECTED 2026-08-08 — the faithfulness claim below was wrong, and `mdFaithful` was
+    > wrong with it.** The rulebook sentence is CONDITIONAL: *"if you realize you've won
+    > **during someone else's turn**, you must wait until it's your turn to say it"* (2008
+    > sheet). The wait is the exception, not the rule — complete your third set on your own
+    > turn and Monopoly Deal ends there. Every printing since drops even the exception:
+    > E3113 (2017/18, the foldout §1b already quotes) and the 2025 licensed cuts (Deal FIFA
+    > G3239, Deal Harry Potter G0717) all print *"the game ends when one player collects 3
+    > complete Property sets in different colors. That player wins!"* with no timing caveat
+    > at all. Extracted from the shipped PDFs, not from a FAQ site.
+    >
+    > So **Final Approach is ours** — a deliberate house rule, not the source's — and the
+    > `mdFaithful` preset, which deferred *every* completion by a full lap, was Final
+    > Approach under another name in the 94.8% own-turn case. It now wins inline on an
+    > own-turn completion and arms only when the set lands off-turn, converting at that
+    > player's very next own turn start. `finalApproach` (the default) and `instant` are
+    > unchanged, and so is every other preset.
+    >
+    > Two more corrections landed with it, both scoped to `mdFaithful` and both OFF in the
+    > default: **`pureSetRequired` was narrowed** from "needs one real property" to "needs
+    > one card that is not a RAINBOW wild" — the 2025 card faces split the two by name
+    > ("two-colour wild: *You may* make a complete set using only these cards"; "every-colour
+    > wild: *You may not*"), so banning two-colour-wild sets was stricter than any edition.
+    > And **`counterCostsPlay` was added** (§3.1d): an OPSEC played in response *while it is
+    > your own turn* spends one of your three plays and is refused with none left — FIFA
+    > Deal's RED CARD prints *"If you add this card to your Bank as points or play it as an
+    > action card, it counts as one of the three cards you may play on your turn."* A
+    > defender answering on someone else's turn has no play budget and never pays, so the
+    > bite is on the attacker's counter-counter, which is where OPSEC chains spiral.
+
+    The house rule itself, unchanged: two consequences follow from the grace window —
     (a) the **contested race is already answered** — both claimants wait, and whoever's turn
     arrives first declares and wins, which is exactly what `resolveFinalApproach` does, so no
-    sudden-death or tiebreak mechanic is needed; (b) our §3.10-strict full-cycle checkpoint is
-    slightly *more* generous than MD, which grants only "until your next turn" (identical when
-    you complete on your own turn — 94.8% of armings — and shorter when you are handed the set
-    off-turn). It arms *final
+    sudden-death or tiebreak mechanic is needed; (b) it is strictly the most generous of the
+    three win rules to the defenders. It arms *final
     approach*: every other player gets exactly one turn to respond; if the player still holds
     ≥3 complete sets when their own next turn begins, they win then. Dropping below 3 disarms
     (and can re-arm — each arming restarts the cycle). Multiple players can be armed at once;

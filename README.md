@@ -116,14 +116,17 @@ have to share a 360° circle.
 
 Three complete sets wins, but reaching three does not end the game on the spot — it arms **final
 approach**, and every other player gets one turn to break the set before the win resolves. That
-turns out to be faithful to the original rather than a departure: the official rule makes you
-wait until your own turn to declare.
+is ours. Monopoly Deal ends the game where the third set lands on your own turn, and makes you
+wait only for a set handed to you during somebody else's turn.
 
 The deck is 106 cards by default and a custom lobby can edit thirteen of the counts, clamped and
 resolved server-side. Four presets ship, including `mdFaithful`, which lands on Monopoly Deal's
-category-for-category composition. Rulings that depart from the source, and the measurements or
-research that produced them, are recorded in [ARCHITECTURE.md §3](ARCHITECTURE.md) — including
-the ones where we knowingly took the minority position.
+category-for-category composition **and now on its win too** — own-turn wins resolve on the spot,
+rainbow wilds cannot finish a set alone, and an OPSEC played on your own turn costs one of your
+three plays, as the modern printings charge it. Rulings that depart from the source, and the
+measurements or research that produced them, are recorded in
+[ARCHITECTURE.md §3](ARCHITECTURE.md) — including the ones where we knowingly took the minority
+position.
 
 ## Repo map
 

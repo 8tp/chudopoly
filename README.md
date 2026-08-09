@@ -237,4 +237,5 @@ this repository is original work. *Monopoly* and *Monopoly Deal* are trademarks 
 This project is not affiliated with, endorsed by, or sponsored by Hasbro; the references above
 are descriptive, to say plainly what kind of game this is.
 
-See [LICENSE](LICENSE) for terms.
+See [LICENSE](LICENSE) for terms — plain MIT — and [TRADEMARKS.md](TRADEMARKS.md) for the
+trademark position, which the licence grants no rights in.

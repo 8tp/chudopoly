@@ -10,10 +10,15 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="description" content="An Air Force card table. Monopoly Deal, flight-line edition — three complete sets and you are wheels up. 2–5 seats, right in the browser.">
+<meta name="description" content="Play Monopoly Deal online free — no download, no signup. Chudopoly is an Air Force card table for 2-5 players: complete three sets and you are wheels up.">
 <meta name="application-name" content="CHUDOPOLY">
 <meta name="apple-mobile-web-app-title" content="CHUDOPOLY">
-<title>CHUDOPOLY</title>
+<!-- The title is the strongest on-page signal there is, and "CHUDOPOLY" carries
+     no intent: nobody searches a name they have not met. Keyword first, brand
+     second, 42 characters so it is not truncated in a result. og:title keeps the
+     brand FIRST — a shared link is met by people who were handed it, not by
+     people searching for it. -->
+<title>Play Monopoly Deal Online Free — Chudopoly</title>
 <!-- Link preview. __ORIGIN__ is substituted per request by server.js (og:url
      and og:image must be ABSOLUTE, crawlers do not run JS, and the same file
      ships to dev and prod — CANONICAL_ORIGIN pins it once a canonical domain
@@ -24,8 +29,8 @@
 <link rel="canonical" href="__ORIGIN__/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="CHUDOPOLY">
-<meta property="og:title" content="CHUDOPOLY">
-<meta property="og:description" content="An Air Force card table. Monopoly Deal, flight-line edition — three complete sets and you are wheels up. 2–5 seats, right in the browser.">
+<meta property="og:title" content="Chudopoly — Play Monopoly Deal Online Free">
+<meta property="og:description" content="Play Monopoly Deal online free — no download, no signup. Chudopoly is an Air Force card table for 2-5 players: complete three sets and you are wheels up.">
 <meta property="og:url" content="__ORIGIN__/">
 <meta property="og:image" content="__ORIGIN__/og.png?v=1">
 <meta property="og:image:type" content="image/png">
@@ -33,8 +38,8 @@
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="The CHUDOPOLY wordmark on a stencilled plate above a deck of card backs on a night airfield apron.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="CHUDOPOLY">
-<meta name="twitter:description" content="An Air Force card table. Monopoly Deal, flight-line edition — three complete sets and you are wheels up. 2–5 seats, right in the browser.">
+<meta name="twitter:title" content="Chudopoly — Play Monopoly Deal Online Free">
+<meta name="twitter:description" content="Play Monopoly Deal online free — no download, no signup. Chudopoly is an Air Force card table for 2-5 players: complete three sets and you are wheels up.">
 <meta name="twitter:image" content="__ORIGIN__/og.png?v=1">
 <meta name="twitter:image:alt" content="The CHUDOPOLY wordmark on a stencilled plate above a deck of card backs on a night airfield apron.">
 <!-- The app icon is the DECK MARK — the pre-press alignment target from the
@@ -52,6 +57,26 @@
 <link rel="alternate icon" type="image/png" sizes="32x32" href="/icons/icon-32.png?v=1">
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png?v=1">
 <link rel="manifest" href="/manifest.webmanifest?v=1">
+<!-- Structured data. NOT a classic script: application/ld+json is data, never
+     executed, so it does not touch §0.4's ban (test/ui-contract.test.js asserts
+     exactly one EXECUTABLE script and pins every other tag to this type). The
+     __ORIGIN__ placeholder is substituted per request like the OG tags above,
+     because schema URLs must be absolute too. -->
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":["VideoGame","WebApplication"],
+"name":"Chudopoly","alternateName":"Chudopoly \u2014 Monopoly Deal online",
+"url":"__ORIGIN__/","image":"__ORIGIN__/og.png?v=1",
+"description":"Play Monopoly Deal online free \u2014 no download, no signup. An Air Force card table for 2-5 players: complete three sets and you are wheels up.",
+"applicationCategory":"GameApplication","operatingSystem":"Any modern web browser",
+"browserRequirements":"Requires JavaScript and WebSocket support",
+"genre":["Card game","Multiplayer"],"playMode":["MultiPlayer","SinglePlayer"],
+"numberOfPlayers":{"@type":"QuantitativeValue","minValue":2,"maxValue":5},
+"gamePlatform":"Web browser","inLanguage":"en",
+"offers":{"@type":"Offer","price":"0","priceCurrency":"USD",
+"availability":"https://schema.org/InStock"},
+"license":"https://github.com/8tp/chudopoly/blob/main/LICENSE",
+"sameAs":["https://github.com/8tp/chudopoly"]}
+</script>
 <link rel="stylesheet" href="/style/variables.css?v=1">
 <link rel="stylesheet" href="/style/base.css?v=1">
 <link rel="stylesheet" href="/style/table.css?v=1">
@@ -97,9 +122,15 @@
     <div class="home">
 
       <header class="home-head">
+        <!-- The h1 was a drawing. `aria-label` serves a screen reader and an
+             SVG <title> serves a tooltip, but neither is TEXT in the document,
+             so the page's most important heading said nothing a search engine
+             could read. The .sr-only line is the heading in words; the mark
+             stays exactly as drawn. -->
         <h1 class="brand-title">
+          <span class="sr-only">Chudopoly — play Monopoly Deal online free, 2–5 players in your browser</span>
           <svg class="brand-mark" viewBox="0 0 724 220" fill-rule="evenodd"
-               role="img" aria-label="Chudopoly"><title>Chudopoly</title>
+               aria-hidden="true" focusable="false">
             <rect width="724" height="220" fill="var(--card-stock)"/>
             <path fill="var(--ink)" d="M13 13 H711 V207 H13 Z M20 20 H704 V200 H20 Z"/>
             <g fill="var(--ink)">
@@ -224,6 +255,12 @@
              template has to change to fit a third mark. -->
         <div class="home-marks">
           <button class="btn btn-ghost home-help" data-action="help">How to play</button>
+          <!-- A real ANCHOR to the rules document, not a data-action: /rules is a page,
+               and a crawler that never runs the app finds the two documents through
+               this link or not at all. pointer.js's route() ignores elements without a
+               data-action, so navigation stays the browser's own — same contract as the
+               GitHub mark below. "How to play" opens the in-game brief; this leaves. -->
+          <a class="btn btn-ghost home-help" href="/rules">Rules</a>
           <button id="btn-flight-log" class="btn btn-ghost home-help home-log"
                   data-action="flight-log" hidden>Flight log</button>
           <!-- OWNER, 2026-08-07: "add a github icon/emblem to the home page so

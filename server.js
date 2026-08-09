@@ -17,6 +17,7 @@ const handlers = require('./server/handlers');
 const protocol = require('./server/protocol');
 const icon = require('./server/icon');
 const og = require('./server/og');
+const pages = require('./server/pages');
 
 /* ── App setup ─────────────────────────────────────────────────────── */
 
@@ -78,6 +79,33 @@ app.get('/og.png', async (req, res, next) => {
     if (!png) return next();
     res.type('image/png').set('Cache-Control', 'public, max-age=86400').send(png);
   } catch (err) { next(err); }
+});
+
+/* ── The crawlable documents ───────────────────────────────────────────
+   The app is one screen of JavaScript, and a crawler does not run it — so the
+   rules live at real URLs, rendered server-side from the same engine the game
+   runs on (server/pages.js). Registered ABOVE the static mount for the same
+   reason the icons are: these paths must never fall through to a file.
+   Cache-Control mirrors the shell — these are generated per request and the
+   numbers in them change when the engine does. */
+app.get('/rules', (req, res) => {
+  res.type('html').set('Cache-Control', 'no-cache')
+    .send(pages.rulesPage(og.originOf(req, `localhost:${PORT}`)));
+});
+app.get('/monopoly-deal-rules', (req, res) => {
+  res.type('html').set('Cache-Control', 'no-cache')
+    .send(pages.mdRulesPage(og.originOf(req, `localhost:${PORT}`)));
+});
+app.get('/sitemap.xml', (req, res) => {
+  res.type('application/xml').set('Cache-Control', 'public, max-age=3600')
+    .send(pages.sitemap(og.originOf(req, `localhost:${PORT}`)));
+});
+/* Served from the origin so the Sitemap: line carries an absolute URL that
+   resolves to whatever host is answering. Cloudflare appends its own
+   content-signal block to this rather than replacing it. */
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').set('Cache-Control', 'public, max-age=3600')
+    .send(pages.robots(og.originOf(req, `localhost:${PORT}`)));
 });
 
 /* The page itself is served with __ORIGIN__ substituted, because og:image and

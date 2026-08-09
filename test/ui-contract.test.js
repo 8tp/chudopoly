@@ -37,9 +37,24 @@ test('client module tree exists with one entry point', () => {
 test('the page ships no inline handlers and no classic scripts', () => {
   assert.doesNotMatch(html, /<[a-zA-Z][^>]*\son[a-z]+\s*=/);
   const scripts = [...html.matchAll(/<script\b[^>]*>/gi)].map(m => m[0]);
-  assert.equal(scripts.length, 1, 'exactly one <script> tag: the module entry');
-  assert.match(scripts[0], /type="module"/);
-  assert.match(scripts[0], /src="\/src\/main\.js\?v=/, 'entry must be cache-busted (§0.2)');
+  // §0.4 bans classic scripts; it does not ban DATA. `application/ld+json` is
+  // never executed — the CSP does not even apply to it — so the rule the page
+  // actually has to keep is "exactly one EXECUTABLE script, and everything else
+  // in a <script> tag is declared data". Asserted that way rather than by
+  // counting tags, which would have to be relaxed again for the next data block.
+  const executable = scripts.filter(s => !/type="application\/ld\+json"/.test(s));
+  assert.equal(executable.length, 1, 'exactly one executable <script>: the module entry');
+  assert.match(executable[0], /type="module"/);
+  assert.match(executable[0], /src="\/src\/main\.js\?v=/, 'entry must be cache-busted (§0.2)');
+  // ...and the data must be data: parseable, or the crawler silently drops it
+  // and the only signal it was ever there is a rich result that never appears.
+  const ld = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+  assert.ok(ld.length >= 1, 'the page ships structured data');
+  for (const [, body] of ld) {
+    const parsed = JSON.parse(body.split('__ORIGIN__').join('https://example.test'));
+    assert.equal(parsed['@context'], 'https://schema.org');
+    assert.ok(parsed['@type'], 'every block declares a type');
+  }
 });
 
 test('every local stylesheet is cache-busted', () => {

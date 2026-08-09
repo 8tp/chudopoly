@@ -26,7 +26,18 @@ test('the head carries the full unfurl set', () => {
   // placeholder server.js substitutes; both facts are asserted.
   assert.equal(meta('og:type'), 'website');
   assert.equal(meta('og:site_name'), 'CHUDOPOLY');
-  assert.equal(meta('og:title'), 'CHUDOPOLY');
+  // The document <title> and og:title are DELIBERATELY different, and the
+  // difference is the whole reasoning: <title> is met by people searching, so
+  // it leads with the words they typed; og:title is met by people who were
+  // HANDED the link, so it leads with the brand. Pinned so neither drifts onto
+  // the other's job.
+  const ogTitle = meta('og:title');
+  assert.match(ogTitle, /^Chudopoly\b/, 'a shared card leads with the brand');
+  assert.match(ogTitle, /Monopoly Deal/, '...and still says what kind of game it is');
+  const docTitle = /<title>([^<]*)<\/title>/.exec(html)?.[1];
+  assert.match(docTitle, /^Play Monopoly Deal Online Free/, 'a result leads with the intent');
+  assert.ok(docTitle.length <= 60, `a SERP truncates past ~60 chars (${docTitle.length})`);
+  assert.notEqual(docTitle, ogTitle);
   assert.match(meta('og:url'), /^__ORIGIN__\//);
   assert.match(meta('og:image'), /^__ORIGIN__\/og\.png\?v=/, 'absolute and cache-busted');
   assert.equal(meta('twitter:card'), 'summary_large_image');

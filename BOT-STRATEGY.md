@@ -1605,3 +1605,309 @@ mostly don't.
 Tests: 508/508 at this tree (496 at round 10 + 12 new in `test/bot-cardcount.test.js`, every
 positive proven red on the pre-fix commit first, per §8). `npm run check` green. Full
 `node tools/verify.mjs` run recorded in the round's closing commit.
+
+---
+
+## Round 12 (2026-08-12) — the breaker economy: bots that save the CHUD card for the fight
+
+Owner report: *"it feels like they don't plan too far ahead and will just use cards like the
+CHUD card or Inspector General instead of saving them to break final approaches … obviously it
+makes sense to steal a set if you have 1-2 already and are going for final approach while
+holding opsec, but it seems bots don't play that way."*
+
+Both halves were checked before anything was written. Both were right, and the second sentence
+turned out to contain the fix for the first. The research pass is `docs/bot-foresight-research.md`;
+the measurement tool it produced is `tools/botaudit.mjs`, which is committed precisely so this
+round's numbers can be re-run against any future tree.
+
+### The defect, in one line
+
+Every planner asked whether a breaker shot was **legal**. Nothing anywhere asked whether it was
+**worth the card**.
+
+### Baseline (`node tools/botaudit.mjs --games 1200`, three seeds, paired)
+
+- **37.8 / 39.5 / 40.8% of all 1,858 hard-breaker plays were fired at a table where nobody held
+  2+ sets and nobody was armed.** Per personality at 400 games: aggressive 54.2%, neutral 46.0%,
+  chud 45.8%, random 36.4%, conservative 11.9%.
+- **21–23% of shots were orphan grabs** — neither out of a complete set nor completing one of ours.
+- By the time anybody armed, **2.23 of the deck's 4 breakers were already dead**, and **72–73% of
+  armings faced a table where not one opponent held a breaker.** `tryBreakFinalApproach` was a
+  well-built branch holding an empty gun.
+- **41% of landed breakers gained the firer nothing**, and it splits entirely by card: Inspector
+  General advances its firer 98.8% of the time (it is a whole set, by construction), THE CHUD
+  CARD only 18.0%. **The two cards needed different bars, not one shared bar.**
+- 64.7% of the wasted shots came from a bot with **no completed set of its own** — the literal
+  "why did it play Inspector General on turn 2" complaint.
+
+### The change
+
+**§3.10c the escrow.** `worthwhileBreakerShot()` retargets-or-refuses every breaker at the
+selection sites (`tryOffensiveActions`, `tryDefensiveOffense`, `decideAggressive` 3–4). A shot
+clears the bar on DENIAL (out of a complete set held by a player at `setsToWin - 1`) or on SELF
+(it hands us a set and lands us at `setsToWin - 1` or better). Retargeting is half the value on
+its own: aggressive had no threat branch at all, so `findBestIGTarget` sent it at the fattest set
+on the table rather than at the player about to win, and `tryDefensiveOffense`'s CHUD branch
+picked the threat's most valuable card *regardless of whether it sat in a complete set* — a shot
+that disarmed nobody.
+
+**The escort clause is what made it work, and it came from the owner's sentence.** The first
+build gated only on set counts and moved the headline 39.5% → 30.6% while leaving
+breakers-in-hand-at-arming at 19.5% → 19.7% — it changed where the shots went without changing
+that the gun was empty when it mattered. Requiring an OPSEC in hand (or a dead OPSEC pool) before
+a shot may be justified by advancing our own win is the difference. It is also what the strategy
+field says: *wait to play the Deal Breaker until you have a Just Say No for reinforcement.*
+
+**The patience roll was measured and removed.** The escrow was first built with a graded
+per-decision probability (conservative 0.95 / neutral 0.8 / aggressive 0.5). It barely worked —
+a bot holding at p=0.8 across ten decision points fires anyway 89% of the time — and moved the
+no-threat share by 2pp. **A probability re-rolled every decision is not patience; it is a delay.**
+The personality axis became the BAR instead:
+
+```
+BREAKER_BAR = { conservative:{denyAt:1,escort:true}, neutral:{denyAt:1,escort:true},
+                aggressive:{denyAt:1,escort:false}, chud:null, random:null }
+```
+
+Deterministic, so it costs zero new `rnd()` calls and paired-seed comparison stays alive. chud
+and random keep `null` — reckless is their character, they fire 43% of the wasted shots, and
+disciplining them would collapse five personalities into one.
+
+**Two leaks had to be closed or the escrow just moved the waste.** Aggressive's banked breakers
+went 20 → 82 per 400 games once it stopped firing them: it fell through to its step-12 "bank
+anything" branch and sold them for cash. The bank veto was widened from "somebody is armed" to
+"the escrow is holding this card". And `chooseDiscards` sorted `inspector_general`/`chud` to the
+**front** of conservative's discard list — told to hold a breaker it would hold it to the hand
+limit and then throw it away ahead of a 1M. All three comparators now keep OPSEC last, then hard
+breakers. (Aggressive was separately discarding its 4M OPSEC to keep a 5M Inspector General on
+the exact turn it armed — the shield thrown away one turn before the whole table shot at it.)
+
+**§3.10c promotion.** The escrow can only say no to a shot the planner proposed, and the planners
+bury breakers — conservative reaches its offensive branch at step 8, *behind* building, so an
+Inspector General that would hand it the winning set lost every turn to a 1M property play.
+`tryArmingBreaker` and `tryArmingPlay` ask, before the personality plan and before the holdback,
+"does a card in my hand win the game right now". Nothing in this file had ever asked that.
+
+**§3.10d steal → rent.** Round 8's dependency pass never considered a steal as a booster. A steal
+that completes the charged colour turns a 3M rent into an 8M rent on a finished set. Three engine
+preconditions are re-checked so the play cannot be refused; the third is the subtle one — the
+card must ALREADY sit in the charged colour, because `game.js` resolves a steal through
+`receiveProperty(..., card.placedColor || card.color)`, so a green/darkblue wild parked in their
+*green* zone lands in our *green* zone and raises the darkblue rent by nothing.
+
+**§3.10f cushion pressure.** See "what did not move" below.
+
+### After (1200 games, three seeds, paired against `338902b`)
+
+| metric | before | after | delta |
+|---|---|---|---|
+| fired at a no-threat table | 37.8 / 39.5 / 40.8% | 28.3 / 30.3 / 30.1% | **−9.8pp** |
+| orphan grabs | 21.3 / 22.7 / 22.0% | 9.7 / 10.1 / 10.3% | **−11.9pp** |
+| shot advanced our own set count | 59.1 / 59.1 / 57.7% | 64.0 / 64.0 / 62.8% | **+4.3pp** |
+| armings facing no breaker in any hand | 73.1 / 73.2 / 72.3% | 65.3 / 65.9 / 67.0% | **−6.8pp** |
+| **armings shot down** | 47.9 / 43.9 / 44.8% | 49.9 / 47.4 / 48.8% | **+3.2pp** |
+| breaker in hand during a grace cycle | ~19% | 21.8 / 20.6 / 21.4% | +2pp |
+| CHUD shots that advance the firer | 18.0% | 28.1% | +10pp |
+
+Per personality (400 games): conservative 11.9% → 10.8%, neutral 46.0% → **18.3%**, aggressive
+54.2% → **32.7%**, chud and random unmoved by design.
+
+### Balance (900 games, seed r12base, paired)
+
+| | random | conservative | neutral | aggressive | chud | avg turns | stalemates |
+|---|---|---|---|---|---|---|---|
+| before | 14.2 | 30.7 | 32.8 | 35.1 | 12.2 | 32.8 | 0.67% |
+| after | 12.4 | 28.2 | 31.4 | **39.4** | 13.6 | 33.1 | 0.22% |
+
+All inside §3's 8–60%. Aggressive gains 4.3pp, and the mechanism is legible: it is the one
+personality with `escort: false`, so it converts breakers into its own sets while the patient two
+wait for a shield. The standing warning that every break-rate buff lengthens games came in at
++0.3 turns, the smallest cost any of them has had.
+
+### What did not work / for the record
+
+- **§3.10e the OPSEC bait: shipped, and it measures NULL on the aggregate.** The share of
+  breakers eaten by an OPSEC is 18.8/17.2/18.8% before and 19.1/17.6/18.8% after — flat. The
+  first belief threshold (0.25) was a bad constant, sitting exactly on top of a modal belief of
+  ~0.23 and rejecting 284 of 358 candidates; fixing it to 0.12 tripled the firing rate and moved
+  the block rate by nothing, which exposed the real cap. **It is card availability, not belief:**
+  only 93 of 410 candidate moments held a cheap targeted action at the same time as a breaker,
+  with two plays left, against a live victim. That conjunction is rare in this deck. Kept at the
+  swept value because it costs nothing measurable and is the most legible thing in the round
+  (~1 game in 7), but nobody should believe it is doing aggregate work. The lever for a future
+  round is availability — add TDY Orders as a third bait card, or let `tryBreakFinalApproach`
+  bait — **not** the threshold.
+- **§3.10f cushion pressure measured small, and the reason is structural.** Charging the
+  pre-armed leader by how much of their *cushion* a charge removes rather than by what it
+  collects is correct — the old scorer preferred rich targets, and a rich target is by definition
+  the one a charge cannot hurt. But only WILD rents route through `chooseRentTarget` at all; a
+  two-colour rent charges every opponent by rule (§3.1). So the change bites on 3 rent cards plus
+  Finance Office, and the leader's median bank at 2 sets did not move (8M → 9M). Shipped as
+  correct targeting, not as a result.
+- **The lap-aware grace-cycle charge was designed and then cut before implementation.** The
+  proposal was to relax `tryBreakFinalApproach`'s `stacked > spare` test to
+  `stacked > spare / opponentTurnsRemainingInLap`. It shares the two properties that killed
+  round 5's blanket fallback — it widens a branch that runs *before* the holdback, and the
+  charges it adds are still charges the victim can afford (91% of charges landing on an armed
+  player are payable from loose change). Round 5's version bought nothing and cost variety.
+- **Sandbagging the third set** — deliberately holding the winning property back a turn to bank
+  and find an OPSEC first — was scoped and deferred, not rejected. It must be off under `instant`
+  and `mdFaithful` where delay is pure loss, a held property can be forced out at the hand limit,
+  and it needs its own measurement. `tryArmingPlay` is the safe half of it.
+- **A chokepoint veto in `decideBotPlay` was tried and abandoned.** It is this file's usual shape
+  and it is wrong here: a chokepoint can only CANCEL a play, and recovering the planner's
+  next-best option means re-running it over a masked hand, which doubles `rnd()` consumption and
+  kills paired-seed comparison from the first escrow onward. Gating at the selection site lets
+  `tryOffensiveActions` fall through IG → CHUD → Midnight Requisition by itself, for no roll and
+  no re-plan. The policy still lives in one function; only the check is at the call sites.
+- **A measurement bug in the research doc, found by rebuilding the tool.** `state.events` is
+  capped at `EVENT_LOG_MAX = 400` and spliced off the FRONT (`game.js:526`), so the throwaway
+  script that counted OPSEC blocks with an end-of-game `state.events.filter(...)` silently
+  dropped every block from a long game's early turns. It understated the block rate by ~1pp and
+  the armings-shot-down rate by ~2pp. `tools/botaudit.mjs` counts against a sequence watermark
+  and prints both figures with a warning when they disagree.
+
+### The game log IS real play — and the trap that made it look otherwise
+
+Round 12 was asked to learn from real human games in `logs/games.jsonl` (1,746 records). The
+first pass got this WRONG in a way worth recording, because the trap is still there for the
+next reader.
+
+**The corpus is real.** Filter to `turns >= 10` and you get **120 genuine human games** — the
+owner playing their own game across several days, one human seat plus two bots, 3-seat,
+`finalApproach`/setsToWin 3, mean 29.8 turns. The other ~1,620 records have <= 1 turn and are
+test fixtures (`test/server-hardening.test.js`'s scoop-out, `rules-wire.test.js`'s ALPHA/BRAVO);
+exclude them and nothing else needs excluding.
+
+**The trap: 116 of those 120 games share the seed `1337#1`,** which reads exactly like one CI
+fixture replayed and was reported as such. It is not. `server/handlers.js:304` builds
+`options.seed = \`${seedBase}#${room.gameCount}\`` from `seedFromEnv()`, which refuses
+`CHUD_SEED` **only** when `NODE_ENV === 'production'` — a variable Railway does not set by
+default. So the determinism hook leaked into the deployment and handed *every real room the
+same seed*. The `#1` is `gameCount`, i.e. the first game in each fresh room.
+
+Two consequences, and the second is a live bug:
+
+1. **The seed carries no provenance information in this log.** Do not use it to tell a harness
+   run from a real game. The discriminator that does work is wall-clock spacing between
+   records: median gap 368s across 111 consecutive games, only 4 of 119 gaps under 30s, 43 over
+   ten minutes. A harness loops in seconds; a person plays sessions.
+2. **Every production game was dealt the same deck order.** That is a gameplay defect in its own
+   right — identical cards in identical sequence, session after session — and it also means any
+   frequency measured over this corpus is a frequency over ONE deck, not over the deck's
+   distribution. Prefer per-decision-point rates (given they held card X, what did they do)
+   over per-game rates when reading anything measured here.
+
+Two other signals were also mistaken for automation and are actually findings about how a good
+player plays: the human seat OPSEC'd thefts but never money charges (0 blocks in 451
+opportunities holding a shield) — that is correct shield discipline, not a scripted branch; and
+it played low-hand-index cards almost always — but `public/src/state/selectors.js` `myHand()`
+returns raw server order and the client renders it directly, so tapping left-to-right through
+the fan produces that by construction. Neither is evidence of anything except play.
+
+**Nothing in round 12 was tuned on this corpus** — every number in the sections above comes from
+`tools/botaudit.mjs` over bot-vs-bot simulation. The human corpus is being analysed separately;
+whatever it says about breaker timing is a check on §3.10c, not its source.
+
+**One genuine bot defect came out of the audit that went with it.** A report that bots kept
+charging a seat which could not pay did not survive the log — of the 9 insolvencies in the game
+concerned, 5 came from multi-target rents and 3 from Roll Call, both of which hit every opponent
+BY RULE rather than by choice, leaving one targeted charge. But checking it meant auditing all
+five Finance Office call sites, and `tryDefensiveOffense`'s is the only one round 10's
+wasted-charge rule never reached: it returns the first threat with no `canPay` test. Unreachable
+in the default deck — the rainbow wilds are the only 0M cards and there are two, so nobody can
+build two complete sets worth nothing — but `wildAny` is a host knob and `DECK_KIND_MAX` allows
+4, at which point brown and intel can both be filled with 0M wilds and a threat is worth exactly
+nothing to charge. Fixed, and pinned by a test that builds that legal room.
+
+### Round 12b — what 91 real production games changed, and what they did not
+
+After the round above shipped, the production game log was pulled off the Railway volume: **91
+games with >= 10 turns, 21 distinct real players, varied decks** (the `CHUD_SEED` leak described
+above is fixed in production — every record has `seed: null`), 55 of them 4-seat, two rulesets
+in live use (finalApproach/sets3 x71, mdFaithful/sets3 x24), and **21 games with two or more
+humans**. Fifty of them are a perfectly paired 4-seat {human, aggressive, conservative, neutral}
+table, which makes seat-for-seat comparison inside the same games possible.
+
+**The headline is that bot-vs-bot balance does not predict human-facing difficulty.**
+
+| seat | win rate, same games | fair share |
+|---|---:|---:|
+| human | 42% | 25% |
+| aggressive | 28.6% | 25% |
+| conservative | 16.1% | 25% |
+| **neutral** | **10.7%** | 25% |
+
+A single human beats a table of bots at 1.7x fair share in 4-player and 2.1x in 5-player. In
+`simbalance` those three planners sit within a few points of one another; against a person they
+are 2.7x apart, and **the weakest of them is the lobby default**. Every number in the round
+above came from bots playing bots, and this is the limit of that instrument.
+
+**Shipped from it:**
+
+* **§3.10h — neutral's shield economy.** `finance_office → true` and `rent >= 4 → true` burned
+  15 of 15 shields on Finance Office and 23 of 23 on charges of 5M+. Real players run a
+  gradient — Inspector General 82%, CHUD 47%, Midnight Requisition 30%, rent 15%, Finance
+  Office 10%, Roll Call 3%, and only 26% of charges at 5M or above blocked at all. Neutral now
+  reserves its LAST shield for the steal and answers money only with a spare. Aggressive's
+  branch already carried the right comment; this brings neutral into line without merging them.
+  Also `tdy_orders` fell through to `false` for every personality (bots 0/19, humans 17%).
+  Cost: none measurable — avg turns and every §3 winrate unmoved when isolated.
+* **§3.10c calibration.** The escrow's first cut fired **0%** at the decision points it refused;
+  measured at the same points, humans fire an Inspector General **51%** of the time and **49%**
+  even at a no-threat table. It was calibrated to conservative (18%) when human play sits nearer
+  old neutral (48%). Holding a shield now relaxes the set-count bar for every personality — and
+  the escort is the one part of §3.10c that real play reproduces exactly: humans fire 75%
+  holding an OPSEC against 44% without, and it works, with escorted human shots blocked 0 times
+  in 25 against 8 in 66 unescorted. Cost: none measurable when isolated.
+
+**Measured and REJECTED — the cash floor.** The strongest finding in the corpus is that humans
+lose half as much property to payments as neutral does. Per 100 own turns: humans bank 174M and
+lose 34.7 property cards; neutral banks 106M and loses 66.1, and 51.2% of its payments cannot be
+covered by its bank against the human's 27.6%. Neutral lays the most property of any seat (118
+cards per 100 turns) and pays it straight back out — a treadmill — and completes 29.3 sets per
+100 turns against the human's 41.2. So: bank up to the largest charge the table can print at you
+before laying more property.
+
+It was implemented three ways and priced each time. Substituting a bank play for any property
+play cost **+2.2 turns per game and 4.3 points of chud's §3 headroom** (chud 13.1% → 8.8%
+against an 8% floor). Restricting it to properties that SCATTER — a colour we own nothing in,
+which is the play the measurement actually indicts — recovered none of it. Dropping the dose to
+a third still cost +1.6 turns and left chud at 9.9%. Isolation confirmed the cash floor was the
+sole cause: with it off, 32.9 turns and chud 13.1%; the other two changes cost nothing.
+
+**It was rejected on a principle worth stating, because the next person will find this
+measurement again and want to ship it.** The cost is measurable and the benefit is not.
+`simbalance` is a fixed pot among bots, so "stronger against a human" cannot appear in it, and
+no instrument in this repo can currently price it. Shipping a measured cost for an unmeasurable
+benefit is not a trade this project makes. The way to land it properly is to build the missing
+instrument first — a human-facing benchmark, or replay-based evaluation against the production
+corpus — and then re-price it. The code is a ~40-line revert away in this file's history.
+
+**Also confirmed, and worth not re-deriving:** the long-game collapse seen in the dev log is not
+real (production single-human tables win 53/50/35/50% across the 10-19/20-29/30-39/40-49 turn
+bands, above fair share in every one); Final Approach is close to a win at 14.9% of 161 armings
+ever broken, rising to 38.5% when an opponent actually holds a breaker; target selection is NOT
+what separates the seats (leader-hit rate 72.6% human, 73.4% aggressive, 73.4% neutral, 80.1%
+conservative, against ~32% for random); and steal→rent is the one sequencing pass humans run
+more than bots (22% against 8-16%), which is precisely §3.10d above, so this corpus is its clean
+pre-change baseline.
+
+**The largest unshipped finding is sandbagging.** At a turn start holding a card that completes
+a colour they are one short of, humans play it 56% of the time; neutral 96% and aggressive 91%.
+Humans complete 93% when it is their final, winning set and 52% otherwise — a deliberate policy,
+controlled for: 66% of the declines laid a DIFFERENT colour the same turn, and none of the
+declined cards were paid away or banked. A card in hand cannot be stolen, seized, or taken as
+payment (`payableCards`, game.js:1128). No bot has any concept of it. It is unshipped because
+the outcome effect is unmeasured (7/15 vs 3/6 — N far too small) and it would need the same
+missing instrument as the cash floor.
+
+### A note for whoever comes next
+
+The owner's second ask — *charge as much rent as possible to someone in final approach so they
+have to give up some of their sets* — is measured in `docs/bot-foresight-research.md` §4 and
+**cannot work in the window it names.** An armed player's disposable value is a median of 24M
+against a best stacked charge of 2M; only 2.5–3.2% of grace-cycle turns could any charge sequence
+exceed the cushion. The leverage is spent between the second set and the third, where the
+leader's bank is still 4–9M. §3.10f is the first move in that direction and it is a small one;
+the real version needs a charge to reach a player through something other than a wild rent.

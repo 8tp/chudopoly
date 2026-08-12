@@ -255,6 +255,13 @@ test('a requisition that advances our set comes from the LEADER when both offer 
 test('a CHUD steal takes the most valuable card in the matching zone, not cards[0]', () => {
   const state = build(3);
   const [me, p2] = state.players;
+  // §3.10c (round 12) — the fixture now gives us a completed set first. This test pins
+  // TARGETING ("take the 3M, not the 0M wild"), and the breaker escrow added a separate,
+  // earlier question: whether a CHUD may be spent on a completion at all. It may, from
+  // setsToWin - 1 - BREAKER_SELF_MARGIN sets upward; below that the completion is Midnight
+  // Requisition's job and the CHUD is held. One completed set puts us over that bar so the
+  // targeting assertion below is still asking what it was written to ask.
+  prop(state, me, 'brown'); prop(state, me, 'brown');   // a complete set — 2 cards
   prop(state, me, 'red'); prop(state, me, 'red');   // building red, 2/3
   // p2's red zone: a 0M rainbow wild FIRST, a 3M real red behind it
   const w = take(state, c => c.type === 'wild_property' && c.colors[0] === 'any');

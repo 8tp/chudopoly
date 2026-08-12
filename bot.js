@@ -169,6 +169,378 @@ const BREAK_URGENCY = { aggressive: 1, chud: 1, neutral: 0.9, conservative: 0.85
 // an aggressive bot will spend its whole turn hunting and a conservative one will not.
 const BREAK_OVERPAY = { aggressive: 0.95, chud: 0.85, neutral: 0.75, conservative: 0.55, random: 0.15 };
 
+/* ── §3.10c THE BREAKER ESCROW (round 12) ───────────────────────────────────────────────
+ *
+ * Measured on the pre-change tree (`node tools/botaudit.mjs --games 400`, and written up in
+ * docs/bot-foresight-research.md §1.1): of 1,858 hard-breaker plays across 400 four-player
+ * games, **39.5% were fired at a table where nobody held 2+ sets and nobody was armed** —
+ * aggressive 54.2%, neutral 46.0%, conservative 11.9%. The consequence is §1.2: by the time
+ * anybody arms, 2.23 of the deck's 4 breakers are already spent, and **71.6% of armings face
+ * a table where not one opponent holds a breaker at all.** `tryBreakFinalApproach` above is
+ * well built and, most of the time, holding an empty gun.
+ *
+ * The cause is one line long: every planner asks whether a shot is LEGAL. Nothing anywhere
+ * asked whether it was WORTH THE CARD.
+ *
+ * The two breakers need DIFFERENT bars, which is the finding that shaped this code. Of the
+ * shots that land, Inspector General advances the firer's own set count 98.8% of the time —
+ * it is a whole set, by construction — while THE CHUD CARD advances it only 18.0%: 652 of
+ * 795 landed CHUDs took a card that completed nothing of ours. So IG's question is only
+ * *when*, and CHUD's question is *whether*.
+ */
+
+// How close the shot must bring US before "it advances our own win" is reason enough on its
+// own. 1 = "to setsToWin - 1 or better" — the owner's bar: it makes sense to steal a set if
+// you already have one or two and are heading for a final approach.
+//
+// Measured before choosing it (docs §1.1a): 64.7% of the wasted shots are fired by a bot
+// with NO completed set of its own, and a 0-set bot that gains one set lands at 1, which is
+// below setsToWin - 1 — so those are held. At margin 1 the escrow still holds 72.4% of the
+// planners' no-threat shots and passes the 27.6% that genuinely build toward a win. It is a
+// bar, not a loophole. 0 tightens it to the shot that arms or wins outright, and is the dial
+// to turn first if avgTurns rises.
+const BREAKER_SELF_MARGIN = 1;
+
+// The personality axis is the BAR, not a coin flip — and that is a measured correction, not
+// a preference. The escrow was first built with a graded per-decision patience
+// (conservative 0.95 / neutral 0.8 / aggressive 0.5) and it barely worked: a bot that holds
+// at p=0.8 across ten decision points fires anyway 89% of the time, and the whole mechanism
+// moved the no-threat share 39.5% -> 37.5%. Deterministic, the same code moves it to 22.9%.
+// A probability that is re-rolled every decision is not patience; it is a delay.
+//
+// Making it deterministic also costs ZERO new rnd() calls, so no personality's random stream
+// gains or loses a draw — which is what keeps paired-seed before/after comparison alive.
+//
+//   denyAt  — how close an opponent must be to winning before DENIAL alone justifies the
+//             card, counted back from setsToWin. 1 = "one set from winning" (the real
+//             threat band); 2 = "holds any complete set at all", which is aggressive's
+//             looser reading and the reason it still reads as the reckless one.
+//   escort  — require an OPSEC in hand (or a dead OPSEC pool) before a shot may be spent on
+//             ADVANCING OUR OWN WIN. See the escort clause in worthwhileBreakerShot.
+//
+// null = no bar at all. chud and random keep it: reckless is their whole character, they
+// fire 318 of the 734 wasted shots, and disciplining them would collapse five personalities
+// into one. Their behaviour here is byte-identical to the pre-change tree.
+const BREAKER_BAR = {
+  conservative: { denyAt: 1, escort: true },
+  neutral:      { denyAt: 1, escort: true },
+  aggressive:   { denyAt: 1, escort: false },
+  chud:         null,
+  random:       null,
+};
+
+// Does this shot earn its card? Returns the best worth-it PLAY for the card at `cardIndex` —
+// which may aim somewhere other than the planner chose — or null when nothing on the table
+// earns it. Reads the discard pile, every table and our own hand; never an opponent's hand
+// and never the deck (round 11's honest-information rule).
+//
+// Two cases it fixes for free, by retargeting rather than by vetoing:
+//   * aggressive has no threat branch at all — `findBestIGTarget` picks the fattest set on
+//     the table, so a 12M green held by a 1-set player outranks the 2M brown of the player
+//     one set from winning. This moves the shot onto the threat.
+//   * `tryDefensiveOffense`'s CHUD branch picks the threat's highest-value card REGARDLESS of
+//     whether it sits in a complete set — a shot that disarms nobody. This moves it into one.
+function worthwhileBreakerShot(state, bot, botId, cardIndex, mode) {
+  const card = bot.hand[cardIndex];
+  if (!isHardBreaker(card)) return null;
+  const bar = BREAKER_BAR[mode];
+  if (!bar) return null;                       // chud/random have no bar; nothing to retarget
+  const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
+  const win = G.setsToWinOf(state);
+  const mine = G.completedSets(bot);
+  // Either breaker is worth exactly one set to us when it lands somewhere we can use — but
+  // ONLY when we can defend the shot. The owner's rule, in full: "it makes sense to steal a
+  // set if you have 1-2 already and are going for final approach WHILE HOLDING OPSEC", and
+  // the strategy field says the same ("wait to play the Deal Breaker until you have a Just
+  // Say No for reinforcement"). The escort clause is not decoration: without it, an IG
+  // almost always gains its firer a set, so the self-rule passes for any bot with one set —
+  // which is most of the mid-game — and the escrow measured a 39.5% -> 30.6% move in the
+  // no-threat share while leaving breakers-in-hand-at-arming at 19.5% -> 19.7%, i.e. it
+  // changed WHERE the shots went without changing that the gun was empty when it mattered.
+  //
+  // A dead OPSEC pool counts as protection too: nothing can answer the shot either way.
+  const holdsShield = bot.hand.some(c => c.action === 'opsec')
+    || unseenCounts(state, bot).opsec === 0;
+  const escorted = !bar.escort || holdsShield;
+  // §3.10c calibration, round 12 addendum. Measured against real players at the SAME decision
+  // points (a turn start holding the card with a legal target): humans fire an Inspector
+  // General 51% of the time, and 49% even at a table where nobody is close to winning. The
+  // first cut of this bar fired 0% at the points it refuses — it was calibrated to
+  // conservative (18% at a no-threat table) when human play sits nearer old neutral (48%).
+  //
+  // The escort is the part humans reproduce almost exactly, so it is what the loosening hangs
+  // on: they fire 75% of the time holding an OPSEC against 44% without, and it WORKS —
+  // escorted human shots were blocked 0 times in 25, unescorted 8 times in 66. So an escorted
+  // shot that gains us a set always clears, at any set count; the margin still governs the
+  // unescorted case, which is the reckless one this whole mechanism was built to stop.
+  // Holding the shield is what relaxes the set-count bar — for every personality, because
+  // that is the axis real players actually condition on. Without a shield the margin governs,
+  // which is the reckless unescorted shot this mechanism was built to stop.
+  const selfWorth = escorted && (holdsShield || (mine + 1) >= win - BREAKER_SELF_MARGIN);
+
+  if (card.action === 'inspector_general') {
+    let best = null;
+    for (const opp of opponents) {
+      const denies = G.completedSets(opp) >= win - bar.denyAt;
+      for (const [color, cards] of Object.entries(opp.properties)) {
+        if (!G.isSetComplete(opp, color)) continue;
+        // A set seized into a colour we have ALREADY completed overflows to other zones or
+        // to the bank (game.js receiveProperty, §3.5 zone cap) — that shot moves cash and
+        // spends the only breaker in play. No planner has ever checked this.
+        const gains = !G.isSetComplete(bot, color);
+        if (!denies && !(gains && selfWorth)) continue;
+        const score = (gains && selfWorth ? 2 : 0) + (denies ? 1 : 0);
+        const value = cards.reduce((sum, c) => sum + c.value, 0);
+        if (!best || score > best.score || (score === best.score && value > best.value)) {
+          best = { score, value, play: { type:'play_action', cardIndex, targetId:opp.id, targetColor:color } };
+        }
+      }
+    }
+    return best ? best.play : null;
+  }
+
+  // THE CHUD CARD takes one card, so its worth-it cases are narrower than IG's: the card
+  // that finishes one of our zones, or a card out of a complete set held by a real threat.
+  //
+  // A completing CHUD clears the bar UNCONDITIONALLY — no margin, no escort — and the
+  // asymmetry with IG below is deliberate rather than an oversight. The two opportunities
+  // decay differently. An IG target is a set that is ALREADY COMPLETE on an opponent's
+  // board: it is stable, it will still be there next turn, and the shot loses nothing by
+  // waiting. A CHUD completion is use-it-or-lose-it — the one card that finishes our zone
+  // can be paid away, rearranged into another colour, stolen by a third player, or our zone
+  // can fill from hand — so a held CHUD completion is frequently a completion that never
+  // happens. It also converts the card into a SET, which is the win condition, so it is
+  // never the wasted shot this whole mechanism exists to prevent. Round 11 pinned this
+  // behaviour in bot-cardcount.test.js and it is right to have pinned it.
+  // A completing CHUD is gated by the MARGIN but not by the escort: finishing an ordinary
+  // set does not make us the table's target the way arming does, so it needs no shield.
+  //
+  // Below the margin the card is held, and that is not a loss of tempo — MIDNIGHT
+  // REQUISITION is the card for this job and it is deliberately not escrowed. It steals a
+  // single property out of any zone that is not a complete set, which is precisely the
+  // "finish my own colour" move, and there are three of them in the deck to CHUD's two.
+  // Leaving completions to MR and reserving CHUD for complete sets is the division of labour
+  // the deck was built for. Measured: letting CHUD take every completion it saw put neutral's
+  // no-threat share back from 9.2% to 24.9% and cost 3.6 points of armings shot down.
+  const completionWorth = (mine + 1) >= win - BREAKER_SELF_MARGIN;
+  const completing = completionWorth ? findChudCompletionTarget(bot, opponents) : null;
+  const completionWins = completing && (mine + 1) >= win;
+
+  // Denial of a real threat outranks our own set-building — with one exception: a completion
+  // that takes us to setsToWin ends the game, and nothing outranks that.
+  if (!completionWins) {
+    let best = null;
+    for (const opp of opponents) {
+      if (G.completedSets(opp) < win - bar.denyAt) continue;
+      for (const { card: c } of completeSetCards(opp)) {
+        if (!best || c.value > best.value) best = { playerId: opp.id, cardId: c.id, value: c.value };
+      }
+    }
+    if (best) return { type:'play_action', cardIndex, targetId:best.playerId, targetCardId:best.cardId };
+  }
+  return completing
+    ? { type:'play_action', cardIndex, targetId:completing.playerId, targetCardId:completing.cardId }
+    : null;
+}
+
+// Why the card cannot rot in hand. Returns a reason or null.
+function breakerEscrowRelease(state, bot, mode, cardIndex) {
+  // §3.11 adjudicates on points after DECK_CYCLE_LIMIT reshuffles, and shuffleCount is
+  // public (every shuffle is a table event). decideBotPlay already uses this exact window
+  // for its holdback clock. Inside it there is no "later" to save the card for.
+  if ((state.shuffleCount || 0) >= G.DECK_CYCLE_LIMIT - 4) return 'clock';
+  // About to be discarded anyway, so spend it. Asked of chooseDiscards itself rather than
+  // guessed, so this can never disagree with the comparator. Skipped for the two shuffle-
+  // based modes: their comparator IS a shuffle and calling it would consume rnd().
+  if (bot.hand.length > G.HAND_LIMIT && mode !== 'chud' && mode !== 'random') {
+    if (chooseDiscards(bot, bot.hand.length - G.HAND_LIMIT, mode).includes(bot.hand[cardIndex].id)) {
+      return 'handlimit';
+    }
+  }
+  return null;
+}
+
+// Deterministic: a personality that has a bar holds every shot that fails it, unless a valve
+// releases the card. No rnd() — see the note on BREAKER_BAR for why the roll was removed.
+function escrowHoldsBreaker(state, bot, mode, cardIndex) {
+  if (!BREAKER_BAR[mode]) return false;                             // chud/random: never
+  return !breakerEscrowRelease(state, bot, mode, cardIndex);
+}
+
+// The one call every planner makes instead of reaching for a breaker directly.
+//
+// A note on shape, because it departs from this file's usual habit. The bank veto in
+// decideBotPlay is a single chokepoint precisely so five personalities cannot drift apart,
+// and the obvious move was to put the escrow there too. It does not work: a chokepoint can
+// only CANCEL a play, and cancelling leaves the planner with nothing — recovering its
+// next-best option means re-running it over a masked hand, which doubles the planner's rnd()
+// consumption and kills paired-seed comparison from the first escrow onward. Gating at the
+// selection site lets `tryOffensiveActions` fall through IG -> CHUD -> Midnight Requisition
+// -> Finance Office by itself, for one roll and no re-plan. The POLICY still lives in one
+// place; only the check is at the call sites.
+//
+// `legacy` is the site's own pre-escrow targeting, kept so that a failed patience roll fires
+// the shot the personality would have fired before — patience is a roll, not a rule.
+/* ── §3.10e BAIT THE SHIELD (round 12) ──────────────────────────────────────────────────
+ *
+ * Measured: 16.4% of every hard breaker fired is eaten by an OPSEC. The competitive Monopoly
+ * Deal field treats drawing out the Just Say No as the core skill of the Deal Breaker — play
+ * a cheap steal first, let it soak the shield, then fire the real card into an empty hand —
+ * and no bot in this file has ever tried it, though it routinely holds the cards to do it.
+ *
+ * The belief is EXACT and built only from public facts (round 11's honest-information rule):
+ * how many OPSEC are unseen, how big the unseen pool is, and how many cards the victim holds.
+ * Hand SIZE is public; hand CONTENTS are not, and nothing here reads them.
+ */
+
+// P(the victim holds at least one OPSEC), hypergeometric: K shields hidden in an unseen pool
+// of U cards, H of which are in the victim's hand. Sharpens as the deck drains, which is
+// exactly when breakers are actually being fired.
+function opsecOdds(state, bot, botId, victim) {
+  const K = unseenCounts(state, bot).opsec;
+  if (K <= 0) return 0;
+  let U = (state.deck || []).length;
+  for (const p of state.players) if (p.id !== botId) U += p.hand.length;
+  const H = victim.hand.length;
+  if (U <= 0 || H <= 0) return 0;
+  if (H >= U) return 1;
+  let miss = 1;                                  // P(no shield in those H cards)
+  for (let i = 0; i < K; i++) {
+    if (U - i <= 0) break;
+    miss *= (U - H - i) / (U - i);
+    if (miss <= 0) return 1;
+  }
+  return 1 - miss;
+}
+
+// Below this the bait is not worth a play. The arithmetic above is exact; the threshold is
+// judgement, and it was swept.
+//
+// MEASURED, AND THE HONEST RESULT IS NULL. Over 400 four-player games the bait fires 17
+// times at 0.25, 53 at 0.12 and 82 at 0.05 — and the share of breakers eaten by an OPSEC
+// does not move at any of them (17.3% at both 0.12 and 0.05; paired-seed at 1200 games over
+// three seeds it is 18.8/17.2/18.8 before and 19.1/17.6/18.8 after). The first sweep showed
+// why 0.25 was a bad constant — the modal belief is ~0.23, so the floor sat exactly on top of
+// the distribution and rejected 284 of 358 candidates — but fixing that only exposed the real
+// cap, which is CARD AVAILABILITY, not belief: only 93 of 410 candidate moments had a cheap
+// targeted action in hand at the same time as a breaker, with two plays left, against a live
+// victim. That conjunction is simply rare in this deck.
+//
+// Kept anyway, at the swept value, and the reasoning is deliberate rather than sentimental:
+// it costs nothing measurable (balance and turn length unmoved), it is never the wrong play
+// when it does fire, and at ~1 in 7 games it is the single most LEGIBLE thing in this round —
+// a human who gets poked with a Midnight Requisition, spends their OPSEC, and then loses the
+// set to the Inspector General behind it has been outplayed in a way no win-rate delta
+// communicates. If a future round wants it to matter in the aggregate rather than in the
+// moment, the lever is availability (add TDY Orders as a third bait card, or let
+// tryBreakFinalApproach bait too), NOT this number.
+const BAIT_BELIEF_FLOOR = 0.12;
+// Who has the temperament to spend a play setting a trap. Aggressive does not — it leads with
+// the biggest card it holds, which is its whole character — and the chaotic two never do.
+// A zero short-circuits the roll, so three of the five keep their exact RNG streams.
+const BAIT_PATIENCE = { conservative: 0.9, neutral: 0.65, aggressive: 0, chud: 0, random: 0 };
+
+// The cheap card that goes first. Returns a play or null.
+function maybeBaitFirst(state, bot, botId, mode, plan) {
+  const weight = BAIT_PATIENCE[mode] ?? 0;
+  if (weight <= 0) return null;                          // no roll for the reckless three
+  if (state.playsRemaining < 2) return null;             // no play left to fire the real card
+  const victim = G.getPlayer(state, plan.targetId);
+  if (!victim || victim.eliminated) return null;
+  if (opsecOdds(state, bot, botId, victim) < BAIT_BELIEF_FLOOR) return null;
+
+  for (let i = 0; i < bot.hand.length; i++) {
+    const c = bot.hand[i];
+    // Midnight Requisition — barred from complete sets, so it can never take the set an
+    // Inspector General is aimed at. Skip the exact card a CHUD is aimed at.
+    if (c.action === 'midnight_requisition') {
+      for (const [col, cards] of Object.entries(victim.properties)) {
+        if (!G.zoneRequisitionable(victim, col)) continue;
+        const pick = cards.find(x => x.id !== plan.targetCardId);
+        if (pick) return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:pick.id };
+      }
+    }
+    // Finance Office — only when they can pay it out of loose change. A demand that forces a
+    // set out is not a bait, it is the attack, and it belongs to the planner.
+    if (c.action === 'finance_office' && disposableValue(victim) >= 5) {
+      return { type:'play_action', cardIndex:i, targetId:victim.id };
+    }
+  }
+  return null;
+}
+
+function planBreakerShot(state, bot, botId, mode, cardIndex, legacy) {
+  const worth = worthwhileBreakerShot(state, bot, botId, cardIndex, mode);
+  if (worth) return worth;
+  if (escrowHoldsBreaker(state, bot, mode, cardIndex)) return null;  // hold; fall through
+  return legacy();
+}
+
+// Would this shot actually raise OUR completed-set count? Read off the same rules the engine
+// applies when the card lands, not guessed: a set seized into a colour we have already
+// completed overflows (game.js receiveProperty), and a stolen single only completes a zone
+// we are exactly one card short in.
+function shotGainsUsASet(state, bot, botId, shot) {
+  if (!shot || shot.type !== 'play_action') return false;
+  if (shot.targetColor) return !G.isSetComplete(bot, shot.targetColor);
+  const target = G.getPlayer(state, shot.targetId);
+  if (!target || !shot.targetCardId) return false;
+  for (const [color, cards] of Object.entries(target.properties)) {
+    if (!cards.some(c => c.id === shot.targetCardId)) continue;
+    const info = G.COLORS[color];
+    return !!info && (bot.properties[color] || []).length === info.size - 1;
+  }
+  return false;
+}
+
+// §3.10g ARM-TURN PREPARATION (round 12). The play in hand that completes our WINNING set
+// outranks everything the personality plan would rather do with the turn.
+//
+// Measured: bots arm on a mean turn of 30.8 in a ~33-turn game, so the grace cycle IS the
+// endgame — and they walk into it unprepared. Aggressive would fire a CHUD with the winning
+// property sitting in hand; conservative and neutral would spend the turn on a Finance
+// Office. Completing the set FIRST is strictly better under every win rule: it starts the
+// checkpoint clock a turn earlier under finalApproach, wins outright under mdFaithful and
+// instant, and — the part that matters most — leaves the rest of the turn to tryDefendFinal-
+// Approach, which banks cash and refuses to bank the OPSEC. Arming with two plays still in
+// hand is how a bot arrives at its grace cycle with a cushion instead of a bare board.
+//
+// NOT sandbagging. Deliberately holding the winning set back a turn to prepare was considered
+// and deferred: it must be off under `instant` and `mdFaithful` where delay is pure loss, a
+// held property can be forced out at the hand limit, and it needs its own measurement.
+function tryArmingPlay(state, bot, mode) {
+  if (!BREAKER_BAR[mode]) return null;                 // planners only; chaos stays chaotic
+  // Already armed: a fourth set wins nothing and tryDefendFinalApproach above owns the rest
+  // of this turn. Without this the promotion would outrank banking on the one turn where
+  // cash is the difference between surviving the lap and paying out of a set.
+  if (bot.finalApproach) return null;
+  if (G.completedSets(bot) + 1 < G.setsToWinOf(state)) return null;
+  return findCompletingPlay(bot, bot.hand);
+}
+
+// §3.10c, the owner's case as a PROMOTION rather than a gate.
+//
+// The escrow can only ever say no to a shot the planner already proposed — and the planners
+// bury breakers. Conservative reaches its offensive branch at step 8, BEHIND building, so an
+// Inspector General that would hand it the winning set lost every turn to a 1M property play.
+// Neutral is at step 6, behind property, PCS Orders and rent. Nothing in this file has ever
+// asked "does a card in my hand win the game right now".
+//
+// Deliberately narrow: only the shot that takes us to setsToWin, only through the escrow's
+// own worth-it test (so it inherits the escort clause — this is the owner's "going for final
+// approach while holding opsec" in full), and no rnd(), so no personality's stream moves.
+function tryArmingBreaker(state, bot, botId, mode) {
+  if (!BREAKER_BAR[mode]) return null;
+  if (bot.finalApproach) return null;                  // see tryArmingPlay
+  if (G.completedSets(bot) + 1 < G.setsToWinOf(state)) return null;
+  for (let i = 0; i < bot.hand.length; i++) {
+    if (!isHardBreaker(bot.hand[i])) continue;
+    const shot = worthwhileBreakerShot(state, bot, botId, i, mode);
+    if (shot && shotGainsUsASet(state, bot, botId, shot)) return shot;
+  }
+  return null;
+}
+
 // The absolute turn number at which a player converts. checkpointForecast() is the engine's
 // own forecast, so this cannot drift from resolveFinalApproach() the way a reimplementation
 // would. Use `.turn`, NOT `.opponents`: two players armed on the same tick have the same
@@ -735,6 +1107,20 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
     }
   }
 
+  // §3.10c THE ESCORT. An OPSEC in hand is the licence the escrow needs before it will spend
+  // a breaker on our own win (see worthwhileBreakerShot), so for the two personalities that
+  // require that licence, the shield is worth more held than spent on small change. Narrow on
+  // purpose: only 2M-or-less demands, only when this is our LAST OPSEC, and never while we
+  // are armed (the branch above already returns true for that and runs first). Round 5
+  // measured the OPSEC-chain headroom at ~0.3 points, so this is a feel change, not a balance
+  // change — it exists so a bot that is visibly saving a breaker also visibly saves its shield.
+  if (bot && pa.type === 'payment' && (pa.amount || 0) <= 2
+      && BREAKER_BAR[mode] && BREAKER_BAR[mode].escort
+      && bot.hand.some(isHardBreaker)
+      && bot.hand.filter(c => c.action === 'opsec').length === 1) {
+    return false;
+  }
+
   // Round 11, angle 1 — the OPSEC economy below prices every block against "the big one
   // that might come later", but what can still come is COUNTABLE. Once every Inspector
   // General and CHUD is accounted for (discard + tables + this hand), a big charge is the
@@ -774,11 +1160,26 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       return false;
 
     case 'neutral':
+      // §3.10h (round 12, measured on 91 production games with 21 real players). Neutral was
+      // the weakest seat at a human table by a wide margin — 13.9% per seat against
+      // aggressive's 28.6% in the SAME games — and its shield policy is a direct cause. The
+      // two lines below used to read `finance_office → true` and `rent >= 4 → true`, and they
+      // burned 15 of 15 shields on Finance Office and 23 of 23 on charges of 5M or more.
+      //
+      // Real players do the opposite, on a clear gradient: Inspector General 82%, CHUD 47%,
+      // Midnight Requisition 30%, rent 15%, Finance Office 10%, Roll Call 3% — and only 26%
+      // of charges of 5M+ are blocked at all. A shield spent on cash is a shield that is not
+      // there for the set-steal, and the set-steal is the only thing that cannot be earned
+      // back. Aggressive's branch below already carried the right comment ("Don't waste OPSEC
+      // on money demands — save for property theft"); this brings neutral into line without
+      // making the two identical, because neutral still blocks a genuinely large charge and
+      // still answers a chain.
       if (pa.action === 'inspector_general') return true;
       if (pa.action === 'chud') return true;
-      if (pa.action === 'finance_office') return true;
-      if (pa.action === 'rent' && pa.amount >= 4) return true;
       if (pa.action === 'midnight_requisition') return rnd() > 0.3;
+      if (pa.action === 'tdy_orders') return rnd() > 0.7;   // humans block 17%; every bot was 0/19
+      if (pa.action === 'finance_office') return opsecCount > 1;
+      if (pa.action === 'rent' && pa.amount >= 6) return opsecCount > 1;
       if (isChainResponse) return true;
       return false;
 
@@ -915,6 +1316,18 @@ function decideBotPlay(state, botId, mode) {
     }
   }
 
+  // §3.10c — a breaker in hand that COMPLETES OUR WINNING SET outranks the personality plan
+  // and the holdback below, for the same reason the break branch does: there may be no next
+  // turn. See tryArmingBreaker for why this has to be a promotion and not a gate.
+  {
+    // The cheap way to arm comes first: a property already in hand costs no card and cannot
+    // be OPSEC'd, so it always beats spending a breaker to reach the same set count.
+    const armNow = tryArmingPlay(state, bot, mode);
+    if (armNow) return armNow;
+    const arming = tryArmingBreaker(state, bot, botId, mode);
+    if (arming) return arming;
+  }
+
   // Human-like holdback: sometimes don't use all 3 plays
   // Conservative: 20% chance to stop after 2 plays (save cards for defense)
   // Neutral: 10% chance to stop after 2 plays
@@ -968,12 +1381,25 @@ function decideBotPlay(state, botId, mode) {
   // above already declined to fire — either the urgency roll failed or the card had no legal
   // target this instant — and in both cases holding the card is strictly better than
   // converting the only counter in the deck into money we will never get to spend.
-  if (armed.length > 0 && plan && plan.type === 'play_money' && isHardBreaker(bot.hand[plan.cardIndex])) {
+  // §3.10c widened this from "somebody is armed" to "the escrow is holding this card".
+  // Measured when the escrow first went in: aggressive's banked breakers went 20 -> 82 per
+  // 400 games. It was not firing them any more, so its planner fell through to step 12 and
+  // sold them for cash — the escrow had moved the leak rather than closed it. A card held
+  // for a final approach that never comes is still worth more than 5M we never get to spend.
+  if (plan && plan.type === 'play_money' && isHardBreaker(bot.hand[plan.cardIndex])
+      && (armed.length > 0
+          || (BREAKER_BAR[mode] && !breakerEscrowRelease(state, bot, mode, plan.cardIndex)))) {
     const alt = bot.hand.findIndex((c, i) => i !== plan.cardIndex && !isHardBreaker(c)
       && c.type !== 'property' && c.type !== 'wild_property' && c.action !== 'opsec');
     return alt >= 0 ? { type:'play_money', cardIndex:alt } : null;
   }
 
+  // §3.10i — the cash floor, applied exactly where the measurement pointed. The planner wants
+  // to lay another property while our bank is below what the table can charge us; humans do
+  // the opposite, and it is the single clearest reason they beat this bot. It substitutes for
+  // a PROPERTY play only — never for a rent, a steal, a breaker or an arming play, all of
+  // which are worth more than solvency — so the bot still attacks and still builds; it just
+  // stops building on an empty bank. A property laid without a bank is a property paid away.
   // Ordering pass (see findChargeBooster): the planner chose a rent, the hand holds a play
   // that raises that exact rent, and a play remains to fire the rent afterwards — the
   // booster goes first. Applied at the chokepoint so all five personalities (and anything
@@ -981,8 +1407,26 @@ function decideBotPlay(state, botId, mode) {
   // their attention roll, exactly as with rearranging.
   if (plan && plan.type === 'play_action' && state.playsRemaining >= 2) {
     const chosen = bot.hand[plan.cardIndex];
+    // §3.10e — the planner wants to fire a breaker and the victim probably holds a shield.
+    // Spend the cheap card first and let it soak the OPSEC. Deliberately NOT applied to
+    // tryArmingBreaker or tryBreakFinalApproach above: both return before this line, both
+    // are the highest-stakes shots in the game, and a bait that fails to draw the shield
+    // there costs the shot itself. Revisit with a measurement, not a hunch.
+    if (chosen && isHardBreaker(chosen)) {
+      const bait = maybeBaitFirst(state, bot, botId, mode, plan);
+      if (bait && rnd() < (BAIT_PATIENCE[mode] ?? 0)) return bait;
+    }
     if (chosen && chosen.type === 'rent' && rnd() < (ORDER_ATTENTION[mode] ?? 1)) {
+      // §3.10d — the steal booster sits between the two round-8/9 passes. It is tried after
+      // findChargeBooster because a card already in hand is unblockable and costs no steal,
+      // and before findCompletingPlay because completing the CHARGED colour is worth more
+      // than completing some other one. The escrow still owns whether a CHUD may be spent:
+      // the callback below is worthwhileBreakerShot, so a booster CHUD has to clear the same
+      // bar as any other CHUD and the two changes cannot deadlock.
       const booster = findChargeBooster(state, bot, bot.hand, plan)
+        || findStealBooster(state, bot, botId, bot.hand, plan,
+             () => !!worthwhileBreakerShot(state, bot, botId,
+               bot.hand.findIndex(c => c.action === 'chud'), mode))
         || findCompletingPlay(bot, bot.hand);
       if (booster) return booster;
     }
@@ -1120,7 +1564,7 @@ function decideConservative(state, bot, botId) {
 
   // If opponent is about to win, go offensive FIRST (before building)
   if (threat >= 2) {
-    const offensive = tryDefensiveOffense(state, bot, botId, hand, opponents, threats);
+    const offensive = tryDefensiveOffense(state, bot, botId, hand, opponents, threats, mode);
     if (offensive) return offensive;
   }
 
@@ -1175,7 +1619,7 @@ function decideConservative(state, bot, botId) {
 
   // 8. If WE are close to winning (2 sets), get offensive
   if (mySets >= 2) {
-    const offensive = tryOffensiveActions(state, bot, botId, hand, opponents);
+    const offensive = tryOffensiveActions(state, bot, botId, hand, opponents, mode);
     if (offensive) return offensive;
   }
 
@@ -1188,7 +1632,7 @@ function decideConservative(state, bot, botId) {
   // 10. Finance Office — drain a bank that can actually pay (conservative uses it now)
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = findFinanceTarget(opponents);
+      const target = findFinanceTarget(opponents, state);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
@@ -1221,7 +1665,7 @@ function decideNeutral(state, bot, botId) {
   // If someone's about to win — go aggressive to stop them FIRST
   if (threat >= 2) {
     const threats = findThreats(opponents);
-    const defensive = tryDefensiveOffense(state, bot, botId, hand, opponents, threats);
+    const defensive = tryDefensiveOffense(state, bot, botId, hand, opponents, threats, mode);
     if (defensive) return defensive;
   }
 
@@ -1266,7 +1710,7 @@ function decideNeutral(state, bot, botId) {
   if (rentPlay) return rentPlay;
 
   // 6. Offensive actions
-  const offensive = tryOffensiveActions(state, bot, botId, hand, opponents);
+  const offensive = tryOffensiveActions(state, bot, botId, hand, opponents, mode);
   if (offensive) return offensive;
 
   // 7. Upgrade/FOC
@@ -1326,26 +1770,35 @@ function decideAggressive(state, bot, botId) {
   const rentPlay = findBestRent(state, bot, hand, 0, opponents, mode);
   if (rentPlay) return rentPlay;
 
-  // 3. CHUD — target strategically
+  // 3. CHUD — target strategically, through the §3.10c escrow. Aggressive is the mode this
+  //    matters most for: it has NO threat branch at all, so before the escrow it fired 54.2%
+  //    of its breakers at tables where nobody held two sets. At BREAKER_PATIENCE 0.5 it stays
+  //    the trigger-happy one — it just stops emptying the gun at nothing.
   for (let i = 0; i < hand.length; i++) {
-    if (hand[i].action === 'chud') {
+    if (hand[i].action !== 'chud') continue;
+    const play = planBreakerShot(state, bot, botId, mode, i, () => {
       const target = findAggressiveChudTarget(state, bot, botId, opponents);
-      if (target) return { type: 'play_action', cardIndex: i, targetId: target.playerId, targetCardId: target.cardId };
-    }
+      return target ? { type: 'play_action', cardIndex: i, targetId: target.playerId, targetCardId: target.cardId } : null;
+    });
+    if (play) return play;
   }
 
-  // 4. Inspector General
+  // 4. Inspector General — same gate. `findBestIGTarget` picks the FATTEST set on the table
+  //    and never looks at who is close to winning or at whether we can even use the colour,
+  //    so the escrow's retarget is doing most of the work here even when it lets the shot go.
   for (let i = 0; i < hand.length; i++) {
-    if (hand[i].action === 'inspector_general') {
+    if (hand[i].action !== 'inspector_general') continue;
+    const play = planBreakerShot(state, bot, botId, mode, i, () => {
       const target = findBestIGTarget(opponents);
-      if (target) return { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color };
-    }
+      return target ? { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color } : null;
+    });
+    if (play) return play;
   }
 
   // 5. Finance Office — drain a bank that can actually pay
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = findFinanceTarget(opponents);
+      const target = findFinanceTarget(opponents, state);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
@@ -1559,8 +2012,8 @@ function findBestPropertyPlay(bot, hand) {
 
 /* ── Defensive offense (target threats specifically) ───────────────── */
 
-function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
-  if (threats.length === 0) return tryOffensiveActions(state, bot, botId, hand, opponents);
+function tryDefensiveOffense(state, bot, botId, hand, opponents, threats, mode) {
+  if (threats.length === 0) return tryOffensiveActions(state, bot, botId, hand, opponents, mode);
 
   // Round 11, angle 4 — findThreats() returns SEAT order, so with two 2-set threats every
   // loop below hit whoever sat first. Rank by who is actually in front: sets, then total
@@ -1568,9 +2021,12 @@ function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
   threats = threats.slice().sort((a, b) =>
     G.completedSets(b) - G.completedSets(a) || G.playerTotalValue(b) - G.playerTotalValue(a));
 
-  // Inspector General — seize a set from the biggest threat
+  // Inspector General — seize a set from the biggest threat.
+  // §3.10c: through the escrow, which retargets onto the set that denies a real threat or
+  // completes our own win before it falls back to this branch's seat-ordered scan.
   for (let i = 0; i < hand.length; i++) {
-    if (hand[i].action === 'inspector_general') {
+    if (hand[i].action !== 'inspector_general') continue;
+    const play = planBreakerShot(state, bot, botId, mode, i, () => {
       for (const threat of threats) {
         for (const [color] of Object.entries(threat.properties)) {
           if (G.isSetComplete(threat, color)) {
@@ -1578,12 +2034,17 @@ function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
           }
         }
       }
-    }
+      return null;
+    });
+    if (play) return play;
   }
 
-  // CHUD — steal from threat's best set
+  // CHUD — steal from threat's best set. The legacy fallback below picks the threat's
+  // highest-value card REGARDLESS of whether it sits in a complete set, which disarms
+  // nobody; the escrow's retarget moves it into one whenever a worth-it target exists.
   for (let i = 0; i < hand.length; i++) {
-    if (hand[i].action === 'chud') {
+    if (hand[i].action !== 'chud') continue;
+    const play = planBreakerShot(state, bot, botId, mode, i, () => {
       for (const threat of threats) {
         let bestCard = null;
         for (const cards of Object.values(threat.properties)) {
@@ -1593,7 +2054,9 @@ function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
         }
         if (bestCard) return { type: 'play_action', cardIndex: i, targetId: bestCard.playerId, targetCardId: bestCard.cardId };
       }
-    }
+      return null;
+    });
+    if (play) return play;
   }
 
   // Midnight Requisition — steal from threat's incomplete sets (best card, not cards[0])
@@ -1610,36 +2073,53 @@ function tryDefensiveOffense(state, bot, botId, hand, opponents, threats) {
     }
   }
 
-  // Finance Office — drain threat's bank
+  // Finance Office — drain threat's bank. `canPay` is the round-10 wasted-charge rule, and
+  // this was the one Finance Office call site of five that never got it: the other four go
+  // through findFinanceTarget or randomPayer, which both filter, while this branch returned
+  // the first threat unconditionally. A threat usually has value by construction — two
+  // complete sets — but not always: the rainbow wilds are worth 0M, so a player whose sets
+  // are built out of them is a threat with a total value of zero, and this fired a play at
+  // them for nothing. Rare, but it is a strict blunder and it costs a play at exactly the
+  // moment plays are worth the most.
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
       for (const threat of threats) {
+        if (!canPay(threat)) continue;
         return { type: 'play_action', cardIndex: i, targetId: threat.id };
       }
     }
   }
 
   // Fall back to general offense
-  return tryOffensiveActions(state, bot, botId, hand, opponents);
+  return tryOffensiveActions(state, bot, botId, hand, opponents, mode);
 }
 
 /* ── Shared offensive action helpers ────────────────────────────────── */
 
-function tryOffensiveActions(state, bot, botId, hand, opponents) {
-  // Inspector General
+function tryOffensiveActions(state, bot, botId, hand, opponents, mode) {
+  // Inspector General — §3.10c escrow. When the shot earns neither denial nor a set of ours,
+  // a patient personality holds the card and this loop falls through to the CHUD below, then
+  // to Midnight Requisition and Finance Office. That fall-through is the whole reason the
+  // gate lives here rather than at decideBotPlay's chokepoint.
   for (let i = 0; i < hand.length; i++) {
-    if (hand[i].action === 'inspector_general') {
+    if (hand[i].action !== 'inspector_general') continue;
+    const play = planBreakerShot(state, bot, botId, mode, i, () => {
       const target = findBestIGTarget(opponents);
-      if (target) return { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color };
-    }
+      return target ? { type: 'play_action', cardIndex: i, targetId: target.id, targetColor: target.color } : null;
+    });
+    if (play) return play;
   }
 
-  // CHUD
+  // CHUD — §3.10c escrow. Its bar is the strict one: 82% of landed CHUDs completed nothing
+  // of ours on the pre-change tree, so it must finish one of our zones or come out of a real
+  // threat's complete set.
   for (let i = 0; i < hand.length; i++) {
-    if (hand[i].action === 'chud') {
+    if (hand[i].action !== 'chud') continue;
+    const play = planBreakerShot(state, bot, botId, mode, i, () => {
       const target = findSmartChudTarget(bot, opponents);
-      if (target) return { type: 'play_action', cardIndex: i, targetId: target.playerId, targetCardId: target.cardId };
-    }
+      return target ? { type: 'play_action', cardIndex: i, targetId: target.playerId, targetCardId: target.cardId } : null;
+    });
+    if (play) return play;
   }
 
   // Midnight Requisition
@@ -1653,7 +2133,7 @@ function tryOffensiveActions(state, bot, botId, hand, opponents) {
   // Finance Office — only against a bank that can pay
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action === 'finance_office') {
-      const target = findFinanceTarget(opponents);
+      const target = findFinanceTarget(opponents, state);
       if (target) return { type: 'play_action', cardIndex: i, targetId: target.id };
     }
   }
@@ -1765,9 +2245,18 @@ function findRichestPlayer(opponents) {
 // over — draining a bank is best (cash leaves without breaking a board), so prefer the
 // richest BANK among players who can pay at all, falling back to whoever owns the most.
 // Returns null when the whole table is broke (owner report: no charge into an empty table).
-function findFinanceTarget(opponents) {
+function findFinanceTarget(opponents, state) {
   const pool = opponents.filter(canPay);
   if (pool.length === 0) return null;
+  // §3.10f — a fixed 5M demand is worth most against the thinnest cushion at setsToWin - 1,
+  // not against the fattest bank. Before this, aggressive routed every Finance Office through
+  // the bank-size test below and demanded 5M from a 19M bank while a 4M cushion sat next to it.
+  if (state) {
+    const leaders = pool.filter(p => preArmedLeader(state, p));
+    if (leaders.length > 0) {
+      return leaders.reduce((best, p) => (disposableValue(p) < disposableValue(best) ? p : best));
+    }
+  }
   return pool.reduce((best, p) => {
     const pb = bankValue(p), bb = bankValue(best);
     if (pb !== bb) return pb > bb ? p : best;
@@ -1840,7 +2329,41 @@ function collectableFrom(opp, face) {
 function canPay(o) { return !o.eliminated && G.playerTotalValue(o) > 0; }
 function anyoneCanPay(opponents) { return opponents.some(canPay); }
 
-function chooseRentTarget(opponents, mode, face = Infinity) {
+/* ── §3.10f CUSHION PRESSURE (round 12) ─────────────────────────────────────────────────
+ *
+ * The owner asked for bots that "charge as much rent as possible to someone in final approach
+ * so they have to give up some of their sets". Measured (docs §4), the grace cycle is the
+ * wrong window by a wide margin: an armed player's disposable value is a MEDIAN OF 24M while
+ * the best stacked charge an opponent can fire is a median of 2M, and only 2.5% of
+ * grace-cycle turns could any charge sequence exceed the cushion. You cannot bankrupt someone
+ * during Final Approach.
+ *
+ * But the leader's bank is a median of 4M at one set and 8M at two — and 13M plus 9M of loose
+ * property the moment they arm. THE LEVERAGE IS SPENT BETWEEN THE SECOND SET AND THE THIRD,
+ * and the bots have never distinguished that player from any other payer: the scorer below
+ * ranked by what a charge COLLECTS, which actively prefers rich targets, and a rich target is
+ * by definition the one a charge cannot hurt.
+ *
+ * So against a player at setsToWin - 1, score by the FRACTION OF THEIR CUSHION the charge
+ * removes rather than by what it banks for us. 3M off a 2-set leader with 4M of slack beats
+ * 5M off a one-set player sitting on 15M.
+ */
+
+// Scale of the cushion term relative to the plain "what does this collect" score. The primary
+// dial: raise it and the planners tunnel on the leader, which lengthens games and invites
+// kingmaking; lower it and the change does nothing.
+const CUSHION_GAIN = 10;
+// Who plays this way. The chaotic two must NOT learn it — target choice is where their
+// character is most visible, and a zero here keeps their RNG streams untouched.
+const CUSHION_PRESSURE = { conservative: 1, neutral: 1, aggressive: 0.7, chud: 0, random: 0 };
+
+// Is this player one set from winning but not yet armed — the window where a charge can still
+// reach them? setsToWin is a per-room rule (3/4/5), so it is read from state, never assumed.
+function preArmedLeader(state, p) {
+  return !p.eliminated && !p.finalApproach && G.completedSets(p) >= G.setsToWinOf(state) - 1;
+}
+
+function chooseRentTarget(state, opponents, mode, face = Infinity) {
   const live = opponents.filter(o => !o.eliminated);
   if (live.length === 0) return null;
   // §3.10 — bleed the armed player first, and when two are armed pick the one further along.
@@ -1856,10 +2379,20 @@ function chooseRentTarget(opponents, mode, face = Infinity) {
     return pool.length > 0 ? pool[Math.floor(rnd() * pool.length)] : null;
   }
   // Hit whoever the charge actually hurts most, with the leader worth two millions a set —
-  // so a rent goes to the player in front unless they are too broke to feel it.
-  return live.reduce((best, p) =>
-    (collectableFrom(p, face) + 2 * G.completedSets(p)
-      > collectableFrom(best, face) + 2 * G.completedSets(best)) ? p : best);
+  // so a rent goes to the player in front unless they are too broke to feel it. §3.10f adds
+  // the cushion term on top: against a player one set from winning, what counts is not what
+  // we collect but how much of the slack between them and a broken set we take away.
+  const press = CUSHION_PRESSURE[mode] ?? 0;
+  const score = (p) => {
+    const take = collectableFrom(p, face);
+    let v = take + 2 * G.completedSets(p);
+    if (press > 0 && take > 0 && preArmedLeader(state, p)) {
+      const cushion = Math.max(1, disposableValue(p));
+      v += press * CUSHION_GAIN * Math.min(1, take / cushion);
+    }
+    return v;
+  };
+  return live.reduce((best, p) => (score(p) > score(best) ? p : best));
 }
 
 // §3.1c — Surge Ops applies to RENT ONLY, and it STACKS. This is the multiplier a rent
@@ -1878,7 +2411,7 @@ function rentYield(state, bot, card, color, opponents, mode) {
   const face = G.calcRent(bot, color) * surgeMultiplier(state);
   if (face <= 0 || opponents.length === 0) return { face, value: 0, target: null };
   if (isWildRent(card)) {
-    const target = chooseRentTarget(opponents, mode, face);
+    const target = chooseRentTarget(state, opponents, mode, face);
     return { face, value: target ? collectableFrom(target, face) : 0, target };
   }
   let total = 0;
@@ -2030,6 +2563,65 @@ function findChargeBooster(state, bot, hand, rentPlay) {
   return null;
 }
 
+// §3.10d STEAL -> RENT (round 12). findChargeBooster above is round 8's dependency pass: the
+// planner picked a rent, and anything in HAND that raises that exact rent goes first. It never
+// considered a STEAL as a booster, and a steal that completes the charged colour is the
+// largest single-turn swing in the deck — a 3M rent becomes an 8M rent on a finished set.
+//
+// Three engine preconditions are re-checked here so the play can never be refused (a refused
+// play burns the turn — see the planRearrange note above):
+//   1. Midnight Requisition may not take out of a complete set (§3.1, Hasbro FAQ 926).
+//   2. Our destination zone must have room, or receiveProperty banks the card instead.
+//   3. The card must ALREADY sit in the charged colour. game.js resolves a steal through
+//      `receiveProperty(..., card.placedColor || card.color || col)`, so a green/darkblue
+//      wild parked in their GREEN zone lands in OUR green zone — it raises the darkblue rent
+//      by exactly nothing. This is the one that is easy to miss.
+//
+// Prefers Midnight Requisition over THE CHUD CARD whenever both reach the card: spending the
+// strongest card in the deck on a job a 3M action does is the mistake §3.10c exists to stop.
+function findStealBooster(state, bot, botId, hand, rentPlay, allowBreaker) {
+  const color = rentPlay.targetColor;
+  if (!color || !G.COLORS[color]) return null;
+  const zone = bot.properties[color];
+  if (!zone || zone.length === 0) return null;
+  if (G.isSetComplete(bot, color)) return null;   // the ladder is already at the top
+  if (G.zoneFull(bot, color)) return null;
+
+  const mrIdx = hand.findIndex(c => c.action === 'midnight_requisition');
+  const chudIdx = hand.findIndex(c => c.action === 'chud');
+  if (mrIdx < 0 && chudIdx < 0) return null;
+
+  const rank = (c) => (c.requisitionable && mrIdx >= 0 ? 1000 : 0) + 10 * c.sets + c.value;
+  let best = null;
+  for (const opp of state.players) {
+    if (opp.id === botId || opp.eliminated) continue;
+    for (const [col, cards] of Object.entries(opp.properties)) {
+      for (const c of cards) {
+        if ((c.placedColor || c.color) !== color) continue;
+        const was = c.placedColor;
+        zone.push(c); c.placedColor = color;
+        const completes = G.isSetComplete(bot, color);
+        zone.pop(); c.placedColor = was;
+        if (!completes) continue;
+        const cand = {
+          oppId: opp.id, cardId: c.id, value: c.value,
+          sets: G.completedSets(opp),
+          requisitionable: G.zoneRequisitionable(opp, col),
+        };
+        if (!best || rank(cand) > rank(best)) best = cand;
+      }
+    }
+  }
+  if (!best) return null;
+
+  if (best.requisitionable && mrIdx >= 0) {
+    return { type: 'play_action', cardIndex: mrIdx, targetId: best.oppId, targetCardId: best.cardId };
+  }
+  if (chudIdx < 0) return null;
+  const shot = { type: 'play_action', cardIndex: chudIdx, targetId: best.oppId, targetCardId: best.cardId };
+  return (typeof allowBreaker === 'function' && !allowBreaker(shot)) ? null : shot;
+}
+
 function findRentOnCompleteSet(state, bot, hand, opponents, mode) {
   let best = null;
   for (let i = 0; i < hand.length; i++) {
@@ -2116,11 +2708,17 @@ function findChudCompletionTarget(bot, opponents) {
   for (const [color, info] of Object.entries(G.COLORS)) {
     const have = (bot.properties[color] || []).length;
     if (have !== info.size - 1) continue;
+    // Round 11, angle 4: when several cards complete the same zone, take the best one from
+    // the player in front — not whichever card happens to sit at index 0. This used to
+    // return cards[0], which is a 0M rainbow wild as often as not; it was invisible because
+    // only the guaranteed-shot branch called it, and §3.10c now routes every CHUD here.
+    const candidates = [];
     for (const opp of opponents) {
       for (const c of (opp.properties[color] || [])) {
-        return { playerId: opp.id, cardId: c.id };
+        candidates.push({ playerId: opp.id, cardId: c.id, value: c.value, sets: G.completedSets(opp) });
       }
     }
+    if (candidates.length > 0) return pickStealCandidate(candidates);
   }
   return null;
 }
@@ -2521,9 +3119,41 @@ function getAllPayableCardIds(bot) {
 
 /* ── Discard selection ──────────────────────────────────────────────── */
 
+// THE CHUD CARD IS NEVER DISCARDED (owner directive, 2026-08-12).
+//
+// This is an absolute rule, not a sort weight, and the distinction is the whole point. The
+// comparators below rank cards, so a hand with nothing cheap in it will still surrender its
+// best card — and the card the escrow (§3.10c) is asking every planner to sit on is exactly
+// the card most likely to be left holding the bag at the hand limit. A ranking says "discard
+// this last"; the owner asked for "never", so the card is removed from the candidate pool
+// before any personality's comparator sees it.
+//
+// It applies to EVERY personality including the chaotic two, whose discard is a `shuffle`.
+// That does cost `chud` a sliver of its randomness, and it is worth it twice over: a mode
+// named after the card should not be the one that throws it away, and a shuffle cannot be
+// asked politely to spare something.
+//
+// The only escape is arithmetic. If the hand is so full of protected cards that the required
+// number cannot be met without one, the protection yields rather than returning a short list
+// — `endTurn` would refuse it and the turn would wedge. Protection is a preference over the
+// rest of the hand, never a licence to break the hand limit.
+function isNeverDiscarded(card) {
+  return !!card && card.action === 'chud';
+}
+
 function chooseDiscards(bot, excess, mode) {
   mode = personaOf(mode);
-  const hand = [...bot.hand];
+  const protectedCards = bot.hand.filter(isNeverDiscarded);
+  const pool = bot.hand.filter(c => !isNeverDiscarded(c));
+  // Enough ordinary cards to cover the excess: the CHUD never enters the running.
+  const hand = pool.length >= excess ? [...pool] : [...bot.hand];
+  // ...and when it is not enough, the protected cards go LAST, so the ordinary cards are
+  // still spent first and only the overflow reaches a CHUD.
+  if (pool.length < excess) {
+    hand.length = 0;
+    hand.push(...pool, ...protectedCards);
+    return hand.slice(0, excess).map(c => c.id);
+  }
 
   switch (mode) {
     case 'chud':
@@ -2533,15 +3163,24 @@ function chooseDiscards(bot, excess, mode) {
 
     case 'conservative':
       // Keep OPSEC, properties, rent. Discard offensive actions and low-value stuff.
+      //
+      // §3.10c: the two HARD breakers are pulled out of the "offensive actions" group and
+      // sorted to the very back, behind everything except OPSEC. Without this the escrow
+      // makes conservative WORSE, not better: told to hold an Inspector General, it held it
+      // to the hand limit and then threw it away ahead of a 1M — the comparator below listed
+      // `inspector_general` and `chud` first among the offensive actions, so they were the
+      // first cards out of the hand.
       hand.sort((a, b) => {
         if (a.action === 'opsec') return 1;
         if (b.action === 'opsec') return -1;
+        if (isHardBreaker(a) && !isHardBreaker(b)) return 1;
+        if (isHardBreaker(b) && !isHardBreaker(a)) return -1;
         if ((a.type === 'property' || a.type === 'wild_property') &&
             b.type !== 'property' && b.type !== 'wild_property') return 1;
         if ((b.type === 'property' || b.type === 'wild_property') &&
             a.type !== 'property' && a.type !== 'wild_property') return -1;
-        const offA = ['inspector_general','chud','midnight_requisition','tdy_orders'].includes(a.action);
-        const offB = ['inspector_general','chud','midnight_requisition','tdy_orders'].includes(b.action);
+        const offA = ['midnight_requisition','tdy_orders'].includes(a.action);
+        const offB = ['midnight_requisition','tdy_orders'].includes(b.action);
         if (offA && !offB) return -1;
         if (offB && !offA) return 1;
         return a.value - b.value;
@@ -2549,8 +3188,17 @@ function chooseDiscards(bot, excess, mode) {
       break;
 
     case 'aggressive':
-      // Keep action cards and properties, discard money and low-value stuff
+      // Keep action cards and properties, discard money and low-value stuff. §3.10c: hard
+      // breakers last of all — aggressive's comparator ranks purely by value below, so a 4M
+      // CHUD went out ahead of a 5M money card on the turn it was being saved for.
       hand.sort((a, b) => {
+        // §3.10c — OPSEC last of all. Aggressive ranked two action cards by face value, so on
+        // the exact turn it armed it threw a 4M OPSEC to keep a 5M Inspector General: it
+        // discarded the shield and kept the sword one turn before the whole table shot at it.
+        if (a.action === 'opsec') return 1;
+        if (b.action === 'opsec') return -1;
+        if (isHardBreaker(a) && !isHardBreaker(b)) return 1;
+        if (isHardBreaker(b) && !isHardBreaker(a)) return -1;
         if (a.type === 'money' && b.type !== 'money') return -1;
         if (b.type === 'money' && a.type !== 'money') return 1;
         if (a.type === 'action' && b.type !== 'action') return 1;
@@ -2564,9 +3212,13 @@ function chooseDiscards(bot, excess, mode) {
       break;
 
     default: // neutral
+      // §3.10c: breakers behind OPSEC but ahead of everything else. Neutral sorted purely by
+      // face value, so a 10M money card outranked the 5M Inspector General it was escrowing.
       hand.sort((a, b) => {
         if (a.action === 'opsec') return 1;
         if (b.action === 'opsec') return -1;
+        if (isHardBreaker(a) && !isHardBreaker(b)) return 1;
+        if (isHardBreaker(b) && !isHardBreaker(a)) return -1;
         return a.value - b.value;
       });
       break;
@@ -2594,7 +3246,10 @@ module.exports = {
     unseenCounts, CARD_AWARENESS, tryGuaranteedBreaker, findChudCompletionTarget,
     REARRANGE_BIAS, REARRANGE_CONSOLIDATES, payWeight, ORDER_ATTENTION, findChargeBooster, findCompletingPlay,
     BREAK_URGENCY, BREAK_OVERPAY, disposableValue, tryBreakFinalApproach,
-    getAllPayableCardIds, chooseDiscards, findResponder: function(state) {
+    BREAKER_BAR, BREAKER_SELF_MARGIN, worthwhileBreakerShot, escrowHoldsBreaker,
+    breakerEscrowRelease, tryArmingBreaker, shotGainsUsASet, planBreakerShot,
+    findStealBooster, opsecOdds, tryArmingPlay, preArmedLeader, CUSHION_PRESSURE, CUSHION_GAIN, maybeBaitFirst, BAIT_PATIENCE, BAIT_BELIEF_FLOOR,
+    getAllPayableCardIds, chooseDiscards, isNeverDiscarded, findResponder: function(state) {
       return G.pendingResponders(state)[0] || null;
     },
     botRespondSync: function(state, botId, mode) {

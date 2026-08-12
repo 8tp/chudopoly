@@ -2546,6 +2546,6 @@ module.exports = {
   // expiring. server/timers.js owns the clocks, and a clock running out changes the board
   // without anybody choosing to — so it has to reach the same event stream every deliberate
   // move goes into, or the journal, the gamelog record and the player are all left guessing.
-  logLine, emit, LOG_MAX, LOG_TAIL, advanceToNextActive, forceEndTurn,
+  logLine, emit, LOG_MAX, LOG_TAIL, advanceToNextActive, forceEndTurn, finishGame,
   checkpointForecast, opponentTurnsRemaining, actionLabel, receiveProperty,
 };

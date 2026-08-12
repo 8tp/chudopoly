@@ -37,9 +37,16 @@ function handleAbsent(room) {
     if (connected.length <= 1 && active.length > 1) {
       if (connected.length === 1) {
         const winner = G.getPlayer(room.state, connected[0].id);
-        room.state.phase = 'finished';
-        room.state.winner = connected[0].id;
-        G.logLine(room.state, winner.name + ' wins — all other players left!');
+        // finishGame() rather than stamping phase/winner by hand. Hand-rolling it left
+        // `endReason` null, `turnPhase` mid-turn, a live `pendingAction` and — because the
+        // celebration is gated on the event, not the phase — NO win event at all, so the
+        // table just stopped. It also made the record indistinguishable from a crash in the
+        // game log: 5 of the first 91 production records carried a winner with a null
+        // endReason and no win event, and nothing downstream could tell a walkover from a
+        // real win. 'walkover' is its own reason because it is not 'last_standing' — nobody
+        // was scooped, they disconnected — and a stats query has to be able to drop it.
+        G.finishGame(room.state, connected[0].id, 'walkover',
+          winner.name + ' wins — all other players left!');
       }
       return;
     }

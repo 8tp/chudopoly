@@ -288,11 +288,28 @@ first-player advantage measured and reported).
 > *filter*, since the discard sheds the lowest cards, so the obvious reading of "conservative
 > discards 6.6 cards per 100 turns against a human's 0.9" had the causation backwards.
 >
-> **Still open: the human gap is not closed.** Humans complete 50.4 sets per 100 turns; the
-> best bot after this change is ~41. The unexplained residual is in the same fingerprint —
-> humans rearrange 23.5 times per 100 turns against the bots' 13.9–18.2, and convert 0.564
-> sets per property play against neutral's 0.284. §3.8 rearranging is free and directly
-> produces sets, so that is where the next round should look.
+> **The rearranging lead was followed, and it is a dead end. Recorded so nobody spends the
+> measurement twice.** `planRearrange` takes only single moves that improve the board on
+> their own; the atomic swap fires only when two zones are each full of what the other wants.
+> Neither can see the shape a human plays constantly — move a wild OUT of a zone where it is
+> wasted (worth nothing alone) and a second wild IN to finish a set. A two-move lookahead was
+> built and measured: **no effect at any threshold.** −0.07pp at a completed-set bar, −0.07pp
+> at 100, −0.10pp at a bar of zero (N=4000–6000 per cell, z=−0.1 throughout), and set
+> completion did not move off 37.5 per 100 turns in any run.
+>
+> The instrumentation says why, and it is the useful part: across 1500 games the pair search
+> was **reached 15,231 times and found a qualifying plan 8 times.** The branch is live, not
+> dead — it is the *situation* that does not arise. For a pair to beat every single move, the
+> second move must be one the greedy search could not already take, which in practice means
+> `zoneFull` blocked it until the first wild vacated. That is a real position (a full-but-
+> incomplete zone under `pureSetRequired`) and it happens about once every 187 games.
+>
+> So the residual is NOT rearranging depth. Seven candidates have now been measured against
+> the shipped bot and only the holdback moved; the remaining human edge — 50.4 sets per 100
+> turns against ~41, and 0.564 sets per property play against 0.284 — is not reachable by
+> tuning these heuristics one at a time. **Anything further should be measured on production
+> data first rather than reasoned from the fingerprint**, which has now produced six confident
+> wrong answers out of seven.
 
 1. **CHUD** keeps its identity (steal any property, even from a complete set) but **loses the
    2M tax rider**. It is OPSEC-able. If sims show it still dominates, raise its face value

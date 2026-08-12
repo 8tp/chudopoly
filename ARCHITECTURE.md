@@ -242,6 +242,58 @@ numbers and **must validate with `simulate.js` winrate matrices** (≥500 games 
 the 5 bot personalities; no personality > 60% or < 8% winrate in a 4-player mixed game, and
 first-player advantage measured and reported).
 
+> **AMENDED 2026-08-11 — the winrate matrix is necessary and NOT sufficient; it cannot see
+> absolute strength.** `simbalance` divides a fixed pot between five personalities, so a
+> change that makes *every* bot stronger moves nothing in it, and a change that makes one bot
+> stronger is indistinguishable from one that makes the other four weaker. The gate above
+> still stands — it is what stops a personality running away with the game — but "did this
+> make the bots play better?" has to be asked somewhere else.
+>
+> The second instrument is **self-play A/B**: seat the modified bot against three copies of
+> the shipped one and measure against a 25% fair share. `bot.js` supports a `persona@scale`
+> seat suffix for exactly this (`neutral@0` is neutral with `HOLDBACK_SCALE` 0), sim-only —
+> `server/handlers.js` allowlists the five bare names, so a suffix can never reach a lobby.
+> Two traps, both of which produced confidently wrong numbers before they were caught by a
+> null test, and both of which are the reason a null test is now mandatory:
+>
+>   * **`runGame` does not seed the bot RNG. Only `runMatches` does** (`setRng(makeRng('bot:'
+>     + gameSeed))`). A harness calling `runGame` directly leaves bot decisions on unseeded
+>     `Math.random`, and every measurement taken that way is noise.
+>   * **Mode is consulted in a dozen places** — seven persona tables, inline string tests,
+>     `chooseDiscards`, the OPSEC economy. A new mode string that misses any one of them
+>     silently becomes a *different personality*, not a variant. `personaOf()` normalises at
+>     every entry point so the whole class of mistake is gone.
+>
+> **Run the null first: subject and baseline behaviourally identical must return 25%.** It is
+> not ceremony. It caught both traps above.
+>
+> **What the second instrument then found: the holdback is the dominant strength lever, and
+> it was written as flavour.** "Sometimes don't use all 3 plays" is set per personality in
+> exactly the order the personalities finish in — aggressive 0/0.08, neutral 0.05/0.15,
+> conservative 0.08/0.25, matching production winrates of 28.9%, 13.3%, 13.3% across 45
+> controlled Quick Play games. So "conservative plays defensively" was mostly a bot declining
+> a quarter of the turns it was offered. `HOLDBACK_SCALE` is now the dial; **set to 0.5**
+> (owner decision). At N=6000 per cell, seat-rotated, subject vs three copies of the shipped
+> persona: conservative +2.47pp (z=3.1), neutral +2.17pp (z=2.7), aggressive +0.23pp (ns) —
+> the gain tracks each persona's holdback size, which is what makes it the mechanism rather
+> than a correlate. §3 still passes at 600 games and the spread *tightened* (14.6–33.5 from
+> 11.9–35.2). Pushing the dial to 0 is worth roughly double but pulls chud to 10.0% against
+> the 8% floor, because chud's holdback lives in `botTakeTurn` and does not scale.
+>
+> **Five other candidates failed, and the null results are recorded because they cost the
+> measurement to earn.** Drawn from the same production fingerprint: contest the leader from
+> their first set, drop the rent floor 2→1 or 2→0, gate PCS Orders on hand size, rescore
+> placement through `boardScore`, bank weak property plays. None beat the null. **Gating PCS
+> Orders was significantly WORSE** (−1.7pp, z=−2.1) — drawing into the hand limit is a
+> *filter*, since the discard sheds the lowest cards, so the obvious reading of "conservative
+> discards 6.6 cards per 100 turns against a human's 0.9" had the causation backwards.
+>
+> **Still open: the human gap is not closed.** Humans complete 50.4 sets per 100 turns; the
+> best bot after this change is ~41. The unexplained residual is in the same fingerprint —
+> humans rearrange 23.5 times per 100 turns against the bots' 13.9–18.2, and convert 0.564
+> sets per property play against neutral's 0.284. §3.8 rearranging is free and directly
+> produces sets, so that is where the next round should look.
+
 1. **CHUD** keeps its identity (steal any property, even from a complete set) but **loses the
    2M tax rider**. It is OPSEC-able. If sims show it still dominates, raise its face value
    (dead-weight as payment) rather than adding riders. ~~*Ruling (P7 round 1):* TDY Orders may

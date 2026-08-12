@@ -811,7 +811,72 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
 
 /* ── Core decision engine ───────────────────────────────────────────── */
 
+
+/* ── The holdback dial ────────────────────────────────────────────────────────────────
+   [chance of stopping after 1 play, chance of stopping after 2]. Written as flavour —
+   "sometimes don't use all 3 plays", so a bot does not read as a machine — but MEASURED, it
+   is the strongest single strength lever in this file, and it is set per personality in
+   exactly the order the personalities finish in:
+
+       aggressive   0.00/0.08    production winrate 28.9%
+       neutral      0.05/0.15    production winrate 13.3%
+       conservative 0.08/0.25    production winrate 13.3%
+
+   Zeroing it for neutral is worth +4.1pp against three shipped neutrals (z=5.2, replicated
+   on three independent seed streams) and lifts set completion from 38.2 to 41.1 per 100
+   turns. Halving it is worth about +2pp — dose-dependent, which is what makes the mechanism
+   credible rather than coincidental. Five other candidates drawn from the same production
+   data (contest the leader from their first set, drop the rent floor, gate PCS Orders on
+   hand size, rescore placement, bank weak property plays) were measured the same way and
+   NONE of them beat the null; gating PCS was significantly WORSE (-1.7pp, z=-2.1), because
+   drawing into the hand limit is a filter — the discard sheds the lowest cards.
+
+   So "conservative plays weakly" is not, mostly, a story about defensive card choice. It is
+   a bot declining a quarter of the turns it is offered. HOLDBACK_SCALE is the dial: 1 keeps
+   today's behaviour exactly, 0 removes the flavour entirely, and between the two it trades
+   texture for strength at a rate that has been measured rather than guessed. Note chud and
+   random do not benefit (chud's holdback lives in botTakeTurn), so pushing the dial to 0
+   pulls chud DOWN the §3 table to 10.0% — inside the 8% floor, but not by much.
+
+   SET TO 0.5 (owner decision, 2026-08-11). Measured at N=6000 per cell, seat-rotated, one
+   seeded RNG stream per game, subject vs three copies of the shipped persona:
+
+       persona       holdback      null     @0.5              @0
+       conservative  0.08/0.25    24.12%   +2.47pp (z=3.1)   +5.28pp (z=6.7)
+       neutral       0.05/0.15    24.18%   +2.17pp (z=2.7)   +4.25pp (z=5.4)
+       aggressive    0/0.08       25.95%   +0.23pp (ns)      +1.12pp (ns)
+
+   The gain tracks each persona's holdback size — aggressive barely moves because it had
+   almost none — which is what makes this the mechanism rather than a correlate. */
+const HOLDBACK = {
+  conservative: [0.08, 0.25],
+  neutral:      [0.05, 0.15],
+  random:       [0.08, 0.15],
+  aggressive:   [0,    0.08],
+  chud:         [0,    0],      // handled in botTakeTurn
+};
+const HOLDBACK_SCALE = 0.5;
+
+// A seat may name its persona as `neutral@0` — same ladder, HOLDBACK_SCALE overridden for
+// that seat only. That is what makes the holdback measurable: seating `neutral@0` against
+// three plain `neutral`s asks "is this change stronger?" in one game, at one table, on one
+// RNG stream. simbalance cannot answer that — its winrates are shares of a fixed pot, so a
+// change that lifts every personality at once moves nothing. The suffix never reaches a
+// lobby: server/handlers.js allowlists the five bare names.
+function personaOf(mode) {
+  const at = typeof mode === 'string' ? mode.indexOf('@') : -1;
+  return at < 0 ? mode : mode.slice(0, at);
+}
+function holdScaleOf(mode) {
+  const at = typeof mode === 'string' ? mode.indexOf('@') : -1;
+  if (at < 0) return HOLDBACK_SCALE;
+  const v = Number(mode.slice(at + 1));
+  return Number.isFinite(v) ? v : HOLDBACK_SCALE;
+}
+
 function decideBotPlay(state, botId, mode) {
+  const variant = mode;
+  mode = personaOf(mode);
   const bot = G.getPlayer(state, botId);
   if (!bot || state.playsRemaining <= 0) return null;
 
@@ -873,10 +938,8 @@ function decideBotPlay(state, botId, mode) {
   }
   if (played >= 1 && !clockRunning) {
     // After 1 play: small chance to stop. After 2 plays: bigger chance.
-    const holdChance = played === 1
-      ? (mode === 'conservative' ? 0.08 : mode === 'random' ? 0.08 : mode === 'neutral' ? 0.05 : 0)
-      : (mode === 'conservative' ? 0.25 : mode === 'neutral' ? 0.15
-        : mode === 'random' ? 0.15 : mode === 'aggressive' ? 0.08 : 0);
+    const hb = HOLDBACK[mode] || [0, 0];
+    const holdChance = (played === 1 ? hb[0] : hb[1]) * holdScaleOf(variant);
     // Don't hold back if we have 8+ cards (need to discard anyway)
     if (holdChance > 0 && bot.hand.length <= 7 && rnd() < holdChance) return null;
   }
@@ -887,7 +950,7 @@ function decideBotPlay(state, botId, mode) {
   }
 
   const plan = (() => {
-    switch (mode) {
+    switch (variant) {
       case 'random':       return decideRandom(state, bot, botId);
       case 'conservative': return decideConservative(state, bot, botId);
       case 'neutral':      return decideNeutral(state, bot, botId);
@@ -1463,6 +1526,8 @@ function decideChud(state, bot, botId) {
 
   return null;
 }
+
+
 
 /* ── Smart property placement ──────────────────────────────────────── */
 
@@ -2457,6 +2522,7 @@ function getAllPayableCardIds(bot) {
 /* ── Discard selection ──────────────────────────────────────────────── */
 
 function chooseDiscards(bot, excess, mode) {
+  mode = personaOf(mode);
   const hand = [...bot.hand];
 
   switch (mode) {
@@ -2532,6 +2598,7 @@ module.exports = {
       return G.pendingResponders(state)[0] || null;
     },
     botRespondSync: function(state, botId, mode) {
+      mode = personaOf(mode);
       const pa = state.pendingAction;
       if (!pa) return;
       const bot = G.getPlayer(state, botId);

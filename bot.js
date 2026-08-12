@@ -15,6 +15,9 @@ const DELAYS = {
   neutral:      { draw:[600,1500], play:[800,2500], respond:[500,1500] },
   aggressive:   { draw:[500,1200], play:[600,2000], respond:[400,1200] },
   chud:         { draw:[300,800],  play:[300,800],  respond:[200,600]  },
+  // §3.12 — the measurement instrument, never seated in a lobby (see HUMANLIKE below).
+  // Timings are cosmetic for it: it exists to be simulated, not watched.
+  humanlike:    { draw:[600,1500], play:[800,2500], respond:[500,1500] },
 };
 
 function getDelay(mode, action) {
@@ -161,13 +164,21 @@ function isHardBreaker(card) {
 
 // How hard each personality tries to shoot down a final approach — the gate on firing a
 // counter that we know will land if it is not OPSEC'd.
-const BREAK_URGENCY = { aggressive: 1, chud: 1, neutral: 0.9, conservative: 0.85, random: 0.2 };
+// §3.12: humanlike is not asleep at the wheel — production humans fire an Inspector General
+// at 56% of the decision points where an opponent is one set from winning, against 49% at a
+// quiet table, so they DO lean in on a threat. The urgency roll only decides whether to look;
+// HUMAN_BREAKER_FIRE below decides whether to shoot.
+const BREAK_URGENCY = { aggressive: 1, chud: 1, neutral: 0.9, conservative: 0.85, random: 0.2, humanlike: 0.9 };
 
 // How far each personality will OVERPAY for the attempt: burning a play on a speculative
 // draw to dig for a counter, or on attrition that cannot disarm by itself. This is the axis
 // the personalities are allowed to differ on — none of them may ignore an armed player, but
 // an aggressive bot will spend its whole turn hunting and a conservative one will not.
-const BREAK_OVERPAY = { aggressive: 0.95, chud: 0.85, neutral: 0.75, conservative: 0.55, random: 0.15 };
+// §3.12 humanlike: UNMEASURED. The corpus has no clean read on "did they burn a play digging
+// for a counter", because a human's declined play is invisible in an event stream. Set to
+// neutral's value so the instrument does not accidentally become the patient one on an axis
+// nobody measured; called out as a known soft spot in the fidelity report.
+const BREAK_OVERPAY = { aggressive: 0.95, chud: 0.85, neutral: 0.75, conservative: 0.55, random: 0.15, humanlike: 0.75 };
 
 /* ── §3.10c THE BREAKER ESCROW (round 12) ───────────────────────────────────────────────
  *
@@ -227,7 +238,56 @@ const BREAKER_BAR = {
   aggressive:   { denyAt: 1, escort: false },
   chud:         null,
   random:       null,
+  // §3.12 — the instrument carries a bar so that everything gated on `BREAKER_BAR[mode]`
+  // being non-null stays ON for it (arm-turn preparation, the arming breaker, the bank veto,
+  // the ordered discard). But its bar is only used for RETARGETING: `escort: false` keeps
+  // worthwhileBreakerShot from vetoing on the shield, because for a real player the shield is
+  // not a veto — it is a 75%-vs-44% swing in a probability. That swing lives in
+  // HUMAN_BREAKER_FIRE, which is where the measurement actually points.
+  humanlike:    { denyAt: 1, escort: false },
 };
+
+/* ── §3.12 HOW OFTEN A REAL PLAYER PULLS THE TRIGGER ────────────────────────────────────
+ *
+ * Re-derived from `scratchpad/prod/games-prod.jsonl` (91 production games, 21 distinct
+ * players), at the same decision point this file's planners face: the play phase begins,
+ * the card is in hand, a legal target exists on the table. "Did they use it this turn?"
+ *
+ *   Inspector General   51% overall (N=67)   — 49% quiet table (43),  75% holding an OPSEC
+ *                                              (16) against 43% without (51)
+ *   THE CHUD CARD       34% overall (N=93)   — 30% quiet table (63),  45% with a live threat
+ *
+ * Round 12 removed a graded patience roll from the escrow and was right to: "a probability
+ * re-rolled every decision is not patience; it is a delay", and a bot holding at p=0.8 across
+ * ten decision points fires anyway 89% of the time. That argument is about a PLAY-level roll.
+ * It is defused here by rolling once per TURN per card (humanTurnRoll), which is the unit the
+ * corpus measures — a human who decides not to fire this turn does not reconsider on play 2.
+ */
+const HUMAN_BREAKER_FIRE = {
+  // The escort is the clause round 12 got from the owner's sentence and the corpus reproduces
+  // almost exactly. It is not decoration: escorted human shots were blocked 0 times in 25,
+  // unescorted 8 times in 66.
+  inspector_general: { escorted: 0.75, bare: 0.43 },
+  // The CHUD is the card real players sit on. They fire it at 30% against a quiet table —
+  // less than a third as often as aggressive (84%) and four times as often as conservative (8%).
+  chud:              { threat: 0.45, quiet: 0.30 },
+};
+
+/* One decision per TURN per card, not one per play.
+ *
+ * The memo hangs off `state` beside `_surgeOps` and is keyed on `turnCounter`, so it clears
+ * itself the moment the turn changes and never has to be swept. It is consulted ONLY from
+ * humanlike branches, so no other personality gains or loses an rnd() draw and every seeded
+ * paired-seed comparison in this repo stays valid. */
+function humanTurnRoll(state, bot, key, p) {
+  let memo = state._hlRolls;
+  if (!memo || memo.turn !== (state.turnCounter || 0)) {
+    memo = state._hlRolls = { turn: state.turnCounter || 0, v: {} };
+  }
+  const k = bot.id + ':' + key;
+  if (!(k in memo.v)) memo.v[k] = rnd() < p;
+  return memo.v[k];
+}
 
 // Does this shot earn its card? Returns the best worth-it PLAY for the card at `cardIndex` —
 // which may aim somewhere other than the planner chose — or null when nothing on the table
@@ -438,7 +498,12 @@ const BAIT_BELIEF_FLOOR = 0.12;
 // Who has the temperament to spend a play setting a trap. Aggressive does not — it leads with
 // the biggest card it holds, which is its whole character — and the chaotic two never do.
 // A zero short-circuits the roll, so three of the five keep their exact RNG streams.
-const BAIT_PATIENCE = { conservative: 0.9, neutral: 0.65, aggressive: 0, chud: 0, random: 0 };
+// §3.12 humanlike: 0, and that is a NULL RESULT rather than a design choice. An event stream
+// records the cards a player played, never the trap they were setting, so "did this human
+// lead with a cheap steal to draw the shield" is not answerable from this corpus. A zero
+// short-circuits the roll, so the instrument's stream is unaffected by a mechanism nobody
+// could price. Called out in the fidelity report as unmodelled.
+const BAIT_PATIENCE = { conservative: 0.9, neutral: 0.65, aggressive: 0, chud: 0, random: 0, humanlike: 0 };
 
 // The cheap card that goes first. Returns a play or null.
 function maybeBaitFirst(state, bot, botId, mode, plan) {
@@ -469,8 +534,43 @@ function maybeBaitFirst(state, bot, botId, mode, plan) {
   return null;
 }
 
+// §3.12 — the measured per-turn trigger rate, asked at EVERY site that can put a breaker on
+// the table. It has to be every site: `tryBreakFinalApproach` fires an Inspector General at an
+// armed player unconditionally and `tryGuaranteedBreaker` fires one whenever the OPSEC pool is
+// dead, both of them BEFORE the planner is consulted, so gating only `planBreakerShot` left
+// the instrument firing a CHUD at 69% of threat decision points against the human's 45%. A
+// proxy that shoots when a person would hold is exactly the proxy that licenses a bad change.
+function humanFiresBreaker(state, bot, botId, cardIndex) {
+  const card = bot.hand[cardIndex];
+  if (!isHardBreaker(card)) return true;
+  // About to be discarded, or the deck-cycle clock has run out: no later to save it for.
+  if (breakerEscrowRelease(state, bot, 'humanlike', cardIndex)) return true;
+  let p;
+  if (card.action === 'inspector_general') {
+    const f = HUMAN_BREAKER_FIRE.inspector_general;
+    p = bot.hand.some(c => c.action === 'opsec') ? f.escorted : f.bare;
+  } else {
+    const win = G.setsToWinOf(state);
+    const live = state.players.some(o => o.id !== botId && !o.eliminated
+      && (o.finalApproach || G.completedSets(o) >= win - 1));
+    const f = HUMAN_BREAKER_FIRE.chud;
+    p = live ? f.threat : f.quiet;
+  }
+  return humanTurnRoll(state, bot, 'fire:' + card.action, p);
+}
+
 function planBreakerShot(state, bot, botId, mode, cardIndex, legacy) {
   const worth = worthwhileBreakerShot(state, bot, botId, cardIndex, mode);
+  // §3.12 — the instrument does not use a bar at all; it uses the measured rate. It still
+  // takes the escrow's RETARGETING when the escrow found a worth-it aim, because that is a
+  // better shot than the planner's legacy pick and a real player picks the better shot too
+  // (leader-hit rate 72.6% human against 73-80% for the planners — targeting is NOT where
+  // humans differ). What differs is how often they shoot at all.
+  if (mode === 'humanlike') {
+    const shot = worth || legacy();
+    if (!shot) return null;
+    return humanFiresBreaker(state, bot, botId, cardIndex) ? shot : null;
+  }
   if (worth) return worth;
   if (escrowHoldsBreaker(state, bot, mode, cardIndex)) return null;  // hold; fall through
   return legacy();
@@ -515,7 +615,14 @@ function tryArmingPlay(state, bot, mode) {
   // cash is the difference between surviving the lap and paying out of a set.
   if (bot.finalApproach) return null;
   if (G.completedSets(bot) + 1 < G.setsToWinOf(state)) return null;
-  return findCompletingPlay(bot, bot.hand);
+  const play = findCompletingPlay(bot, bot.hand);
+  // §3.12 — even the winning set is not automatic for a real player: 13 of 14 production
+  // decision points took it (93%), one did not. The same memo key is read by
+  // humanPropertyPlay below, so a turn that declines here cannot quietly complete the same
+  // set two plays later — one decision, one turn.
+  if (play && mode === 'humanlike'
+      && !humanTurnRoll(state, bot, HUMAN_COMPLETE_KEY, HUMAN_COMPLETE_WINNING)) return null;
+  return play;
 }
 
 // §3.10c, the owner's case as a PROMOTION rather than a gate.
@@ -536,7 +643,16 @@ function tryArmingBreaker(state, bot, botId, mode) {
   for (let i = 0; i < bot.hand.length; i++) {
     if (!isHardBreaker(bot.hand[i])) continue;
     const shot = worthwhileBreakerShot(state, bot, botId, i, mode);
-    if (shot && shotGainsUsASet(state, bot, botId, shot)) return shot;
+    if (!shot || !shotGainsUsASet(state, bot, botId, shot)) continue;
+    // §3.12 — the arming promotion was the last unguarded door onto the table: measured, 26
+    // Inspector Generals and 22 CHUDs per 200 games came through it without ever asking the
+    // trigger, and that alone put the instrument 4pp over the human IG rate and 11pp over the
+    // CHUD rate. It is gated on the ORDINARY trigger, not on HUMAN_COMPLETE_WINNING: the 93%
+    // figure was measured on a PROPERTY that completes the winning colour, and the breaker
+    // rates were measured separately over every decision point INCLUDING the winning ones, so
+    // giving a winning breaker its own higher band would double-count the same turns.
+    if (mode === 'humanlike' && !humanFiresBreaker(state, bot, botId, i)) return null;
+    return shot;
   }
   return null;
 }
@@ -590,6 +706,7 @@ function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
   //    it swings two sets at once. Strictly the best counter whenever it is in hand.
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action !== 'inspector_general') continue;
+    if (mode === 'humanlike' && !humanFiresBreaker(state, bot, botId, i)) break;   // §3.12
     const color = theirSets[0].color;
     return { type:'play_action', cardIndex:i, targetId:victim.id, targetColor:color };
   }
@@ -598,6 +715,7 @@ function tryBreakFinalApproach(state, bot, botId, hand, armed, mode) {
   //    single property. Permanent, and one card is all it takes to disarm.
   for (let i = 0; i < hand.length; i++) {
     if (hand[i].action !== 'chud') continue;
+    if (mode === 'humanlike' && !humanFiresBreaker(state, bot, botId, i)) break;   // §3.12
     const best = theirSets.reduce((a, b) => (b.card.value > a.card.value ? b : a));
     return { type:'play_action', cardIndex:i, targetId:victim.id, targetCardId:best.card.id };
   }
@@ -728,7 +846,11 @@ function chudTargetOn(player) {
 
 // Armed bots stop building (they cannot win by having more sets) and start hoarding cash
 // so an incoming charge does not have to be paid out of a completed set.
-const ARMED_BANK_BIAS = { conservative: 0.9, neutral: 0.85, aggressive: 0.7, chud: 0.4, random: 0.2 };
+// §3.12 humanlike: real players do NOT spend the grace cycle hoarding. Measured on the arming
+// turn itself: humans bank on 21% of them and charge rent on 42%; neutral banks on 80% and
+// charges on 27%. A human uses the turn that arms them to apply pressure, so the bias is set
+// low and the rest of the turn falls through to the ordinary ladder, which charges.
+const ARMED_BANK_BIAS = { conservative: 0.9, neutral: 0.85, aggressive: 0.7, chud: 0.4, random: 0.2, humanlike: 0.25 };
 
 function tryDefendFinalApproach(bot, hand, mode, othersArmed) {
   if (rnd() > (ARMED_BANK_BIAS[mode] ?? 0.8)) return null;
@@ -782,7 +904,13 @@ function unseenCounts(state, observer) {
 // How reliably each personality counts, per decision. Card awareness is a PLANNER skill:
 // the three planning modes get it in graded amounts, chud mostly does not notice (reckless
 // by identity) and random never does — five modes that all count cards are one mode.
-const CARD_AWARENESS = { conservative: 1, neutral: 0.9, aggressive: 0.75, chud: 0.15, random: 0 };
+// §3.12 humanlike: 0.35, and this one is JUDGEMENT, not measurement — an event stream cannot
+// show whether a player was counting the discard pile. It is set low because the corpus shows
+// what a card-counting bot would look like and humans do not look like it: they fire an
+// unblockable-by-arithmetic Inspector General at the same 51% they fire any other one. A high
+// value here would override the measured rate through tryGuaranteedBreaker, which is exactly
+// the failure mode this instrument must not have.
+const CARD_AWARENESS = { conservative: 1, neutral: 0.9, aggressive: 0.75, chud: 0.15, random: 0, humanlike: 0.35 };
 
 // A hard breaker fired while every OPSEC in the deck is visible CANNOT be answered — and
 // the window closes at the next reshuffle, when the discarded OPSEC re-enter the unseen
@@ -900,11 +1028,14 @@ function scoreAfterSwap(bot, a, b) {
 // lives on: the three planning modes always take a free set, the gremlin usually notices,
 // and random mostly does not. Nobody is FORBIDDEN the move — it is free, and a bot that
 // left a finished set on the floor forever would just read as broken.
-const REARRANGE_BIAS = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3, random: 0.12 };
+// §3.12 humanlike: 1. Measured and matching already — free rearranges per 100 own turns are
+// human 18.0, neutral 17.5, conservative 14.5, aggressive 12.5. planRearrange needs no
+// human-facing correction; this is one of the few places the bots were already right.
+const REARRANGE_BIAS = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3, random: 0.12, humanlike: 1 };
 // Whether a personality will spend a move on mere consolidation — a wild that improves the
 // board without finishing anything today. The chaotic two will not: they take the free set
 // and nothing else, which keeps their boards scattered, which is their whole shape.
-const REARRANGE_CONSOLIDATES = { conservative: true, neutral: true, aggressive: true, chud: false, random: false };
+const REARRANGE_CONSOLIDATES = { conservative: true, neutral: true, aggressive: true, chud: false, random: false, humanlike: true };
 // A completed set is worth ~1000 on the board score; anything under this is housekeeping.
 const SET_DELTA = 500;
 
@@ -1092,6 +1223,19 @@ function acceptAction(state, bot, botId, pa, mode) {
 
 /* ── OPSEC decision — smarter per mode ────────────────────────────── */
 
+// §3.12 — see the `humanlike` case below for the measurement each of these came from.
+const HUMAN_SHIELD = {
+  thefts:  { inspector_general: 0.77, chud: 0.47, midnight_requisition: 0.27, tdy_orders: 0.23 },
+  charges: { finance_office: 0.10, roll_call: 0.03 },
+  rent:    { big: 0.26, mid: 0.19, small: 0.02 },   // >=5M / 3-4M / <3M
+  // Nothing in the corpus, so price it like the cheapest thing they ever answered rather
+  // than letting it fall through to a silent `false`.
+  unknown: 0.03,
+};
+// Being one turn from winning raises the price a real player will pay for a shield without
+// making it automatic: 25% blocked while armed (5 of 20) against 18% overall.
+const HUMAN_SHIELD_ARMED = 1.4;
+
 function shouldPlayOpsecDecision(state, pa, mode, botId) {
   const bot = G.getPlayer(state, botId);
   const opsecCount = bot ? bot.hand.filter(c => c.action === 'opsec').length : 0;
@@ -1100,7 +1244,13 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
 
   // §3.10 — an armed bot is one turn from winning: anything that could cost it a set is
   // worth an OPSEC. Random keeps a coin-flip's worth of incompetence.
-  if (bot?.finalApproach && pa.sourceId !== botId) {
+  // §3.12 — humanlike is deliberately excluded from this branch. It is a RULE ("armed means
+  // block everything"), and real players do not have it: measured over the production corpus,
+  // a human holding a shield while armed blocked 25% of what came at them (5 of 20), against
+  // 18% unarmed. Being one turn from winning raises the price they will pay; it does not make
+  // the shield automatic. The humanlike case below applies that 1.4x as a multiplier on the
+  // measured gradient instead. No other personality's condition or RNG draw changes.
+  if (bot?.finalApproach && pa.sourceId !== botId && mode !== 'humanlike') {
     const forcedOutOfSets = pa.type === 'payment' && bankValue(bot) < (pa.amount || 0);
     if (pa.type !== 'payment' || forcedOutOfSets) {
       return mode === 'random' ? rnd() < 0.6 : true;
@@ -1128,7 +1278,10 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
   // for a card that no longer exists. 4M is the same bar the modes already use for "big
   // rent". Measured before: aggressive declined 43 such blocks per 400 four-player games,
   // conservative 11 — each one 4M+ handed over with a dead shield in hand.
-  if (bot && pa.type === 'payment' && (pa.amount || 0) >= 4) {
+  // §3.12 — humanlike is excluded: its whole shield policy is the measured gradient below,
+  // and a card-counting override on top of it would quietly make the instrument block big
+  // charges more often than any real player in the corpus ever did.
+  if (bot && pa.type === 'payment' && (pa.amount || 0) >= 4 && mode !== 'humanlike') {
     const aw = CARD_AWARENESS[mode] ?? 0;
     if (aw > 0 && rnd() < aw && unseenCounts(state, bot).breakers === 0) return true;
   }
@@ -1195,6 +1348,38 @@ function shouldPlayOpsecDecision(state, pa, mode, botId) {
       // Don't waste OPSEC on money demands — save for property theft
       return false;
 
+    /* §3.12 — the shield economy of 21 real players, as a probability per incoming action
+     * rather than a rule. Re-derived at the decision point "an action resolved against this
+     * seat while they held an OPSEC in hand" (scratchpad/hb/corpus.js):
+     *
+     *   Inspector General 77% (13)   CHUD 47% (15)   Midnight Requisition 27% (22)
+     *   TDY Orders 23% (13)          rent 15% (128)  Finance Office 10% (30)
+     *   Roll Call 3% (58)
+     *
+     * and money charges by size: 2% under 3M (126), 19% at 3-4M (37), 26% at 5M+ (53).
+     *
+     * The shape is what matters and it is the opposite of a bot's: a smooth gradient with
+     * the SET-STEAL at the top and cash at the bottom, and a real willingness to eat even a
+     * 5M charge (74% of the time they let it through). Every planner in this file was, before
+     * round 12, spending shields on money — neutral burned 15 of 15 on a Finance Office.
+     */
+    case 'humanlike': {
+      const armed = bot?.finalApproach && pa.sourceId !== botId ? HUMAN_SHIELD_ARMED : 1;
+      const amt = pa.amount || 0;
+      let p;
+      if (pa.action === 'rent') {
+        p = amt >= 5 ? HUMAN_SHIELD.rent.big : amt >= 3 ? HUMAN_SHIELD.rent.mid : HUMAN_SHIELD.rent.small;
+      } else if (HUMAN_SHIELD.charges[pa.action] !== undefined) {
+        p = HUMAN_SHIELD.charges[pa.action];
+      } else {
+        p = HUMAN_SHIELD.thefts[pa.action];
+      }
+      // An action nobody in the corpus ever answered gets the corpus's floor, not a `false`
+      // fall-through — that fall-through is exactly the bug §3.10h found in `tdy_orders`.
+      if (p === undefined) p = HUMAN_SHIELD.unknown;
+      return rnd() < Math.min(1, p * armed);
+    }
+
     case 'chud':
       // Chaotic OPSEC: block small stuff, let big stuff through
       if (pa.action === 'roll_call') return rnd() > 0.3;
@@ -1255,6 +1440,11 @@ const HOLDBACK = {
   random:       [0.08, 0.15],
   aggressive:   [0,    0.08],
   chud:         [0,    0],      // handled in botTakeTurn
+  // §3.12 — measured as plays per own turn: human 2.61, neutral 2.68, aggressive 2.81,
+  // conservative 2.54. A person declines a little more of the turn than neutral and a little
+  // less than conservative, and that is all the holdback is here. HOLDBACK_SCALE 0.5 applies
+  // to it like everyone else.
+  humanlike:    [0.06, 0.18],
 };
 const HOLDBACK_SCALE = 0.5;
 
@@ -1312,7 +1502,8 @@ function decideBotPlay(state, botId, mode) {
     const aw = CARD_AWARENESS[mode] ?? 0;
     if (aw > 0 && rnd() < aw && unseenCounts(state, bot).opsec === 0) {
       const shot = tryGuaranteedBreaker(state, bot, botId);
-      if (shot) return shot;
+      // §3.12 — an unblockable shot is still a shot a person declines about half the time.
+      if (shot && (mode !== 'humanlike' || humanFiresBreaker(state, bot, botId, shot.cardIndex))) return shot;
     }
   }
 
@@ -1356,19 +1547,27 @@ function decideBotPlay(state, botId, mode) {
     // Don't hold back if we have 8+ cards (need to discard anyway)
     if (holdChance > 0 && bot.hand.length <= 7 && rnd() < holdChance) return null;
   }
-  // Also: if only OPSEC cards remain in hand, conservative/neutral hold them
-  if ((mode === 'conservative' || mode === 'neutral') && played >= 1) {
+  // Also: if only OPSEC cards remain in hand, conservative/neutral hold them.
+  // §3.12 humanlike joins them: median table-turns a real player held an OPSEC before firing
+  // it is 11, against 3 for a bot. They sit on the shield.
+  if ((mode === 'conservative' || mode === 'neutral' || mode === 'humanlike') && played >= 1) {
     const nonOpsec = bot.hand.filter(c => c.action !== 'opsec');
     if (nonOpsec.length === 0) return null; // only OPSEC in hand — hold it
   }
 
+  // Switched on `mode`, not on `variant`. They are the same string for every bare persona, so
+  // this changes no shipped seat — but `variant` still carries any `@` suffix, so
+  // `aggressive@0` fell through to `default` and quietly played as NEUTRAL. The suffix form is
+  // the whole mechanism `tools/simhuman.mjs` A/Bs a candidate change with, and it was only
+  // ever correct for `neutral@n` by coincidence of which persona `default` happens to be.
   const plan = (() => {
-    switch (variant) {
+    switch (mode) {
       case 'random':       return decideRandom(state, bot, botId);
       case 'conservative': return decideConservative(state, bot, botId);
       case 'neutral':      return decideNeutral(state, bot, botId);
       case 'aggressive':   return decideAggressive(state, bot, botId);
       case 'chud':         return decideChud(state, bot, botId);
+      case 'humanlike':    return decideHumanlike(state, bot, botId);
       default:             return decideNeutral(state, bot, botId);
     }
   })();
@@ -1425,9 +1624,25 @@ function decideBotPlay(state, botId, mode) {
       // bar as any other CHUD and the two changes cannot deadlock.
       const booster = findChargeBooster(state, bot, bot.hand, plan)
         || findStealBooster(state, bot, botId, bot.hand, plan,
-             () => !!worthwhileBreakerShot(state, bot, botId,
-               bot.hand.findIndex(c => c.action === 'chud'), mode))
-        || findCompletingPlay(bot, bot.hand);
+             () => {
+               const at = bot.hand.findIndex(c => c.action === 'chud');
+               // §3.12 — this callback was a third door onto the table for a CHUD, and it
+               // measured: the instrument fired one at 45% of decision points against the
+               // human's 34%. A booster CHUD has to clear the same trigger as any other.
+               if (mode === 'humanlike') return humanFiresBreaker(state, bot, botId, at);
+               return !!worthwhileBreakerShot(state, bot, botId, at, mode);
+             })
+        // §3.12 — the ordering pass reaches findCompletingPlay directly, which is a second
+        // door into the completion the sandbag just declined. It measured a real 7pp leak.
+        // It must stay a COMPLETION-only door for humanlike too: substituting the general
+        // property play here would let the pass replace the planner's rent with any old
+        // property, which is not what the round-9 ordering rule says at all.
+        // §3.10j — the cosmetic cross-colour completion is worth 0M by measurement, so there
+        // is nothing to lose by holding; and if the completion is on the CHARGED colour the
+        // rent valve has already released the card, so the two rules cannot fight.
+        || (mode === 'humanlike' ? humanCompletingPlay(state, bot)
+                                 : findCompletingPlay(bot, bot.hand,
+                                     sandbagHeld(state, bot, botId, mode)));
       if (booster) return booster;
     }
   }
@@ -1594,8 +1809,9 @@ function decideConservative(state, bot, botId) {
     return { type: 'play_action', cardIndex: pcsIdx };
   }
 
-  // 4. Properties — build toward completion
-  const propPlay = findBestPropertyPlay(bot, hand);
+  // 4. Properties — build toward completion. §3.10j threads the sandbag's skip set through:
+  //    a held completer is skipped, so this falls through to the colour it is NOT hiding.
+  const propPlay = findBestPropertyPlay(bot, hand, sandbagHeld(state, bot, botId, mode));
   if (propPlay) return propPlay;
 
   // 5. PCS if we skipped it above
@@ -1697,8 +1913,8 @@ function decideNeutral(state, bot, botId) {
     // Otherwise fall through to property
   }
 
-  // 4. Properties — smart placement
-  const propPlay = findBestPropertyPlay(bot, hand);
+  // 4. Properties — smart placement (§3.10j skip set; see decideConservative)
+  const propPlay = findBestPropertyPlay(bot, hand, sandbagHeld(state, bot, botId, mode));
   if (propPlay) return propPlay;
 
   // 5. PCS Orders (if not played above)
@@ -1755,7 +1971,8 @@ function decideAggressive(state, bot, botId) {
 
   // If we have 0 sets and 0 properties, build first (need sets to win)
   if (mySets === 0 && Object.values(bot.properties).every(c => c.length === 0) && played === 0) {
-    const propPlay = findBestPropertyPlay(bot, hand);
+    // §3.10j inert at weight 0 — wired for symmetry so a future weight change is one constant.
+    const propPlay = findBestPropertyPlay(bot, hand, sandbagHeld(state, bot, botId, mode));
     if (propPlay) return propPlay;
   }
 
@@ -1823,8 +2040,8 @@ function decideAggressive(state, bot, botId) {
     }
   }
 
-  // 9. Properties — still need to build sets to win
-  const propPlay = findBestPropertyPlay(bot, hand);
+  // 9. Properties — still need to build sets to win (§3.10j inert at weight 0)
+  const propPlay = findBestPropertyPlay(bot, hand, sandbagHeld(state, bot, botId, mode));
   if (propPlay) return propPlay;
 
   // 10. PCS Orders (draw more ammo)
@@ -1982,15 +2199,593 @@ function decideChud(state, bot, botId) {
 
 
 
+/* ── §3.12 HUMANLIKE — the measurement instrument ────────────────────────────────────────
+ *
+ * NOT A PRODUCT. It is absent from `BOT_MODES` in simulate.js and from the five-name
+ * allowlist in server/handlers.js (`handlers.js:501`), so no lobby can seat it and
+ * `tools/simbalance.mjs`'s §3 grid is untouched. It exists so that "is this change stronger
+ * against a PERSON?" becomes a runnable question — `tools/simhuman.mjs` seats a subject
+ * personality against three of these.
+ *
+ * WHY IT HAD TO EXIST. simbalance measures bots against bots in a fixed pot, so a change that
+ * helps against people is invisible in it — and that gap has already cost this project a good
+ * idea. Round 12b measured that humans lose HALF as much property to payments as neutral
+ * does, implemented the cash floor three ways, priced the cost each time (+1.6 to +2.2 turns
+ * per game, 4.3 points of chud's §3 headroom) and rejected it, because the cost was
+ * measurable and the benefit was not. This file is the missing half of that trade.
+ *
+ * WHAT IT IS BUILT FROM. 91 production games with >= 10 turns, 21 distinct real players,
+ * mostly 4-seat finalApproach/setsToWin 3, 50 of them a perfectly paired
+ * {human, aggressive, conservative, neutral} table. Every constant below is a rate measured
+ * at a DECISION POINT — "the play phase began, they held this card, a legal target existed;
+ * what fraction of the time did they use it" — not a per-game frequency. The replay that
+ * reconstructs those hands was re-verified before use: it reproduces the final board exactly
+ * for 84 of 84 non-truncated records.
+ *
+ * WHAT IT IS NOT. It is not a strong bot and it must never be tuned to become one. Its job is
+ * to be WRONG IN THE SAME PLACES A PERSON IS — it declines to finish sets, it holds property
+ * in hand, it lets a 5M charge through with a shield in its hand, and it is worse than every
+ * planner here at following a Surge with a rent. A proxy tuned for strength would license
+ * exactly the changes it exists to prevent.
+ *
+ * THE FOUR THINGS THAT ACTUALLY SEPARATE A PERSON FROM THIS FILE'S PLANNERS, in the order the
+ * corpus ranks them, and where each one lives:
+ *
+ *   1. CASH SOLVENCY. Per 100 own turns humans bank 174M and lose 34.7 property cards to
+ *      payments; neutral banks 106M and loses 66.1, and 51% of neutral's payments cannot be
+ *      covered by its bank against the human's 28%. Humans lead a turn with a money card 20%
+ *      of the time against the bots' 3-4%, and carry 0.87 money cards at turn start against
+ *      1.5-1.7. Neutral lays the most property of any seat and pays it straight back out.
+ *      -> HUMAN_BANK_FLOOR and HUMAN_CASH_BEFORE_PROPERTY, steps D and G below.
+ *   2. SANDBAGGING. At a turn start holding a card that completes a colour they are one short
+ *      of, humans play it 56% of the time (93% when it is their winning set, 52% otherwise);
+ *      neutral 96%, aggressive 91%. Controlled for: 66% of the declines laid a DIFFERENT
+ *      colour the same turn, and none of the declined cards were paid away or banked. A card
+ *      in hand cannot be stolen, seized, or taken as payment (payableCards, game.js).
+ *      -> HUMAN_COMPLETE_*, HUMAN_LAYS_SCATTER, humanPropertyPlay.
+ *   3. THE SHIELD IS PRICED, NOT RULED. -> HUMAN_SHIELD, above.
+ *   4. BREAKERS FIRE ON A RATE, NOT A BAR. -> HUMAN_BREAKER_FIRE, above.
+ *
+ * And two non-differences worth not re-deriving: leader-targeting (72.6% human against
+ * 73-80% for the planners) and rent SIZE (3.32M against 3.45-3.81M) are the same. Rent
+ * VOLUME is not — 33.5 rents per 100 turns against aggressive 35.9, neutral 25.7,
+ * conservative 21.9 — which is why the ladder below reaches a rent early.
+ */
+
+// Below this much in the bank, cash comes before laying more property.
+//
+// This is the §3.10i cash floor that round 12b measured, priced and REJECTED for the shipped
+// personalities — correctly, because it cost +2.2 turns and 4.3 points of chud's §3 headroom
+// for a benefit no instrument could price. Here it is not a strength change; it is what the
+// data says a person does, and it costs the product nothing because this bot is not a product.
+//
+// CALIBRATED ON A MEASURED QUANTITY rather than picked: the mean bank a player was holding at
+// the moment a demand landed on them is 8.84M for a human, 8.45M for aggressive, 6.02M for
+// conservative and 5.54M for neutral. At 9 the instrument realises 7.8M — the closest this
+// ladder gets without pushing past the human figure, which is the bound that stops this
+// constant from being a strength dial. It also reproduces both surface tells on its own, with
+// no separate rule: 23% of its turns open with a money card (humans 20.3%, bots 2.7-4.2%) and
+// it carries 0.74 money cards at turn start (humans 0.86, bots 1.5-1.7).
+const HUMAN_BANK_FLOOR = 9;
+
+// WHEN the cash goes in, relative to laying property. Measured on mixed turns — turns that
+// contain both a property and a money play — humans put every property down before any money
+// on 52% of them (N=227); every bot in the corpus did it on 100% of 244 mixed turns, without
+// one exception. Mechanically the order changes nothing (all three plays resolve inside the
+// turn), so this is a FEEL difference — but it is also the cleanest single tell that the
+// instrument is not just a planner wearing a hat, and it is free to reproduce.
+const HUMAN_CASH_BEFORE_PROPERTY = 0.48;
+
+// 93% (13 of 14) when the completion is the winning set; 52% (65 of 125) when it is not.
+const HUMAN_COMPLETE_WINNING = 0.93;
+const HUMAN_COMPLETE_ORDINARY = 0.52;
+// One key, so tryArmingPlay and humanPropertyPlay cannot disagree inside a single turn.
+const HUMAN_COMPLETE_KEY = 'complete';
+
+// Given they declined the completion, 66% laid a different colour on the same turn anyway.
+// The decline is not "I had nothing to do with the play" — it is a choice about WHICH card.
+const HUMAN_DECLINE_LAYS_ELSEWHERE = 0.66;
+
+// Given a Surge is live, how often the next play is actually the rent it was armed for.
+// Humans 60% (N=35); every planner here is at 85-90%. The bots are BETTER at this and the
+// instrument has to be worse, or it will over-reward a change that improves rent sequencing.
+const HUMAN_SURGE_FOLLOW = 0.60;
+
+// Humans lay 92.6 property cards per 100 own turns; neutral lays 118.1 and pays 66.1 of them
+// straight back out. The completer sandbag above accounts for only ~15% of turns, so it
+// cannot by itself produce the other half of the picture: a real player carries 1.91 property
+// cards in hand at turn start against every bot's 1.07-1.32, and the gap WIDENS through the
+// game (turn 30+: human 1.52, aggressive 0.65, neutral 0.38).
+//
+// What the corpus indicts specifically is the SCATTER play — a card laid into a colour we own
+// nothing in, which starts a third or fourth pile that will be paid away before it is ever
+// finished. This is calibrated on props-laid-per-100-own-turns, which is measured; the choice
+// of the scatter play as the one to decline is round 12b's, and it is a judgement.
+const HUMAN_LAYS_SCATTER = 0.78;
+
+// A property play that finishes nothing — used when the sandbag declines the completer, so a
+// declined set cannot be completed by the fall-through two lines later.
+function nonCompletingPropertyPlay(bot, hand) {
+  const completing = new Set();
+  for (let i = 0; i < hand.length; i++) {
+    const c = hand[i];
+    if (c.type !== 'property' && c.type !== 'wild_property') continue;
+    for (const color of G.legalColorsFor(c)) {
+      if (!G.COLORS[color] || G.zoneFull(bot, color)) continue;
+      const zone = bot.properties[color] || (bot.properties[color] = []);
+      zone.push(c);
+      const done = G.isSetComplete(bot, color);
+      zone.pop();
+      if (done) { completing.add(i); break; }
+    }
+  }
+  if (completing.size === 0) return findBestPropertyPlay(bot, hand);
+  const masked = hand.filter((_, i) => !completing.has(i));
+  const play = findBestPropertyPlay(bot, masked);
+  if (!play) return null;
+  // findBestPropertyPlay indexes into the array it was handed; translate back.
+  const card = masked[play.cardIndex];
+  return { ...play, cardIndex: hand.indexOf(card) };
+}
+
+// The sandbag, at the one place a property reaches the table.
+function humanPropertyPlay(state, bot, hand) {
+  const completer = findCompletingPlay(bot, hand);
+  if (!completer) return humanScatterGate(state, bot, findBestPropertyPlay(bot, hand));
+  const winning = G.completedSets(bot) + 1 >= G.setsToWinOf(state) && !bot.finalApproach;
+  const p = winning ? HUMAN_COMPLETE_WINNING : HUMAN_COMPLETE_ORDINARY;
+  // The winning case shares tryArmingPlay's key, so if the arming promotion already declined
+  // this turn the same decision is read back here rather than re-rolled.
+  const key = winning ? HUMAN_COMPLETE_KEY : HUMAN_COMPLETE_KEY + ':ordinary';
+  if (humanTurnRoll(state, bot, key, p)) return completer;
+  if (humanTurnRoll(state, bot, 'elsewhere', HUMAN_DECLINE_LAYS_ELSEWHERE)) {
+    return humanScatterGate(state, bot, nonCompletingPropertyPlay(bot, hand));
+  }
+  return null;                       // hold the hand; the ladder below spends the play
+}
+
+// Refuse a share of the plays that open a brand-new colour. See HUMAN_LAYS_SCATTER.
+function humanScatterGate(state, bot, play) {
+  if (!play) return null;
+  const card = bot.hand[play.cardIndex];
+  const color = play.targetColor || card.color;
+  if ((bot.properties[color] || []).length > 0) return play;   // building, not scattering
+  return humanTurnRoll(state, bot, 'scatter', HUMAN_LAYS_SCATTER) ? play : null;
+}
+
+// The completion half of humanPropertyPlay, for the ordering pass — which may only ever
+// substitute a play that FINISHES a set, never an ordinary property.
+function humanCompletingPlay(state, bot) {
+  if (!findCompletingPlay(bot, bot.hand)) return null;
+  const play = humanPropertyPlay(state, bot, bot.hand);
+  if (!play) return null;
+  const card = bot.hand[play.cardIndex];
+  const color = play.targetColor || card.color;
+  const zone = bot.properties[color] || (bot.properties[color] = []);
+  zone.push(card);
+  const completes = G.isSetComplete(bot, color);
+  zone.pop();
+  return completes ? play : null;
+}
+
+// The highest money card in hand. Not a measurement — the corpus cannot show WHICH money card
+// a player chose to bank, only that they banked one — but it is the choice that reaches
+// HUMAN_BANK_FLOOR in the fewest plays, which is the behaviour that was measured.
+function bankOneMoney(hand) {
+  let best = -1, bestIdx = -1;
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].type !== 'money') continue;
+    if (hand[i].value > best) { best = hand[i].value; bestIdx = i; }
+  }
+  return bestIdx >= 0 ? { type: 'play_money', cardIndex: bestIdx } : null;
+}
+
+function decideHumanlike(state, bot, botId) {
+  const mode = 'humanlike';
+  const hand = bot.hand;
+  const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
+  const threat = threatLevel(opponents);
+  const played = 3 - state.playsRemaining;
+
+  // A. Somebody is one set from winning. Humans hit the leader as reliably as any planner
+  //    (72.6% of targeted attacks), so this reuses tryDefensiveOffense unchanged — and the
+  //    breakers inside it come through planBreakerShot, which applies the measured fire rate.
+  if (threat >= 2) {
+    const shot = tryDefensiveOffense(state, bot, botId, hand, opponents, findThreats(opponents), mode);
+    if (shot) return shot;
+  }
+
+  // B. Surge, then the charge it was armed for — but only 60% of the time, because that is
+  //    how often a real player actually follows through (the planners follow at 85-90%).
+  const surgeIdx = hand.findIndex(c => c.action === 'surge_ops');
+  if (surgeIdx >= 0 && !state._surgeOps && state.playsRemaining >= 2
+      && hasChargeFollowUp(bot, hand, opponents)) {
+    return { type: 'play_action', cardIndex: surgeIdx };
+  }
+  // The follow-through is decided once per turn, and a turn that declines it must not fire a
+  // rent two steps lower down — that would undo the decline and put the rate back at 85%.
+  const surgeSpent = !!state._surgeOps
+    && !humanTurnRoll(state, bot, 'surgefollow', HUMAN_SURGE_FOLLOW);
+  if (state._surgeOps && !surgeSpent) {
+    const surged = findBestRent(state, bot, hand, 0, opponents, mode);
+    if (surged) return surged;
+  }
+
+  // C. Rent off a finished set. Rent VOLUME is a real human strength (33.5 per 100 turns,
+  //    second only to aggressive), and this is where most of it comes from.
+  const rentOnComplete = surgeSpent ? null : findRentOnCompleteSet(state, bot, hand, opponents, mode);
+  if (rentOnComplete) return rentOnComplete;
+
+  // D. THE CASH FLOOR. A property laid off an empty bank is a property paid away — the
+  //    treadmill that makes neutral the weakest seat at a human table. See HUMAN_BANK_FLOOR.
+  //    Decided ONCE per turn whether it goes before or after the property, because that
+  //    ordering is itself measured (HUMAN_CASH_BEFORE_PROPERTY).
+  const cashFirst = humanTurnRoll(state, bot, 'cashfirst', HUMAN_CASH_BEFORE_PROPERTY);
+  const belowFloor = bankValue(bot) < HUMAN_BANK_FLOOR;
+  if (cashFirst && belowFloor) {
+    const cash = bankOneMoney(hand);
+    if (cash) return cash;
+  }
+
+  // E. Offence. Humans open a turn with an action card 42.6% of the time against 37.1% with a
+  //    property, so offence sits AHEAD of the ordinary rent. It has to: buried behind the
+  //    rent, the instrument only reached an Inspector General on 40% of the turns it held one
+  //    at a quiet table, against the measured 49% — the ladder position, not the constant,
+  //    was setting the trigger rate.
+  const offensive = tryOffensiveActions(state, bot, botId, hand, opponents, mode);
+  if (offensive) return offensive;
+
+  // F. Property, through the sandbag.
+  const prop = humanPropertyPlay(state, bot, hand);
+  if (prop) return prop;
+
+  // G. ...and the other half of the turns bank after the board is built.
+  if (!cashFirst && belowFloor) {
+    const cash = bankOneMoney(hand);
+    if (cash) return cash;
+  }
+
+  // H. Rent. VOLUME is one of the two places a real player out-plays neutral outright — 33.5
+  //    rents per 100 own turns against neutral's 25.7 and conservative's 21.9 — while the
+  //    SIZE of the charge is not (3.32M against the bots' 3.45-3.81M). So the floor is 1, not
+  //    the 2 the cautious planners use: humans charge small rents often.
+  const decentRent = surgeSpent ? null : findBestRent(state, bot, hand, 1, opponents, mode);
+  if (decentRent) return decentRent;
+
+  // I. PCS Orders. Round 11 measured that gating this on hand size is significantly WORSE
+  //    (-1.7pp, z=-2.1) because drawing into the hand limit is a filter, so it is ungated.
+  const pcsIdx = hand.findIndex(c => c.action === 'pcs_orders');
+  if (pcsIdx >= 0) return { type: 'play_action', cardIndex: pcsIdx };
+
+  // J. Upgrades on a finished set.
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].action === 'upgrade') {
+      const color = findUpgradeableSet(bot, 'upgrade');
+      if (color) return { type: 'play_action', cardIndex: i, targetColor: color };
+    }
+    if (hand[i].action === 'foc') {
+      const color = findUpgradeableSet(bot, 'foc');
+      if (color) return { type: 'play_action', cardIndex: i, targetColor: color };
+    }
+  }
+
+  // K. Any rent at all.
+  const lowRent = surgeSpent ? null : findBestRent(state, bot, hand, 1, opponents, mode);
+  if (lowRent) return lowRent;
+
+  // L. Bank. Reached often, and on purpose: money in hand is dead weight and real players
+  //    know it — payableCards excludes the hand, so a carried money card can neither pay a
+  //    debt nor threaten anybody, and it is first out at the hand limit.
+  const cash = bankOneMoney(hand);
+  if (cash) return cash;
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i].type === 'rent' && !chooseBestRentColor(bot, hand[i])) {
+      return { type: 'play_money', cardIndex: i };
+    }
+  }
+  return null;   // hold the rest: the shield, the breaker, and any property being sandbagged
+}
+
+/* ── §3.10j SANDBAGGING — the completer that stays in hand ──────────────────────────────
+ *
+ * MEASURED, on 91 production games (21 distinct players, mostly 4-seat,
+ * finalApproach/setsToWin 3), at a turn start holding a card that completes a colour the
+ * player is one short of: humans lay it 56% of the time, neutral 96%, aggressive 91%. And it
+ * splits — 93% when the completion is their FINAL, WINNING set, 52% otherwise. Three controls
+ * survived: 66% of the declines laid a DIFFERENT colour that same turn (so this is building
+ * elsewhere, not sitting still); restricted to plain non-wild completers humans declined 16 of
+ * 55 against aggressive's 1 of 19 and neutral's 0 of 18; and NONE of the declined cards was
+ * later paid away or banked.
+ *
+ * WHY IT WORKS. `payableCards()` (game.js) is bank + properties + upgrades. The hand is not in
+ * it. A card in hand cannot be paid away, cannot be taken by Midnight Requisition or TDY
+ * Orders (they read `zoneRequisitionable`, which reads `player.properties`), cannot be taken by
+ * THE CHUD CARD, and cannot be seized by an Inspector General — and a completed set is the only
+ * thing an Inspector General can take at all. Holding the last card of a set converts a
+ * stealable asset into an unstealable one, at the price of the rent that set would have earned,
+ * the tempo of the play not made, and — at adjudication — everything `endInStalemate` counts,
+ * which is `completedSets` then `playerNetWorth`, neither of which sees a hand card.
+ *
+ * THE OUTCOME EFFECT IS UNMEASURED AND NOTHING HERE CLAIMS IT. Humans who declined >= 50% won
+ * 7 of 15; those who did not won 3 of 6. Two groups of fifteen and six support no conclusion.
+ * So this ships behind SANDBAG_ENABLED = false and is priced by tools/simhuman.mjs first; the
+ * enabling and kill criteria are pre-registered in scratchpad/spec-sandbag.md §9. What IS
+ * measured is that humans do it and bots never do.
+ */
+const SANDBAG = {
+  // 0.52 is the measured ordinary-completion rate, unmodified: humanlike's whole brief is to
+  // reproduce the corpus. Note that decideHumanlike does NOT route through the hold below — it
+  // shipped its own sandbag (humanPropertyPlay / HUMAN_COMPLETE_ORDINARY, §3.12) against the
+  // same measurement and keyed per turn the same way. This entry is what makes the discard
+  // tier below apply to it, and it is where the two would be reconciled if they ever merge.
+  humanlike:    0.52,
+  // Asset protection is conservative's whole identity — the highest HOLDBACK, escort: true —
+  // so it takes the largest legacy dose. NOT 0.52: it already carries two patience axes, and
+  // round 12b's cash floor is the warning that stacking passivity on conservative buys +2.2
+  // turns per game.
+  conservative: 0.35,
+  // The lobby default, and the seat that measured worst against real players (10.7% against a
+  // 25% fair share) by laying the most property of any seat and paying it straight back out.
+  // A small dose aimed at exactly that. Small, because neutral's turn budget is what most
+  // directly sets game length.
+  neutral:      0.20,
+  // escort: false, leads with the biggest card it holds, already ranks best against humans, and
+  // already matches the measured completion rate (91%). Holding is the negation of its
+  // character, and the zero is the distinctness gate: 0.35 / 0.20 / 0 reads left to right.
+  aggressive:   0,
+  // A zero short-circuits before any rnd() call, so the chaotic two keep byte-identical RNG
+  // streams and paired-seed before/after comparison stays alive — the same reasoning that gives
+  // them BAIT_PATIENCE 0, CUSHION_PRESSURE 0 and BREAKER_BAR null. Belt and braces: the call
+  // sites are inside the three PLANNER selectors, so decideChud and decideRandom never reach
+  // this code at all.
+  chud:         0,
+  random:       0,
+};
+const SANDBAG_DEFAULTS = { ...SANDBAG };
+let SANDBAG_ENABLED = false;      // THE FLAG. OFF until tools/simhuman.mjs prices it.
+const SANDBAG_BANK_FLOOR = 5;     // at or above this bank a charge is paid in cash, so the set
+                                  // is not what pays and there is nothing to hide from.
+const SANDBAG_WILDS = false;      // v1 holds PLAIN properties only.
+const SANDBAG_MAX_HELD = 1;       // at most one colour hidden at a time.
+const SANDBAG_TIEBREAK = 'value'; // which of two completers to hide. Lowest-confidence
+                                  // constant in the file; alternative 'rent'. Sweep it if the
+                                  // feature survives §9.
+
+// A setter, not a mutable export: SANDBAG_ENABLED is a module `let`, so assigning to
+// Bot._internal.SANDBAG_ENABLED would not rebind it. Same shape as setRng. `weights` is merged
+// over the shipped defaults so a caller can name one personality; setSandbag(null) restores.
+function setSandbag(opts) {
+  if (!opts) {
+    SANDBAG_ENABLED = false;
+    for (const k of Object.keys(SANDBAG)) delete SANDBAG[k];
+    Object.assign(SANDBAG, SANDBAG_DEFAULTS);
+    return;
+  }
+  if ('enabled' in opts) SANDBAG_ENABLED = !!opts.enabled;
+  if (opts.weights) Object.assign(SANDBAG, opts.weights);
+}
+function sandbagConfig() { return { enabled: SANDBAG_ENABLED, weights: { ...SANDBAG } }; }
+
+// Pure, no state: would this card finish a zone right now? chooseDiscards needs it and has
+// only `bot`, so it cannot be phrased as a play the way findCompletingPlay is. Restores
+// bot.properties exactly, including the absence of a key.
+function completingColorOf(bot, card) {
+  if (!card || (card.type !== 'property' && card.type !== 'wild_property')) return null;
+  const props = bot.properties || (bot.properties = {});
+  for (const color of G.legalColorsFor(card)) {
+    if (!G.COLORS[color] || G.zoneFull(bot, color)) continue;
+    const had = Object.prototype.hasOwnProperty.call(props, color);
+    const prev = props[color];
+    props[color] = (prev || []).concat([card]);
+    const done = G.isSetComplete(bot, color);
+    if (had) props[color] = prev; else delete props[color];
+    if (done) return color;
+  }
+  return null;
+}
+function completesASet(bot, card) { return completingColorOf(bot, card) !== null; }
+
+// What the completed set would be worth to lose — the tiebreak in §5.1. The rent valve has
+// already removed any colour that could earn this turn, so the remaining question is purely
+// "which is more expensive to have seized".
+function sandbagHoldValue(bot, card) {
+  const color = completingColorOf(bot, card);
+  if (!color) return 0;
+  if (SANDBAG_TIEBREAK === 'rent') {
+    const props = bot.properties, had = Object.prototype.hasOwnProperty.call(props, color);
+    const prev = props[color];
+    props[color] = (prev || []).concat([card]);
+    const r = G.calcRent(bot, color);
+    if (had) props[color] = prev; else delete props[color];
+    return r;
+  }
+  return (bot.properties[color] || []).reduce((s, c) => s + c.value, 0) + card.value;
+}
+
+// A hidden set earns nothing, so release the card the moment the colour could actually be
+// CHARGED this turn. Determined from the engine's own numbers rather than guessed: rentYield
+// caps by what the victims can hand over, which is the same test makeRentPlay uses to refuse a
+// charge that collects nothing — so this valve cannot release the card for a rent the planner
+// would then decline to fire. Roll-free for the planner modes (chooseRentTarget only rolls for
+// chud and random, whose weight is 0).
+function sandbagRentFirable(state, bot, botId, card, mode) {
+  if (state.playsRemaining < 2) return false;   // a play must be left to fire the rent after
+  const color = completingColorOf(bot, card);
+  if (!color) return false;
+  const rents = bot.hand.filter(c => c.type === 'rent'
+    && (c.colors[0] === 'any' || c.colors.includes(color)));
+  if (rents.length === 0) return false;
+  const opponents = state.players.filter(p => p.id !== botId && !p.eliminated);
+  const props = bot.properties, had = Object.prototype.hasOwnProperty.call(props, color);
+  const prev = props[color];
+  props[color] = (prev || []).concat([card]);
+  let firable = false;
+  if (G.calcRent(bot, color) > 0) {
+    for (const c of rents) {
+      if (rentYield(state, bot, c, color, opponents, mode).value > 0) { firable = true; break; }
+    }
+  }
+  if (had) props[color] = prev; else delete props[color];
+  return firable;
+}
+
+// Composing with round 12's escrow. tryArmingBreaker opens only at
+// completedSets + 1 >= setsToWin, so sandbagging our SECOND set keeps that gate shut and
+// leaves the bot sitting on the property that would have loaded the gun. A regression found by
+// reading the escrow rather than by running it. The sandbag steps aside.
+function sandbagArmingUnlock(state, bot, botId, mode) {
+  if (G.completedSets(bot) + 1 < G.setsToWinOf(state) - 1) return false;
+  if (state.playsRemaining < 2) return false;
+  for (let i = 0; i < bot.hand.length; i++) {
+    if (!isHardBreaker(bot.hand[i])) continue;
+    const shot = worthwhileBreakerShot(state, bot, botId, i, mode);
+    if (shotGainsUsASet(state, bot, botId, shot)) return true;
+  }
+  return false;
+}
+
+// The gate, in order. Everything before the roll is deterministic, so a bot that will not
+// sandbag consumes no randomness. Returns { valve, pick }: `valve` is the name of the release
+// that fired (telemetry, and it keeps the tests from asserting on behaviour with three possible
+// causes), `pick` is the single card that would be held if the roll agrees.
+function sandbagGate(state, bot, botId, mode) {
+  const no = (valve) => ({ valve, pick: null });
+  if (!SANDBAG_ENABLED) return no('flag');
+  const w = SANDBAG[mode] ?? 0;
+  if (!(w > 0)) return no('flag');                 // no rnd() for a zero
+  // Read from state, never assumed. Under `instant` the set wins the moment it completes from
+  // any call site including off-turn; under `mdFaithful` a set completed on our own turn wins
+  // on the spot, the preset ships chud: 0 so half the seizure threat does not exist,
+  // counterCostsPlay changes the tempo arithmetic the 52% was measured under, and
+  // pureSetRequired changes what "completes a set" even means for a wild zone.
+  if (state.winRule === 'instant' || state.winRule === 'mdFaithful') return no('winrule');
+  if (bot.finalApproach) return no('armed');
+  const win = G.setsToWinOf(state);                // per-room; the longGame preset ships 5
+  // THE WINNING SET, which is the 93% leg. This is tryArmingPlay's territory (round 12 already
+  // shipped the half of sandbagging that must never be sandbagged) and the gate is doubled here.
+  if (G.completedSets(bot) + 1 >= win) return no('winningset');
+  // --- release valves, table-wide ---
+  // §3.11 adjudicates on points after DECK_CYCLE_LIMIT reshuffles, and inside that window there
+  // is no "later" to save the card for. decideBotPlay's holdback clock uses the same window.
+  if ((state.shuffleCount || 0) >= G.DECK_CYCLE_LIMIT - 4) return no('clock');
+  // shuffleCount does NOT cover the idle-turn ending: endTurn also ends the game when
+  // _idleTurns >= activeCount with deck AND discard empty, and a bot that plays nothing is a
+  // bot that FEEDS that counter. (The third ending, contestLaps, is covered by 'race' below,
+  // because a contested approach means an opponent already at setsToWin.)
+  if (state.deck.length === 0 && state.discardPile.length === 0) return no('dry');
+  // >= not >: at exactly HAND_LIMIT a hold guarantees a discard decision next turn over a hand
+  // containing the completer, and laying it now costs nothing.
+  if (bot.hand.length >= G.HAND_LIMIT) return no('handlimit');
+  if (state.players.some(p => p.id !== botId && !p.eliminated && G.completedSets(p) >= win - 1))
+    return no('race');
+  // --- "holding is only safer when …" — two different threats ---
+  // SEIZURE: only an Inspector General or THE CHUD CARD can reach a completed set. If none can
+  // come, a completed set is safe on the table. Honest information only (round 11).
+  if (unseenCounts(state, bot).breakers === 0) return no('nobreakers');
+  // The mirror image of round 12's escort clause: a shield in hand means the seizure can be
+  // answered, so the zone is not exposed and the set should be earning.
+  if (bot.hand.some(c => c.action === 'opsec')) return no('shield');
+  // PAYMENT: if the bank can absorb an ordinary charge the property is not what pays; if it
+  // cannot, the property is exactly what pays. This is NOT the rejected cash floor — that
+  // substituted a bank play for a property play across the board and cost +2.2 turns per game.
+  // This substitutes nothing; it is a condition on an already-narrow branch.
+  if (bankValue(bot) >= SANDBAG_BANK_FLOOR) return no('bank');
+  // --- candidates ---
+  let cands = bot.hand.filter(c =>
+    (c.type === 'property' || (SANDBAG_WILDS && c.type === 'wild_property'))
+    && completesASet(bot, c));
+  if (cands.length === 0) return no(null);
+  // Structurally impossible for plain properties in the shipped deck (buildDeck emits exactly
+  // COLORS[c].size plain cards per colour, and the property block is non-editable), but it
+  // becomes reachable the moment SANDBAG_WILDS flips.
+  const byColor = {};
+  for (const c of cands) {
+    const col = completingColorOf(bot, c);
+    byColor[col] = (byColor[col] || 0) + 1;
+  }
+  const perCard = {};
+  cands = cands.filter(c => {
+    if (byColor[completingColorOf(bot, c)] > 1) { perCard[c.id] = 'dupe'; return false; }
+    if (sandbagRentFirable(state, bot, botId, c, mode)) { perCard[c.id] = 'rent'; return false; }
+    return true;
+  });
+  if (cands.length === 0) return { valve: null, pick: null, perCard };
+  if (sandbagArmingUnlock(state, bot, botId, mode)) return no('armingunlock');
+  // The idle valve. Control 1 of the measurement is that 66% of declines laid a DIFFERENT
+  // colour the same turn — the behaviour is "build elsewhere", never "pass". An OPSEC is not
+  // "something else to do": conservative, neutral and humanlike hold their shields by rule, so
+  // a hand of [completer, OPSEC] is an idle turn too. This is an approximation and the residual
+  // is a wasted turn at probability <= w: sandbagGate is called from inside the planner and
+  // cannot see the planner's fall-through without re-running it, which is the rnd()-doubling
+  // round 12 forbade.
+  const heldSet = new Set(cands.map(c => c.id));
+  const somethingElse = bot.hand.some(c => !heldSet.has(c.id) && c.action !== 'opsec');
+  if (!somethingElse) return no('idle');
+  // SANDBAG_MAX_HELD = 1. Holding two completers doubles the tempo cost, reproduces neither the
+  // measurement nor control 1, and would cost a second roll.
+  let pick = cands[0];
+  for (const c of cands) {
+    if (sandbagHoldValue(bot, c) > sandbagHoldValue(bot, pick)) pick = c;
+  }
+  return { valve: null, pick: SANDBAG_MAX_HELD > 0 ? pick : null, perCard };
+}
+
+/* The roll is taken ONCE PER TURN, not once per decision. Round 12, in its own words: "a
+ * probability re-rolled every decision is not patience; it is a delay" — decideBotPlay is
+ * called once per play, so a naive per-decision rnd() < 0.52 holds a card across a whole turn
+ * only 14% of the time.
+ *
+ * Keyed on `state`, not a module global: state is per-room and a server runs many rooms.
+ * `_`-prefixed and transient, like _surgeOps / _contestedSince / _idleTurns, and never read by
+ * getPlayerView. Only the ROLL is cached — every deterministic valve above is re-evaluated on
+ * every call, because the hand shrinks, the bank grows and an opponent can arm mid-turn, and
+ * all three must be able to release the card inside the turn. Because the roll is retaken next
+ * turn a hold decays geometrically: at w = 0.52 the expected hold is ~2.1 turns. */
+function sandbagRoll(state, botId, mode, card) {
+  const key = (state.turnCounter || 0) + ':' + botId;
+  let cache = state._sandbagRoll;
+  if (!cache || cache.key !== key) cache = state._sandbagRoll = { key, byCard: {} };
+  if (!(card.id in cache.byCard)) cache.byCard[card.id] = rnd() < (SANDBAG[mode] ?? 0);
+  return cache.byCard[card.id];
+}
+
+// The array of card ids held THIS TURN. At most one, and at most one rnd() draw.
+function sandbagHeld(state, bot, botId, mode) {
+  mode = personaOf(mode);
+  const { pick } = sandbagGate(state, bot, botId, mode);
+  if (!pick) return [];
+  return sandbagRoll(state, botId, mode, pick) ? [pick.id] : [];
+}
+
+// Which valve released `card` — for telemetry (tools/botaudit.mjs needs to report which valve
+// is doing the work) and so a test never has to assert on behaviour with three possible causes.
+// null means nothing released it: either it is being held, or it was never a candidate.
+function sandbagRelease(state, bot, botId, mode, card) {
+  mode = personaOf(mode);
+  const { valve, perCard } = sandbagGate(state, bot, botId, mode);
+  if (valve) return valve;
+  if (!card) return null;
+  return (perCard && perCard[card.id]) || null;
+}
+
 /* ── Smart property placement ──────────────────────────────────────── */
 
-function findBestPropertyPlay(bot, hand) {
+// `held` is the sandbag's skip set (§3.10j). Round 12 established that a chokepoint veto in
+// decideBotPlay is the wrong shape — a chokepoint can only cancel, and recovering the planner's
+// next-best option means re-running it over a masked hand, which doubles rnd() consumption and
+// kills paired-seed comparison. So the skip is threaded into the two pure, roll-free selectors
+// instead: the held card is SKIPPED, never spliced, so cardIndex stays correct, and a planner
+// that finds nothing falls through to its own next step with zero extra rolls. That
+// fall-through is not a side effect — it is the mechanism that reproduces control 1 of the
+// measurement (66% of declines laid a different colour that same turn).
+function findBestPropertyPlay(bot, hand, held) {
   // Play properties that advance our best sets first
   const progress = myProgress(bot);
   let bestPlay = null, bestScore = -1;
 
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
+    if (held && held.length && held.includes(c.id)) continue;   // §3.10j
     if (c.type === 'property') {
       if (G.zoneFull(bot, c.color)) continue;
       const pct = progress[c.color]?.pct || 0;
@@ -2355,7 +3150,10 @@ function anyoneCanPay(opponents) { return opponents.some(canPay); }
 const CUSHION_GAIN = 10;
 // Who plays this way. The chaotic two must NOT learn it — target choice is where their
 // character is most visible, and a zero here keeps their RNG streams untouched.
-const CUSHION_PRESSURE = { conservative: 1, neutral: 1, aggressive: 0.7, chud: 0, random: 0 };
+// §3.12 humanlike: 1. Target selection is NOT what separates a person from a planner —
+// share of targeted attacks aimed at the table leader is human 72.6% (N=496) against
+// aggressive 73.4%, neutral 73.4%, conservative 80.1% and ~32% for random. Do not "fix" it.
+const CUSHION_PRESSURE = { conservative: 1, neutral: 1, aggressive: 0.7, chud: 0, random: 0, humanlike: 1 };
 
 // Is this player one set from winning but not yet armed — the window where a charge can still
 // reach them? setsToWin is a per-room rule (3/4/5), so it is read from state, never assumed.
@@ -2505,7 +3303,10 @@ function randomRentColor(bot, card) {
  * Termination: each booster leaves the hand when played, and the pass requires
  * playsRemaining >= 2, so it can fire at most twice per turn ahead of a final rent.
  */
-const ORDER_ATTENTION = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3, random: 0.12 };
+// §3.12 humanlike: 1. The one sequencing pass humans run MORE than bots is steal -> rent on
+// the newly-taken colour (human 22% of steals, N=206; aggressive 13%, neutral 8%), and that
+// pass is §3.10d, reached through this table.
+const ORDER_ATTENTION = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3, random: 0.12, humanlike: 1 };
 
 // A play from this hand that would COMPLETE a set right now. Used by the ordering pass:
 // the owner's round-9 report — "if bots are going to finish a set that turn, have them
@@ -2514,9 +3315,10 @@ const ORDER_ATTENTION = { conservative: 1, neutral: 1, aggressive: 1, chud: 0.3,
 // changes nothing about how a payer answers, and armedAtTurn is the turnCounter, identical
 // at play 1 and play 3 of the same turn) but is the order a human expects to see. A wild is
 // allowed onto any colour it completes — finishing a set is never a bad wild placement.
-function findCompletingPlay(bot, hand) {
+function findCompletingPlay(bot, hand, held) {
   for (let i = 0; i < hand.length; i++) {
     const c = hand[i];
+    if (held && held.length && held.includes(c.id)) continue;   // §3.10j
     if (c.type !== 'property' && c.type !== 'wild_property') continue;
     for (const color of G.legalColorsFor(c)) {
       if (!G.COLORS[color] || G.zoneFull(bot, color)) continue;
@@ -2986,7 +3788,16 @@ function selectPaymentCards(bot, amount, mode) {
       cards.sort(bySource);
       break;
 
-    default: // neutral
+    // §3.12 — humanlike deliberately has NO case of its own and lands here, and the reason is
+    // worth writing down because it looks like an omission. Real players surrendered property
+    // on 28.3% of their payments against neutral's 50.6%, but the whole of that gap is that
+    // they HAD cash when the demand landed (HUMAN_BANK_FLOOR), not that they chose different
+    // cards once it had. And measured: since round 9's minimal-cover rewrite this sort is very
+    // nearly inert — `payWeight`'s tier gaps are wider than the largest card in the deck, so
+    // four of the five comparators return identical selections at every amount, and only
+    // random's shuffle ever breaks a tie differently. A sixth copy of this comparator would be
+    // code no test could pin.
+    default: // neutral, and humanlike
       cards.sort((a, b) => {
         if (a.source !== b.source) return bySource(a, b);
         if (a.source === 'prop') return (a.setProgress || 0) - (b.setProgress || 0);
@@ -3141,6 +3952,70 @@ function isNeverDiscarded(card) {
   return !!card && card.action === 'chud';
 }
 
+/* §3.10j THE DISCARD TIER — and it is an escrow-class bug that is live in every planner
+ * comparator TODAY, sandbag or no sandbag. Verified by running them, with a brown zone one
+ * short and a hand forced to choose between properties:
+ *
+ *   hand: brown/1M(completes) green/4M darkblue/4M yellow/3M red/3M green/4M darkblue/4M yellow/3M
+ *   humanlike LOST THE COMPLETER · neutral LOST · conservative LOST · aggressive LOST
+ *
+ * Each leaks for its own reason. Neutral sorts OPSEC last, hard breakers next, then purely
+ * `a.value - b.value` — and brown, lightblue and intel properties print 1M, so a completer is
+ * the FIRST card out of the hand. Conservative and humanlike sort properties late as a GROUP
+ * but fall through to face value between two of them, so the cheap completer goes before an
+ * expensive orphan. Aggressive sorts `a.type === 'action'` after property, so a completer is
+ * discarded ahead of any ordinary action card. Told to hold a card, a bot holds it to the hand
+ * limit and then throws it away — the same trap that bit round 12's escrow twice.
+ *
+ * THE FIX IS A TIER, NOT POOL REMOVAL, and the distinction is deliberate. isNeverDiscarded
+ * removes THE CHUD CARD from the candidate pool before any comparator sees it because the
+ * owner said "never". A completer must not get that treatment: pool removal can make the
+ * required count unmeetable, and a second protected class multiplies the ways the arithmetic
+ * escape is reached. A tier can always yield. INVARIANT: chooseDiscards(...).length === excess,
+ * always — endTurn refuses a short list and the turn wedges.
+ *
+ * TWO STRENGTHS, and only the weaker one is unconditional:
+ *
+ *   narrow (ALWAYS ON, for the four planner comparators)  — among PROPERTIES only, a card that
+ *     finishes one of our zones ranks behind one that does not. Throwing away the card that
+ *     finishes your own set to keep a property you do not need is wrong whether or not
+ *     sandbagging ever ships, so it is not gated on the flag. It is confined to
+ *     property-vs-property because that is the comparison where the bug is unambiguous and
+ *     because it is the narrowest change that fixes it.
+ *   absolute (behind SANDBAG_ENABLED) — the full tier from the spec: completer last of all,
+ *     behind the shield, because the shield defends one card once and the completer is a third
+ *     of the win condition. Gated on the FLAG rather than on sandbagHeld()'s per-turn output:
+ *     if it were gated on the live hold, a card released mid-turn by the hand-limit valve would
+ *     be unprotected at endTurn, which is precisely the hole that would let a bot hold a card
+ *     for four turns and then throw it away.
+ *
+ * Both are gated OFF for chud and random (BREAKER_BAR null, SANDBAG weight 0), whose discard is
+ * a `shuffle` — a shuffle cannot be asked politely to spare something, and their byte-identical
+ * streams are what keeps paired-seed comparison alive.
+ *
+ * Applied OUTSIDE the switch, so a personality added later cannot miss it. Array.prototype.sort
+ * has been stable since ES2019, and the narrow pass reorders only the property SUBSEQUENCE in
+ * place, so every non-property slot keeps the position its comparator gave it.
+ */
+function applyCompleterTier(bot, hand, mode) {
+  const absolute = SANDBAG_ENABLED && (SANDBAG[mode] ?? 0) > 0;
+  if (absolute) {
+    hand.sort((a, b) => (completesASet(bot, a) ? 1 : 0) - (completesASet(bot, b) ? 1 : 0));
+    return;
+  }
+  if (!BREAKER_BAR[mode]) return;                 // chud and random keep a pure shuffle
+  const at = [];
+  for (let i = 0; i < hand.length; i++) {
+    const c = hand[i];
+    if (c && (c.type === 'property' || c.type === 'wild_property')) at.push(i);
+  }
+  if (at.length < 2) return;
+  const props = at.map(i => hand[i]);
+  const ordered = props.filter(c => !completesASet(bot, c))
+    .concat(props.filter(c => completesASet(bot, c)));
+  at.forEach((idx, k) => { hand[idx] = ordered[k]; });
+}
+
 function chooseDiscards(bot, excess, mode) {
   mode = personaOf(mode);
   const protectedCards = bot.hand.filter(isNeverDiscarded);
@@ -3211,6 +4086,26 @@ function chooseDiscards(bot, excess, mode) {
       shuffle(hand);
       break;
 
+    // §3.12 — a real player reaches the hand limit far less often than a bot (2.6% of turns
+    // end over it against conservative's 7.7%), because they bank their money instead of
+    // carrying it. When they do get there the order follows what the corpus shows them
+    // protecting: the shield (held a median of 11 table-turns before firing, against 3 for a
+    // bot), then the breakers, then PROPERTY — which for this personality is not incidental,
+    // it is the sandbag: a card held back on purpose must not be thrown away by the same turn
+    // loop that is holding it. That last clause is the trap round 12 hit with the escrow, in
+    // mirror image, and it is why this case cannot just borrow neutral's comparator.
+    case 'humanlike':
+      hand.sort((a, b) => {
+        if (a.action === 'opsec') return 1;
+        if (b.action === 'opsec') return -1;
+        if (isHardBreaker(a) !== isHardBreaker(b)) return isHardBreaker(a) ? 1 : -1;
+        const pa = a.type === 'property' || a.type === 'wild_property';
+        const pb = b.type === 'property' || b.type === 'wild_property';
+        if (pa !== pb) return pa ? 1 : -1;
+        return a.value - b.value;
+      });
+      break;
+
     default: // neutral
       // §3.10c: breakers behind OPSEC but ahead of everything else. Neutral sorted purely by
       // face value, so a 10M money card outranked the 5M Inspector General it was escrowing.
@@ -3223,6 +4118,8 @@ function chooseDiscards(bot, excess, mode) {
       });
       break;
   }
+
+  applyCompleterTier(bot, hand, mode);
 
   return hand.slice(0, excess).map(c => c.id);
 }
@@ -3249,6 +4146,15 @@ module.exports = {
     BREAKER_BAR, BREAKER_SELF_MARGIN, worthwhileBreakerShot, escrowHoldsBreaker,
     breakerEscrowRelease, tryArmingBreaker, shotGainsUsASet, planBreakerShot,
     findStealBooster, opsecOdds, tryArmingPlay, preArmedLeader, CUSHION_PRESSURE, CUSHION_GAIN, maybeBaitFirst, BAIT_PATIENCE, BAIT_BELIEF_FLOOR,
+    // §3.12 the humanlike instrument (tools/simhuman.mjs, test/bot-humanlike.test.js).
+    HUMAN_BREAKER_FIRE, HUMAN_SHIELD, HUMAN_SHIELD_ARMED, HUMAN_BANK_FLOOR,
+    HUMAN_COMPLETE_WINNING, HUMAN_COMPLETE_ORDINARY, HUMAN_DECLINE_LAYS_ELSEWHERE,
+    HUMAN_SURGE_FOLLOW, HUMAN_CASH_BEFORE_PROPERTY, HUMAN_LAYS_SCATTER, humanFiresBreaker,
+    humanCompletingPlay, ARMED_BANK_BIAS, HOLDBACK, HOLDBACK_SCALE, DELAYS,
+    decideHumanlike, humanPropertyPlay, nonCompletingPropertyPlay, bankOneMoney, humanTurnRoll,
+    // §3.10j the sandbag (scratchpad/spec-sandbag.md, test/bot-sandbag.test.js) and the
+    // always-on completer discard tier (test/bot-discard-completer.test.js).
+    SANDBAG, setSandbag, sandbagConfig, sandbagHeld, sandbagRelease, completesASet,
     getAllPayableCardIds, chooseDiscards, isNeverDiscarded, findResponder: function(state) {
       return G.pendingResponders(state)[0] || null;
     },

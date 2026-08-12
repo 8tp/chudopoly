@@ -42,6 +42,7 @@
     "tool:record": "node tools/record.mjs",
     "tool:recordlog": "node tools/recordlog.mjs",
     "tool:simbalance": "node tools/simbalance.mjs",
+    "tool:simhuman": "node tools/simhuman.mjs",
     "tool:playtest": "node tools/playtest.mjs",
     "tool:touchtest": "node tools/touchtest.mjs",
     "tool:dragtest": "node tools/dragtest.mjs",

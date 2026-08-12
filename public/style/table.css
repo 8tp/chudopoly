@@ -1538,6 +1538,40 @@
    (outside the object) as every other "it is you" mark in the app. */
 .screen-game:has(.hud-turn.is-mine) .hand-dock { box-shadow: inset 0 3px 0 var(--accent), inset 0 4px 8px var(--shade); }
 
+/* ── payment: the fan retracts, because it is the one thing that cannot answer ──
+   payableCards() (game.js:1128) is bank + properties + upgrades. The HAND IS NOT
+   PAYABLE. So during a payment the fan is the only surface on screen that cannot
+   resolve the prompt, while the two that can — the bank row and the property
+   columns — sit above it and, on a phone, below the fold. Measured on the shipped
+   payment@phone shot: the fan and its bar hold the bottom ~19% of a 2532px screen
+   and every tap target in it is dead.
+
+   This is not a theory about tap sizes. touchtest passes §B/§D on this surface —
+   every control is >=44px and nothing occludes CONFIRM PAYMENT — and players still
+   abandoned it: 67 of 71 production response timeouts were somebody sitting on a
+   payment prompt, against 3 on steal and 1 on swap. The gate measures reachability,
+   which was never what was broken.
+
+   `data-state` is the hook prompt.js:684 sets and public/style/ owns the rule (see
+   the note at prompt.js:681), so this stays entirely in CSS. The BAR is deliberately
+   kept: it carries the hand count and the dock controls, and a dock that vanishes
+   whole reads as a bug rather than as room being made. */
+.screen-game:has(#prompt[data-state="payment"]) #zone-hand {
+  /* .zone-hand carries `min-height: calc(var(--card-w) * 1.56 + .9em)` for the fan's
+     rotated bounding box, and a min-height beats a max-height — without this the cards
+     hide but the dock keeps every pixel it reserved for them. */
+  min-block-size: 0;
+  max-block-size: 0;
+  padding-block: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-block-size .18s ease, opacity .12s ease, padding-block .18s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .screen-game:has(#prompt[data-state="payment"]) #zone-hand { transition: none; }
+}
+
 .hand-bar { display: flex; align-items: center; gap: .4em; min-width: 0; }
 .hand-label { white-space: nowrap; font-size: .7em; }
 .hand-label span { color: var(--fg); }

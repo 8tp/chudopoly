@@ -29,7 +29,7 @@ import * as journal from './journal.js';
 import { stats, awardFor, bandFor, rankFor } from '../state/stats.js';
 
 /**
- * finishGame() stamps state.endReason with 'sets' | 'last_standing' |
+ * finishGame() stamps state.endReason with 'sets' | 'last_standing' | 'walkover' |
  * 'stalemate'. The stalemate sub-reason ('deck_dry' | 'deck_cycles') rides on
  * the emitted event, not on the view, so read it off the event tail — falling
  * back to the deck-cycle counter, which getPlayerView does carry.
@@ -93,6 +93,15 @@ function endingCopy(snap) {
       // scoop(): activePlayers.length === 1 → finishGame(..., 'last_standing').
       reason: 'Everyone else scooped out. The last player at the table wins immediately — '
         + 'no final approach, no checkpoint.',
+    };
+  }
+  if (snap.endReason === 'walkover') {
+    return {
+      title: mine ? 'WON BY WALKOVER' : `${seatName(winner)} WINS BY WALKOVER`,
+      tag: 'WALKOVER',
+      // absent.js handleAbsent(): connected.length === 1 while active.length > 1.
+      reason: 'Everyone else left the table. The last player connected takes it — '
+        + 'not a win on sets, and the game log records it as one.',
     };
   }
   if (snap.endReason === 'stalemate') {

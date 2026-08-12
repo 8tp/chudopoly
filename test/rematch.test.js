@@ -170,3 +170,47 @@ test('CHUD_SEED is honoured outside production and refused inside it', () => {
   assert.equal(handlers.seedFromEnv({ CHUD_SEED:'abc' }), 'abc');
   assert.equal(handlers.seedFromEnv({ CHUD_SEED:'abc', NODE_ENV:'production' }), null);
 });
+
+// A walkover used to be stamped by hand in absent.js: phase and winner set, nothing else.
+// That left endReason null, turnPhase mid-turn, pendingAction live, and no win event — and
+// the celebration is gated on the EVENT (prompt.js/overlays.js), so the table just stopped.
+// It also made the game log unreadable: 5 of the first 91 production records carried a
+// winner with a null endReason, indistinguishable from a crashed game, and no stats query
+// could separate a walkover from a real win on sets.
+test('a walkover finishes through finishGame — reason, turn phase, and a win event', () => {
+  broadcast.init({ G, Bot:{ scheduleBotAction() {}, cancelBotTimeout() {} } });
+  absent.init({ G, broadcast });
+  const { room, state } = stuckRoom();
+  // p3 is a bot in stuckRoom(); make it a departed human so p1 is the only one connected.
+  room.players[2].isBot = false;
+  assert.equal(state.phase, 'playing');
+  assert.ok(state.pendingAction, 'starts mid-demand');
+
+  absent.handleAbsent(room);
+
+  assert.equal(state.phase, 'finished');
+  assert.equal(state.winner, 'p1');
+  assert.equal(state.endReason, 'walkover', 'the reason is recorded, not left null');
+  assert.equal(state.turnPhase, 'finished');
+  assert.equal(state.pendingAction, null, 'a live demand does not survive the ending');
+
+  const win = (state.events || []).filter(e => e.t === 'win');
+  assert.equal(win.length, 1, 'exactly one win event — the celebration is gated on it');
+  assert.equal(win[0].actor, 'p1');
+  assert.equal(win[0].reason, 'walkover');
+  assert.deepEqual(G.validateState(state), { ok: true });
+});
+
+// 'walkover' must stay distinct from 'last_standing'. Both end with one player, but
+// last_standing is an in-game elimination (everyone scooped) and walkover is everyone
+// disconnecting — the client prints different copy, and only one of them is a real win.
+test('walkover is not last_standing', () => {
+  broadcast.init({ G, Bot:{ scheduleBotAction() {}, cancelBotTimeout() {} } });
+  absent.init({ G, broadcast });
+  const { room, state } = stuckRoom();
+  room.players[2].isBot = false;
+  absent.handleAbsent(room);
+  assert.equal(state.endReason, 'walkover');
+  assert.notEqual(state.endReason, 'last_standing');
+  assert.equal(state.players.filter(p => p.eliminated).length, 0, 'nobody was actually scooped');
+});

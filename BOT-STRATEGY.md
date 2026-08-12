@@ -1911,3 +1911,117 @@ against a best stacked charge of 2M; only 2.5–3.2% of grace-cycle turns could 
 exceed the cushion. The leverage is spent between the second set and the third, where the
 leader's bank is still 4–9M. §3.10f is the first move in that direction and it is a small one;
 the real version needs a charge to reach a player through something other than a wild rent.
+
+---
+
+## Round 13 (2026-08-12) — the instrument, and the first thing it killed
+
+Round 12b ended by rejecting a good idea for an unmeasurable benefit: `simbalance` measures bots
+against bots in a fixed pot, so "stronger against a human" cannot appear in it. This round builds
+the missing instrument and then uses it.
+
+### §3.12 `humanlike` — a personality whose constants are the measured human
+
+Built from the 91-game production corpus (21 real players), re-derived from the event stream
+rather than taken on trust — which immediately corrected the brief it was built from: **the
+decision point is the start of the PLAY phase, not `turn_start`.** Measured before the turn's
+draws, human Inspector General opportunities are N=47 at 43%; after, N=67 at 51%. Two other
+figures moved: "44.9% play properties before money" was the COMPLEMENT (humans do it 52% of the
+time, bots 98-99%), and OPSEC-on-IG is 77%, not 82%.
+
+It is deliberately NOT in `BOT_MODES` or the lobby allowlist: it is an instrument, not a product,
+and a test pins that. `tools/simhuman.mjs` seats a subject against N-1 of them, seat-rotated and
+seeded, with Wilson intervals.
+
+**Fidelity: a good BEHAVIOUR clone and a poor STRENGTH clone, and the second half is the limit.**
+IG fire rate 51% vs 52%, escort split 75/43 vs 80/42, completer rate 56% vs 56% exact,
+money-in-hand 0.86 vs 0.74, leads-with-money 20% vs 23% against the bots' 4-5%, all-properties-
+before-money 52% vs 50% against the bots' 98%. But the human seat WON 42% of those games and
+`humanlike` wins ~21-25%.
+
+That gap is not a bug to tune out, and understanding why is the whole point: `sets/100` and
+`property-lost/100` are **consequences of winning**, not behaviours. A seat that wins completes
+more sets and loses less board by construction. Matching them would mean making the proxy
+stronger — which is exactly the tuning an instrument must not have. So:
+
+> **`simhuman` RANKS changes. It does not certify difficulty.** Use it paired
+> (`--subject X` against `--subject X@n`, same seed), never as an absolute reading. A real
+> person is materially harder than `humanlike`, so its absolute winrates are optimistic.
+
+Baseline against 3 `humanlike` opponents (4000 games, 4 seats, fair share 25%): aggressive
+**34.6%** [31.4, 38.0], conservative 29.4%, neutral 29.1%, random 13.5%, chud 10.8%. The ORDERING
+matches production — aggressive is the hardest seat for a person and it is not the lobby default
+— but production had those three 2.7x apart (28.6 / 16.1 / 10.7) where the proxy has them inside
+5pp. That gap is the proxy's strength shortfall, stated rather than hidden.
+
+Three constants are unmeasurable from an event stream and are labelled so in the code:
+`BREAK_OVERPAY` (a stream cannot show a declined play), `BAIT_PATIENCE` (nor a trap being set),
+`CARD_AWARENESS` (nor someone counting the discard pile). Several others rest on 13-20
+observations — the escort split on N=16, the winning-set rate on N=14.
+
+### §3.10j sandbagging — implemented, measured, and left OFF
+
+Holding a set-completing property in hand instead of laying it. `payableCards` is bank +
+properties + upgrades, so a card in hand cannot be stolen, seized, or paid away. Measured:
+humans lay a completer 56% of the time (93% when it is the winning set, 52% otherwise); neutral
+96%, aggressive 91%.
+
+**It fails its own pre-registered bar and stays behind `SANDBAG_ENABLED = false`.** Subject
+against 3 `humanlike` opponents, paired seeds, 2000 games per arm:
+
+| neutral weight | delta | 95% CI | turns |
+|---|---|---|---|
+| 0.20 (shipped) | +0.25pp | [-2.52, +3.02] | +0.05 |
+| 0.52 (the human rate) | +0.00pp | [-2.77, +2.77] | +0.13 |
+| 0.90 | +0.00pp | [-2.77, +2.77] | +0.08 |
+
+Flat, **not dose-dependent**, inside noise, against a bar of >= +3.0pp with the interval
+excluding zero. And the null is stronger than it looks, because the known confound runs in
+sandbagging's FAVOUR: every threat heuristic in this file counts `completedSets`, so a
+sandbagging bot is invisible to six of them and `humanlike` opponents run those same heuristics.
+With that tailwind, still nothing.
+
+Worth recording for whoever revisits it: the first sweep returned byte-identical numbers at all
+three doses, which is not a null but a broken harness — `setSandbag` takes `{weights: {...}}` and
+a top-level key is silently ignored. Three identical results across three doses should always be
+read as an instrumentation failure first. The corrected script asserts the weight took effect
+before running.
+
+### The completer discard defect — found, fixed, and live regardless
+
+While checking a reported bug, a real one turned up that is broader than the report: **forced to
+choose between properties, EVERY personality discarded the cheapest, and the cheapest is very
+often the set-completer** (brown and intel are 2-card sets at 1M). Verified on a discriminating
+fixture — eight properties, no money or actions, so every comparator falls through to
+`a.value - b.value`:
+
+    brown/1M(completes) green/4M darkblue/4M yellow/3M red/3M green/4M darkblue/4M yellow/3M
+    before: humanlike LOST · neutral LOST · conservative LOST · aggressive LOST
+    after:  all six personalities keep it
+
+Fixed as a TIER applied outside the `switch` in `chooseDiscards`, so a personality added later
+cannot miss it, and live with the sandbag flag OFF — a bot should never throw away the card that
+finishes its set, whatever else is true. Instrumented to prove it is not inert: on the pinned
+seed it is reached 225 times and reorders 20 but never reaches the discard boundary (which is
+why `simbalance` is byte-identical), and across 9,000 games on three other seeds it changes the
+discarded card 14 times, every one a completer saved.
+
+### Two bugs found by building the instrument
+
+- **`decideBotPlay` dispatched its planner on `variant`, not `mode`.** `neutral@0` worked only by
+  coincidence — `default` IS neutral — so **`aggressive@0` silently played as neutral**, and so
+  would every other suffixed seat. That is the exact A/B mechanism the holdback round introduced
+  and this round depends on, quietly broken since. No bare name is affected.
+- **A test that could not discriminate, twice over.** `it steps aside when laying the property is
+  what loads the escrow gun` stayed green with its valve deleted: the fixture satisfied §3.10c's
+  escort clause with a shield IN HAND, which trips an earlier valve. Draining the OPSEC pool
+  instead trips `tryGuaranteedBreaker`, which fires the IG outright. There is no third way to
+  satisfy the escort, so no end-to-end fixture can isolate that valve for an escort-bearing
+  personality; it is now asserted at the valve and mutation-proved red. **A test that looks
+  end-to-end and proves nothing is worse than a narrower one that bites.**
+
+### Verification
+
+618 tests passing (`--test-concurrency=1`; the suite has pre-existing port contention in
+parallel that produces phantom failures). `simbalance --games 900 --seed r12base` byte-identical
+to the pre-round tree: 14.2 / 28.2 / 31.7 / 37.9 / 13.1, avg 33.0 turns, stalemates 0.11%.

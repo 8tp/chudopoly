@@ -1556,6 +1556,18 @@
    the note at prompt.js:681), so this stays entirely in CSS. The BAR is deliberately
    kept: it carries the hand count and the dock controls, and a dock that vanishes
    whole reads as a bug rather than as room being made. */
+
+/* §3.13 (owner directive 2026-08-12) — the retract is now DEVICE-AWARE and overridable.
+   The argument above is entirely about REACH, and reach is only scarce on a phone: on a
+   desktop the bank row and the property columns are already above the fold, nothing needs
+   lifting, and folding the fan only removes information the player wants while deciding what
+   to give up. Which cards they hold is exactly what says whether a property is worth
+   defending.
+
+   `auto` (no [data-payhand], the default) narrows the rule to the screens it was measured on;
+   `hide` restores it everywhere; `show` turns it off everywhere. ui/settings.js is the only
+   writer of the attribute. The overrides come AFTER the base rule so they win on order at
+   equal-or-greater specificity, and each one reverts exactly the properties the base sets. */
 .screen-game:has(#prompt[data-state="payment"]) #zone-hand {
   /* .zone-hand carries `min-height: calc(var(--card-w) * 1.56 + .9em)` for the fan's
      rotated bounding box, and a min-height beats a max-height — without this the cards
@@ -1570,6 +1582,31 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .screen-game:has(#prompt[data-state="payment"]) #zone-hand { transition: none; }
+}
+
+:root[data-payhand="show"] .screen-game:has(#prompt[data-state="payment"]) #zone-hand {
+  min-block-size: revert; max-block-size: revert; padding-block: revert;
+  opacity: revert; overflow: revert; pointer-events: revert;
+}
+
+/* Wide AND tall enough that the payable surfaces were never below the fold — the condition
+   the measurement actually turned on. `auto` only: an explicit `hide` still hides. */
+@media (min-width: 700px) and (min-height: 560px) {
+  :root:not([data-payhand="hide"]) .screen-game:has(#prompt[data-state="payment"]) #zone-hand {
+    min-block-size: revert; max-block-size: revert; padding-block: revert;
+    opacity: revert; overflow: revert; pointer-events: revert;
+  }
+}
+
+/* THE PEEK (phones). The fan folds because it cannot ANSWER the prompt, not because it is
+   irrelevant. So it stays reachable: swipe up on the dock (interact/handpeek.js) and it comes
+   back OVER the prompt without dismissing it; swipe down, tap away, or resolve the payment and
+   it folds again. `.is-peeking` is written only by that module. !important because the base
+   rule above is a :has() selector of higher specificity than a single class. */
+.hand-dock.is-peeking #zone-hand {
+  min-block-size: revert !important; max-block-size: revert !important;
+  padding-block: revert !important; opacity: 1 !important;
+  overflow: revert !important; pointer-events: auto !important;
 }
 
 .hand-bar { display: flex; align-items: center; gap: .4em; min-width: 0; }

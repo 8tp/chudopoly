@@ -223,6 +223,77 @@ function applyTheme(value) {
 // visible flash on every load for anyone not on 'auto'.
 applyTheme(getTheme());
 
+/* ── §3.13 the hand during a payment ────────────────────────────────────────
+ *
+ * `4a8e282` retracted the fan whenever the prompt is a payment, on the measured
+ * ground that the hand is the ONE surface that cannot answer it — `payableCards`
+ * (game.js:1128) is bank + properties + upgrades — and that 67 of 71 production
+ * response timeouts were somebody sitting on a payment prompt.
+ *
+ * That reasoning is about REACH, and reach is only scarce on a phone. On a desktop
+ * the bank row and the property columns are already above the fold, nothing needs
+ * lifting, and hiding the hand only removes information a player wants while
+ * deciding what to give up — which cards they hold is exactly what tells them
+ * whether a property is worth defending. Owner directive, 2026-08-12.
+ *
+ * So the retract becomes device-aware by default and overridable always:
+ *   auto — retract on coarse/short screens only (where it was measured)
+ *   show — never retract
+ *   hide — always retract (the behaviour 4a8e282 shipped)
+ *
+ * `auto` REMOVES the attribute rather than writing a token, exactly as applyTheme
+ * does, so the cascade falls back to the media query on its own and a player who
+ * never opens settings gets the measured behaviour on the device it was measured on.
+ */
+const PAYHAND_KEY = 'chud.payhand';
+const PAYHANDS = ['auto', 'show', 'hide'];
+const PAYHAND_DEFAULT = 'auto';
+const PAYHAND_LABEL = { auto: 'Auto', show: 'Show', hide: 'Hide' };
+
+export function getPayHand() {
+  try {
+    const raw = localStorage.getItem(PAYHAND_KEY);
+    return PAYHANDS.includes(raw) ? raw : PAYHAND_DEFAULT;
+  } catch { return PAYHAND_DEFAULT; }       // private mode
+}
+
+export function setPayHand(value) {
+  const next = PAYHANDS.includes(value) ? value : PAYHAND_DEFAULT;
+  applyPayHand(next);
+  try { localStorage.setItem(PAYHAND_KEY, next); } catch { /* private mode */ }
+}
+
+/** The only writer of [data-payhand]. */
+function applyPayHand(value) {
+  const root = document.documentElement;
+  if (value === PAYHAND_DEFAULT) root.removeAttribute('data-payhand');
+  else root.setAttribute('data-payhand', value);
+}
+
+// Module scope, same reason as applyTheme: the dock exists before mount() runs.
+applyPayHand(getPayHand());
+
+function payHandRow(body) {
+  const current = getPayHand();
+  const strip = el('div', {
+    class: 'rule-seg', attrs: { role: 'radiogroup', 'aria-label': 'Hand while paying' },
+  }, PAYHANDS.map((value) => {
+    const input = el('input', {
+      class: 'rule-input',
+      attrs: { type: 'radio', name: 'chud-payhand', value, ...(value === current ? { checked: true } : {}) },
+    });
+    input.addEventListener('change', () => { if (input.checked) setPayHand(value); });
+    return el('label', { class: 'seg seg-wide' }, [
+      input, el('span', { class: 'seg-face', text: PAYHAND_LABEL[value] }),
+    ]);
+  }));
+
+  body.appendChild(el('div', { class: 'settings-row' }, [
+    el('span', { class: 'settings-label', text: 'Hand while paying' }),
+    strip,
+  ]));
+}
+
 /**
  * A segmented radio group, not a <select> and not a switch. Three mutually
  * exclusive values want a radiogroup's semantics (arrow keys traverse, the
@@ -359,12 +430,21 @@ export function show() {
   });
 
   themeRow(body);
+  payHandRow(body);
   scaleRow(body);
 
   body.appendChild(el('p', {
     class: 'hint',
     text: 'Interface scale resizes the cards and text. Buttons and card targets keep their '
       + 'full tap size at every setting, so a smaller table is still a hittable one.',
+  }));
+
+  body.appendChild(el('p', {
+    class: 'hint',
+    text: 'Hand while paying: on a phone the fan folds away during a payment so the bank and '
+      + 'your properties — the only cards that can actually pay — sit above the fold. Swipe up '
+      + 'on the dock to look at your hand without losing the prompt. On a wider screen nothing '
+      + 'needs folding, so the hand stays put.',
   }));
 
   body.appendChild(el('p', {

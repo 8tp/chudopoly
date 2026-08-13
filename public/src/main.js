@@ -13,6 +13,7 @@ import * as table from './table/index.js';
 import * as choreographer from './anim/choreographer.js';
 import * as interact from './interact/index.js';
 import * as pointer from './interact/pointer.js';
+import * as handpeek from './interact/handpeek.js';
 import * as audio from './audio/engine.js';
 import * as fx from './fx/index.js';
 import * as screens from './ui/screens.js';
@@ -197,6 +198,9 @@ function boot() {
   peek.mount();
   interact.mount();
   pointer.mount();
+  // §3.13 — after pointer.mount() so the capture-phase listeners are ordered the same way
+  // they were registered; handpeek only ever reads the event, it never stops propagation.
+  handpeek.mount();
 
   wireNet();
 

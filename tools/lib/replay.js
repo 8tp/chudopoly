@@ -897,7 +897,9 @@ function applyResolvedAction(state, seatId, action, pol) {
     return;
   }
   if (a.type === 'scoop') { G.scoop(state, seatId); return; }
-  if (a.cardId !== undefined && a.cardIndex === undefined) {
+  // Only hand-card plays are index-addressed; a rearrange/swap names board cards by id.
+  const handTypes = a.type === 'play_money' || a.type === 'play_property' || a.type === 'play_action';
+  if (handTypes && a.cardId !== undefined && a.cardIndex === undefined) {
     const bot = G.getPlayer(state, seatId);
     a.cardIndex = bot.hand.findIndex(c => c.id === a.cardId);
     if (a.cardIndex < 0) throw new ReplayError('first action card not in hand', { cardId: a.cardId });
@@ -1003,13 +1005,15 @@ function evaluate(records, {
       out.points++;
       const seatId = dp.meta.seat;
 
-      // What does each arm DO here? (Deterministically seeded so the divergence check
-      // itself is reproducible — decide() consumes bot-RNG rolls.)
+      // What does each arm DO here? BOTH arms decide on the SAME seeded rng stream —
+      // the null test (identical policies must return exactly zero) failed under
+      // per-arm streams, because a policy's own holdback rolls differed between arms
+      // and manufactured divergence out of nothing. Same stream = paired decisions.
       const decideSeed = `${seed}:${record.code}:${dp.meta.index}`;
-      const subjectAction = decideAt(dp.snapshot, seatId, subjectPolicy, decideSeed + ':S');
+      const subjectAction = decideAt(dp.snapshot, seatId, subjectPolicy, decideSeed);
       const baselineAction = baselineIsRecorded
         ? dp.meta.recorded
-        : decideAt(dp.snapshot, seatId, baselinePolicy, decideSeed + ':B');
+        : decideAt(dp.snapshot, seatId, baselinePolicy, decideSeed);
 
       const stateForCanon = reviveState(dp.snapshot);
       const diverges = !sameAction(

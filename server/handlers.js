@@ -419,7 +419,21 @@ function handleMessage(ws, msg, state) {
       // approaches (19.7%). `random` also makes the table measurably easier (seat 0 wins
       // 26.8%). Personalities stay unlabelled in-game per the owner's standing constraint;
       // this chooses the bench, it does not announce it.
-      for (const mode of ['neutral', 'aggressive', 'conservative']) {
+      //
+      // DOUBLE `aggressive`, DROP `neutral` — OWNER DIRECTIVE 2026-08-20 ("somewhat harder
+      // bots", solo human target 30-40%), measured in docs/harder-bots-study.md. Production
+      // truth: humans won 46.2% of 104 solo games against the old bench, and per-seat,
+      // aggressive is the ONLY near-fair-share bot against real players (26-28% of its
+      // games) while neutral is the weakest (10.7% in round 12b's paired tables). Priced
+      // with tools/benchstudy.mjs (the §3.12 human-proxy instrument, seat-rotated, 6,000
+      // games per bench, paired decks): this bench cuts the proxy's win 22.9% -> 19.7%,
+      // projecting the real-human solo rate to ~39.8% — the top edge of the target band —
+      // while IMPROVING the round-7 axes above: shot-down 50.7% vs 48.0%, contested 22.7%
+      // vs 22.2%, avg turns +0.6. Composition saturates here: even 3x aggressive only
+      // projects 38.5%, at the cost of a monotone table, and every parameter dial priced
+      // at real production states is worth ~+1pp per seat (docs/harder-bots-study.md) —
+      // reaching the band's lower half needs new bot capability, not seating.
+      for (const mode of ['aggressive', 'aggressive', 'conservative']) {
         room.players.push({ id: genId(), name: absent.generateBotName(room), ws: null, isBot: true, botMode: mode });
       }
       rooms.set(code, room);

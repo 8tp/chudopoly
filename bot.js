@@ -210,7 +210,10 @@ const BREAK_OVERPAY = { aggressive: 0.95, chud: 0.85, neutral: 0.75, conservativ
 // planners' no-threat shots and passes the 27.6% that genuinely build toward a win. It is a
 // bar, not a loophole. 0 tightens it to the shot that arms or wins outright, and is the dial
 // to turn first if avgTurns rises.
-const BREAKER_SELF_MARGIN = 1;
+// `let`, not `const`, ONLY so setTuning (the inert evaluation hook at the bottom of this
+// file) can override and restore it; the shipped value is unchanged and simbalance is
+// byte-identical to the const tree (proof in test/replayeval.test.js and the commit).
+let BREAKER_SELF_MARGIN = 1;
 
 // The personality axis is the BAR, not a coin flip — and that is a measured correction, not
 // a preference. The escrow was first built with a graded per-decision patience
@@ -3147,7 +3150,7 @@ function anyoneCanPay(opponents) { return opponents.some(canPay); }
 // Scale of the cushion term relative to the plain "what does this collect" score. The primary
 // dial: raise it and the planners tunnel on the leader, which lengthens games and invites
 // kingmaking; lower it and the change does nothing.
-const CUSHION_GAIN = 10;
+let CUSHION_GAIN = 10;   // `let` only for setTuning (inert eval hook); shipped value unchanged
 // Who plays this way. The chaotic two must NOT learn it — target choice is where their
 // character is most visible, and a zero here keeps their RNG streams untouched.
 // §3.12 humanlike: 1. Target selection is NOT what separates a person from a planner —
@@ -4134,6 +4137,55 @@ function shuffle(arr) {
   return arr;
 }
 
+/* ── setTuning — the inert parameter-override hook (setSandbag's mold) ──────────────────
+ *
+ * Exists so tools/replayeval can price a CONSTANT change at production decision points
+ * without a live code change. Defaults are the shipped values; setTuning(null) restores
+ * them exactly; nothing in the live server ever calls this. The hook covers the
+ * personality TABLES (mutated in place — their declarations are untouched) plus the two
+ * scalars whose declarations moved const->let above. It deliberately does NOT cover the
+ * shield-economy switch in shouldPlayOpsecDecision or the inline "rent >= 4"-style
+ * charge-timing bars: those are branch literals, and hooking them would mean rewriting
+ * live decision code — the one thing an inert hook must not do.
+ */
+const TUNING_TABLES = {
+  BREAK_URGENCY, BREAK_OVERPAY, BREAKER_BAR, CARD_AWARENESS, BAIT_PATIENCE,
+  ARMED_BANK_BIAS, ORDER_ATTENTION, CUSHION_PRESSURE, HOLDBACK, REARRANGE_BIAS,
+};
+const TUNING_TABLE_DEFAULTS = JSON.parse(JSON.stringify(TUNING_TABLES));
+const TUNING_SCALAR_DEFAULTS = { CUSHION_GAIN, BREAKER_SELF_MARGIN };
+
+function setTuning(opts) {
+  if (!opts) {
+    for (const [name, table] of Object.entries(TUNING_TABLES)) {
+      for (const k of Object.keys(table)) delete table[k];
+      Object.assign(table, JSON.parse(JSON.stringify(TUNING_TABLE_DEFAULTS[name])));
+    }
+    CUSHION_GAIN = TUNING_SCALAR_DEFAULTS.CUSHION_GAIN;
+    BREAKER_SELF_MARGIN = TUNING_SCALAR_DEFAULTS.BREAKER_SELF_MARGIN;
+    return;
+  }
+  for (const [name, perPersona] of Object.entries(opts.tables || {})) {
+    const table = TUNING_TABLES[name];
+    if (!table) throw new Error('setTuning: unknown table ' + name);
+    for (const [persona, value] of Object.entries(perPersona)) {
+      table[persona] = (value && typeof value === 'object' && table[persona]
+        && typeof table[persona] === 'object')
+        ? { ...table[persona], ...value }
+        : value;
+    }
+  }
+  if (opts.CUSHION_GAIN !== undefined) CUSHION_GAIN = opts.CUSHION_GAIN;
+  if (opts.BREAKER_SELF_MARGIN !== undefined) BREAKER_SELF_MARGIN = opts.BREAKER_SELF_MARGIN;
+}
+
+function tuningConfig() {
+  return {
+    tables: JSON.parse(JSON.stringify(TUNING_TABLES)),
+    CUSHION_GAIN, BREAKER_SELF_MARGIN,
+  };
+}
+
 module.exports = {
   scheduleBotAction, cancelBotTimeout,
   // Exported for simulation harness
@@ -4155,6 +4207,8 @@ module.exports = {
     // §3.10j the sandbag (scratchpad/spec-sandbag.md, test/bot-sandbag.test.js) and the
     // always-on completer discard tier (test/bot-discard-completer.test.js).
     SANDBAG, setSandbag, sandbagConfig, sandbagHeld, sandbagRelease, completesASet,
+    // The inert parameter-override hook (see its header above module.exports).
+    setTuning, tuningConfig,
     getAllPayableCardIds, chooseDiscards, isNeverDiscarded, findResponder: function(state) {
       return G.pendingResponders(state)[0] || null;
     },

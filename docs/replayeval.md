@@ -51,11 +51,34 @@ node tools/replayeval.mjs --log logs/production-games.jsonl \
 ```
 
 Policies: the five lobby personas plus `humanlike`, `persona@scale` variants, and
-evaluation-only wrappers `cashfloor:<mode>` / `nocompleter:<mode>` (defined inside
-`tools/lib/replay.js`; **bot.js is untouched** — a test asserts it). `--baseline
-recorded` compares the subject's first action against the recorded one with both arms
-continuing under identical policies (isolates the decision); a policy baseline rolls each
-arm's seat under its own policy for the whole continuation (prices a persistent change).
+evaluation-only wrappers (defined inside `tools/lib/replay.js`; **bot.js live behavior is
+untouched** — a test asserts it). `--baseline recorded` compares the subject's first
+action against the recorded one with both arms continuing under identical policies
+(isolates the decision); a policy baseline rolls each arm's seat under its own policy for
+the whole continuation (prices a persistent change).
+
+* `cashfloor:<mode>` — round 12b's rejected cash floor: substitute a bank play for a
+  NON-COMPLETING property play while the bank cannot cover the largest charge the table
+  can print at us (max opponent rent, floor 5M for Finance Office).
+* `nocompleter:<mode>` — deliberately lobotomized (refuses set completions); exists to
+  prove the instrument discriminates.
+* `sandbag@<weight>:<mode>` — §3.10j sandbagging through **bot.js's own shelved
+  implementation** (`setSandbag`/`sandbagGate`/the once-per-turn cached roll), not a
+  re-derivation. The module-global flag is arm-scoped: enabled immediately before each
+  `decide()`/`chooseDiscards()` this policy makes and restored to defaults after, so it
+  cannot leak into the other arm or a continuation seat. Leak-proofed by a gate:
+  `sandbag@0` vs the bare persona is EXACTLY zero (a zero weight consumes no rnd() by
+  `sandbagGate`'s own design), and the flag is asserted off after a whole evaluation.
+* `rentlev:<mode>` — round 12's closing note (§3.10f direction) as a policy. EXACT
+  definition: when the base policy chose a build/bank play (`play_money`, or a
+  `play_property` that does not complete a set) AND an opponent is in the window —
+  non-eliminated, not on final approach, holding exactly `setsToWin - 1` completed sets,
+  bank ≤ 9M, at least one payable card (round 10: never a charge that collects
+  nothing) — substitute the best collectible charge in hand aimed at them: wild rent at
+  our highest-rent color (rent > 0) > Finance Office > color rent (rent > 0; the window
+  seat is in every color rent's blast) > Roll Call. Everything else the base chose —
+  its own charges, completions, breaker shots, defense, rearranges, passes — is
+  untouched. Deterministic; consumes no rnd().
 
 ## Validation (2026-08-20, this corpus)
 
@@ -91,6 +114,51 @@ production neutral actually faced. The rejection stands, now with a number on it
 (The wrapper re-derives round 12b's first cut — "bank while the bank cannot cover the
 largest charge the table can print at you", completions exempt — from its description;
 the original experimental diff was never committed.)
+
+## Second use: the two remaining shelved ideas, re-priced (2026-08-20)
+
+All runs on the production corpus at the subject mode's own decision points (neutral:
+3,236 points / 153 games; aggressive: 2,035), `--rollouts 24` divergence-gated and
+`--rollouts 12` whole-trajectory (`--at all`), cluster bootstrap CIs by game.
+
+**Sandbagging (§3.10j), priced through its own shelved implementation:**
+
+| run | divergent pts | delta | 95% CI |
+|---|---:|---:|---|
+| sandbag@0.20:neutral (gated) | 2 / 3,236 | +4.17pp | [−8.33, +16.67] |
+| sandbag@0.52:neutral (gated) | 3 / 3,236 | +4.17pp | [0, +8.33] |
+| sandbag@0.90:neutral (gated) | 4 / 3,236 | +0.00pp | [−6.25, +8.33] |
+| sandbag@0.52:aggressive (gated) | 4 / 2,035 | +1.04pp | [0, +3.12] |
+| **sandbag@0.52:neutral, whole-trajectory, all 3,236 points** | held 624× | **+0.05pp** | **[0.00, +0.10]** |
+
+The structural finding is the divergence column: **the sandbag gate almost never opens
+at real production states** — 71 of the 153 games play `instant`/`mdFaithful`, which the
+winrule valve refuses outright, and the bank/shield/hand-limit/no-breakers valves close
+most of the rest. Applied persistently across every real neutral decision point it is
+**flat (+0.05pp)** — round 13's simhuman null, confirmed at real states by a second
+independent instrument. Twice measured, twice null: `SANDBAG_ENABLED = false` stands.
+
+**Rent-leverage window (round 12's closing note), per the wrapper definition above:**
+
+| run | divergent pts | delta | 95% CI |
+|---|---:|---:|---|
+| rentlev:neutral (gated) | 17 / 3,236 | −1.72pp | [−5.28, +3.47] |
+| rentlev:aggressive (gated) | 2 / 2,035 | −2.08pp | [−4.17, 0] |
+| **rentlev:neutral, whole-trajectory** | fired 5,561× | **+0.73pp** | **[+0.57, +0.88]** |
+| **rentlev:aggressive, whole-trajectory** | fired 1,666× | **+0.33pp** | **[+0.20, +0.48]** |
+
+A real effect, and an instructive one: single substituted moves price as noise (the
+window is rare at any one decision, and the base plan already fires the profitable
+charges — the wrapper's surface is the marginal 1–2M charge the plan declines), but the
+policy applied **persistently** is worth a small, CI-clean positive for both personas.
+Read with the standing caveat — deltas under bot continuation play rank policies, and
++0.7pp is far below the +3.0pp pre-registered bar §3.10j set for shipping a behavior
+change. This is "directionally right, not yet worth a live code change" — exactly what
+the round-12 note predicted ("§3.10f is the first move in that direction and it is a
+small one; the real version needs a charge to reach a player through something other
+than a wild rent").
+
+Runtimes: divergence-gated runs 0.6–1.1s each; whole-trajectory runs 31–42s each.
 
 ## Limits — read before quoting numbers
 

@@ -734,7 +734,58 @@ function modePolicy(mode) {
       return BI.decideBotPlay(state, botId, mode);
     },
     respondMode: mode,
+    respond(state, botId) { return BI.botRespondSync(state, botId, mode); },
     discard(bot, excess) { return BI.chooseDiscards(bot, excess, mode); },
+  };
+}
+
+// tuned:<dial>=<value>[,<dial>=<value>...]:<mode> — bot.js constants overridden through
+// its inert setTuning hook, ARM-SCOPED around every decide/respond/discard exactly like
+// the sandbag flag (responses matter here: the escrow's escort and the breaker bars are
+// consulted from the response path too). Dials map to the persona's own entry:
+//   urgency->BREAK_URGENCY  overpay->BREAK_OVERPAY  denyAt/escort->BREAKER_BAR
+//   awareness->CARD_AWARENESS  bait->BAIT_PATIENCE  armedbank->ARMED_BANK_BIAS
+//   order->ORDER_ATTENTION  cushionpress->CUSHION_PRESSURE
+//   cushiongain->CUSHION_GAIN (global scalar)  selfmargin->BREAKER_SELF_MARGIN (global)
+const TUNED_DIALS = {
+  urgency: 'BREAK_URGENCY', overpay: 'BREAK_OVERPAY', awareness: 'CARD_AWARENESS',
+  bait: 'BAIT_PATIENCE', armedbank: 'ARMED_BANK_BIAS', order: 'ORDER_ATTENTION',
+  cushionpress: 'CUSHION_PRESSURE',
+};
+
+function tunedPolicy(dialSpec, baseMode) {
+  const base = modePolicy(baseMode);
+  const persona = baseMode.split('@')[0];
+  const opts = { tables: {} };
+  for (const pair of dialSpec.split(',')) {
+    const [k, raw] = pair.split('=');
+    const v = raw === 'true' ? true : raw === 'false' ? false : Number(raw);
+    if (TUNED_DIALS[k]) {
+      (opts.tables[TUNED_DIALS[k]] ||= {})[persona] = v;
+    } else if (k === 'denyAt' || k === 'escort') {
+      (opts.tables.BREAKER_BAR ||= {})[persona] = { ...(opts.tables.BREAKER_BAR?.[persona] || {}), [k]: v };
+    } else if (k === 'holdback') {
+      (opts.tables.HOLDBACK ||= {})[persona] = [v, v];
+    } else if (k === 'cushiongain') {
+      opts.CUSHION_GAIN = v;
+    } else if (k === 'selfmargin') {
+      opts.BREAKER_SELF_MARGIN = v;
+    } else {
+      throw new Error('unknown tuning dial: ' + k);
+    }
+  }
+  const scoped = (fn) => {
+    BI.setTuning(opts);
+    try { return fn(); } finally { BI.setTuning(null); }
+  };
+  return {
+    ...base,
+    name: `tuned:${dialSpec}:${baseMode}`,
+    stats: { scopedCalls: 0 },
+    tuningOpts: opts,
+    decide(state, botId) { this.stats.scopedCalls++; return scoped(() => base.decide(state, botId)); },
+    respond(state, botId) { return scoped(() => base.respond(state, botId)); },
+    discard(bot, excess) { return scoped(() => base.discard(bot, excess)); },
   };
 }
 
@@ -945,6 +996,8 @@ function makePolicy(spec) {
   if (spec.startsWith('cashfloor:')) return cashFloorPolicy(spec.slice('cashfloor:'.length));
   if (spec.startsWith('nocompleter:')) return noCompleterPolicy(spec.slice('nocompleter:'.length));
   if (spec.startsWith('rentlev:')) return rentLeveragePolicy(spec.slice('rentlev:'.length));
+  const tuned = /^tuned:(.+):([a-z@0-9.]+)$/.exec(spec);
+  if (tuned) return tunedPolicy(tuned[1], tuned[2]);
   const sandbag = /^sandbag@([0-9.]+):(.+)$/.exec(spec);
   if (sandbag) return sandbagPolicy(Number(sandbag[1]), sandbag[2]);
   const persona = spec.split('@')[0];
@@ -981,7 +1034,13 @@ function rollout(snapshot, policies, { seed, firstAction = null, seatId }) {
     while (state.phase === 'playing' && safety-- > 0 && state.turnCounter <= MAX_ROLLOUT_TURNS) {
       if (state.pendingAction) {
         const rid = BI.findResponder(state);
-        if (rid) { BI.botRespondSync(state, rid, (policies.get(rid) || modePolicy('neutral')).respondMode); continue; }
+        if (rid) {
+          const pol = policies.get(rid) || modePolicy('neutral');
+          // Through the policy, not straight to botRespondSync: tuned/oracle wrappers
+          // must be able to scope their overrides around the RESPONSE path too.
+          if (pol.respond) pol.respond(state, rid); else BI.botRespondSync(state, rid, pol.respondMode);
+          continue;
+        }
         state.pendingAction = null; state.turnPhase = 'play';
         continue;
       }
@@ -1208,7 +1267,7 @@ module.exports = {
   loadRecords, reconstruct, verifySeeded, makeRiggedState, makeSeededState,
   stateProjection, boardProjection, snapshotState, reviveState, determinize,
   makePolicy, modePolicy, cashFloorPolicy, noCompleterPolicy, sandbagPolicy,
-  rentLeveragePolicy, continuationPolicies,
+  rentLeveragePolicy, tunedPolicy, continuationPolicies,
   rollout, evaluate, decideAt, canonicalAction, wilson, clusterBootstrapCI,
   ReplayError, drive, verifyFinalBoards,
 };

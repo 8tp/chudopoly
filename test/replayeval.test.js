@@ -264,6 +264,57 @@ test('rentlev wrapper: substitutes a collectible charge at the 2-set window, els
   assert.deepEqual(wrapped, bare, 'outside the window the wrapper is the base policy');
 });
 
+/* ── 3c. the setTuning hook and the tuned: wrapper ───────────────────── */
+
+test('setTuning: overrides bind, restore is exact, and the tuned wrapper never leaks', () => {
+  const before = JSON.stringify(BI.tuningConfig());
+  BI.setTuning({
+    tables: { BREAK_URGENCY: { neutral: 0.123 }, BREAKER_BAR: { neutral: { escort: false } } },
+    CUSHION_GAIN: 999, BREAKER_SELF_MARGIN: 2,
+  });
+  const mid = BI.tuningConfig();
+  assert.equal(mid.tables.BREAK_URGENCY.neutral, 0.123, 'table override binds');
+  assert.equal(mid.tables.BREAKER_BAR.neutral.escort, false, 'nested merge binds');
+  assert.equal(mid.tables.BREAKER_BAR.neutral.denyAt, 1, 'nested merge preserves siblings');
+  assert.equal(mid.CUSHION_GAIN, 999, 'scalar override binds');
+  BI.setTuning(null);
+  assert.equal(JSON.stringify(BI.tuningConfig()), before, 'restore is EXACT, byte for byte');
+
+  // Scoping null: a tuned policy carrying the SHIPPED values must be behaviourally
+  // identical to the bare persona — exactly zero, or the scoping itself perturbs streams.
+  const res = R.evaluate([RECORD_A], {
+    subject: 'tuned:urgency=0.9:neutral', baseline: 'neutral', rollouts: 2, at: 'all',
+    maxPoints: 8, seed: 'tune-null', focus: 'human',
+  });
+  assert.equal(res.meanDelta, 0, 'shipped-value tuning is the bare persona, exactly');
+  assert.equal(res.divergent, 0);
+  assert.equal(JSON.stringify(BI.tuningConfig()), before, 'defaults intact after a whole evaluation');
+});
+
+test('a tuned dial provably CHANGES behaviour: holdback=0 through the hook equals @0', () => {
+  // The @scale suffix and the HOLDBACK table are two doors to the same constant; driving
+  // one through setTuning and the other through holdScaleOf must produce identical
+  // decisions on identical streams — a behavioural bind proof with a known-good referee.
+  const { decisions } = R.reconstruct(RECORD_A, { focusSeats: ['p0'] });
+  let checked = 0, diffsVsBase = 0;
+  for (const dp of decisions.slice(0, 25)) {
+    const seedS = 'tune-bind:' + dp.meta.index;
+    const viaHook = R.decideAt(dp.snapshot, 'p0', R.makePolicy('tuned:holdback=0:neutral'), seedS);
+    const viaScale = R.decideAt(dp.snapshot, 'p0', R.makePolicy('neutral@0'), seedS);
+    const bare = R.decideAt(dp.snapshot, 'p0', R.makePolicy('neutral'), seedS);
+    const st = R.reviveState(dp.snapshot);
+    assert.deepEqual(R.canonicalAction(st, 'p0', viaHook), R.canonicalAction(st, 'p0', viaScale),
+      'the hook and the @scale door must agree');
+    if (JSON.stringify(R.canonicalAction(st, 'p0', viaHook))
+      !== JSON.stringify(R.canonicalAction(st, 'p0', bare))) diffsVsBase++;
+    checked++;
+  }
+  assert.ok(checked >= 20);
+  // Round 13's lesson: prove the knob DID something somewhere, or the equality above
+  // could be three copies of the same broken zero.
+  assert.ok(diffsVsBase > 0, 'holdback=0 must actually change at least one decision vs bare');
+});
+
 /* ── 4. determinization conserves the deck ───────────────────────────── */
 
 test('determinized rollout decks are exactly the unseen multiset', () => {

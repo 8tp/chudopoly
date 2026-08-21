@@ -160,6 +160,110 @@ test('the cashfloor wrapper is live, inert-by-default elsewhere, and bot.js is u
   assert.ok(policy.name.startsWith('cashfloor:'));
 });
 
+/* ── 3b. the sandbag and rent-leverage wrappers (evaluation-only) ────── */
+
+// A state sandbagGate() passes on: default winRule, not armed, one set short of the
+// gate's winningset valve, low bank, small hand with a plain completer plus something
+// else, breakers unseen, no shield. Built from a real createGame state so every field
+// the planner reads exists.
+function sandbagReadyState() {
+  const state = G.createGame([
+    { id: 'p0', name: 'a' }, { id: 'p1', name: 'b' }, { id: 'p2', name: 'c' },
+  ], { seed: 'sandbag-fixture' });
+  const p0 = state.players[0];
+  const take = (pred) => {
+    const i = state.deck.findIndex(pred);
+    assert.ok(i >= 0, 'fixture card present in deck');
+    return state.deck.splice(i, 1)[0];
+  };
+  // Everything p0 holds is rebuilt from real deck cards, engine-legal.
+  for (const c of p0.hand.splice(0)) state.deck.push(c);
+  const browns = [take(c => c.color === 'brown'), take(c => c.color === 'brown')];
+  p0.properties = { brown: [{ ...browns[0], placedColor: 'brown' }] };
+  p0.bank = [];
+  p0.hand = [browns[1], take(c => c.type === 'money' && c.value === 1)];
+  state.currentPlayerIndex = 0;
+  state.turnPhase = 'play';
+  state.playsRemaining = 3;
+  return { state, completerId: browns[1].id };
+}
+
+test('sandbag wrapper: bot.js machinery fires under the scope, and the flag never leaks', () => {
+  const { state, completerId } = sandbagReadyState();
+  const pol = R.makePolicy('sandbag@1:neutral');
+  assert.equal(BI.sandbagConfig().enabled, false, 'flag off before');
+  BI.setRng(G.makeRng('bot:sandbag-gate'));
+  const action = pol.decide(state, 'p0');
+  BI.setRng(null);
+  assert.equal(BI.sandbagConfig().enabled, false, 'flag restored after — arm-scoped');
+  assert.equal(pol.stats.held, 1, 'the shelved §3.10j implementation held the completer');
+  if (action && action.type === 'play_property') {
+    const played = state.players[0].hand[action.cardIndex];
+    assert.notEqual(played.id, completerId, 'a held completer is not the card played');
+  }
+  // Weight 0 consumes no rnd() (sandbagGate returns before the roll), so sandbag@0
+  // must be behaviourally IDENTICAL to the bare persona — the leak-proof null.
+  const res = R.evaluate([RECORD_A], {
+    subject: 'sandbag@0:neutral', baseline: 'neutral', rollouts: 2, at: 'all',
+    maxPoints: 8, seed: 'sandbag-null', focus: 'human',
+  });
+  assert.equal(res.meanDelta, 0, 'sandbag@0 vs bare: exactly zero — no leakage, no stream drift');
+  assert.equal(res.divergent, 0);
+  assert.equal(BI.sandbagConfig().enabled, false, 'flag off after a whole evaluation');
+});
+
+test('rentlev wrapper: substitutes a collectible charge at the 2-set window, else passes through', () => {
+  const state = G.createGame([
+    { id: 'p0', name: 'a' }, { id: 'p1', name: 'b' }, { id: 'p2', name: 'c' },
+  ], { seed: 'rentlev-fixture3' });
+  const p0 = state.players[0], p1 = state.players[1];
+  const take = (pred) => {
+    const i = state.deck.findIndex(pred);
+    assert.ok(i >= 0, 'fixture card present in deck');
+    return state.deck.splice(i, 1)[0];
+  };
+  for (const c of p0.hand.splice(0)) state.deck.push(c);
+  for (const c of p1.hand.splice(0)) state.deck.push(c);
+  // p1 in the window: exactly 2 completed sets, tiny bank, payable cards on the board.
+  p1.properties = {
+    brown: [take(c => c.color === 'brown'), take(c => c.color === 'brown')].map(c => ({ ...c, placedColor: 'brown' })),
+    intel: [take(c => c.color === 'intel'), take(c => c.color === 'intel')].map(c => ({ ...c, placedColor: 'intel' })),
+  };
+  p1.bank = [take(c => c.type === 'money' && c.value === 1)];
+  // p0 owns one lightblue and holds a 1M brown/lightblue rent the base policy DECLINES
+  // (probed: it lays the pink property instead — a 3M darkblue rent it fires itself, so
+  // the wrapper's real surface is exactly the marginal charge the plan skips). The note's
+  // case: a small collectible charge, spent into the window instead of building.
+  const rentCard = take(c => c.type === 'rent' && c.colors[0] !== 'any' && c.colors.includes('lightblue'));
+  p0.properties = { lightblue: [{ ...take(c => c.color === 'lightblue'), placedColor: 'lightblue' }] };
+  p0.hand = [
+    rentCard,
+    take(c => c.color === 'pink'),
+    take(c => c.type === 'money' && c.value === 2),
+  ];
+  state.currentPlayerIndex = 0;
+  state.turnPhase = 'play';
+  state.playsRemaining = 3;
+
+  const pol = R.makePolicy('rentlev:neutral');
+  BI.setRng(G.makeRng('bot:rlg3'));
+  const action = pol.decide(state, 'p0');
+  BI.setRng(null);
+  assert.equal(pol.stats.triggered, 1, 'the window must fire on this state');
+  assert.equal(action.type, 'play_action');
+  assert.equal(state.players[0].hand[action.cardIndex].id, rentCard.id, 'the declined rent is the substitution');
+  assert.equal(action.targetColor, 'lightblue', 'charging the color we can actually collect on');
+  // Color rents hit the whole table, so the window seat p1 is in the blast by construction.
+
+  // No window (fresh game, nobody near 2 sets): pass-through must be byte-identical.
+  const fresh = G.createGame([{ id: 'p0', name: 'a' }, { id: 'p1', name: 'b' }], { seed: 'rentlev-null' });
+  BI.setRng(G.makeRng('bot:rentlev-null'));
+  const wrapped = R.makePolicy('rentlev:neutral').decide(fresh, G.currentPlayer(fresh).id);
+  BI.setRng(G.makeRng('bot:rentlev-null'));
+  const bare = R.makePolicy('neutral').decide(fresh, G.currentPlayer(fresh).id);
+  assert.deepEqual(wrapped, bare, 'outside the window the wrapper is the base policy');
+});
+
 /* ── 4. determinization conserves the deck ───────────────────────────── */
 
 test('determinized rollout decks are exactly the unseen multiset', () => {

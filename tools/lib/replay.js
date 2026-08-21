@@ -815,10 +815,138 @@ function noCompleterPolicy(baseMode) {
   };
 }
 
+// §3.10j sandbagging, priced through bot.js's OWN shelved implementation — setSandbag/
+// sandbagGate/sandbagRoll — not a re-derivation. SANDBAG_ENABLED is process-global module
+// state, so it is ARM-SCOPED: enabled immediately before every decide()/discard() this
+// policy makes and restored to defaults immediately after, so it can never leak into the
+// other arm, a baseline policy, or a continuation seat. Leak-proof is gated by a null
+// test (sandbag@0 vs bare must be EXACTLY zero — a zero weight consumes no rnd() by
+// sandbagGate's own design, so the streams must be identical) and by asserting the
+// global flag is off after an evaluation.
+function sandbagPolicy(weight, baseMode) {
+  const base = modePolicy(baseMode);
+  const persona = baseMode.split('@')[0];
+  const w = Number(weight);
+  if (!Number.isFinite(w) || w < 0 || w > 1) throw new Error('sandbag weight must be 0..1: ' + weight);
+  const scoped = (fn) => {
+    BI.setSandbag({ enabled: true, weights: { [persona]: w } });
+    try { return fn(); } finally { BI.setSandbag(null); }
+  };
+  return {
+    ...base,
+    name: `sandbag@${w}:${baseMode}`,
+    stats: { held: 0 },
+    decide(state, botId) {
+      return scoped(() => {
+        const action = base.decide(state, botId);
+        // Knob telemetry: sandbagRoll caches per (turn, bot, card), so this second query
+        // costs no extra rnd() when the planner already rolled, and the same single roll
+        // when it did not — either way it is part of THIS policy's stream, applied on
+        // every decide, so pairing stays deterministic.
+        const bot = G.getPlayer(state, botId);
+        if (bot && BI.sandbagHeld(state, bot, botId, persona).length) this.stats.held++;
+        return action;
+      });
+    },
+    discard(bot, excess) {
+      return scoped(() => base.discard(bot, excess));   // the absolute completer tier reads the flag too
+    },
+  };
+}
+
+// Round 12's closing note (§3.10f direction), as an evaluation-only policy. EXACT
+// DEFINITION — the number this prices is only as meaningful as this paragraph:
+// When the base policy chose a BUILD or BANK play (play_money, or a play_property that
+// does not complete one of our sets), and some opponent W is IN THE WINDOW —
+// non-eliminated, NOT on final approach, holding exactly setsToWin-1 completed sets
+// (the note's "between the second set and the third"), bank value <= 9M (the note's
+// "bank is still 4-9M"), and holding at least one payable card (round 10's rule: never
+// a charge that collects nothing) — then substitute the best collectible charge in hand
+// aimed at W, in priority order:
+//   1. wild rent, targeted at W, charging our highest-rent color (rent > 0);
+//   2. Finance Office at W (5M);
+//   3. a color rent whose eligible color we can charge for rent > 0 (color rents hit
+//      the whole table, W included);
+//   4. Roll Call (2M from everyone, W included).
+// Anything else the base policy chose — charges, completions, breaker shots, defense,
+// rearranges, end-turn — passes through untouched. Deterministic; consumes no rnd().
+function rentLeveragePolicy(baseMode) {
+  const base = modePolicy(baseMode);
+  return {
+    ...base,
+    name: 'rentlev:' + baseMode,
+    stats: { triggered: 0 },
+    decide(state, botId) {
+      const action = base.decide(state, botId);
+      if (!action) return action;
+      const bot = G.getPlayer(state, botId);
+      if (!bot) return action;
+
+      const isBank = action.type === 'play_money';
+      let isBuild = false;
+      if (action.type === 'play_property') {
+        const card = bot.hand[action.cardIndex];
+        if (card) {
+          const color = action.targetColor || card.color;
+          const size = G.COLORS[color] ? G.COLORS[color].size : 99;
+          isBuild = ((bot.properties[color] || []).length + 1) < size;   // completions pass through
+        }
+      }
+      if (!isBank && !isBuild) return action;
+
+      const win = G.setsToWinOf(state);
+      const target = state.players.find(p => p.id !== botId && !p.eliminated
+        && !p.finalApproach
+        && G.completedSets(p) === win - 1
+        && (p.bank || []).reduce((s, c) => s + (c.value || 0), 0) <= 9
+        && G.payableCards(p).length > 0);
+      if (!target) return action;
+
+      const charge = bestChargeAt(state, bot, target);
+      if (!charge) return action;
+      this.stats.triggered++;
+      return charge;
+    },
+  };
+}
+
+function bestChargeAt(state, bot, target) {
+  let wildRent = null, finance = null, colorRent = null, rollCall = null;
+  for (let i = 0; i < bot.hand.length; i++) {
+    const c = bot.hand[i];
+    if (c.type === 'rent') {
+      const colors = (c.colors[0] === 'any')
+        ? Object.keys(bot.properties || {})
+        : c.colors.filter(col => (bot.properties[col] || []).length > 0);
+      let bestColor = null, bestRent = 0;
+      for (const col of colors) {
+        const r = G.calcRent(bot, col);
+        if (r > bestRent) { bestRent = r; bestColor = col; }
+      }
+      if (!bestColor) continue;
+      if (c.colors[0] === 'any') {
+        if (!wildRent || bestRent > wildRent.rent) {
+          wildRent = { rent: bestRent, action: { type: 'play_action', cardIndex: i, targetColor: bestColor, targetId: target.id } };
+        }
+      } else if (!colorRent || bestRent > colorRent.rent) {
+        colorRent = { rent: bestRent, action: { type: 'play_action', cardIndex: i, targetColor: bestColor } };
+      }
+    } else if (c.action === 'finance_office' && !finance) {
+      finance = { action: { type: 'play_action', cardIndex: i, targetId: target.id } };
+    } else if (c.action === 'roll_call' && !rollCall) {
+      rollCall = { action: { type: 'play_action', cardIndex: i } };
+    }
+  }
+  return (wildRent || finance || colorRent || rollCall)?.action || null;
+}
+
 function makePolicy(spec) {
   if (typeof spec !== 'string') throw new Error('policy spec must be a string');
   if (spec.startsWith('cashfloor:')) return cashFloorPolicy(spec.slice('cashfloor:'.length));
   if (spec.startsWith('nocompleter:')) return noCompleterPolicy(spec.slice('nocompleter:'.length));
+  if (spec.startsWith('rentlev:')) return rentLeveragePolicy(spec.slice('rentlev:'.length));
+  const sandbag = /^sandbag@([0-9.]+):(.+)$/.exec(spec);
+  if (sandbag) return sandbagPolicy(Number(sandbag[1]), sandbag[2]);
   const persona = spec.split('@')[0];
   if (!BASE_MODES.includes(persona)) throw new Error('unknown policy: ' + spec);
   return modePolicy(spec);
@@ -1079,7 +1207,8 @@ function decideAt(snapshot, seatId, policy, seed) {
 module.exports = {
   loadRecords, reconstruct, verifySeeded, makeRiggedState, makeSeededState,
   stateProjection, boardProjection, snapshotState, reviveState, determinize,
-  makePolicy, modePolicy, cashFloorPolicy, noCompleterPolicy, continuationPolicies,
+  makePolicy, modePolicy, cashFloorPolicy, noCompleterPolicy, sandbagPolicy,
+  rentLeveragePolicy, continuationPolicies,
   rollout, evaluate, decideAt, canonicalAction, wilson, clusterBootstrapCI,
   ReplayError, drive, verifyFinalBoards,
 };

@@ -68,6 +68,64 @@ leaves.** Reaching 30–35% would need new bot capability (the round-12 closing 
 "a charge that reaches a player through something other than a wild rent" is still the
 most promising unbuilt direction; its cheap approximation priced +0.73pp).
 
+## Lever 2, completed: the full dial sweep (setTuning hook)
+
+The first sweep covered only the hookless dials; this pass added `setTuning` — an
+inert constant-override hook in bot.js (setSandbag's mold; PROVEN inert: simbalance
+`--games 900 --seed r12base` reproduces the recorded round-13 grid exactly, restore
+is byte-exact, and gates assert defaults intact after every evaluation) — and swept
+the named constant families at production states (whole-trajectory, rollouts 12,
+cluster bootstrap by game). NOT hookable, stated: `shouldPlayOpsecDecision`'s shield
+switch and the inline "rent >= 4"-style charge-timing bars are branch literals, not
+constants; hooking them would rewrite live decision code.
+
+| dial (family) | setting | persona | delta | 95% CI |
+|---|---|---|---:|---|
+| BREAK_URGENCY (§3.10 break) | 0.85→1 | conservative | +0.25pp | [+0.06, +0.43] |
+| BREAKER_BAR.escort (§3.10c) | true→false | conservative | +0.23pp | [+0.08, +0.37] |
+| BREAKER_BAR.escort (§3.10c) | true→false | neutral | +0.20pp | [−0.01, +0.39] |
+| BREAK_OVERPAY (round 12) | 0.55→0.9 | conservative | +0.17pp | [+0.02, +0.31] |
+| BREAKER_BAR.denyAt (§3.10c) | 1→2 | neutral | +0.10pp | [−0.17, +0.37] |
+| BREAK_URGENCY | 0.9→1 | neutral | +0.07pp | [−0.03, +0.18] |
+| CARD_AWARENESS (round 11) | 0.75→1 | aggressive | +0.03pp | [−0.05, +0.13] |
+| BREAKER_SELF_MARGIN | 1→2 | neutral | +0.01pp | [−0.07, +0.09] |
+| CUSHION_PRESSURE (§3.10f) | 0.7→1 | aggressive | +0.01pp | [−0.00, +0.03] |
+| CUSHION_GAIN (§3.10f) | 10→20, 10→30 | neutral | ±0.01pp | null (0 divergent) |
+| BAIT_PATIENCE (round 12) | 0.65→0 | neutral | −0.03pp | [−0.12, +0.06] |
+| BREAK_OVERPAY | 0.75→0.95 | neutral | −0.02pp | [−0.10, +0.07] |
+| HOLDBACK (via @scale, earlier) | →0 | n/c/a | +0.8 to +1.6pp | (see table above) |
+
+**Every constant dial prices at ≤ +0.25pp** — an order of magnitude under the +3.0pp
+bar; the holdback remains the only ≥ +1pp knob in the file. Claim 1 is now evidenced
+in full, not asserted.
+
+## The oracle-charge ceiling: is low-30s reachable with today's deck?
+
+`oracle:<mode>` (exact definition in tools/lib/replay.js) plays charges as well as
+the cards allow: window awareness, calcRent-maximal color choice, targeted wild
+rents, §3.1c-legal surge stacking when doubling crosses the victim's bank, holding
+charges for the window, never a charge that collects nothing. Priced whole-trajectory
+at production states, with a no-holding decomposition arm (`oraclenh:`):
+
+| policy | vs | delta | 95% CI | note |
+|---|---|---:|---|---|
+| oraclenh:neutral (window+surge, no hold) | neutral | **+0.84pp** | [+0.52, +1.18] | the ceiling |
+| oracle:neutral (full, with holding) | neutral | −0.46pp | [−0.89, −0.01] | holding costs ~1.3pp |
+| oraclenh:aggressive | aggressive | −0.71pp | [−1.03, −0.40] | aggressive already beats it |
+| oracle:aggressive | aggressive | −1.11pp | [−1.61, −0.61] | — |
+
+And stacked on the recommended bench (same-loop comparison, 6,000 games each): plain
+AAC 19.7% proxy rate; oraclenh-AAC **20.5%** — the "optimized" bench is slightly
+EASIER. Three independent reads agree: the charge-play headroom with today's deck is
+**≈ +0.8pp at best** (neutral only), aggressive's shipped charge logic is already at
+or above this oracle's level, and charge holding is actively harmful. **The low-30s
+is not reachable by playing today's cards better; the design-change conclusion is
+real** — round 12's note named the requirement ("a charge that reaches a player
+through something other than a wild rent"), i.e., new card text or rules, not new
+heuristics. Weakest link, named: the oracle is one concrete definition of optimal
+charge play (greedy, window-focused); a stronger oracle could exist — but the fact
+that aggressive's own plan beats this one argues the remaining headroom is small.
+
 ## Recommendation
 
 **Change the quick-play bench to [aggressive, aggressive, conservative].** Projected
@@ -91,5 +149,17 @@ weeks of post-ship production games re-measures the true rate with this same cor
 pipeline.
 
 The prepared change (bench swap in server/handlers.js quick_play, comment updated
-with these measurements) sits as the final commit on this branch, **awaiting owner
+with these measurements) sits on this branch as commit `40190c0`, **awaiting owner
 approval**.
+
+## Revised bottom line (after the completed dial sweep and the oracle ceiling)
+
+Nothing found deepens the projection below AAC's ~39.8%: the full constant sweep
+tops out at +0.25pp per dial, the charge-play oracle tops out at +0.84pp for one
+persona and is negative for the strongest one, and stacking the oracle on AAC moved
+the proxy the WRONG way. **AAC alone remains the recommendation, projecting the top
+edge of the 30–40 band.** Reaching the band's lower half requires either a rules or
+deck change (round 12's un-built "charge that reaches a player through something
+other than a wild rent"), or genuinely new planning capability — both are design
+decisions, not tuning. The free check stays free: two weeks of post-ship production
+games re-measures the true human rate through the same corpus pipeline.

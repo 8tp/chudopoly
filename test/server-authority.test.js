@@ -472,6 +472,47 @@ test('quick_play/leave_room cycles do not accumulate rooms', async () => {
   shut(ws);
 });
 
+// Production incident 2026-08-20 (room L2NR): office wifi killed every long-lived
+// connection at once — all three humans dropped within 15s, flapped, and the room was
+// deleted mid-game with the LAST player only 10s gone, because the one reap timer was
+// armed by the FIRST drop and billed its whole window to whoever dropped last. A live
+// multi-human table now gets CHUD_REAP_PLAYING_MS (default 4x the base window), measured
+// from the last human departure.
+test('a live multi-human game outlives the short reap window, measured from the LAST drop', async () => {
+  const host = await openClient();
+  send(host, { type: 'create_room', name: 'OfficeA' });
+  const hj = await waitFor(host, m => m.type === 'joined');
+  assert.ok(hj, 'host joined');
+  const guest = await openClient();
+  send(guest, { type: 'join_room', code: hj.code, name: 'OfficeB' });
+  assert.ok(await waitFor(guest, m => m.type === 'joined'), 'guest joined');
+  send(host, { type: 'start_game', turnTimeout: 60, responseTimeout: 30 });
+  assert.ok(await waitFor(host, m => m.type === 'state' && m.phase === 'playing'), 'game started');
+
+  // The office wifi scenario: both humans drop, the second one later than the first.
+  host._socket.destroy();
+  await sleep(Math.floor(REAP_MS * 0.6));
+  guest._socket.destroy();
+
+  // Past the SHORT window (which the OLD code would have enforced): still reclaimable.
+  await sleep(REAP_MS + 500);
+  const back = await openClient();
+  send(back, { type: 'reconnect', code: hj.code, playerId: hj.playerId, resumeToken: hj.resumeToken });
+  assert.ok(await waitFor(back, m => m.type === 'joined', 2000),
+    'the seat survives a wifi blip longer than the base reap window');
+
+  // And the long window is a grace, not immortality: once the last human is gone for the
+  // full playing window, the room is collected like any other.
+  back._socket.destroy();
+  await sleep(REAP_MS * 4 + 1500);
+  const probe = await openClient();
+  send(probe, { type: 'join_room', code: hj.code, name: 'Probe' });
+  const refusal = await waitFor(probe, m => m.type === 'error', 2000);
+  assert.ok(refusal && /not found/i.test(refusal.message),
+    'the abandoned multi-human room is eventually collected');
+  shut(host, guest, back, probe);
+});
+
 test('a flapping connection arms one reaper per room, not one per disconnect', async () => {
   const ws = await openClient();
   send(ws, { type: 'quick_play', name: 'Flap' });

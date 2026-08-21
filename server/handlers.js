@@ -120,6 +120,22 @@ function clearBotWatchdog(room) {
 
 // How long an abandoned room is kept alive so a dropped player can come back.
 const REAP_DELAY_MS = Math.max(50, Number(process.env.CHUD_REAP_MS) || 30000);
+// A LIVE game between two or more humans gets a longer window. Production incident,
+// 2026-08-20 ~17:58 UTC (room L2NR): the office network dropped every long-lived
+// connection at once while short HTTP kept flowing — all three humans fell off within
+// 15 seconds, flapped back, dropped again, and the room was deleted mid-game with the
+// last player only 10s gone. A multi-human table is the most expensive thing on the
+// server to lose and the cheapest to keep; solo/quick-play rooms stay on the SHORT
+// window on purpose, so an abandoned bot table is still collected before it can play
+// itself out and pollute the game log (see the immortal-rooms defect below).
+const REAP_PLAYING_GRACE_MS = Math.max(REAP_DELAY_MS,
+  Number(process.env.CHUD_REAP_PLAYING_MS) || REAP_DELAY_MS * 4);
+
+function reapDelayFor(room) {
+  const humanSeats = room.players.filter(p => !p.isBot || p._wasHuman).length;
+  if (room.state?.phase === 'playing' && humanSeats >= 2) return REAP_PLAYING_GRACE_MS;
+  return REAP_DELAY_MS;
+}
 
 // ONE reaper per room, armed by every path that can leave a room without a live human in it.
 //
@@ -130,22 +146,37 @@ const REAP_DELAY_MS = Math.max(50, Number(process.env.CHUD_REAP_MS) || 30000);
 // gamelog record (measured: 300 immortal rooms in 8.5s from 10 sockets; ~600x disk-write
 // amplification). (b) handleClose armed a fresh uncancelled 30s timeout on EVERY disconnect,
 // so a flapping connection stacked them; the `_reapTimerId` guard makes it at most one.
+//
+// The grace is measured from the LAST human departure, not from whenever the one timer
+// happened to be armed. Every call stamps `_lastHumanLeftAt` (even while other humans are
+// still connected — the stamp only matters once nobody is), and a firing timer that finds
+// the room emptied more recently than its full window re-arms for the remainder instead of
+// deleting. Without this, the timer armed by the FIRST drop billed its whole window to
+// whoever dropped last — in L2NR that turned a 30s promise into 10s of actual grace.
 function scheduleRoomReap(roomCode) {
   const room = rooms.get(roomCode);
-  if (!room || room._reapTimerId) return;
+  if (!room) return;
+  room._lastHumanLeftAt = Date.now();
+  if (room._reapTimerId) return;
+  armRoomReap(room, roomCode, reapDelayFor(room));
+}
+
+function armRoomReap(room, roomCode, delayMs) {
   room._reapTimerId = setTimeout(() => {
     const r = rooms.get(roomCode);
     if (!r) return;
     r._reapTimerId = null;
-    if (r.players.every(x => x.isBot || !x.ws || x.ws.readyState !== 1)) {
-      timers.clearTurnTimer(r);          // otherwise the deleted room keeps playing forever
-      clearBotWatchdog(r);
-      rooms.delete(roomCode);
-      console.log(`[ROOM] ${roomCode} deleted (empty)`);
-    } else {
+    if (!r.players.every(x => x.isBot || !x.ws || x.ws.readyState !== 1)) {
       broadcast.broadcastRoom(r);
+      return;
     }
-  }, REAP_DELAY_MS);
+    const remaining = reapDelayFor(r) - (Date.now() - (r._lastHumanLeftAt || 0));
+    if (remaining > 50) { armRoomReap(r, roomCode, remaining); return; }
+    timers.clearTurnTimer(r);            // otherwise the deleted room keeps playing forever
+    clearBotWatchdog(r);
+    rooms.delete(roomCode);
+    console.log(`[ROOM] ${roomCode} deleted (empty)`);
+  }, delayMs);
   room._reapTimerId.unref?.();
 }
 
@@ -388,7 +419,21 @@ function handleMessage(ws, msg, state) {
       // approaches (19.7%). `random` also makes the table measurably easier (seat 0 wins
       // 26.8%). Personalities stay unlabelled in-game per the owner's standing constraint;
       // this chooses the bench, it does not announce it.
-      for (const mode of ['neutral', 'aggressive', 'conservative']) {
+      //
+      // DOUBLE `aggressive`, DROP `neutral` — OWNER DIRECTIVE 2026-08-20 ("somewhat harder
+      // bots", solo human target 30-40%), measured in docs/harder-bots-study.md. Production
+      // truth: humans won 46.2% of 104 solo games against the old bench, and per-seat,
+      // aggressive is the ONLY near-fair-share bot against real players (26-28% of its
+      // games) while neutral is the weakest (10.7% in round 12b's paired tables). Priced
+      // with tools/benchstudy.mjs (the §3.12 human-proxy instrument, seat-rotated, 6,000
+      // games per bench, paired decks): this bench cuts the proxy's win 22.9% -> 19.7%,
+      // projecting the real-human solo rate to ~39.8% — the top edge of the target band —
+      // while IMPROVING the round-7 axes above: shot-down 50.7% vs 48.0%, contested 22.7%
+      // vs 22.2%, avg turns +0.6. Composition saturates here: even 3x aggressive only
+      // projects 38.5%, at the cost of a monotone table, and every parameter dial priced
+      // at real production states is worth ~+1pp per seat (docs/harder-bots-study.md) —
+      // reaching the band's lower half needs new bot capability, not seating.
+      for (const mode of ['aggressive', 'aggressive', 'conservative']) {
         room.players.push({ id: genId(), name: absent.generateBotName(room), ws: null, isBot: true, botMode: mode });
       }
       rooms.set(code, room);

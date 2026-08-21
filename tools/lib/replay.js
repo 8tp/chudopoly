@@ -1025,7 +1025,7 @@ function bestChargeAt(state, bot, target) {
 // applied consistently), and the chosen alternative is played instead (a null re-decide
 // means pass). At most 3 hides per decision. Charges the base fires for >= 4M, and
 // every non-charge action, pass through untouched.
-function oracleChargePolicy(baseMode) {
+function oracleChargePolicy(baseMode, { hold = true } = {}) {
   const base = modePolicy(baseMode);
   const CHARGE_ACTIONS = new Set(['finance_office', 'roll_call']);
   const isChargeCard = c => c.type === 'rent' || CHARGE_ACTIONS.has(c.action);
@@ -1127,7 +1127,9 @@ function oracleChargePolicy(baseMode) {
         return action;
       }
 
-      // Holding, outside the window.
+      // Holding, outside the window. (oraclenh: disables this branch — the decomposition
+      // arm that separates window-charging value from holding cost.)
+      if (!hold) return action;
       if (!action) return action;
       const anyArmed = state.players.some(p => p.id !== botId && !p.eliminated && p.finalApproach);
       const windowSoon = state.players.some(p => p.id !== botId && !p.eliminated
@@ -1174,6 +1176,7 @@ function oracleChargePolicy(baseMode) {
 function makePolicy(spec) {
   if (typeof spec !== 'string') throw new Error('policy spec must be a string');
   if (spec.startsWith('oracle:')) return oracleChargePolicy(spec.slice('oracle:'.length));
+  if (spec.startsWith('oraclenh:')) return oracleChargePolicy(spec.slice('oraclenh:'.length), { hold: false });
   if (spec.startsWith('cashfloor:')) return cashFloorPolicy(spec.slice('cashfloor:'.length));
   if (spec.startsWith('nocompleter:')) return noCompleterPolicy(spec.slice('nocompleter:'.length));
   if (spec.startsWith('rentlev:')) return rentLeveragePolicy(spec.slice('rentlev:'.length));

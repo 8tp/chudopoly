@@ -58,7 +58,7 @@ function wilson(wins, n, z = 1.96) {
 
 const seats = 4;
 const perSeat = Math.max(1, Math.round(totalGames / seats));
-let wins = 0, games = 0, turnSum = 0, stales = 0;
+let wins = 0, games = 0, turnSum = 0, stales = 0, armings = 0, breaks = 0, contested = 0;
 const started = Date.now();
 
 for (let s = 0; s < seats; s++) {
@@ -75,6 +75,9 @@ for (let s = 0; s < seats; s++) {
   games += res.games;
   turnSum += res.avgTurns * res.games;
   stales += res.stalemates;
+  armings += res.armings || 0;
+  breaks += res.breaks || 0;
+  contested += res.contestedGames || 0;
   process.stdout.write(dim('.'));
 }
 process.stdout.write('\n');
@@ -99,5 +102,14 @@ if (anchor !== null && currentRate !== null && currentRate > 0) {
     dim(`  (indicative band ${pLo.toFixed(1)}-${pHi.toFixed(1)}, anchor ${anchor}%,`) +
     dim(' assumes the proxy\'s relative response transfers)'));
 }
-console.log(JSON.stringify({ bench, rate, lo, hi, wins, games, avgTurns: turnSum / games }));
+// Round 7 chose the current bench partly for its final-approach dynamics (shot-down and
+// contested rates); any candidate must show its numbers on the same axis.
+console.log(dim(`  final approach: ${armings} armings, ${breaks} broken ` +
+  `(${armings ? ((breaks / armings) * 100).toFixed(1) : '0'}%), ` +
+  `${((contested / games) * 100).toFixed(1)}% of games contested`));
+console.log(JSON.stringify({
+  bench, rate, lo, hi, wins, games, avgTurns: turnSum / games,
+  armings, breaks, shotDownPct: armings ? (breaks / armings) * 100 : 0,
+  contestedPct: (contested / games) * 100,
+}));
 process.exit(games > 0 ? EXIT_PASS : EXIT_FAIL);

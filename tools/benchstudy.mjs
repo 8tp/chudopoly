@@ -61,23 +61,42 @@ const perSeat = Math.max(1, Math.round(totalGames / seats));
 let wins = 0, games = 0, turnSum = 0, stales = 0, armings = 0, breaks = 0, contested = 0;
 const started = Date.now();
 
+// A bench entry containing ':' is an evaluation-only wrapper policy (oracle:, tuned:,
+// cashfloor:, …) that simulate.js's mode-string loop cannot seat; those benches run
+// through tools/lib/replay.js's playFresh loop instead. IMPORTANT for comparability:
+// the two loops are the same shape but not the same rnd() consumption, so compare a
+// wrapper bench ONLY against a plain bench that was ALSO run with --loop fresh.
+const useFresh = bench.some(m => m.includes(':')) || args.loop === 'fresh';
+const R = useFresh ? require(path.join(ROOT, 'tools', 'lib', 'replay.js')) : null;
+
 for (let s = 0; s < seats; s++) {
   const lineup = bench.slice();
   lineup.splice(s, 0, PROXY);
   // The seed deliberately does NOT contain the bench, so every candidate bench sees the
   // SAME deck order per (seat, game index) — bench-to-bench comparison is paired.
-  const res = sim.runMatches({
-    players: lineup, games: perSeat, seed: `${seed}-s${s}`,
-    // Quick play launches the default ruleset (preset chudopoly): finalApproach, 3 sets.
-    rules: { winRule: 'finalApproach', setsToWin: 3, shuffleSeats: false },
-  });
-  wins += res.seatWins[s];
-  games += res.games;
-  turnSum += res.avgTurns * res.games;
-  stales += res.stalemates;
-  armings += res.armings || 0;
-  breaks += res.breaks || 0;
-  contested += res.contestedGames || 0;
+  if (useFresh) {
+    for (let g = 0; g < perSeat; g++) {
+      const r = R.playFresh(lineup, `${seed}-s${s}:${g}`,
+        { winRule: 'finalApproach', setsToWin: 3 });
+      games++;
+      turnSum += r.turns;
+      if (r.winner === 'p' + s) wins++;
+      if (r.endReason === 'stalemate') stales++;
+    }
+  } else {
+    const res = sim.runMatches({
+      players: lineup, games: perSeat, seed: `${seed}-s${s}`,
+      // Quick play launches the default ruleset (preset chudopoly): finalApproach, 3 sets.
+      rules: { winRule: 'finalApproach', setsToWin: 3, shuffleSeats: false },
+    });
+    wins += res.seatWins[s];
+    games += res.games;
+    turnSum += res.avgTurns * res.games;
+    stales += res.stalemates;
+    armings += res.armings || 0;
+    breaks += res.breaks || 0;
+    contested += res.contestedGames || 0;
+  }
   process.stdout.write(dim('.'));
 }
 process.stdout.write('\n');

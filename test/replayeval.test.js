@@ -315,6 +315,85 @@ test('a tuned dial provably CHANGES behaviour: holdback=0 through the hook equal
   assert.ok(diffsVsBase > 0, 'holdback=0 must actually change at least one decision vs bare');
 });
 
+/* ── 3d. the oracle-charge wrapper ───────────────────────────────────── */
+
+test('oracle: surges into the window, holds small charges outside it, restores the hand', () => {
+  // WINDOW: p1 one set from winning, tiny bank; p0 holds a 1M rent + surge_ops. The
+  // doubled rent (2M) bites the board where the single (1M) does not -> surge first.
+  const state = G.createGame([
+    { id: 'p0', name: 'a' }, { id: 'p1', name: 'b' }, { id: 'p2', name: 'c' },
+  ], { seed: 'oracle-fix' });
+  const p0 = state.players[0], p1 = state.players[1];
+  const take = (pred) => {
+    const i = state.deck.findIndex(pred);
+    assert.ok(i >= 0, 'fixture card present');
+    return state.deck.splice(i, 1)[0];
+  };
+  for (const c of p0.hand.splice(0)) state.deck.push(c);
+  for (const c of p1.hand.splice(0)) state.deck.push(c);
+  p1.properties = {
+    brown: [take(c => c.color === 'brown'), take(c => c.color === 'brown')].map(c => ({ ...c, placedColor: 'brown' })),
+    intel: [take(c => c.color === 'intel'), take(c => c.color === 'intel')].map(c => ({ ...c, placedColor: 'intel' })),
+  };
+  p1.bank = [take(c => c.type === 'money' && c.value === 1)];
+  p0.properties = { lightblue: [{ ...take(c => c.color === 'lightblue'), placedColor: 'lightblue' }] };
+  p0.hand = [
+    take(c => c.type === 'rent' && c.colors[0] !== 'any' && c.colors.includes('lightblue')),
+    take(c => c.color === 'pink'),
+    take(c => c.action === 'surge_ops'),
+    take(c => c.action === 'finance_office'),
+  ];
+  state.currentPlayerIndex = 0; state.turnPhase = 'play'; state.playsRemaining = 3;
+  const pol = R.makePolicy('oracle:neutral');
+  BI.setRng(G.makeRng('bot:og'));
+  const a = pol.decide(state, 'p0');
+  BI.setRng(null);
+  assert.equal(pol.stats.surged, 1, 'the surge branch must fire when doubling crosses the bank');
+  assert.equal(state.players[0].hand[a.cardIndex].action, 'surge_ops');
+
+  // HOLDING: opponent at setsToWin-2, base fires a 1M rent -> oracle hides it and the
+  // base re-decides to a non-charge play. The hand must come back byte-identical.
+  const s2 = G.createGame([{ id: 'p0', name: 'a' }, { id: 'p1', name: 'b' }], { seed: 'oracle-hold' });
+  const q0 = s2.players[0], q1 = s2.players[1];
+  const take2 = (pred) => {
+    const i = s2.deck.findIndex(pred);
+    assert.ok(i >= 0, 'fixture card present');
+    return s2.deck.splice(i, 1)[0];
+  };
+  for (const c of q0.hand.splice(0)) s2.deck.push(c);
+  q1.properties = { brown: [take2(c => c.color === 'brown'), take2(c => c.color === 'brown')].map(c => ({ ...c, placedColor: 'brown' })) };
+  q1.bank = [take2(c => c.type === 'money' && c.value === 1)];
+  q0.properties = { lightblue: [{ ...take2(c => c.color === 'lightblue'), placedColor: 'lightblue' }] };
+  q0.hand = [
+    take2(c => c.type === 'rent' && c.colors[0] !== 'any' && c.colors.includes('lightblue')),
+    take2(c => c.type === 'money' && c.value === 2),
+  ];
+  s2.currentPlayerIndex = 0; s2.turnPhase = 'play'; s2.playsRemaining = 3;
+  const handBefore = JSON.stringify(q0.hand);
+  const pol2 = R.makePolicy('oracle:neutral');
+  BI.setRng(G.makeRng('bot:oh'));
+  const b = pol2.decide(s2, 'p0');
+  BI.setRng(null);
+  assert.equal(pol2.stats.held, 1, 'the holding branch must fire on a sub-4M charge');
+  assert.equal(b.type, 'play_money', 'the re-decided alternative is played instead');
+  assert.equal(JSON.stringify(q0.hand), handBefore, 'hide-and-redecide restores the hand exactly');
+
+  // Round 10's rule survives composition: an insolvent window seat is NOT a window.
+  q1.bank = []; q1.properties = {}; // nothing payable
+  const pol3 = R.makePolicy('oracle:neutral');
+  BI.setRng(G.makeRng('bot:oi'));
+  pol3.decide(s2, 'p0');
+  BI.setRng(null);
+  assert.equal(pol3.stats.charged + pol3.stats.surged, 0, 'never a charge that collects nothing');
+});
+
+test('playFresh: wrapper benches play whole games, and plain modes match the sim loop shape', () => {
+  const r = R.playFresh(['oracle:aggressive', 'humanlike', 'neutral', 'conservative'],
+    'playfresh-gate', { winRule: 'finalApproach', setsToWin: 3 });
+  assert.ok(r.winner === null || typeof r.winner === 'string');
+  assert.ok(r.turns > 0 && r.turns <= 300);
+});
+
 /* ── 4. determinization conserves the deck ───────────────────────────── */
 
 test('determinized rollout decks are exactly the unseen multiset', () => {

@@ -991,8 +991,189 @@ function bestChargeAt(state, bot, target) {
   return (wildRent || finance || colorRent || rollCall)?.action || null;
 }
 
+// oracle:<mode> — the CHARGE-PLAY CEILING with today's deck, as an evaluation-only
+// policy. It answers one question: if a bot spent its charge cards as well as the cards
+// allow — window-aware, color-optimal, §3.1c-legal surge stacking, holding charges for
+// the window — how much stronger does it get? EXACT DEFINITION:
+//
+// WINDOW: any opponent, non-eliminated, NOT armed, holding exactly setsToWin-1 completed
+// sets, with >= 1 payable card (round 10: never a charge that collects nothing). Among
+// several, the one with the highest total board+bank value. (No bank cap, unlike rentlev:
+// the scorer below prefers board-biting charges instead of pre-filtering on bank.)
+//
+// IN THE WINDOW, when the base policy chose anything that is not already a charge:
+//   * enumerate every legal charge play in hand under game.js's true targeting rules:
+//     color rent (must own >= 1 card of an eligible color; hits every opponent, the
+//     window seat included; amount = calcRent at the calcRent-maximal eligible color),
+//     wild rent (targeted at the window seat, calcRent-maximal color), Finance Office
+//     (5M, targeted), Roll Call (2M from everyone);
+//   * score each by collectible-from-window (min(amount, their payable total)) plus
+//     DOUBLE the board bite (max(0, collectible - their bank value) — set material is
+//     the point, per the owner's original ask);
+//   * SURGE (§3.1c: rent only, stacks, spends a play): if plays >= 2, a surge_ops is in
+//     hand, and doubling the best rent either newly bites the board or adds >= 2M of
+//     collectible, play surge_ops FIRST — the doubled rent follows at the next decide,
+//     where this same logic re-selects it (state._surgeOps carries the stack).
+//   * substitute the best charge if its collectible >= 1M; if the base action was
+//     itself a charge, keep whichever scores higher.
+//
+// OUT OF THE WINDOW (holding — the multi-turn half rentlev lacked): if no opponent is
+// armed, some opponent holds >= setsToWin-2 sets (a window is plausible), and the base
+// chose to SPEND a charge asset — playing finance_office/roll_call/a rent whose
+// collectible now is < 4M, or banking any charge card as money — then HOLD it: the card
+// is hidden from the hand, the base policy re-decides without it (its own rnd stream,
+// applied consistently), and the chosen alternative is played instead (a null re-decide
+// means pass). At most 3 hides per decision. Charges the base fires for >= 4M, and
+// every non-charge action, pass through untouched.
+function oracleChargePolicy(baseMode) {
+  const base = modePolicy(baseMode);
+  const CHARGE_ACTIONS = new Set(['finance_office', 'roll_call']);
+  const isChargeCard = c => c.type === 'rent' || CHARGE_ACTIONS.has(c.action);
+  const bankOf = p => (p.bank || []).reduce((s, c) => s + (c.value || 0), 0);
+  const payableOf = p => G.payableCards(p).reduce((s, c) => s + (c.value || 0), 0);
+
+  function windowSeat(state, me) {
+    const win = G.setsToWinOf(state);
+    let best = null, bestVal = -1;
+    for (const p of state.players) {
+      if (p.id === me || p.eliminated || p.finalApproach) continue;
+      if (G.completedSets(p) !== win - 1) continue;
+      if (!G.payableCards(p).length) continue;
+      const v = payableOf(p);
+      if (v > bestVal) { best = p; bestVal = v; }
+    }
+    return best;
+  }
+
+  function bestRent(state, bot) {
+    let best = null;
+    for (let i = 0; i < bot.hand.length; i++) {
+      const c = bot.hand[i];
+      if (c.type !== 'rent') continue;
+      const colors = c.colors[0] === 'any'
+        ? Object.keys(bot.properties || {})
+        : c.colors.filter(col => (bot.properties[col] || []).length > 0);
+      for (const col of colors) {
+        if (!(bot.properties[col] || []).length) continue;
+        const r = G.calcRent(bot, col);
+        if (r > 0 && (!best || r > best.rent)) best = { i, rent: r, color: col, wild: c.colors[0] === 'any' };
+      }
+    }
+    return best;
+  }
+
+  function chargeMenu(state, bot, target) {
+    const pay = payableOf(target), bank = bankOf(target);
+    const surge = state._surgeOps || 0;
+    const mult = 2 ** surge;
+    const score = amount => {
+      const collect = Math.min(amount, pay);
+      return { collect, value: collect + 2 * Math.max(0, collect - bank) };
+    };
+    const menu = [];
+    const rent = bestRent(state, bot);
+    if (rent) {
+      menu.push({
+        ...score(rent.rent * mult), amount: rent.rent * mult, kind: 'rent',
+        action: { type: 'play_action', cardIndex: rent.i, targetColor: rent.color,
+          targetId: rent.wild ? target.id : undefined },
+      });
+    }
+    for (let i = 0; i < bot.hand.length; i++) {
+      const c = bot.hand[i];
+      if (c.action === 'finance_office') {
+        menu.push({ ...score(5), amount: 5, kind: 'finance',
+          action: { type: 'play_action', cardIndex: i, targetId: target.id } });
+      } else if (c.action === 'roll_call') {
+        menu.push({ ...score(2), amount: 2, kind: 'rollcall',
+          action: { type: 'play_action', cardIndex: i } });
+      }
+    }
+    return { menu: menu.filter(m => m.collect >= 1).sort((a, b) => b.value - a.value), rent, pay, bank, mult };
+  }
+
+  return {
+    ...base,
+    name: 'oracle:' + baseMode,
+    stats: { charged: 0, surged: 0, held: 0 },
+    decide(state, botId) {
+      const action = base.decide(state, botId);
+      const bot = G.getPlayer(state, botId);
+      if (!bot) return action;
+      const win = G.setsToWinOf(state);
+
+      const target = windowSeat(state, botId);
+      if (target) {
+        const { menu, rent, pay, bank } = chargeMenu(state, bot, target);
+        // §3.1c surge stacking, when the doubling is what crosses the bar.
+        const surgeIdx = bot.hand.findIndex(c => c.action === 'surge_ops');
+        if (rent && surgeIdx >= 0 && state.playsRemaining >= 2) {
+          const now = Math.min(rent.rent * (2 ** (state._surgeOps || 0)), pay);
+          const doubled = Math.min(rent.rent * (2 ** ((state._surgeOps || 0) + 1)), pay);
+          const bitesNow = now > bank, bitesDoubled = doubled > bank;
+          if ((bitesDoubled && !bitesNow) || doubled - now >= 2) {
+            this.stats.surged++;
+            return { type: 'play_action', cardIndex: surgeIdx };
+          }
+        }
+        if (menu.length) {
+          const baseCard = action && action.cardIndex !== undefined ? bot.hand[action.cardIndex] : null;
+          const baseIsCharge = action && action.type === 'play_action' && baseCard && isChargeCard(baseCard);
+          if (!baseIsCharge) {
+            this.stats.charged++;
+            return menu[0].action;
+          }
+        }
+        return action;
+      }
+
+      // Holding, outside the window.
+      if (!action) return action;
+      const anyArmed = state.players.some(p => p.id !== botId && !p.eliminated && p.finalApproach);
+      const windowSoon = state.players.some(p => p.id !== botId && !p.eliminated
+        && G.completedSets(p) >= win - 2);
+      if (anyArmed || !windowSoon) return action;
+
+      let current = action;
+      for (let hides = 0; hides < 3; hides++) {
+        if (!current || current.cardIndex === undefined) return current;
+        const card = bot.hand[current.cardIndex];
+        if (!card || !isChargeCard(card)) return current;
+        const spendingAsCharge = current.type === 'play_action';
+        const bankingIt = current.type === 'play_money';
+        if (!spendingAsCharge && !bankingIt) return current;
+        if (spendingAsCharge) {
+          // A charge the base fires for real money is not held. Collectible bound: the
+          // best-paying opponent it can reach.
+          const amount = card.type === 'rent'
+            ? G.calcRent(bot, current.targetColor || card.color || '') * (2 ** (state._surgeOps || 0))
+            : card.action === 'finance_office' ? 5 : 2;
+          const reach = Math.max(0, ...state.players
+            .filter(p => p.id !== botId && !p.eliminated).map(payableOf));
+          if (Math.min(amount, reach) >= 4) return current;
+        }
+        // Hide the card, let the base pick its next-best play, restore, remap.
+        const idx = current.cardIndex;
+        const [hidden] = bot.hand.splice(idx, 1);
+        let redecided;
+        try { redecided = base.decide(state, botId); }
+        finally { bot.hand.splice(idx, 0, hidden); }
+        this.stats.held++;
+        if (!redecided) return null;
+        if (redecided.cardIndex !== undefined) {
+          // Index was relative to the hidden hand; shift back over the restored card.
+          if (redecided.cardIndex >= idx) redecided.cardIndex++;
+        }
+        current = redecided;
+      }
+      return current;
+    },
+  };
+}
+
 function makePolicy(spec) {
   if (typeof spec !== 'string') throw new Error('policy spec must be a string');
+  if (spec.startsWith('oracle:')) return oracleChargePolicy(spec.slice('oracle:'.length));
   if (spec.startsWith('cashfloor:')) return cashFloorPolicy(spec.slice('cashfloor:'.length));
   if (spec.startsWith('nocompleter:')) return noCompleterPolicy(spec.slice('nocompleter:'.length));
   if (spec.startsWith('rentlev:')) return rentLeveragePolicy(spec.slice('rentlev:'.length));
@@ -1021,44 +1202,59 @@ function continuationPolicies(record, overrides = {}) {
 
 const MAX_ROLLOUT_TURNS = 300;
 
+// The shared playout loop (mirrors simulate.js runGame). Assumes bot RNG is seeded.
+function runLoop(state, policies) {
+  let safety = MAX_ROLLOUT_TURNS * 25;
+  while (state.phase === 'playing' && safety-- > 0 && state.turnCounter <= MAX_ROLLOUT_TURNS) {
+    if (state.pendingAction) {
+      const rid = BI.findResponder(state);
+      if (rid) {
+        const pol = policies.get(rid) || modePolicy('neutral');
+        // Through the policy, not straight to botRespondSync: tuned/oracle wrappers
+        // must be able to scope their overrides around the RESPONSE path too.
+        if (pol.respond) pol.respond(state, rid); else BI.botRespondSync(state, rid, pol.respondMode);
+        continue;
+      }
+      state.pendingAction = null; state.turnPhase = 'play';
+      continue;
+    }
+    const cp = G.currentPlayer(state);
+    if (cp.eliminated) { G.advanceToNextActive(state); continue; }
+    const pol = policies.get(cp.id) || modePolicy('neutral');
+    if (state.turnPhase !== 'play') break;
+    const action = pol.decide(state, cp.id);
+    if (action) {
+      const res = BI.applyBotAction(state, cp.id, action);
+      if (!res || res.error) endTurnFor(state, cp.id, pol);
+      continue;
+    }
+    endTurnFor(state, cp.id, pol);
+  }
+}
+
 // One playout from a decision snapshot. `firstAction` (already index-resolved or in
-// cardId form) is applied before the loop; the loop then mirrors simulate.js runGame.
+// cardId form) is applied before the loop.
 function rollout(snapshot, policies, { seed, firstAction = null, seatId }) {
   const state = reviveState(snapshot);
   determinize(state, seed);
   BI.setRng(G.makeRng('bot:' + seed));
   try {
     if (firstAction) applyResolvedAction(state, seatId, firstAction, policies.get(seatId));
-
-    let safety = MAX_ROLLOUT_TURNS * 25;
-    while (state.phase === 'playing' && safety-- > 0 && state.turnCounter <= MAX_ROLLOUT_TURNS) {
-      if (state.pendingAction) {
-        const rid = BI.findResponder(state);
-        if (rid) {
-          const pol = policies.get(rid) || modePolicy('neutral');
-          // Through the policy, not straight to botRespondSync: tuned/oracle wrappers
-          // must be able to scope their overrides around the RESPONSE path too.
-          if (pol.respond) pol.respond(state, rid); else BI.botRespondSync(state, rid, pol.respondMode);
-          continue;
-        }
-        state.pendingAction = null; state.turnPhase = 'play';
-        continue;
-      }
-      const cp = G.currentPlayer(state);
-      if (cp.eliminated) { G.advanceToNextActive(state); continue; }
-      const pol = policies.get(cp.id) || modePolicy('neutral');
-      if (state.turnPhase !== 'play') break;
-      const action = pol.decide(state, cp.id);
-      if (action) {
-        const res = BI.applyBotAction(state, cp.id, action);
-        if (!res || res.error) endTurnFor(state, cp.id, pol);
-        continue;
-      }
-      endTurnFor(state, cp.id, pol);
-    }
+    runLoop(state, policies);
   } finally {
     BI.setRng(null);
   }
+  return { winner: state.winner, turns: state.turnCounter, endReason: state.endReason };
+}
+
+// A whole fresh game under wrapper policies — what lets benchstudy seat evaluation-only
+// policies (oracle:, tuned:, …) that simulate.js's mode-string loop cannot.
+function playFresh(specs, seed, rules = {}) {
+  const players = specs.map((s, i) => ({ id: 'p' + i, name: 'seat' + i }));
+  const state = G.createGame(players, { seed, ...rules });
+  const policies = new Map(specs.map((s, i) => ['p' + i, typeof s === 'string' ? makePolicy(s) : s]));
+  BI.setRng(G.makeRng('bot:' + seed));
+  try { runLoop(state, policies); } finally { BI.setRng(null); }
   return { winner: state.winner, turns: state.turnCounter, endReason: state.endReason };
 }
 
@@ -1267,7 +1463,7 @@ module.exports = {
   loadRecords, reconstruct, verifySeeded, makeRiggedState, makeSeededState,
   stateProjection, boardProjection, snapshotState, reviveState, determinize,
   makePolicy, modePolicy, cashFloorPolicy, noCompleterPolicy, sandbagPolicy,
-  rentLeveragePolicy, tunedPolicy, continuationPolicies,
+  rentLeveragePolicy, tunedPolicy, oracleChargePolicy, playFresh, continuationPolicies,
   rollout, evaluate, decideAt, canonicalAction, wilson, clusterBootstrapCI,
   ReplayError, drive, verifyFinalBoards,
 };
